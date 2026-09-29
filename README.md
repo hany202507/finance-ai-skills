@@ -23,14 +23,23 @@
 
 ### 설치
 
-클로드 코드에서 플러그인으로 설치합니다.
+스킬만 설치합니다(플러그인 아님). 한 줄을 붙여 넣으면 스킬 폴더에 들어가고 파이썬 패키지까지 설치합니다.
 
-```
-/plugin marketplace add hany202507/finance-ai-skills
-/plugin install finance-ai-skills@finance-ai-skills
+윈도우 PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex
 ```
 
-스킬 폴더만 쓰려면 저장소를 받아 `skills/현금흐름표` 를 `~/.claude/skills/` 에 복사합니다. 파이썬 3.10 이상과 `pip install -r skills/현금흐름표/requirements.txt` 가 필요합니다. 들어 있는 합성 자료로 바로 돌려 보는 방법은 [SKILL.md](skills/현금흐름표/SKILL.md) 빠른 시작에 있습니다.
+맥 · 리눅스 터미널
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh
+```
+
+`~/.claude/skills/현금흐름표` 에 들어갑니다. Claude Code 를 다시 열면 잡힙니다. 파이썬 3.10 이상이 필요합니다. 새 판이 나오면 같은 줄을 다시 실행하면 덮어씁니다.
+
+플러그인으로 설치하려면 `/plugin marketplace add hany202507/finance-ai-skills` 후 `/plugin install finance-ai-skills@finance-ai-skills`.
 
 ## 고지
 
