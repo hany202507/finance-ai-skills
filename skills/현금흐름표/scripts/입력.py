@@ -411,6 +411,8 @@ def 재무상태표(경로, 기준일=None, 시트=None):
     if _양식여부(raw):
         return 재무상태표_양식(경로, 시트)
     df = _읽기(경로, 시트, 찾을=("계정", "잔액", "금액", "구분", "코드", "과목"))
+    if "차변잔액" in df.columns and "대변잔액" in df.columns and "잔액" not in df.columns:
+        return {"-": _차대잔액(df)}
     kc, nc = _열(df, "코드", False), _열(df, "계정")
     gc, bc = _열(df, "BS구분", False), _열(df, "잔액")
     dc = _열(df, "기준일", False)
@@ -451,9 +453,38 @@ def 상세(경로, 필터=None):
     return out
 
 
+def _차대잔액(df):
+    """차변잔액·대변잔액 두 열인 잔액표 → 계정별 한 줄. 거래처별로 나뉜 줄은 합친다. 구분이 없으면 이름으로 정한다."""
+    kc, nc = _열(df, "코드", False), _열(df, "계정")
+    gc = _열(df, "BS구분", False)
+    합, 이름, 구분 = {}, {}, {}
+    for _, x in df.iterrows():
+        c, n = _계정분리(x[kc] if kc else None, x[nc])
+        if c is None or (isinstance(c, str) and not c.strip()):
+            continue
+        차, 대 = (_원(x["차변잔액"]) if pd.notna(x["차변잔액"]) else 0), (_원(x["대변잔액"]) if pd.notna(x["대변잔액"]) else 0)
+        합[c] = 합.get(c, 0) + 차 - 대
+        이름.setdefault(c, n)
+        if gc and _글(x[gc]):
+            구분[c] = _글(x[gc])
+    out = []
+    for c, v in 합.items():
+        g = 구분.get(c) or R.구분_코드추정(c, 이름[c])
+        out.append({"코드": c, "계정": 이름[c], "구분": g, "분류": None, "잔액": v if g == "자산" else -v})
+    return out
+
+
 def 계정명세서(경로):
-    """전기말 추적 계정(미지급금·가지급금 …)의 거래처별 잔액. 활동·항목 열이 있으면 그대로 쓴다."""
+    """전기말 추적 계정(미지급금·가지급금 …)의 거래처별 잔액. 활동·항목 열이 있으면 그대로 쓴다.
+    차변잔액·대변잔액 두 열인 기초잔액 파일이면 거래처가 적힌 줄만 명세로 쓴다."""
     df = _읽기(경로, 찾을=("계정", "잔액", "거래처", "금액"))
+    if "차변잔액" in df.columns and "대변잔액" in df.columns and "잔액" not in df.columns:
+        pc = next((c for c in ["거래처", "거래처명"] if c in df.columns), None)
+        if not pc:
+            return []
+        df = df[df[pc].map(lambda v: bool(_글(v)))].copy()
+        df["잔액"] = [abs((_원(a) if pd.notna(a) else 0) - (_원(b) if pd.notna(b) else 0))
+                     for a, b in zip(df["차변잔액"], df["대변잔액"])]
     kc, nc = _열(df, "코드", False), _열(df, "계정", False)
     bc = _열(df, "잔액")
     pc = next((c for c in ["거래처", "거래처명"] if c in df.columns), None)
@@ -666,6 +697,9 @@ def 준비(분개장경로, 재무상태표경로=None, 계정마스터경로=No
             메모.append(f"전기 재무상태표 기준일 {앞[-1]}")
             if 앞[-1] != "-":
                 시작 = _다음날(앞[-1])
+            elif 시작[8:] != "01":
+                시작 = 시작[:8] + "01"
+                메모.append(f"재무상태표에 기준일이 없어 기간을 분개장 첫 달 1일({시작})부터로 봤다")
             if 끝 in 표:
                 기말 = 표[끝]
                 메모.append(f"같은 파일의 {끝} 재무상태표로 기말 대조")

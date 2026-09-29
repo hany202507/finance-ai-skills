@@ -77,6 +77,11 @@ def main(argv=None):
     정책 = dict(x.split("=", 1) for x in a.정책)
     상세 = [d for p in a.상세 for d in 입력.상세(p, a.상세필터)]
     명세 = 입력.계정명세서(a.명세서) if a.명세서 else []
+    if not 명세 and a.재무상태표:
+        try:                       # 기초잔액 파일에 거래처·원천계정 열이 있으면 그 자체가 명세서다
+            명세 = 입력.계정명세서(a.재무상태표)
+        except Exception:
+            명세 = []
     이름코드 = {l["계정"]: l["코드"] for l in 줄}
     for m in 명세:
         if isinstance(m["코드"], str) or m["코드"] is None:
