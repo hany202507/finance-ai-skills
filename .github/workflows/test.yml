@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: skills/현금흐름표
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tests
+      - name: 합성 자료로 실행(엑셀 재계산 없이)
+        run: python scripts/run.py --분개장 tests/fixtures/합성_분개장.xlsx --재무상태표 tests/fixtures/합성_재무상태표.xlsx --계정 tests/fixtures/합성_계정.xlsx --회사 합성 --출력 out
