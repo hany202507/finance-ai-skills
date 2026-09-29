@@ -79,7 +79,13 @@ def 스타일제거(경로):
 def _원본(경로, 시트=None, header=0):
     p = Path(경로)
     if p.suffix.lower() in (".csv", ".txt"):
-        return pd.read_csv(p, header=header)
+        # 엑셀이 한글을 제대로 여는 BOM 붙은 UTF-8, BOM 없는 UTF-8, 한글 엑셀이 저장한 CP949 를 모두 받는다
+        for enc in ("utf-8-sig", "cp949"):
+            try:
+                return pd.read_csv(p, header=header, encoding=enc)
+            except UnicodeDecodeError:
+                continue
+        return pd.read_csv(p, header=header, encoding="utf-8", encoding_errors="replace")
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
