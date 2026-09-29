@@ -67,6 +67,8 @@ def main(argv=None):
     ap.add_argument("--명세서", help="전기말 추적 계정의 거래처별 잔액(계정명세서)")
     ap.add_argument("--회사", default="")
     ap.add_argument("--출력")
+    ap.add_argument("--엑셀대조생략", action="store_true",
+                    help="엑셀·LibreOffice 로 수식을 다시 계산해 엔진 값과 대조하는 단계를 건너뛴다(엑셀이 없는 서버·CI)")
     a = ap.parse_args(argv)
 
     줄, 전기, 기말, 마스터, 메모, 기간, 부가 = 입력.준비(a.분개장, a.재무상태표, a.계정, a.분개장시트,
@@ -100,8 +102,11 @@ def main(argv=None):
     xl = out / f"현금흐름표_{이름}.xlsx"
     메모 = 메모 + [f"정책: " + ", ".join(f"{k}={v}" for k, v in r.정책.items())]
     셀 = build_workbook.만들기(r, xl, a.회사, 기간, 메모, 기말)
-    도구 = 재계산.심기(xl)
-    틀림, 판정 = (대조(xl, r, 셀) if 도구 else (["재계산 못 함: 엑셀에서 열어 저장한 뒤 다시 대조"], []))
+    if a.엑셀대조생략:
+        틀림, 판정 = [], []
+    else:
+        도구 = 재계산.심기(xl)
+        틀림, 판정 = (대조(xl, r, 셀) if 도구 else (["재계산 못 함: 엑셀에서 열어 저장한 뒤 다시 대조"], []))
 
     요약 = {
         "파일": str(xl), "기간": 기간, "메모": 메모,
@@ -139,7 +144,7 @@ def main(argv=None):
             continue
         print(f"  {활}  {r.직접합[활]:,}  (계정 기본활동으로만 보면 {r.간접초안합[활]:,})")
     print(f"  재분류 {len(r.재분류)}건  확인사항 {len(r.확인)}건")
-    print(f"  엔진 검증 {'PASS' if r.통과 else 'FAIL'}  엑셀 대조 {'PASS' if not 틀림 else 'FAIL'}"
+    print(f"  엔진 검증 {'PASS' if r.통과 else 'FAIL'}  엑셀 대조 {'생략' if a.엑셀대조생략 else 'PASS' if not 틀림 else 'FAIL'}"
           f"  독립 검산 {'PASS' if r.독립통과 else 'FAIL'}"
           f" (A {sum(x['통과'] is False for x in r.독립['A'])} · B {sum(x['통과'] is False for x in r.독립['B'])}"
           f" · C {sum(x['통과'] is False for x in r.독립['C'])} FAIL"

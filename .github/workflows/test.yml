@@ -27,4 +27,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests
       - name: 합성 자료로 실행(엑셀 재계산 없이)
-        run: python scripts/run.py --분개장 tests/fixtures/합성_분개장.xlsx --재무상태표 tests/fixtures/합성_재무상태표.xlsx --계정 tests/fixtures/합성_계정.xlsx --회사 합성 --출력 out
+        run: python scripts/run.py --분개장 tests/fixtures/합성_분개장.xlsx --재무상태표 tests/fixtures/합성_재무상태표.xlsx --계정 tests/fixtures/합성_계정.xlsx --회사 합성 --출력 out --엑셀대조생략

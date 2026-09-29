@@ -1,5 +1,7 @@
 # finance-ai-skills
 
+[![tests](https://github.com/hany202507/finance-ai-skills/actions/workflows/test.yml/badge.svg)](https://github.com/hany202507/finance-ai-skills/actions/workflows/test.yml)
+
 재무·회계·세무 실무에 쓰는 Claude Code 스킬입니다. 하나씩 추가합니다.
 
 실무에서 매달 쓰는 것을 공개합니다. 공통 원칙은 세 가지입니다. 계산은 결정적인 코드가 하고, 판단 근거는 원문으로 남기고, 결과는 AI 와 무관한 방법으로 한 번 더 검산합니다.
