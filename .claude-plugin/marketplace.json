@@ -1,0 +1,20 @@
+{
+  "name": "finance-ai-skills",
+  "owner": {
+    "name": "hany202507",
+    "url": "https://github.com/hany202507"
+  },
+  "metadata": {
+    "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "finance-ai-skills",
+      "source": "./",
+      "description": "현금흐름표(직접법·간접법) 스킬",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

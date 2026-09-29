@@ -1,0 +1,13 @@
+{
+  "name": "finance-ai-skills",
+  "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬. 현금흐름표 직접법·간접법",
+  "version": "0.1.0",
+  "author": {
+    "name": "hany202507",
+    "url": "https://github.com/hany202507"
+  },
+  "homepage": "https://github.com/hany202507/finance-ai-skills",
+  "repository": "https://github.com/hany202507/finance-ai-skills",
+  "license": "MIT",
+  "keywords": ["accounting", "cash-flow", "현금흐름표", "회계"]
+}
