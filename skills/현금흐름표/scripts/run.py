@@ -10,6 +10,7 @@
 import argparse, json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
+from collections import defaultdict
 import 입력, engine, build_workbook, 재계산
 
 
@@ -58,7 +59,9 @@ def main(argv=None):
     ap.add_argument("--투자계정", nargs="*", default=[], help="현금성자산이 아니라 투자(금융상품)로 볼 계정코드(예: 만기 3개월 넘는 정기예금)")
     ap.add_argument("--세부유지", action="store_true", help="7자리 세부계정을 상위계정으로 합치지 않는다")
     ap.add_argument("--정책", nargs="*", default=[])
-    ap.add_argument("--기준", default="일반기업", choices=["일반기업", "중소기업", "K-IFRS"])
+    ap.add_argument("--기준", default="일반기업", choices=["일반기업", "중소기업", "K-IFRS", "K-IFRS1118"],
+                    help="K-IFRS1118: 2027년 이후. 이자·배당 분류 고정, 간접법은 영업이익에서 출발")
+    ap.add_argument("--판정", nargs="*", default=[], help="회계사 판정 파일(판정후보_<기간>.csv 를 채운 것). 여러 달 것을 이어 써도 된다")
     ap.add_argument("--상세", nargs="*", default=[], help="가계정을 발라낼 은행거래내역·미분류목록")
     ap.add_argument("--상세필터", help="상세 파일에서 이 값이 든 행만(예: 미분류)")
     ap.add_argument("--명세서", help="전기말 추적 계정의 거래처별 잔액(계정명세서)")
@@ -80,9 +83,11 @@ def main(argv=None):
             m["코드"] = 이름코드.get(m["계정"] or m["코드"], m["코드"])
     현금추가 = {int(x) if x.isdigit() else x for x in a.현금계정}
     투자지정 = {int(x) if x.isdigit() else x for x in a.투자계정}
+    판정 = [p for f in a.판정 for p in 입력.판정파일(f)]
     r = engine.실행(줄, 전기, 마스터, 정책, 기말, 기준=a.기준, 상세=상세, 명세서=명세, 손익NI=손익NI, 현금추가=현금추가,
-                   투자지정=투자지정, 잔액열어둠=부가.get("잔액열어둠", False))
-    메모.append(f"기준: {r.기준}" + (f", 상세 {len(상세)}건" if 상세 else "") + (f", 계정명세서 {len(명세)}건" if 명세 else ""))
+                   투자지정=투자지정, 잔액열어둠=부가.get("잔액열어둠", False), 판정=판정)
+    메모.append(f"기준: {r.기준}" + (f", 상세 {len(상세)}건" if 상세 else "") + (f", 계정명세서 {len(명세)}건" if 명세 else "")
+              + (f", 회계사 판정 {len(r.판정)}줄" if r.판정 else ""))
 
     out = Path(a.출력 or Path(a.분개장[0]).parent)
     out.mkdir(parents=True, exist_ok=True)
@@ -106,6 +111,21 @@ def main(argv=None):
         "확인사항": [{"분류": x[0], "내용": x[1], "금액": x[2]} for x in r.확인],
     }
     (out / f"검증_{이름}.json").write_text(json.dumps(요약, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    # 판정후보: 근거가 약한 행을 계정·거래처로 묶는다. 활동·항목·근거·판정자·판정일을 채워 --판정 으로 다시 준다
+    후보 = defaultdict(lambda: [0, "", ""])
+    for t in r.직접행:
+        if t["방법"] in engine.근거방법 or t["방법"].endswith("+회계사 판정"):
+            continue
+        k = (t["상대코드"], t["상대계정"], t["거래처"])
+        후보[k][0] += t["금액"]; 후보[k][1] = t["활동"]; 후보[k][2] = t["항목"]
+    import csv
+    with open(out / f"판정후보_{이름}.csv", "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["계정코드", "계정과목", "거래처", "현금영향", "지금 활동", "지금 항목", "활동", "항목", "근거", "판정자", "판정일"])
+        for (c, n, 처), (v, 활, 항) in sorted(후보.items(), key=lambda kv: -abs(kv[1][0])):
+            if v:
+                w.writerow([c, n, 처, v, 활, 항, "", "", "", "", ""])
 
     print(f"{xl.name}")
     print(f"  기초현금 {r.기초현금:,}  기말현금 {r.기말현금:,}  증감 {r.현금증감:,}")

@@ -438,8 +438,26 @@ def 만들기(r, 경로, 회사="", 기간=("", ""), 메모=(), 기말BS=None):
     간셀 = {}
     s영 = row
     간.cell(row=row, column=1, value=활동명[R.영업]); _줄(간, row, "sec"); row += 1
-    간.cell(row=row, column=1, value="1. 당기순이익(손실)"); 간.cell(row=row, column=2, value=f"=간접법_정산표!G{당기순}")
-    _줄(간, row, "grp"); 소계 = [row]; row += 1
+    if r.기준 == "K-IFRS1118":
+        # 영업이익 = 당기순이익 - (투자·재무·법인세 범주 손익). 비영업 범주 손익은 한 줄로 되돌려 합계는 그대로 둔다
+        범주 = {c: R.손익범주_1118(계정[c]["계정"]) for c in 계정 if 계정[c]["구분"] in ("수익", "비용")}
+        손 = lambda c: f'(SUMIFS({J["H"]},{J["D"]},{_식값(c)})-SUMIFS({J["G"]},{J["D"]},{_식값(c)}))'
+        비영 = [c for c, g in 범주.items() if g]
+        간.cell(row=row, column=1, value="1. 영업이익(손실) (K-IFRS 1118)")
+        간.cell(row=row, column=2, value=f"=간접법_정산표!G{당기순}" + "".join(f"-{손(c)}" for c in 비영))
+        _줄(간, row, "grp"); 소계 = [row]; row += 1
+        for g in ("법인세", "투자", "재무"):
+            cs = [c for c in 비영 if 범주[c] == g]
+            if not cs:
+                continue
+            간.cell(row=row, column=1, value={"법인세": "   법인세비용(영업이익에 없음, 납부는 영업)",
+                                           "투자": "   투자 범주 손익(아래 가감에서 되돌린다)",
+                                           "재무": "   재무 범주 손익(아래 가감에서 되돌린다)"}[g])
+            간.cell(row=row, column=2, value="=" + "+".join(손(c) for c in cs)); _줄(간, row, "item")
+            소계.append(row); row += 1
+    else:
+        간.cell(row=row, column=1, value="1. 당기순이익(손실)"); 간.cell(row=row, column=2, value=f"=간접법_정산표!G{당기순}")
+        _줄(간, row, "grp"); 소계 = [row]; row += 1
     범 = f"간접법_정산표!$H$4:$H${끝}", f"간접법_정산표!$I$4:$I${끝}", f"간접법_정산표!$J$4:$J${끝}", f"간접법_정산표!$K$4:$K${끝}"
     가산 = sorted({lab for c in r.정산칸 for lab in r.정산칸[c].get("I", {})} | {계정[c]["계정"] for c in r.정산손익})
     차감 = sorted({lab for c in r.정산칸 for lab in r.정산칸[c].get("K", {})} | {계정[c]["계정"] for c in r.정산손익})

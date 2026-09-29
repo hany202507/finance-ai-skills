@@ -458,15 +458,49 @@ def 계정명세서(경로):
     bc = _열(df, "잔액")
     pc = next((c for c in ["거래처", "거래처명"] if c in df.columns), None)
     tc = next((c for c in ["적요", "내용", "비고", "성격"] if c in df.columns), None)
+    oc = next((c for c in ["원천계정", "원천 계정", "원천", "원천코드", "발생계정"] if c in df.columns), None)
     out = []
     for _, x in df.iterrows():
         if pd.isna(x[bc]):
             continue
         c, n = _계정분리(x[kc] if kc else None, x[nc] if nc else "")
-        out.append({"코드": c, "계정": n, "잔액": _원(x[bc]),
+        out.append({"코드": c, "계정": n, "잔액": _원(x[bc]), "원천": _원천계정(x[oc]) if oc else None,
                     "거래처": _글(x[pc]) if pc else "", "적요": _글(x[tc]) if tc else "",
                     "활동": _글(x["활동"]) or None if "활동" in df.columns else None,
                     "항목": _글(x["항목"]) or None if "항목" in df.columns else None})
+    return out
+
+
+def _원천계정(v):
+    """「833 광고선전비」·「[833]광고선전비」·「833」·「광고선전비」 → (코드 또는 None, 이름)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    m = re.match(r"^\[?(\d+)\]?\s*(.*)$", t)
+    if m:
+        return (_코드(m.group(1)), m.group(2).strip())
+    return (None, t)
+
+
+def 판정파일(경로):
+    """회계사 판정: 계정코드·거래처·활동·항목(직접법항목)·근거·판정자·판정일. 활동이 빈 줄은 건너뛴다.
+    판정후보_<기간>.csv 를 채운 것도 그대로 받는다."""
+    df = _읽기(경로, 찾을=("계정", "활동", "거래처"))
+    kc = _열(df, "코드", False) or _열(df, "계정")
+    hc = next((c for c in ["항목", "직접법항목", "직접법 항목", "표시항목"] if c in df.columns), None)
+    out = []
+    for _, x in df.iterrows():
+        활 = _글(x["활동"]) if "활동" in df.columns else ""
+        if not 활:
+            continue
+        c, _n = _계정분리(x[kc], "")
+        out.append({"코드": c, "거래처": _글(x["거래처"]) if "거래처" in df.columns else "",
+                    "활동": 활, "항목": _글(x[hc]) if hc else "",
+                    "근거": _글(x["근거"]) if "근거" in df.columns else "",
+                    "판정자": _글(x["판정자"]) if "판정자" in df.columns else "",
+                    "판정일": _글(x["판정일"])[:10] if "판정일" in df.columns else ""})
     return out
 
 
