@@ -317,21 +317,27 @@ def run(folder):
                        f"[F1] {ch} 누락분 매출 계상", base="401", contra="108")
 
     # ── C1 공급시기 경계 ──────────────────────────────────────
-    # 채널별로 본다. 기간 전체로 합치면 다른 채널의 누락(F1)이 이 초과를 덮는다
-    cut = defaultdict(lambda: defaultdict(int))     # 채널 -> 주문월 -> 판매금액
+    # 초과는 채널별로 본다. 기간 전체로 합치면 다른 채널의 누락(F1)이 이 초과를 덮는다.
+    # 다음 기 배송분은 채널을 가리지 않고 모은다. 직원이 다른 채널 주문까지 한 채널 매출로
+    # 넣는 일이 흔해서다. 그 채널 초과분만큼, 모은 다음 기 배송분 안에서 뺀다
+    by_ym = defaultdict(int)                        # 주문월 -> 판매금액
     for r in agg:
         if s(r["취소여부"]) != "정상" or s(r["채널"]) == "TENANT":
             continue
         if s(r["과세구분"]) != "TAXABLE":
             continue
         if inp(r["주문월"]) and not inp(r["배송완료일"]):
-            cut[s(r["채널"])][s(r["주문월"])] += n(r["판매금액"])
-    for ch, by_ym in sorted(cut.items()):
-        over = sum(v for (d, c), v in led_day.items() if c == ch) - \
-            sum(v for (d, c), v in src_day.items() if c == ch)
-        if not has_agg or over <= tol:
+            by_ym[s(r["주문월"])] += n(r["판매금액"])
+    pool = sum(by_ym.values())
+    chans = sorted({c for (d, c) in led_day} | {c for (d, c) in src_day})
+    over_by = {ch: sum(v for (d, c), v in led_day.items() if c == ch)
+               - sum(v for (d, c), v in src_day.items() if c == ch) for ch in chans}
+    for ch in sorted(chans, key=lambda c: -over_by[c]):
+        over = over_by[ch]
+        if not has_agg or over <= tol or pool <= tol:
             continue
-        gross = sum(by_ym.values())
+        gross = min(over, pool)
+        pool -= gross
         sup = round(gross / 1.1)
         rep.add("C1", STOP, "공급시기가 다음 기인 매출이 이번 기에 들어갔다",
                 f"{ch} 주문월 {' · '.join(sorted(by_ym))} · 배송완료 다음 기 {gross:,}원",
@@ -368,15 +374,55 @@ def run(folder):
             k = f"{n(r['년도'])}-{n(r['월']):02d}"
             by_m[k][0] += n(r["공급가액"])
             by_m[k][1] += n(r["부가세"])
+        # 매출로 잡은 직원은 보통 입점사 판매대금 입금을 외상매출금 회수로, 입점사 지급을
+        # 비용으로 처리한다. 매출을 음수로 지우면 외상매출금이 한 번 더 줄어든다.
+        # 그래서 일반전표의 그 줄을 찾아 선수금으로 되돌린다. 적요나 거래처에 입점사가 든 줄이다
+        words = ("입점사",) + tuple(k.split("(")[0].replace("판매분", "").strip()
+                                    for k, v in ch_map.items()
+                                    if s(v["채널코드"]) == "TENANT" and k)
+        words = tuple(w for w in words if w)
+
+        def tenant_line(g):
+            return any(w in s(g.get("적요")) + s(g.get("거래처")) for w in words)
+        rcv_m, pay_m = defaultdict(int), defaultdict(lambda: defaultdict(int))
+        acct_name = {}
+        for g in gjs:
+            # 일반전표 업로드 양식에는 연도 칸이 없다. 과세기간은 한 해 안이라 장부 연도를 쓴다
+            ym = f"{months[0][:4]}-{n(g.get('월')):02d}"
+            if not tenant_line(g) or not inp(ym):
+                continue
+            code = n(g.get("계정과목코드"))
+            if code == 108 and n(g.get("대변")) > 0:
+                rcv_m[ym] += n(g.get("대변"))
+            elif n(g.get("차변")) > 0 and code not in (101, 102, 103, 259):
+                pay_m[ym][code] += n(g.get("차변"))
+                acct_name[code] = s(g.get("계정과목명"))
         for ym, (a, b) in sorted(x for x in by_m.items() if x[1][0]):
-            me = month_end(ym)
-            rep.fix_mm(me, 1, 17, s(ten_rows[0]["거래처명"]), "", -a, -b,
+            rep.fix_mm(month_end(ym), 1, 17, s(ten_rows[0]["거래처명"]), "", -a, -b,
                        f"[B7] 입점사 판매대금 총액계상 취소 {ym}", base="401", contra="108")
-            # 위 음수 매출행이 외상매출금을 a+b 만큼 줄인다. 받을 돈은 그대로 있으므로
-            # 외상매출금을 되살리고(차변) 입점사에 넘길 돈을 부채로 세운다(대변)
-            rep.fix_gj(me, 108, "외상매출금", "입점사", f"[B7] 외상매출금 환원 {ym}",
-                       a + b, 0)
-            rep.fix_gj(me, 259, "선수금", "입점사", f"[B7] 선수금 계상 {ym}", 0, a + b)
+        if rcv_m or pay_m:
+            for ym in sorted(set(rcv_m) | set(pay_m)):
+                me = month_end(ym)
+                if rcv_m[ym]:
+                    rep.fix_gj(me, 108, "외상매출금", "입점사",
+                               f"[B7] 입점사 판매대금 입금 외상매출금 회수 취소 {ym}",
+                               rcv_m[ym], 0)
+                    rep.fix_gj(me, 259, "선수금", "입점사",
+                               f"[B7] 입점사 판매대금 입금 선수금 계상 {ym}", 0, rcv_m[ym])
+                for code, amt in sorted(pay_m[ym].items()):
+                    rep.fix_gj(me, 259, "선수금", "입점사",
+                               f"[B7] 입점사 지급 선수금 차감 {ym}", amt, 0)
+                    rep.fix_gj(me, code, acct_name.get(code, ""), "입점사",
+                               f"[B7] 입점사 지급 {acct_name.get(code, code)} 취소 {ym}", 0, amt)
+        else:
+            # 일반전표에서 입점사 입금·지급 줄을 못 찾았다. 입금이 매출 금액만큼 외상매출금을
+            # 지웠다고 보고 그만큼 선수금으로 옮긴다. 실제 처리는 회계사가 확인한다
+            for ym, (a, b) in sorted(x for x in by_m.items() if x[1][0]):
+                me = month_end(ym)
+                rep.fix_gj(me, 108, "외상매출금", "입점사", f"[B7] 외상매출금 환원 {ym}",
+                           a + b, 0)
+                rep.fix_gj(me, 259, "선수금", "입점사", f"[B7] 선수금 계상 {ym}", 0, a + b)
+            rep.findings[-1]["잠정"] = "예(일반전표의 입점사 입금·지급 처리 확인)"
 
     # ── B5 불공제 ─────────────────────────────────────────────
     if deny and not any(s(r["거래처명"]) in deny for r in buys):
@@ -459,11 +505,16 @@ def run(folder):
                        s(r["사업자(주민)등록번호"]), -n(r["공급가액"]), -n(r["부가세"]),
                        "[B6] 카드대금 결제 매입계상 취소", base=s(r["기본계정"]),
                        contra=s(r["상대계정"]))
+            # 일반전표에 결제 분개(차 미지급금)가 이미 있으면 매입만 지우면 된다.
+            # 또 넣으면 보통예금이 두 번 빠진다. 결제가 매입으로만 들어간 경우에만 세운다
+            gross = n(r["공급가액"]) + n(r["부가세"])
+            if any(n(g.get("월")) == n(r["월"]) and n(g.get("일")) == n(r["일"])
+                   and n(g.get("계정과목코드")) == 253 and n(g.get("차변")) == gross
+                   for g in gjs):
+                continue
             rep.fix_gj(d3(r), 253, "미지급금", "법인카드사",
-                       "[B6] 카드대금 미지급금 상계",
-                       n(r["공급가액"]) + n(r["부가세"]), 0)
-            rep.fix_gj(d3(r), 103, "보통예금", "법인카드사", "[B6] 카드대금 결제",
-                       0, n(r["공급가액"]) + n(r["부가세"]))
+                       "[B6] 카드대금 미지급금 상계", gross, 0)
+            rep.fix_gj(d3(r), 103, "보통예금", "법인카드사", "[B6] 카드대금 결제", 0, gross)
 
     # ── F2 전표 종류 오분류 ───────────────────────────────────
     led_ti = {(d3(r), s(r["사업자(주민)등록번호"]), n(r["공급가액"])) for r in buys

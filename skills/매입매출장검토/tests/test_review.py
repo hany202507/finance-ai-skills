@@ -169,3 +169,72 @@ def test_리포트_검토범위에_32개가_다_찍힌다(bad):
     assert len(cat) == 32
     for r in cat:
         assert f"| {r['번호']} |" in md
+
+
+def test_B7_일반전표에_입점사_입금·지급이_있으면_그_줄을_선수금으로_되돌린다(bad):
+    """직원이 입점사 판매대금 입금을 외상매출금 회수로, 입점사 지급을 지급수수료로 잡은 경우.
+    매출 취소 + 입금·지급 재분류를 하면 외상매출금과 지급수수료는 0, 선수금은 수수료만 남는다."""
+    p = glob.glob(os.path.join(bad, "일반전표_*.xlsx"))[0]
+    wb = openpyxl.load_workbook(p)
+    ws = wb.active
+    head = [c.value for c in ws[1]]
+    for row in (
+            {"월": 4, "일": 25, "계정과목코드": 103, "계정과목명": "보통예금",
+             "적요": "입점사 판매대금 수취", "차변": 1_100_000},
+            {"월": 4, "일": 25, "계정과목코드": 108, "계정과목명": "외상매출금",
+             "적요": "입점사 판매대금 수취", "대변": 1_100_000},
+            {"월": 5, "일": 10, "계정과목코드": 831, "계정과목명": "지급수수료",
+             "적요": "입점사 지급", "차변": 968_000},
+            {"월": 5, "일": 10, "계정과목코드": 103, "계정과목명": "보통예금",
+             "적요": "입점사 지급", "대변": 968_000}):
+        ws.append([row.get(h) for h in head])
+    wb.save(p)
+
+    rep = review.run(bad)[0]
+    b7 = [g for g in rep.gj if "[B7]" in g["적요"]]
+    net = {}
+    for g in b7:
+        net[g["계정과목코드"]] = net.get(g["계정과목코드"], 0) + (g["차변"] or 0) - (g["대변"] or 0)
+    assert net == {108: 1_100_000, 259: -1_100_000 + 968_000, 831: -968_000}
+    # 매출 취소(외상매출금 -1,100,000) + 입금 재분류(+1,100,000) + 원건(+1,100,000 -1,100,000) = 0
+    b7f = next(f for f in rep.findings if f["검사"] == "B7")
+    assert b7f["잠정"] == "아니오"
+
+
+def test_B7_일반전표에_입점사_줄이_없으면_잠정으로_올린다(bad):
+    rep = review.run(bad)[0]
+    b7f = next(f for f in rep.findings if f["검사"] == "B7")
+    assert b7f["잠정"].startswith("예")
+
+
+def _append(path, rows):
+    wb = openpyxl.load_workbook(path)
+    ws = wb.active
+    head = [c.value for c in ws[1]]
+    for row in rows:
+        ws.append([row.get(h) for h in head])
+    wb.save(path)
+
+
+def test_C1_다른_채널의_다음기_배송분을_한_채널에_넣었어도_전부_뺀다(bad):
+    """플랫폼 주문(6월 주문·7월 배송)을 자사몰 매출로 넣었다. 자사몰 초과분은 두 채널 몫이다."""
+    _append(glob.glob(os.path.join(bad, "매출집계_*.xlsx"))[0],
+            [{"배송완료일": "2026-07-03", "채널": "PLTF", "과세구분": "TAXABLE", "취소여부": "정상",
+              "주문월": "2026-06", "건수": 1, "판매금액": 550_000}])
+    _append(glob.glob(os.path.join(bad, "매입매출장_*.xlsx"))[0],
+            [make_fixture.mm("2026-06-30", 1, 17, "자사몰(집계)", 500_000, 50_000, "D2C 과세매출",
+                             "401", "108", biz="")])
+    rep = review.run(bad)[0]
+    c1 = [f for f in rep.findings if f["검사"] == "C1"]
+    assert len(c1) == 1 and c1[0]["공급가액 영향"] == -1_000_000
+
+
+def test_B6_일반전표에_카드대금_결제가_이미_있으면_결제분개를_또_만들지_않는다(bad):
+    _append(glob.glob(os.path.join(bad, "일반전표_*.xlsx"))[0], [
+        {"월": 5, "일": 25, "계정과목코드": 253, "계정과목명": "미지급금", "거래처": "○○카드",
+         "적요": "법인카드 대금 결제", "차변": 440_000},
+        {"월": 5, "일": 25, "계정과목코드": 103, "계정과목명": "보통예금", "거래처": "○○카드",
+         "적요": "법인카드 대금 결제", "대변": 440_000}])
+    rep = review.run(bad)[0]
+    assert any("[B6] 카드대금 결제 매입계상 취소" in m["품명"] for m in rep.mm)
+    assert not [g for g in rep.gj if "[B6]" in g["적요"]]
