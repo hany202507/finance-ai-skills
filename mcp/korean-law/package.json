@@ -1,0 +1,11 @@
+{
+  "name": "korean-law",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "법제처 국가법령정보 OPEN API를 직접 호출하는 로컬 stdio MCP 서버.",
+  "main": "index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
