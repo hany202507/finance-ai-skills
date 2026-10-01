@@ -1,7 +1,7 @@
 {
   "name": "finance-ai-skills",
-  "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬. 현금흐름표 직접법·간접법, 세법자문 회신, 회계기준 검토",
-  "version": "0.2.0",
+  "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬. 현금흐름표, 세법자문 회신, 회계기준 검토, 리스회계(K-IFRS 1116), 매입매출장 검토, 부가세 신고서 검토",
+  "version": "0.3.0",
   "author": {
     "name": "hany202507",
     "url": "https://github.com/hany202507"
@@ -17,6 +17,11 @@
     "현금흐름표",
     "회계",
     "세무",
-    "세법"
+    "세법",
+    "lease",
+    "K-IFRS 1116",
+    "VAT",
+    "부가세",
+    "리스"
   ]
 }
