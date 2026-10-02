@@ -1,0 +1,460 @@
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap">
+<style>
+/* ============================================================
+   테마 토큰. 색은 여기서만 정한다.
+   ============================================================ */
+:root{
+  --page:#F1F4F9; --card:#FFFFFF; --tint:#F7F9FC;
+  --ink:#0A1628; --body:#39445A; --muted:#6B7688; --faint:#9AA3B2;
+  --line:#E3E7EE; --line2:#F1F3F7; --rule:#0A1628;
+  --a1:#1E50D8; --a1t:#1741B4; --a1b:#EAF0FF;
+  --a2:#4338CA; --a2t:#332BA6; --a2b:#EDEBFD;
+  --a3:#C2761A; --a3t:#96590F; --a3b:#FBF1E1;
+  --risk:#D4453B; --riskT:#B5322A; --riskB:#FDECEA;
+  --heroA:#0A1E38; --heroB:#123C68; --heroC:#17586E;
+  --heroInk:#FFFFFF; --heroSub:#A8BFD8; --heroDot:#3FD9A4;
+  --sh:0 1px 3px rgba(10,22,40,.06); --sh-sm:0 1px 2px rgba(10,22,40,.04);
+}
+*{box-sizing:border-box; margin:0; padding:0}
+body{
+  font-family:'Pretendard Variable',Pretendard,'Noto Sans KR',-apple-system,'Apple SD Gothic Neo','Malgun Gothic','Segoe UI',sans-serif;
+  background:var(--page); color:var(--body);
+  -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+  word-break:keep-all; overflow-wrap:break-word;
+}
+.wrap{max-width:1220px; margin:0 auto; padding:26px 26px 60px; display:flex; flex-direction:column; gap:16px}
+@media (max-width:640px){.wrap{padding:14px 13px 40px; gap:12px}}
+
+/* hero. 높이를 200px 아래로 유지한다 */
+.hero{position:relative; overflow:hidden; border-radius:16px; padding:26px 30px;
+  background:linear-gradient(104deg,var(--heroA) 0%,var(--heroB) 58%,var(--heroC) 100%);
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:18px}
+.hero::after{content:""; position:absolute; right:-90px; top:-120px; width:340px; height:340px;
+  border-radius:50%; background:rgba(255,255,255,.05)}
+.hero>*{position:relative; z-index:1}
+.hero .hk{display:flex; align-items:center; gap:8px; font-size:11.5px; font-weight:800;
+  letter-spacing:.18em; color:var(--heroSub)}
+.hero .hk i{width:7px; height:7px; border-radius:50%; background:var(--heroDot); flex:0 0 auto}
+.hero h1{font-size:31px; font-weight:800; letter-spacing:-.026em; color:var(--heroInk); margin-top:9px; line-height:1.2}
+.hero .hs{font-size:14.5px; color:var(--heroSub); margin-top:8px; line-height:1.55}
+.hchip{border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.07);
+  border-radius:12px; padding:13px 20px; text-align:right; min-width:196px}
+.hchip dt{font-size:11px; font-weight:800; letter-spacing:.14em; color:var(--heroSub)}
+.hchip dd{font-size:17px; font-weight:800; color:var(--heroInk); margin-top:5px}
+.hchip .hm{font-size:11.5px; color:var(--heroSub); margin-top:6px; font-weight:600}
+@media (max-width:640px){.hero{padding:20px 18px}.hero h1{font-size:23px}
+  .hchip{text-align:left; min-width:0; width:100%}}
+
+/* grid */
+.row{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+@media (max-width:900px){.row{grid-template-columns:1fr}}
+.kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:16px}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:520px){.kpis{grid-template-columns:1fr}}
+
+.card{background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:20px 22px 18px; box-shadow:var(--sh-sm); min-width:0}
+@media (max-width:640px){.card{padding:15px 14px 13px}}
+.chd{display:flex; align-items:flex-start; justify-content:space-between; gap:14px}
+.chd .ck{font-size:11px; font-weight:800; letter-spacing:.14em; color:var(--ct,var(--a1t))}
+.chd h2{font-size:19px; font-weight:800; letter-spacing:-.02em; color:var(--ink); margin-top:7px; line-height:1.25}
+.chd .cs{font-size:13px; color:var(--muted); margin-top:6px; line-height:1.5}
+.badge{flex:0 0 auto; font-size:11px; font-weight:800; letter-spacing:.06em; padding:4px 10px;
+  border-radius:20px; background:var(--bgc,var(--a1b)); color:var(--ct,var(--a1t))}
+
+/* KPI. 관점 라벨 / 지표명 / 값 / 비교 네 줄을 지킨다 */
+.kpi{background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:17px 18px 16px; box-shadow:var(--sh-sm); position:relative; overflow:hidden}
+.kpi::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--ct,var(--a1))}
+.kpi .ax{font-size:11px; font-weight:800; letter-spacing:.14em}
+.kpi .kl{font-size:13.5px; font-weight:700; color:var(--ink); margin-top:7px}
+.kpi .kv{font-size:30px; font-weight:800; letter-spacing:-.032em; color:var(--ink); margin-top:9px; line-height:1.05}
+.kpi .kv small{font-size:15px; font-weight:750; color:var(--muted); margin-left:2px; letter-spacing:0}
+.kpi .kd{font-size:12.5px; color:var(--muted); margin-top:9px; line-height:1.5}
+.kpi .kd b{font-weight:800}
+
+/* chart */
+.fig{margin-top:16px; position:relative}
+.fig svg{width:100%; height:auto; display:block}
+svg text{font-family:inherit}
+svg .l{font-size:12px; fill:var(--body)}
+svg .ls{font-size:11px; fill:var(--faint)}
+svg .f{font-size:12px; fill:var(--ink); font-weight:700}
+svg .hit{cursor:pointer}
+.lgd{display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; list-style:none;
+  font-size:12px; font-weight:600; color:var(--muted)}
+.lgd li{display:flex; align-items:center; gap:7px}
+.lgd i{width:11px; height:11px; border-radius:3px; background:var(--c); flex:0 0 auto}
+.lgd i.ln{height:3px; width:17px; border-radius:2px}
+.lgd i.hz{background:var(--tint); border:1px solid var(--faint);
+  background-image:repeating-linear-gradient(45deg,transparent 0 3px,var(--faint) 3px 4px)}
+
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+  background:var(--tint); flex:0 0 auto}
+.seg button{appearance:none; border:0; background:transparent; font:inherit; font-size:12.5px;
+  font-weight:700; color:var(--muted); padding:6px 13px; cursor:pointer; border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--a1); color:var(--card)}
+.seg button:focus-visible{outline:2px solid var(--a1); outline-offset:-2px}
+
+/* 클릭 상세 */
+.dtl{margin-top:14px; border-radius:10px; background:var(--tint); border:1px solid var(--line2);
+  border-left:3px solid var(--ct,var(--a1)); padding:13px 16px}
+.dtl .dk{font-size:11px; font-weight:800; letter-spacing:.14em; color:var(--ct,var(--a1t))}
+.dtl .dt{font-size:15.5px; font-weight:800; color:var(--ink); margin-top:6px}
+.dtl .dg{display:grid; grid-template-columns:repeat(auto-fit,minmax(126px,1fr)); gap:10px 18px; margin-top:11px}
+.dtl .dg div{display:flex; flex-direction:column; gap:2px}
+.dtl .dg dt{font-size:11px; font-weight:700; color:var(--muted)}
+.dtl .dg dd{font-size:15.5px; font-weight:800; color:var(--ink)}
+.dtl .dn{margin-top:10px; font-size:12.5px; line-height:1.55; color:var(--muted)}
+.dtl .ph{font-size:13px; color:var(--muted); margin-top:6px}
+
+/* table */
+.tw{margin-top:16px; overflow-x:auto; border-top:2px solid var(--c,var(--rule)); border-bottom:1px solid var(--line)}
+table{width:100%; border-collapse:collapse}
+thead th{text-align:left; font-size:11px; font-weight:800; letter-spacing:.09em; color:var(--faint);
+  padding:10px 12px; white-space:nowrap; border-bottom:1px solid var(--line)}
+tbody td{font-size:14px; line-height:1.5; color:var(--body); padding:10px 12px;
+  border-top:1px solid var(--line2); white-space:nowrap}
+tbody tr:first-child td{border-top:1px solid var(--line)}
+tbody td:first-child{font-weight:700; color:var(--ink)}
+tfoot td{font-size:14px; font-weight:800; color:var(--ink); padding:11px 12px;
+  border-top:2px solid var(--rule); white-space:nowrap}
+.num{text-align:right}
+.neg{color:var(--riskT)} .pos{color:var(--a1t)}
+tr.sub td{background:var(--tint); font-size:12.5px; color:var(--muted); white-space:normal; padding:9px 12px}
+.cap{margin-top:9px; font-size:12px; color:var(--faint); line-height:1.5}
+
+.callout{margin-top:16px; border-radius:0 10px 10px 0; padding:14px 18px 13px;
+  background:var(--bgc,var(--riskB)); border-left:3px solid var(--c,var(--risk))}
+.callout .ck{font-size:11px; font-weight:800; letter-spacing:.14em; color:var(--ct,var(--riskT))}
+.callout .hd{font-size:15.5px; font-weight:800; color:var(--ink); margin-top:6px}
+.callout p{margin-top:7px; font-size:13.5px; line-height:1.62; color:var(--body)}
+
+.foot{margin-top:6px; padding:16px 22px; border-radius:14px; background:var(--card);
+  border:1px solid var(--line); font-size:12px; color:var(--faint); line-height:1.7;
+  display:flex; gap:24px; flex-wrap:wrap; justify-content:space-between}
+.foot b{color:var(--muted); font-weight:700}
+.foot div{max-width:640px}
+
+.tip{position:absolute; pointer-events:none; opacity:0; transition:opacity .12s; z-index:25;
+  background:var(--rule); color:var(--card); border-radius:9px; padding:9px 12px;
+  font-size:12px; line-height:1.55; min-width:158px; box-shadow:var(--sh)}
+.tip .th{display:block; font-weight:800; font-size:12.5px; margin-bottom:5px}
+.tip .tr{display:flex; justify-content:space-between; gap:16px}
+.tip .tr b{font-weight:800}
+
+@media print{
+  *{-webkit-print-color-adjust:exact!important; print-color-adjust:exact!important}
+  body{background:#fff}
+  .tip,.seg{display:none!important}
+  .wrap{max-width:none; padding:0}
+  .card,.kpi,.foot{break-inside:avoid; box-shadow:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div>
+    <div class="hk"><i></i>{{EYEBROW}}</div>
+    <h1>{{TITLE}}</h1>
+    <p class="hs">{{SUBTITLE}}</p>
+  </div>
+  <dl class="hchip">
+    <dt>{{CHIP_LABEL}}</dt>
+    <dd>{{CHIP_VALUE}}</dd>
+    <div class="hm">{{CHIP_META}}</div>
+  </dl>
+</header>
+
+<section class="kpis" id="kpis"></section>
+
+<div class="row">
+  <section class="card">
+    <div class="chd">
+      <div><div class="ck" style="--ct:var(--a1t)">{{CARD1_EN}}</div>
+        <h2>{{CARD1_TITLE}}</h2><p class="cs">{{CARD1_SUB}}</p></div>
+      <span class="badge" style="--bgc:var(--a1b);--ct:var(--a1t)">{{CARD1_BADGE}}</span>
+    </div>
+    <div class="fig" id="p1"><ul class="lgd" id="g1"></ul><div class="tip" id="t1"></div></div>
+    <div class="dtl" id="d1" style="--ct:var(--a1t)"></div>
+  </section>
+
+  <section class="card">
+    <div class="chd">
+      <div><div class="ck" style="--ct:var(--a2t)">{{CARD2_EN}}</div>
+        <h2>{{CARD2_TITLE}}</h2><p class="cs">{{CARD2_SUB}}</p></div>
+      <span class="badge" style="--bgc:var(--a2b);--ct:var(--a2t)">{{CARD2_BADGE}}</span>
+    </div>
+    <div class="fig" id="p2"><ul class="lgd" id="g2"></ul><div class="tip" id="t2"></div></div>
+    <div class="dtl" id="d2" style="--ct:var(--a2t)"></div>
+  </section>
+</div>
+
+<!-- 관점이 넷이므로 차트 카드도 넷이 기본이다. 아래 .row 를 그대로 복제해
+     p5/p6 을 더 붙여도 된다. 눈썹 색은 a1t → a2t 를 번갈아 쓴다. -->
+<div class="row">
+  <section class="card">
+    <div class="chd">
+      <div><div class="ck" style="--ct:var(--a1t)">{{CARD3_EN}}</div>
+        <h2>{{CARD3_TITLE}}</h2><p class="cs">{{CARD3_SUB}}</p></div>
+      <span class="badge" style="--bgc:var(--a1b);--ct:var(--a1t)">{{CARD3_BADGE}}</span>
+    </div>
+    <div class="fig" id="p3"><ul class="lgd" id="g3"></ul><div class="tip" id="t3"></div></div>
+    <div class="dtl" id="d3" style="--ct:var(--a1t)"></div>
+  </section>
+
+  <section class="card">
+    <div class="chd">
+      <div><div class="ck" style="--ct:var(--a2t)">{{CARD4_EN}}</div>
+        <h2>{{CARD4_TITLE}}</h2><p class="cs">{{CARD4_SUB}}</p></div>
+      <span class="badge" style="--bgc:var(--a2b);--ct:var(--a2t)">{{CARD4_BADGE}}</span>
+    </div>
+    <div class="fig" id="p4"><ul class="lgd" id="g4"></ul><div class="tip" id="t4"></div></div>
+    <div class="dtl" id="d4" style="--ct:var(--a2t)"></div>
+  </section>
+</div>
+
+<footer class="foot">
+  <div><b>산출 근거</b> {{BASIS}}</div>
+  <div><b>한계</b> {{LIMITS}}</div>
+</footer>
+
+</div>
+
+<script>
+/* ============================================================
+   차트 라이브러리. 다섯 종 전부 hover 툴팁 + 클릭 상세를 진다.
+   viewBox 는 컨테이너 실제 픽셀 폭으로 잡는다. 고정폭을 쓰면
+   좁은 카드에서 글자만 축소되어 못 읽는다.
+   ============================================================ */
+function C(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function won(v){return Math.round(v).toLocaleString("ko-KR");}
+function man(v){var m=v/1e4;return Math.abs(m)>=10000?(m/10000).toFixed(2)+"억":Math.round(m).toLocaleString("ko-KR")+"만";}
+function pct(v,d){return (v*100).toFixed(d===undefined?1:d)+"%";}
+function pp(v){return (v>=0?"+":"")+(v*100).toFixed(1)+"%p";}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function niceStep(r,t){var raw=r/t,p=Math.pow(10,Math.floor(Math.log10(raw))),n=raw/p;
+  return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10)*p;}
+/* 퍼센트 눈금의 소수 자릿수. 간격 자체가 정수로 떨어지는지로 정한다.
+   크기로 판정하면(예: 1 이상이면 0자리) 간격 2.5%가 "3%"로 반올림돼 0/3/5/8 처럼 틀리게 찍힌다. */
+function pctDec(step){
+  var s=Math.abs(step*100);
+  if(Math.abs(s-Math.round(s))<1e-9) return 0;
+  if(Math.abs(s*10-Math.round(s*10))<1e-9) return 1;
+  return 2;}
+function W_(host){return Math.max(Math.round(host.clientWidth||520),360);}
+
+function panel(id,title,pairs,note){
+  var el=document.getElementById(id); if(!el) return;
+  el.innerHTML='<div class="dk">상세</div><div class="dt">'+esc(title)+'</div>'+
+    '<div class="dg">'+pairs.map(function(p){
+      return '<div><dt>'+esc(p[0])+'</dt><dd'+(p[2]?' class="'+p[2]+'"':'')+'>'+p[1]+'</dd></div>';}).join("")+'</div>'+
+    (note?'<div class="dn">'+note+'</div>':'');
+}
+function placeholder(id,txt){
+  var el=document.getElementById(id); if(!el) return;
+  el.innerHTML='<div class="dk">상세</div><div class="ph">'+txt+'</div>';
+}
+function legend(id,items){
+  var el=document.getElementById(id); if(!el) return;
+  el.innerHTML=items.map(function(o){
+    return '<li><i class="'+(o.type||"")+'" style="--c:'+C(o.color)+'"></i>'+esc(o.name)+'</li>';}).join("");
+}
+function mkTip(host,tipEl){return{
+  show:function(html,x,y){tipEl.innerHTML=html;tipEl.style.opacity="1";
+    var r=host.getBoundingClientRect(),tw=tipEl.offsetWidth,th=tipEl.offsetHeight;
+    var L=x+16;if(L+tw>r.width)L=x-tw-16;if(L<0)L=2;
+    var T=y-th-12;if(T<0)T=y+18;
+    tipEl.style.left=L+"px";tipEl.style.top=T+"px";},
+  hide:function(){tipEl.style.opacity="0";}};}
+function bind(host,tip,fnTip,fnClick){
+  host.querySelectorAll(".hit").forEach(function(h){
+    h.addEventListener("mousemove",function(e){var hr=host.getBoundingClientRect();
+      tip.show(fnTip(h),e.clientX-hr.left,e.clientY-hr.top);});
+    h.addEventListener("mouseleave",function(){tip.hide();});
+    h.addEventListener("click",function(){
+      host.querySelectorAll(".hit").forEach(function(o){o.setAttribute("fill","transparent");});
+      h.setAttribute("fill","rgba(30,80,216,.07)");
+      if(fnClick) fnClick(h);});});
+}
+function svgWrap(host,W,H,inner,label){
+  var old=host.querySelector("svg"); if(old) old.remove();
+  host.insertAdjacentHTML("afterbegin",'<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(label)+'">'+inner+'</svg>');
+}
+var HATCH='<defs><pattern id="hx" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">'+
+  '<line x1="0" y1="0" x2="0" y2="7" stroke="'+"CARDCOLOR"+'" stroke-width="2.6"/></pattern></defs>';
+function hatchDef(){return HATCH.replace("CARDCOLOR",C("--card"));}
+
+var CHART={};
+
+/* 세로 묶은 막대. cfg:{host,tip,dtl,cats,series:[{name,color,data}],fmt,note,detail} */
+CHART.bars=function(cfg){
+  var host=document.getElementById(cfg.host),tip=mkTip(host,document.getElementById(cfg.tip));
+  var S=cfg.series,n=cfg.cats.length,fmt=cfg.fmt||man;
+  var W=W_(host),H=cfg.height||250,mL=cfg.mL||64,mR=10,mT=12,mB=cfg.note?48:32;
+  var pw=W-mL-mR,ph=H-mT-mB;
+  var hi=Math.max.apply(null,S.map(function(s){return Math.max.apply(null,s.data);}));
+  var step=niceStep(hi*1.06,4),yMax=Math.ceil(hi*1.06/step)*step;
+  var Y=function(v){return mT+ph-v/yMax*ph;};
+  var bw=pw/n,bar=Math.min(26,(bw-14)/S.length),g="",tk="";
+  for(var v=0;v<=yMax+step*.001;v+=step){var y=Y(v);
+    g+='<line x1="'+mL+'" x2="'+(W-mR)+'" y1="'+y+'" y2="'+y+'" stroke="'+(v===0?C("--line"):C("--line2"))+'" stroke-width="'+(v===0?1.5:1)+'"/>';
+    tk+='<text class="ls" x="'+(mL-9)+'" y="'+(y+4)+'" text-anchor="end">'+(v===0?"0":fmt(v))+'</text>';}
+  var bars="",hits="";
+  for(var i=0;i<n;i++){
+    var cx=mL+bw*i+bw/2,off=-(S.length*bar)/2;
+    S.forEach(function(s,si){
+      var x=cx+off+si*bar+(si?1.5:0);
+      bars+='<rect x="'+x+'" y="'+Y(s.data[i])+'" width="'+(bar-1.5)+'" height="'+Math.max(ph-(Y(s.data[i])-mT),1)+'" rx="3" fill="'+C(s.color)+'"/>';});
+    bars+='<text class="l" x="'+cx+'" y="'+(mT+ph+19)+'" text-anchor="middle">'+esc(cfg.cats[i])+'</text>';
+    if(cfg.note) bars+='<text class="f" x="'+cx+'" y="'+(mT+ph+36)+'" text-anchor="middle" fill="'+C(cfg.note(i).color||"--a1t")+'">'+cfg.note(i).text+'</text>';
+    hits+='<rect class="hit" data-i="'+i+'" x="'+(mL+bw*i)+'" y="'+mT+'" width="'+bw+'" height="'+ph+'" fill="transparent"/>';}
+  svgWrap(host,W,H,g+bars+tk+hits,cfg.label||"막대그래프");
+  bind(host,tip,function(h){var i=+h.dataset.i;
+    return '<span class="th">'+esc(cfg.cats[i])+'</span>'+S.map(function(s){
+      return '<span class="tr"><span>'+esc(s.name)+'</span><b>'+won(s.data[i])+'</b></span>';}).join("");},
+    cfg.detail?function(h){var o=cfg.detail(+h.dataset.i);panel(cfg.dtl,o.title,o.pairs,o.note);}:null);
+};
+
+/* 꺾은선. cfg:{host,tip,dtl,cats,series,percent:true,detail} */
+CHART.line=function(cfg){
+  var host=document.getElementById(cfg.host),tip=mkTip(host,document.getElementById(cfg.tip));
+  var S=cfg.series,n=cfg.cats.length,P=cfg.percent;
+  var W=W_(host),H=cfg.height||250,mL=cfg.mL||52,mR=10,mT=12,mB=34,pw=W-mL-mR,ph=H-mT-mB;
+  var all=[];S.forEach(function(s){all=all.concat(s.data);});
+  var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);
+  /* 퍼센트 축도 간격을 자료에서 뽑는다. .1 로 고정하면 폭이 좁은 자료에서 눈금이 두 줄만 남는다. */
+  var st=niceStep(hi-Math.min(lo,P?lo:0),4);
+  var yMin=Math.floor(Math.min(lo,P?lo:0)/st)*st,yMax=Math.ceil(hi/st)*st;
+  var X=function(i){return mL+(pw/(n-1))*i;},Y=function(v){return mT+ph-(v-yMin)/(yMax-yMin)*ph;};
+  var g="",tk="",dc=pctDec(st);
+  for(var v=yMin;v<=yMax+st*.001;v+=st){var y=Y(v),z=Math.abs(v)<1e-9;
+    g+='<line x1="'+mL+'" x2="'+(W-mR)+'" y1="'+y+'" y2="'+y+'" stroke="'+(z?C("--line"):C("--line2"))+'" stroke-width="'+(z?1.5:1)+'"/>';
+    tk+='<text class="ls" x="'+(mL-9)+'" y="'+(y+4)+'" text-anchor="end">'+(P?(v*100).toFixed(dc)+"%":man(v))+'</text>';}
+  var xl="";
+  for(var i=0;i<n;i++) xl+='<text class="l" x="'+X(i)+'" y="'+(mT+ph+20)+'" text-anchor="middle">'+esc(cfg.cats[i])+'</text>';
+  var paths="",dots="";
+  S.forEach(function(s){
+    paths+='<path d="'+s.data.map(function(v,i){return (i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1);}).join(" ")+
+      '" fill="none" stroke="'+C(s.color)+'" stroke-width="2.6" stroke-linejoin="round"/>';
+    s.data.forEach(function(v,i){dots+='<circle cx="'+X(i)+'" cy="'+Y(v)+'" r="4.5" fill="'+C(s.color)+'" stroke="'+C("--card")+'" stroke-width="2"/>';});});
+  var hits="";
+  for(var j=0;j<n;j++) hits+='<rect class="hit" data-i="'+j+'" x="'+(X(j)-pw/(n-1)/2)+'" y="'+mT+'" width="'+(pw/(n-1))+'" height="'+ph+'" fill="transparent"/>';
+  svgWrap(host,W,H,g+paths+dots+tk+xl+hits,cfg.label||"꺾은선그래프");
+  bind(host,tip,function(h){var i=+h.dataset.i;
+    return '<span class="th">'+esc(cfg.cats[i])+'</span>'+S.map(function(s){
+      return '<span class="tr"><span>'+esc(s.name)+'</span><b>'+(P?pct(s.data[i]):won(s.data[i]))+'</b></span>';}).join("");},
+    cfg.detail?function(h){var o=cfg.detail(+h.dataset.i);panel(cfg.dtl,o.title,o.pairs,o.note);}:null);
+};
+
+/* 폭포. cfg:{host,tip,dtl,start:{k,v},steps:[{k,v,hatch}],end:{k,v},labels,detail}
+   항목이 5개를 넘으면 못 읽는다. 묶어서 줄여라. */
+CHART.bridge=function(cfg){
+  var host=document.getElementById(cfg.host),tip=mkTip(host,document.getElementById(cfg.tip));
+  var steps=[{k:cfg.start.k,v:cfg.start.v,base:1}].concat(cfg.steps).concat([{k:cfg.end.k,v:cfg.end.v,base:1}]);
+  var W=W_(host),H=cfg.height||300,mL=48,mR=12,mT=24,mB=56,pw=W-mL-mR,ph=H-mT-mB;
+  var cum=cfg.start.v,tops=[],lo=0,hi=0;
+  steps.forEach(function(s){
+    if(s.base){tops.push([0,s.v]);}else{var a=cum;cum+=s.v;tops.push([Math.min(a,cum),Math.max(a,cum)]);}});
+  tops.forEach(function(t){lo=Math.min(lo,t[0]);hi=Math.max(hi,t[1]);});
+  var st=niceStep(hi-lo,5),yMin=Math.floor(lo/st)*st,yMax=Math.ceil(hi/st)*st;
+  var Y=function(v){return mT+ph-(v-yMin)/(yMax-yMin)*ph;};
+  var bw=pw/steps.length,bar=Math.min(72,bw*.58),g="",tk="";
+  /* 눈금 소수 자릿수는 간격에서 뽑는다. toFixed(0) 으로 고정하면 간격 2.5%가 "3%"로 찍혀
+     0/3/5/8/10 처럼 틀린 눈금이 나온다. */
+  var dc=pctDec(st);
+  for(var v=yMin;v<=yMax+st*.001;v+=st){var y=Y(v),z=Math.abs(v)<1e-9;
+    g+='<line x1="'+mL+'" x2="'+(W-mR)+'" y1="'+y+'" y2="'+y+'" stroke="'+(z?C("--line"):C("--line2"))+'" stroke-width="'+(z?1.5:1)+'"/>';
+    tk+='<text class="ls" x="'+(mL-9)+'" y="'+(y+4)+'" text-anchor="end">'+(v*100).toFixed(dc)+'%</text>';}
+  var bars="",hits="";
+  steps.forEach(function(s,i){
+    var cx=mL+bw*i+bw/2,x=cx-bar/2,t=tops[i],y0=Y(t[1]),h2=Math.max(Y(t[0])-Y(t[1]),3);
+    var col=s.base?C("--ink"):(s.v>0?C("--a1"):C("--risk"));
+    bars+='<rect x="'+x+'" y="'+y0+'" width="'+bar+'" height="'+h2+'" rx="3" fill="'+col+'"/>';
+    if(s.hatch) bars+='<rect x="'+x+'" y="'+y0+'" width="'+bar+'" height="'+h2+'" rx="3" fill="url(#hx)"/>';
+    bars+='<text class="f" x="'+cx+'" y="'+(y0-8)+'" text-anchor="middle" fill="'+col+'">'+(s.base?pct(s.v):pp(s.v))+'</text>';
+    ((cfg.labels&&cfg.labels[s.k])||[s.k]).forEach(function(p,j){
+      bars+='<text class="l" x="'+cx+'" y="'+(mT+ph+20+j*15)+'" text-anchor="middle">'+esc(p)+'</text>';});
+    hits+='<rect class="hit" data-i="'+i+'" x="'+(mL+bw*i)+'" y="'+mT+'" width="'+bw+'" height="'+ph+'" fill="transparent"/>';});
+  svgWrap(host,W,H,hatchDef()+g+bars+tk+hits,cfg.label||"폭포그래프");
+  bind(host,tip,function(h){var s=steps[+h.dataset.i];
+    return '<span class="th">'+esc(s.k)+'</span><span class="tr"><span>'+(s.base?"값":"영향")+'</span><b>'+(s.base?pct(s.v):pp(s.v))+'</b></span>';},
+    cfg.detail?function(h){var o=cfg.detail(+h.dataset.i,steps[+h.dataset.i]);panel(cfg.dtl,o.title,o.pairs,o.note);}:null);
+};
+
+/* 가로 묶은 막대. rows:[{name,a,b,segs:[[라벨,값],...]}] segs 있으면 b 막대를 쌓고 둘째에 빗금 */
+CHART.hbar=function(cfg){
+  var host=document.getElementById(cfg.host),tip=mkTip(host,document.getElementById(cfg.tip));
+  var R=cfg.rows,W=W_(host),rowH=cfg.rowH||44,H=R.length*rowH+10;
+  var mL=cfg.mL||96,mR=cfg.mR||76,mT=4,pw=W-mL-mR;
+  var xMax=Math.max.apply(null,R.map(function(r){return Math.max(r.a||0,r.b||0);}))*1.05;
+  var out="",hits="";
+  R.forEach(function(r,i){
+    var y=mT+i*rowH,bh=13;
+    out+='<text class="l" x="'+(mL-10)+'" y="'+(y+rowH/2+1)+'" text-anchor="end" font-weight="700" fill="'+C("--ink")+'">'+esc(r.name)+'</text>';
+    [[r.a,C(cfg.colorA||"--a3"),0,null],[r.b,C(cfg.colorB||"--a1"),bh+4,r.segs]].forEach(function(t){
+      var yy=y+7+t[2],x0=mL,segs=t[3]||[[r.name,t[0]||0]];
+      segs.forEach(function(sg,si){
+        var w=Math.max(pw*sg[1]/xMax,sg[1]>0?2:0); if(w<=0) return;
+        out+='<rect x="'+x0+'" y="'+yy+'" width="'+w+'" height="'+bh+'" rx="'+(segs.length>1?2:3)+'" fill="'+t[1]+'"/>';
+        if(si===1) out+='<rect x="'+x0+'" y="'+yy+'" width="'+w+'" height="'+bh+'" rx="2" fill="url(#hx)"/>';
+        x0+=w+(segs.length>1&&si===0?1.5:0);});});
+    if(r.right) out+='<text class="f" x="'+(W-8)+'" y="'+(y+rowH/2-2)+'" text-anchor="end" fill="'+C(r.rightColor||"--a1t")+'">'+esc(r.right)+'</text>';
+    if(r.right2) out+='<text class="ls" x="'+(W-8)+'" y="'+(y+rowH/2+13)+'" text-anchor="end">'+esc(r.right2)+'</text>';
+    hits+='<rect class="hit" data-i="'+i+'" x="0" y="'+y+'" width="'+W+'" height="'+rowH+'" fill="transparent"/>';});
+  svgWrap(host,W,H,hatchDef()+out+hits,cfg.label||"가로막대그래프");
+  bind(host,tip,function(h){var r=R[+h.dataset.i];
+    return '<span class="th">'+esc(r.name)+'</span>'+
+      '<span class="tr"><span>'+esc(cfg.nameA||"전기")+'</span><b>'+won(r.a||0)+'</b></span>'+
+      '<span class="tr"><span>'+esc(cfg.nameB||"당기")+'</span><b>'+won(r.b||0)+'</b></span>';},
+    cfg.detail?function(h){var o=cfg.detail(+h.dataset.i,R[+h.dataset.i]);panel(cfg.dtl,o.title,o.pairs,o.note);}:null);
+};
+
+/* 0선 기준 발산 가로막대. rows:[{name,v}] v 는 비율 */
+CHART.diverge=function(cfg){
+  var host=document.getElementById(cfg.host),tip=mkTip(host,document.getElementById(cfg.tip));
+  var R=cfg.rows.slice().sort(function(x,y){return y.v-x.v;});
+  var W=W_(host),rowH=cfg.rowH||38,H=R.length*rowH+26,mL=cfg.mL||96,mR=58,mT=6,pw=W-mL-mR;
+  var lo=Math.min(0,Math.min.apply(null,R.map(function(r){return r.v;})));
+  var hi=Math.max.apply(null,R.map(function(r){return r.v;})),pad=(hi-lo)*.14;
+  var X=function(v){return mL+(v-(lo-pad*.5))/((hi+pad)-(lo-pad*.5))*pw;},zero=X(0);
+  var out='<line x1="'+zero+'" x2="'+zero+'" y1="'+mT+'" y2="'+(mT+R.length*rowH)+'" stroke="'+C("--line")+'" stroke-width="1.5"/>',hits="";
+  R.forEach(function(r,i){
+    var y=mT+i*rowH,bh=15,x1=Math.min(zero,X(r.v)),w=Math.max(Math.abs(X(r.v)-zero),3);
+    out+='<text class="l" x="'+(mL-10)+'" y="'+(y+rowH/2+4)+'" text-anchor="end" font-weight="700" fill="'+C("--ink")+'">'+esc(r.name)+'</text>';
+    out+='<rect x="'+x1+'" y="'+(y+rowH/2-bh/2)+'" width="'+w+'" height="'+bh+'" rx="3" fill="'+(r.v>=0?C("--a1"):C("--risk"))+'"/>';
+    /* 음수 값 라벨은 항상 막대 오른쪽 끝(0선 옆)에 붙인다. 왼쪽에 두면 항목명과 겹친다. */
+    out+='<text class="f" x="'+(x1+w+8)+'" y="'+(y+rowH/2+4)+'" text-anchor="start" fill="'+(r.v>=0?C("--ink"):C("--riskT"))+'">'+pct(r.v)+'</text>';
+    hits+='<rect class="hit" data-i="'+i+'" x="0" y="'+y+'" width="'+W+'" height="'+rowH+'" fill="transparent"/>';});
+  out+='<text class="ls" x="'+zero+'" y="'+(mT+R.length*rowH+18)+'" text-anchor="middle">0%</text>';
+  svgWrap(host,W,H,out+hits,cfg.label||"발산 가로막대그래프");
+  bind(host,tip,function(h){var r=R[+h.dataset.i];
+    return '<span class="th">'+esc(r.name)+'</span><span class="tr"><span>'+esc(cfg.unit||"비율")+'</span><b>'+pct(r.v)+'</b></span>';},
+    cfg.detail?function(h){var o=cfg.detail(+h.dataset.i,R[+h.dataset.i]);panel(cfg.dtl,o.title,o.pairs,o.note);}:null);
+};
+
+/* KPI. items:[{ax,label,value,unit,color,colorT,desc}] */
+function renderKPI(id,items){
+  document.getElementById(id).innerHTML=items.map(function(o){
+    return '<div class="kpi" style="--ct:'+o.color+'"><div class="ax" style="color:'+o.colorT+'">'+esc(o.ax)+'</div>'+
+      '<div class="kl">'+esc(o.label)+'</div>'+
+      '<div class="kv">'+o.value+(o.unit?'<small>'+esc(o.unit)+'</small>':'')+'</div>'+
+      '<div class="kd">'+o.desc+'</div></div>';}).join("");
+}
+
+/* ============================================================
+   여기부터 자료를 넣는다. drawAll 안에서 CHART.* 를 부르고
+   그리기가 끝나면 placeholder 로 상세 안내를 채운다.
+   ============================================================ */
+function drawAll(){
+  /* {{DRAW}} */
+}
+drawAll();
+var rt;addEventListener("resize",function(){clearTimeout(rt);rt=setTimeout(drawAll,180);});
+</script>
