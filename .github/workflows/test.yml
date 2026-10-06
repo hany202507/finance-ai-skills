@@ -51,6 +51,27 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests
 
+  close:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: skills/결산자동화
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q scripts/tests
+
   mcp:
     runs-on: ubuntu-latest
     defaults:
