@@ -34,7 +34,11 @@ def recalc_values(path):
     xl.calculate()
     outdir = tempfile.mkdtemp()
     xl.write(dirpath=outdir)
-    f = glob.glob(os.path.join(outdir, "*.xlsx"))[0]
+    # formulas 는 파일 이름을 대문자(.XLSX)로 쓴다. 리눅스는 대소문자를 가리므로 확장자를 소문자로 비교한다.
+    found = [os.path.join(r, n) for r, _, ns in os.walk(outdir) for n in ns if n.lower().endswith(".xlsx")]
+    if not found:
+        raise FileNotFoundError(f"재계산 결과 파일이 없다: {outdir}")
+    f = found[0]
     wb = openpyxl.load_workbook(f, data_only=True)
     return wb
 
