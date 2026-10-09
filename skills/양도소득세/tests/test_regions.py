@@ -21,6 +21,29 @@ def now_list(kind):
         return sorted(json.load(f)[kind]["지역"])
 
 
+@pytest.mark.parametrize("bad", ["20261115", "2026-W46-7", "2026/11/15", "2026-11-15T00:00:00", "", None, 20261115])
+def test_dates_other_than_iso_text_are_rejected(bad):
+    """파이썬 3.11 이상의 date.fromisoformat 은 20261115 도 받는다. 기준일은 YYYY-MM-DD 글자만 받는다."""
+    place = a("서울특별시", "마포구", "공덕동")
+    with pytest.raises(ValueError):
+        REG.status(C, place, bad)
+    with pytest.raises(ValueError):
+        REG.designated_list(C, bad)
+    with pytest.raises(ValueError):
+        RG._d(bad)
+    if bad is not None:   # metro 의 기준일은 생략할 수 있다(None)
+        with pytest.raises(ValueError):
+            REG.metro(place, bad)
+
+
+def test_date_objects_and_iso_text_are_accepted():
+    import datetime
+    place = a("서울특별시", "마포구", "공덕동")
+    want = REG.status(C, place, "2026-10-09")
+    assert REG.status(C, place, datetime.date(2026, 10, 9)) == want
+    assert REG.status(C, place, datetime.datetime(2026, 10, 9, 12, 0)) == want
+
+
 def test_replay_matches_2026_status_table():
     assert REG.designated_list(C, "2026-10-09") == now_list(C)
     assert len(now_list(C)) == 40

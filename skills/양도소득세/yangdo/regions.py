@@ -6,9 +6,9 @@
 """
 import json
 import os
-from datetime import date
 
 from yangdo import RULES_DIR
+from yangdo.dates import to_date
 
 REGIMES = ("조정대상지역", "투기과열지구", "투기지역")
 SIDO_SHORT = {"서울": "서울특별시", "부산": "부산광역시", "대구": "대구광역시", "인천": "인천광역시",
@@ -34,7 +34,11 @@ class NeedAnswer(Exception):
 
 
 def _d(v):
-    return v if isinstance(v, date) else date.fromisoformat(str(v))
+    """날짜 값을 date 로. 글자는 YYYY-MM-DD 만 받고(dates.to_date), 비었거나 다른 모양이면 ValueError."""
+    d = to_date(v)
+    if d is None:
+        raise ValueError("날짜가 비었습니다: %r" % (v,))
+    return d
 
 
 def _clean(s):

@@ -7,10 +7,8 @@
 도구가 실패하면 서버는 죽지 않고 isError 결과에 이유를 적어 돌려준다. 프로토콜 줄만 표준출력에 쓴다.
 """
 import contextlib
-import datetime as dt
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +22,7 @@ for p in (SKILL, HERE):
 
 import run as RUN  # noqa: E402
 from yangdo import engine, questions, regions, ruleset  # noqa: E402
+from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
 PROTOCOL = "2025-03-26"
@@ -57,7 +56,6 @@ TOOLS = [
 VERDICT_KEYS = ("비과세", "고가주택", "전액비과세", "미등기", "중과", "단기", "장특공", "보유년", "거주년")
 SUM_NOTE = ("자산별 산출세액은 자산마다 따로 계산한 참고값이다. 산출세액은 같은 세율 자산 합산 세액(호별합산세액)과 "
             "합산 비교 세액 중 큰 값이다")
-ISO = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 
 
 class ToolError(Exception):
@@ -90,10 +88,10 @@ def _text(args, key, required=False):
 
 
 def _date(v, name):
-    ok = isinstance(v, str) and ISO.match(v) is not None
+    ok = isinstance(v, str)
     if ok:
         try:
-            dt.date.fromisoformat(v)
+            ok = to_date(v) is not None   # YYYY-MM-DD 이고 달력에 있는 날만 받는다
         except ValueError:
             ok = False
     if not ok:
