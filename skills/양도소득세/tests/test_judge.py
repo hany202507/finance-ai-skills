@@ -484,6 +484,39 @@ def test_extension_reason_names_the_item_of_155_18(사유, 호):
     assert len(m) == 1 and ("제155조⑱%s" % 호) in m[0] and 사유 in m[0]
 
 
+OPEN_18_NOTE = "시행령 제155조⑱ 본문은 사유가 다른 주택을 취득한 날부터 3년이 되는 날 현재 있어야 한다고 적는다"
+
+
+def _two_year_deadline_passed(사유):
+    """신규 주택 취득 2026-08-10 이라 처분기한이 2년(2028-08-10)이고, 양도는 그 뒤인 2028-09-01 이다."""
+    f, _, _ = _pair("2026-08-10", "2028-09-01")
+    f["자산"][0]["처분기한연장사유"] = 사유
+    return _verdict(f)
+
+
+@pytest.mark.parametrize("사유", ["자산관리공사", "경매신청", "공매", "현금청산소송"])
+def test_extension_on_a_two_year_deadline_notes_the_open_reading(사유):
+    """처분기한이 2년인 경우에도 ⑱ 연장을 적용하는지는 확인되지 않았다. 연장을 적용하되 그 사실을 확인사항에 남긴다(m-8)."""
+    v = _two_year_deadline_passed(사유)
+    assert v["처분기한"] == "2028-08-10" and v["일세대일주택"] is True and v["전액비과세"] is True
+    m = [x for x in v["확인사항"] if OPEN_18_NOTE in x]
+    assert len(m) == 1 and "처분기한이 2년인 경우에 이 연장을 적용하는지는 확인되지 않았다" in m[0] and "세무 전문가" in m[0]
+    assert len([x for x in v["확인사항"] if "제155조⑱" in x and x != m[0]]) == 1   # 연장을 적용했다는 기존 확인사항은 그대로다
+
+
+def test_extension_note_is_not_added_for_a_three_year_deadline_or_no_reason():
+    v = one("G2", lambda f: f["자산"][0].update(처분기한연장사유="경매신청"))   # 처분기한 3년 사례
+    assert not any(OPEN_18_NOTE in x for x in v["확인사항"])
+    f, a, _ = _pair("2026-08-10", "2028-09-01")   # 2년 기한이 지났지만 연장 사유가 없다. 비과세가 아니라 중과 판정에 필요한 값을 채운다
+    a["양도"].update(계약일="2028-06-01", 계약금수령일="2028-06-01")
+    a["기준시가"] = {"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}}
+    v = _verdict(f)
+    assert v["일세대일주택"] is False and not any("제155조⑱" in x for x in v["확인사항"])
+    f, _, _ = _pair("2026-08-10", "2028-08-01")   # 2년 기한 안 양도라 연장을 쓰지 않는다
+    f["자산"][0]["처분기한연장사유"] = "경매신청"
+    assert not any("제155조⑱" in x for x in _verdict(f)["확인사항"])
+
+
 def test_no_extension_reason_keeps_deadline_passed():
     v = one("G2")
     assert v["일세대일주택"] is False and not any("제155조⑱" in x for x in v["확인사항"])
