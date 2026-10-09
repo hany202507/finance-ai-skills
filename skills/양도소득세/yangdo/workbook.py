@@ -10,6 +10,8 @@ import sys
 import openpyxl
 from openpyxl.styles import Font
 
+from yangdo import calc
+
 COL = {"id": "A", "종류": "B", "세율": "C", "단일세율": "D", "가산세율": "E", "양도가액": "F", "취득가액": "G",
        "필요경비": "H", "양도차익": "I", "고가주택": "J", "고가주택기준": "K", "과세양도차익": "L", "장특공률": "M",
        "장특공": "N", "양도소득금액": "O", "기본공제": "P", "과세표준": "Q", "산출세액": "R", "지방소득세": "S",
@@ -24,20 +26,18 @@ def summary_cells(n, groups):
             "지방_자산별": "S%d" % a, "지방_호별합산": "S%d" % h, "지방_합산비교": "S%d" % b, "지방소득세": "S%d" % c}
 
 
-def _earliest(rows, members):
-    """묶음 구성원 가운데 양도일이 가장 이르고(같으면 id 가 앞선) 자산의 입력 순번. calc.group_anchor 와 같은 규칙이다."""
-    return min(members, key=lambda i: (rows[i]["판정"].get("양도일") or "", rows[i]["id"]))
-
-
 def _groups(rows):
-    """합산묶음 이름 -> 대표 구성원의 입력 순번(0부터). 대표는 묶음 세율의 기준일이 되는 가장 이른 양도일의 자산이다.
-    과세 자산만, 대표의 (양도일, 묶음 이름) 순서라 입력 순서와 상관없다."""
+    """합산묶음 이름 -> 대표 구성원의 입력 순번(0부터). 대표는 묶음 세율의 기준일이 되는 가장 이른 양도일의 자산이고
+    엔진이 쓰는 calc.group_anchor 가 정한다(정의는 한 곳). 과세 자산만, 대표의 (양도일, 묶음 이름) 순서라 입력 순서와 상관없다."""
     members = {}
     for i, row in enumerate(rows):
         key = row["계산"].get("합산묶음")
         if key:
             members.setdefault(key, []).append(i)
-    out = {key: _earliest(rows, idx) for key, idx in members.items()}
+    out = {}
+    for key, idx in members.items():
+        anchor = calc.group_anchor([rows[i] for i in idx])
+        out[key] = next(i for i in idx if rows[i] is anchor)
     return dict(sorted(out.items(), key=lambda kv: (rows[kv[1]]["판정"].get("양도일") or "", kv[0])))
 
 
