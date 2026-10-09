@@ -550,3 +550,62 @@ def test_next_questions_reports_bad_condition_with_question_id(monkeypatch):
     monkeypatch.setattr(Q, "load", lambda path=None: broken)
     with pytest.raises(ValueError, match=broken["문항"][0]["id"]):
         Q.next_questions({"자산": [{"id": "A"}]})
+
+
+# ---- 자료형 검사는 사실관계 검사와 같은 표(facts.form_problem)를 쓴다 (C1) ----
+def _q(qid):
+    return next(q for q in Q.load()["문항"] if q["id"] == qid)
+
+
+def test_question_definitions_are_loaded_once_for_both_checks():
+    from yangdo import facts as F
+    assert Q.load() is F.load_questions()
+
+
+@pytest.mark.parametrize("qid,value,unit", [
+    ("A07", "false", "자산"), ("A07", 0, "자산"), ("A07", "예", "자산"),
+    ("X04", "해당없음", "자산"), ("X04", ["없는사유"], "자산"), ("X04", [["사원용"]], "자산"),
+    ("A06", ["일괄"], "자산"), ("A06", "통째", "자산"), ("A06", {"구분": "일괄"}, "자산"),
+    ("A02", True, "자산"), ("A02", {"구분": "예"}, "자산"),
+    ("H10", ["해당없음"], "자산"),
+    ("P01", "아니오", "전역"), ("H01", "true", "전역"),
+    ("H02", "30세이상", "전역"), ("H02", ["그냥"], "전역"),
+    ("H05", "없음", "전역"), ("H06", "없음", "전역"),
+])
+def test_answer_and_prepare_reject_the_same_wrong_forms(qid, value, unit):
+    from yangdo import facts as F
+    q = _q(qid)
+    assert F.form_problem(q, value)
+    f = {"자산": [{"id": "A"}]}
+    with pytest.raises(ValueError, match="받는 형식"):
+        Q.answer(f, qid, value, 자산="A" if unit == "자산" else None)
+
+
+@pytest.mark.parametrize("qid,value", [
+    ("A07", True), ("A07", False), ("X04", []), ("X04", ["사원용", "소송3년"]), ("X04", ["해당없음"]),
+    ("A06", "일괄"), ("A02", "모름"), ("P01", False), ("H01", True), ("H02", ["30세이상"]), ("H05", ["없음"]),
+    ("H06", []), ("P04", "단독"), ("P04", {"구분": "공동", "분자": 1, "분모": 2}),
+])
+def test_answer_accepts_the_forms_prepare_accepts(qid, value):
+    from yangdo import facts as F
+    assert F.form_problem(_q(qid), value) is None
+    f = {"자산": [{"id": "A"}]}
+    unit = Q.unit_kind(_q(qid))
+    Q.answer(f, qid, value, 자산="A" if unit == "자산" else None)
+
+
+def test_wrongly_typed_value_is_asked_again_instead_of_counted_as_answered():
+    f = copy.deepcopy(CASES["D"])
+    f["자산"][0]["중과배제_사유"] = "해당없음"
+    assert "X04" in [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+    g = Q.answer(f, "X04", ["해당없음"], 자산="D")
+    assert "X04" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
+    assert g["자산"][0]["중과배제_사유"] == ["해당없음"]
+
+
+def test_moreum_and_right_forms_still_count_as_answered():
+    f = copy.deepcopy(CASES["D"])
+    assert "X04" not in [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+    f["자산"][0]["중과배제_사유"] = None
+    g = Q.answer(f, "X04", Q.MOREUM, 자산="D")
+    assert "X04" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]

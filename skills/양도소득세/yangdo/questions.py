@@ -13,32 +13,23 @@ judge.engine_values 로 계산한다. 아직 모르는 답이나 엔진값에 �
 주택.이름으로 걸어 그 집이 필요할 때만 묻는다.
 
 키 이름으로 거는 답 검사와 소재지 날짜 규칙은 KEY_RULES 한 표에 모았다.
+예아니오·선택·복수선택·목록의 자료형은 문항.json 의 답형식 하나(facts.form_problem)로 본다. 답을 받을 때와 사실관계를 읽을 때
+같은 함수라 두 검사가 갈라지지 않고, 손으로 고친 사실관계의 틀린 형식은 답한 것으로 치지 않아 다시 묻는다.
 """
 import copy
-import json
 import os
-import re
-from datetime import date
 
-from yangdo import QUESTIONS_PATH, RULES_DIR, judge, regions, ruleset
+from yangdo import RULES_DIR, judge, regions, ruleset
 from yangdo import facts as F
 
 MOREUM = "모름"
-_DEF, _RULES = {}, {}
-_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
+_RULES = {}
 OPS = {"==": lambda a, b: a == b, "!=": lambda a, b: a != b, "in": lambda a, b: a in b,
        "not_in": lambda a, b: a not in b, ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
        "<": lambda a, b: a < b, ">": lambda a, b: a > b}
 
 
-def _is_iso(v):
-    if not isinstance(v, str) or not _ISO.fullmatch(v):
-        return False
-    try:
-        date.fromisoformat(v)
-    except ValueError:
-        return False
-    return True
+_is_iso = F.is_iso   # 날짜 규칙은 facts 와 하나다
 
 
 def _check_share(qid, value, f):
@@ -112,11 +103,7 @@ KEY_RULES = {
 
 
 def load(path=None):
-    path = path or QUESTIONS_PATH
-    if path not in _DEF:
-        with open(path, encoding="utf-8") as f:
-            _DEF[path] = json.load(f)
-    return _DEF[path]
+    return F.load_questions(path)
 
 
 def _rules(rules_dir):
@@ -146,13 +133,7 @@ def unit_kind(q):
     return "전역"
 
 
-def _split(key):
-    parts = key.split(".")
-    if parts[0] == "자산[]":
-        return "자산", parts[1:]
-    if parts[0] == "세대" and len(parts) > 1 and parts[1] in ("주택목록[]", "주택목록[신규]"):
-        return "주택", parts[2:]
-    return "전역", parts
+_split = F.split_key
 
 
 def read(f, key, asset=None, house=None):
@@ -186,9 +167,11 @@ def _marker(qid, unit):
 
 
 def _answered(f, q, unit, asset, house):
+    """모름으로 답했거나 형식에 맞는 값이 있으면 답한 문항이다. 손으로 고친 사실관계의 틀린 형식(문자열 「false」 등)은
+    답으로 치지 않아 다시 묻는다. 형식은 사실관계 검사와 같은 facts.form_problem 으로 본다."""
     if _marker(q["id"], unit) in (f.get("모름") or []):
         return True
-    return any(read(f, k, asset, house) is not None for k in q["키"])
+    return any(v is not None and F.form_problem(q, v) is None for v in (read(f, k, asset, house) for k in q["키"]))
 
 
 def _item(it, f, ev, asset, house, qmap, qid):
@@ -308,21 +291,12 @@ def next_questions(f, rules_dir=None, 서식=False, limit=1):
 
 def _validate(q, value, f):
     qid, kind, keys = q["id"], q["답형식"], q["키"]
-    codes = [o["코드"] for o in q.get("선택지") or []]
-    if kind == "예아니오" and not isinstance(value, bool):
-        raise ValueError("%s 는 true 또는 false 로 답한다" % qid)
-    if kind == "선택" and codes:
-        v = value.get("구분") if isinstance(value, dict) else value
-        if v not in codes:
-            raise ValueError("%s 의 답은 %s 중 하나다" % (qid, codes))
-    if kind == "복수선택" and codes:
-        if not isinstance(value, list) or any(v not in codes for v in value):
-            raise ValueError("%s 의 답은 %s 중 고른 목록이다" % (qid, codes))
+    problem = F.form_problem(q, value)   # 예아니오, 선택, 복수선택, 목록: 사실관계 검사와 같은 표
+    if problem:
+        raise ValueError("%s 의 답 형식이 맞지 않는다. 받는 형식: %s" % (qid, problem))
     if kind == "주소" and not (isinstance(value, dict) and all(
             isinstance(value.get(k), str) and value[k] for k in ("시도", "시군구"))):
         raise ValueError("%s 는 시도·시군구·읍면동으로 나눈 dict 로 답한다. 주소 문자열은 받지 않는다" % qid)
-    if kind == "목록" and not isinstance(value, list):
-        raise ValueError("%s 는 목록으로 답한다" % qid)
     if kind == "날짜" and not (len(keys) == 1 and "답" in KEY_RULES.get(keys[0], {})):  # 묶음으로 답하는 날짜 키는 표의 답 검사가 맡는다
         vals = list(value.values()) if len(keys) > 1 and isinstance(value, dict) else [value]
         if any(v is not None and not _is_iso(v) for v in vals):

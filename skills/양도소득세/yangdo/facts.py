@@ -1,14 +1,22 @@
 # -*- coding: utf-8 -*-
-"""사실관계 JSON 검사. 원자료 날짜로 취득·양도 시기를 정하고, 범위와 빠진 사실을 모은다."""
+"""사실관계 JSON 검사. 원자료 날짜로 취득·양도 시기를 정하고, 범위와 빠진 사실을 모은다.
+
+자료형은 질문지/문항.json 의 답형식 하나로 검사한다. form_problem 이 그 표이고, 질문지 answer() 와 prepare() 가 같이 쓴다.
+엔진이 읽는 예아니오·선택·복수선택 키에 다른 자료형이 들어오면(문자열 「false」, 「해당없음」 글자 하나 등) 그 문항을 되묻는다.
+질문지가 묻는데 엔진이 읽지 않는 키는 COLLECT_ONLY 에 이유와 함께 적는다. 읽는 키는 계산하거나, 계산하지 않고
+다루지않음(계획 5)이나 확인사항으로 돌린다. tests/test_scope_contract.py 가 이 약속을 지키는지 본다.
+"""
+import json
 import re
 from datetime import date
 from fractions import Fraction
 
-from yangdo import dates, 첫양도일
+from yangdo import QUESTIONS_PATH, dates, 첫양도일
 
 PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인",
                  "주소", "도로명주소", "지번주소", "상세주소", "거주지"}
 RRN = re.compile(r"(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)")
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
 ADDRESS_KEYS = {"소재지", "취득당시소재지"}
 SHARE_MSG = "지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다"
 OK_LAND_USE = ("사업용", "주택부수토지")
@@ -19,6 +27,24 @@ EMPTY_MSG = "금액이 비어 있습니다"
 SHAPE_PRICE_MSG = "기준시가는 취득과 양도 칸마다 토지·건물·주택 금액을 적습니다"
 EXPENSE_GROUPS = (("취득부대", "M08"), ("자본적지출", "M09"), ("기타", "M10"), ("양도비", "M11"))
 RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간으로 적습니다"
+FORM_MSG = "%s 의 값 형식이 맞지 않습니다. 받는 형식: %s"
+FORM_KINDS = ("예아니오", "선택", "복수선택", "목록")
+CHOICE_DICT_KEYS = {"자산[].지분"}  # 선택 문항인데 {구분: 공동, 분자, 분모} 묶음으로도 답하는 키
+
+# 질문지(범위 계획1)가 묻지만 엔진이 읽지 않는 키. 문항.json 의 키 그대로 적고 읽지 않는 이유를 한 줄로 적는다.
+# 여기 든 키는 prepare 의 자료형 검사도 받지 않는다(answer() 는 받는다). 엔진이 읽기 시작하면 이 표에서 지운다.
+# tests/test_scope_contract.py 가 표에 든 키를 yangdo 가 읽으면 시험이 깨지게 해서 낡은 항목이 남지 않게 한다.
+COLLECT_ONLY = {
+    "연간.기신고": "같은 해 다른 양도는 확인사항(연간.다른양도)으로만 안내한다. 기신고 금액은 합산하지 않는다",
+    "자산[].주택유형": "질문지 보이는조건(A05, A06, L01)에만 쓴다. 판정은 주거사용개시일을 직접 읽는다",
+    "자산[].면적": "서식 기재용이다. 판정과 계산에 쓰지 않는다",
+    "세대.세대원": "1세대 판정은 배우자(H01)와 1세대요건(H02)으로 한다. 세대원 목록은 읽지 않는다",
+    "자산[].거주_일부미거주": "거주요건은 거주기간 구간(H07)으로만 판정한다. 일부 미거주 표시는 읽지 않는다",
+    "세대.주택목록[신규].취득원인": "신규 주택의 취득일은 주택 목록(H04)의 취득일을 쓴다. 취득 원인은 읽지 않는다",
+    "자산[].취득.상대방유형": "환산 전에 실제 금액을 찾아보라는 안내용이다. 계산에 쓰지 않는다",
+    "자산[].토지등급": "취득 당시 토지 기준시가 환산은 하지 않는다. 입력한 기준시가를 그대로 쓴다",
+    "자산[].토지거래허가": "허가 신청일과 허가일은 한시배제 나·다목 판정(계획 5)에 쓴다. 지금은 토지거래허가대상(X05) 답만 확인사항으로 안내한다",
+}
 
 
 class FactsError(Exception):
@@ -98,6 +124,84 @@ def need(obj, path, 문항, 자산id, 내용=None):
     if v is None:
         raise Missing(문항, 자산id, 내용 or "%s 가 필요합니다" % path)
     return v
+
+
+def is_iso(v):
+    """YYYY-MM-DD 로 적은 실제 있는 날짜인지. 질문지 answer() 와 prepare() 가 같은 규칙을 쓴다."""
+    if not isinstance(v, str) or not _ISO.fullmatch(v):
+        return False
+    try:
+        date.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
+
+
+def split_key(key):
+    """문항 키가 놓인 곳. ('자산'|'주택'|'전역', 경로 조각). 자산[] 은 자산마다, 세대.주택목록[] 은 집마다 있다."""
+    parts = key.split(".")
+    if parts[0] == "자산[]":
+        return "자산", parts[1:]
+    if parts[0] == "세대" and len(parts) > 1 and parts[1] in ("주택목록[]", "주택목록[신규]"):
+        return "주택", parts[2:]
+    return "전역", parts
+
+
+_QUESTIONS, _FORM_RULES = {}, {}
+
+
+def load_questions(path=None):
+    """질문지/문항.json. 경로마다 한 번만 읽는다."""
+    path = path or QUESTIONS_PATH
+    if path not in _QUESTIONS:
+        with open(path, encoding="utf-8") as fh:
+            _QUESTIONS[path] = json.load(fh)
+    return _QUESTIONS[path]
+
+
+def form_problem(q, value):
+    """문항 q 의 답형식에 이 값이 맞는지 본다. 맞으면 None, 틀리면 받는 형식을 설명한 글.
+
+    예아니오는 bool, 선택은 선택지 코드 하나(글자), 복수선택은 선택지 코드의 목록, 목록은 list 다.
+    그 밖의 답형식(날짜, 금액, 주소 등)은 여기서 보지 않는다. 날짜는 is_iso, 금액은 _money 가 본다.
+    값이 없는 것(None)은 아직 답하지 않은 것이라 호출하는 쪽이 따로 다룬다.
+    질문지 answer() 가 답을 받을 때와 prepare() 가 사실관계를 읽을 때 같은 함수를 쓴다.
+    """
+    kind = q["답형식"]
+    codes = [o["코드"] for o in q.get("선택지") or []]
+    if kind == "예아니오":
+        return None if isinstance(value, bool) else "true 또는 false"
+    if kind == "선택" and codes:
+        keys = q.get("키") or []
+        v = value.get("구분") if isinstance(value, dict) and keys and keys[0] in CHOICE_DICT_KEYS else value
+        return None if isinstance(v, str) and v in codes else "다음 중 하나를 글자로: %s" % ", ".join(codes)
+    if kind == "복수선택" and codes:
+        ok = isinstance(value, list) and all(isinstance(v, str) and v in codes for v in value)
+        return None if ok else "다음 중 고른 것을 목록으로(하나만 골라도 목록, 없으면 []): %s" % ", ".join(codes)
+    if kind == "목록":
+        return None if isinstance(value, list) else "목록"
+    return None
+
+
+def form_rules(path=None):
+    """prepare 가 자료형을 검사하는 키 표. [(문항, 단위, 경로)] 이고 문항.json 의 답형식에서 만든다.
+
+    엔진이 읽지 않는 키(COLLECT_ONLY), 신규 주택 키([신규]), 서식 전용 문항은 뺀다.
+    자산 안의 목록(거주기간, 필요경비)은 모양별 검사(_check_residence, _check_money)가 따로 있어 뺀다.
+    """
+    path = path or QUESTIONS_PATH
+    if path not in _FORM_RULES:
+        rules = []
+        for q in load_questions(path)["문항"]:
+            if q["답형식"] not in FORM_KINDS or q["범위"] == "서식단계":
+                continue
+            for key in q["키"]:
+                where, parts = split_key(key)
+                if key in COLLECT_ONLY or "[신규]" in key or (where == "자산" and q["답형식"] == "목록"):
+                    continue
+                rules.append((q, where, ".".join(parts)))
+        _FORM_RULES[path] = rules
+    return _FORM_RULES[path]
 
 
 def _whole(v):
@@ -239,7 +343,50 @@ def _check_house_prices(f, out):
             out["질문"].append(m.to_dict())
 
 
-def _prepare_asset(f, a, out):
+def _form_missing(q, 자산, path, value):
+    hint = None if value is None else form_problem(q, value)
+    return Missing(q["id"], 자산, FORM_MSG % (path, hint)) if hint else None
+
+
+def _check_global_forms(f):
+    """신고인·연간·세대 키의 자료형. 어긋난 문항마다 Missing 을 낸다. 세대 키는 주택을 파는 사실관계에서만 엔진이 읽는다."""
+    house_sale = any(isinstance(a, dict) and a.get("종류") == "주택" for a in f.get("자산") or [])
+    bad = []
+    for q, where, path in form_rules():
+        if where != "전역" or (path.startswith("세대.") and not house_sale):
+            continue
+        m = _form_missing(q, None, path, get(f, path))
+        if m:
+            bad.append(m)
+    houses = get(f, "세대.주택목록")
+    if house_sale and isinstance(houses, list) and not all(isinstance(h, dict) for h in houses):
+        bad.append(Missing("H04", None, "주택 목록은 집마다 id, 소재지, 취득일을 가진 dict 의 목록으로 적습니다"))
+    return bad
+
+
+def _check_house_forms(f, out):
+    """주택 목록의 집마다 선택 키(제12호해당)의 자료형."""
+    houses = get(f, "세대.주택목록")
+    for h in houses if isinstance(houses, list) else []:
+        if not isinstance(h, dict):
+            continue
+        for q, where, path in form_rules():
+            if where == "주택":
+                m = _form_missing(q, h.get("id"), path, get(h, path))
+                if m:
+                    out["질문"].append(m.to_dict())
+
+
+def _check_asset_forms(a, aid):
+    """자산 한 건의 예아니오·선택·복수선택 키 자료형. 첫 번째로 어긋난 문항을 Missing 으로 올린다."""
+    for q, where, path in form_rules():
+        if where == "자산":
+            m = _form_missing(q, aid, path, get(a, path))
+            if m:
+                raise m
+
+
+def _prepare_asset(f, a, out, bad):
     aid = a.get("id")
     종류 = need(a, "종류", "P02", aid)
     if 종류 in ("겸용주택", "입주권", "분양권"):
@@ -281,10 +428,11 @@ def _prepare_asset(f, a, out):
     # 시기를 먼저 적는다. 질문지가 세대·거주 문항을 금액 문항보다 먼저 물을 수 있도록 엔진값이 시기만으로 돌아간다
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
+    _check_asset_forms(a, aid)
     if 종류 == "주택":
-        if [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
+        if "H05" not in bad and [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
             raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")
-        if get(f, "세대.입주권분양권"):
+        if "H06" not in bad and get(f, "세대.입주권분양권"):
             raise OutOfScope(aid, "세대가 조합원입주권·분양권을 가진 경우", "5")
     if 종류 == "토지" and a.get("등기") is not False:
         용도 = need(a, "토지사용현황", "A21", aid)
@@ -302,17 +450,21 @@ def _prepare_asset(f, a, out):
 def prepare(f):
     _check_asset_ids(f)
     out = {"시기": {}, "질문": [], "다루지않음": [], "확인사항": []}
-    if get(f, "신고인.거주자") is False:
+    shared = _check_global_forms(f)
+    out["질문"] += [m.to_dict() for m in shared]
+    bad = {m.문항 for m in shared}
+    if "P01" not in bad and get(f, "신고인.거주자") is False:
         out["다루지않음"].append(OutOfScope(None, "비거주자 양도", "없음").to_dict())
     for a in f.get("자산") or []:
         try:
-            _prepare_asset(f, a, out)
+            _prepare_asset(f, a, out, bad)
         except Missing as m:
             out["질문"].append(m.to_dict())
         except OutOfScope as o:
             out["다루지않음"].append(o.to_dict())
     _check_house_prices(f, out)
-    if get(f, "연간.다른양도"):
+    _check_house_forms(f, out)
+    if "P05" not in bad and get(f, "연간.다른양도"):
         out["확인사항"].append("같은 해 다른 양도는 이 계산에 들어가지 않았다. 기본공제와 합산 비교(소득세법 제104조⑤)를 다시 확인하라")
     return out
 

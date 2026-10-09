@@ -439,3 +439,109 @@ def test_new_build_acquisition_after_transfer_asks_a18():
 def test_acquisition_same_day_as_transfer_is_allowed():
     p = prep("A", _set(("취득", "잔금일"), "2026-11-15"))
     assert p["질문"] == [] and p["시기"]["A"]["취득일"] == "2026-11-15"
+
+
+# ---- 자료형 검사 (C1): 엔진이 읽는 예아니오·선택·복수선택 키 ----
+@pytest.mark.parametrize("name,mutate,문항", [
+    ("D", lambda f: f["자산"][0].update(중과배제_사유="해당없음"), "X04"),    # 글자 단위로 돌아 중과를 빼던 값
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=["없는사유"]), "X04"),
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=[["해당없음"]]), "X04"),
+    ("E", lambda f: f["자산"][0].update(등기="false"), "A07"),
+    ("E", lambda f: f["자산"][0].update(등기=0), "A07"),
+    ("D", lambda f: f["신고인"].update(거주자="false"), "P01"),
+    ("D", lambda f: f["신고인"].update(거주자="아니오"), "P01"),
+    ("D", lambda f: f["자산"][0].update(계약금액일치="false"), "M04"),
+    ("D", lambda f: f["세대"].update(배우자="false"), "H01"),
+    ("D", lambda f: f["세대"].update(특례주택="없음"), "H05"),               # 다루지않음이 되던 값
+    ("D", lambda f: f["세대"].update(특례주택=["상속"]), "H05"),
+    ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": "30세이상"}), "H02"),
+    ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": ["그냥"]}), "H02"),
+    ("D", lambda f: f["자산"][0].update(보유거주예외=["해당없음"]), "H10"),
+    ("D", lambda f: f["자산"][0].update(보유거주예외="모름"), "H10"),
+    ("D", lambda f: f["자산"][0].update(처분기한연장사유=True), "T03"),
+    ("D", lambda f: f["자산"][0].update(정비구역="네"), "X02"),
+    ("D", lambda f: f["자산"][0].update(토지거래허가대상=True), "X05"),
+    ("D", lambda f: f["자산"][0].update(취득가액_확인="없음"), "M05"),
+    ("D", lambda f: f["자산"][0].update(지구해당=True), "A02"),
+    ("D", lambda f: f["자산"][0].update(미등기사유="언젠가"), "A08"),
+    ("D", lambda f: f["자산"][0].update(지분=["단독"]), "P04"),
+    ("D", lambda f: f["자산"][0]["취득"].update(계약금지급일_무주택="true"), "H09"),
+    ("D", lambda f: f["세대"].update(기관이전종사자="false"), "T04"),
+    ("D", lambda f: f["연간"].update(다른양도="false"), "P05"),
+    ("D", lambda f: f["세대"].update(입주권분양권="없음"), "H06"),
+    ("D", lambda f: f["세대"].update(주택목록={"id": "H1"}), "H04"),
+    ("D", lambda f: f["세대"].update(주택목록=["H1"]), "H04"),
+    ("D", lambda f: f["세대"]["주택목록"][1].update(제12호해당="소형"), "X03"),
+    ("D", lambda f: f["자산"][0]["취득"].update(원인="언젠가"), "A15"),
+])
+def test_wrong_form_asks_that_question(name, mutate, 문항):
+    p = prep(name, mutate)
+    assert 문항 in [q["문항"] for q in p["질문"]], p
+    assert p["다루지않음"] == [], p
+
+
+def test_wrong_form_message_names_the_key_and_the_accepted_codes():
+    q = _only(prep("D", lambda f: f["자산"][0].update(중과배제_사유="해당없음")), "X04")
+    assert q["자산"] == "D" and q["내용"].startswith("중과배제_사유 의 값 형식이 맞지 않습니다")
+    assert "목록" in q["내용"] and "장기임대등록" in q["내용"] and "소송3년" in q["내용"]
+    q = _only(prep("E", lambda f: f["자산"][0].update(등기="false")), "A07")
+    assert q["내용"].endswith("true 또는 false")
+    q = _only(prep("D", lambda f: f["세대"].update(배우자="false")), "H01")
+    assert q["자산"] is None
+
+
+@pytest.mark.parametrize("name,mutate", [
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=[])),
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=["해당없음"])),
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=["사원용", "소송3년"])),
+    ("D", lambda f: f["자산"][0].update(중과배제_사유=None)),
+    ("D", lambda f: f["세대"].update(특례주택=["없음"])),
+    ("D", lambda f: f["세대"].update(특례주택=None)),
+    ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": ["30세이상", "소득독립"]})),
+    ("D", lambda f: f["자산"][0].update(지구해당="아니오")),
+    ("D", lambda f: f["자산"][0].update(지분={"구분": "공동", "분자": 1, "분모": 2})),
+    ("D", lambda f: f["자산"][0].update(지분="단독")),
+    ("E", lambda f: f["자산"][0].update(등기=False)),
+])
+def test_right_form_passes(name, mutate):
+    p = prep(name, mutate)
+    assert p["질문"] == [] and p["다루지않음"] == [], p
+
+
+def test_form_check_skips_keys_that_do_not_matter():
+    """토지만 파는 사실관계에서 세대 키는 엔진이 읽지 않아 자료형을 따지지 않는다. 단 신고인·연간 키는 따진다."""
+    p = prep("F", lambda f: f["세대"].update(배우자="false"))
+    assert p["질문"] == []
+    p = prep("F", lambda f: f["연간"].update(다른양도="false"))
+    assert [q["문항"] for q in p["질문"]] == ["P05"]
+
+
+def test_non_resident_string_is_a_question_not_a_resident():
+    p = prep("D", lambda f: f["신고인"].update(거주자="false"))
+    assert [q["문항"] for q in p["질문"]] == ["P01"] and p["다루지않음"] == []
+
+
+def test_form_table_comes_from_question_definitions():
+    """자료형 표는 문항.json 의 답형식 하나다. 엔진이 읽지 않는 키(COLLECT_ONLY)와 신규 주택 키는 들지 않는다."""
+    rules = F.form_rules()
+    paths = {path for _, _, path in rules}
+    assert {"신고인.거주자", "세대.특례주택", "세대.1세대요건", "중과배제_사유", "등기", "계약금액일치", "보유거주예외"} <= paths
+    assert not any("[신규]" in q["키"][0] for q, _, _ in rules)
+    collect = {k.split(".")[-1] for k in F.COLLECT_ONLY}
+    assert not collect & {p.split(".")[-1] for p in paths}
+    assert F.form_rules() is rules   # 한 번만 만든다
+
+
+def test_form_problem_by_answer_form():
+    qs = {q["id"]: q for q in F.load_questions()["문항"]}
+    assert F.form_problem(qs["A07"], True) is None and F.form_problem(qs["A07"], "true")
+    assert F.form_problem(qs["A07"], 1)
+    assert F.form_problem(qs["A06"], "일괄") is None and F.form_problem(qs["A06"], "통째")
+    assert F.form_problem(qs["A06"], ["일괄"]) and F.form_problem(qs["A06"], {"구분": "일괄"})
+    assert F.form_problem(qs["X04"], ["사원용"]) is None and F.form_problem(qs["X04"], []) is None
+    assert F.form_problem(qs["X04"], "사원용") and F.form_problem(qs["X04"], ["사원용", 3])
+    assert F.form_problem(qs["P04"], {"구분": "공동", "분자": 1, "분모": 2}) is None   # 지분만 묶음으로도 답한다
+    assert F.form_problem(qs["P04"], {"구분": "그냥"})
+    assert F.form_problem(qs["H06"], []) is None and F.form_problem(qs["H06"], "없음")
+    assert F.form_problem(qs["A11"], "2026.11.15") is None     # 날짜·금액은 이 함수가 보지 않는다
+    assert F.form_problem(qs["P07"], "H1") is None            # 선택지가 없는 선택 문항은 받는 대로 둔다
