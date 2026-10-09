@@ -79,3 +79,21 @@ def test_acquisition_auction_uses_full_payment():
 
 def test_acquisition_plain_purchase():
     assert dates.acquisition_date({"원인": "매매", "잔금일": "2014-11-01"})[0] == date(2014, 11, 1)
+
+
+def test_acquisition_presale_actual_use_earlier():
+    d, why = dates.acquisition_date({"원인": "분양", "잔금일": "2020-01-10", "사용승인일": "2020-03-01", "사실상사용일": "2020-02-15"})
+    assert d == date(2020, 2, 15) and "8호" in why
+
+
+def test_acquisition_new_build_without_dates_is_unknown():
+    assert dates.acquisition_date({"원인": "신축", "잔금일": "2020-01-10"}) == (None, "")
+
+
+def test_acquisition_auction_prefers_full_payment():
+    assert dates.acquisition_date({"원인": "경매", "잔금일": "2019-08-01", "대금완납일": "2019-07-01"})[0] == date(2019, 7, 1)
+
+
+def test_to_date_normalizes_datetime():
+    from datetime import datetime
+    assert dates.to_date(datetime(2026, 1, 2, 13, 0)) == date(2026, 1, 2)

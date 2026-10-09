@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """기간 계산과 양도·취득 시기. 민법 초일 불산입에 따라 시작일 다음 날부터 센다."""
-from datetime import date
+from datetime import date, datetime
 
 
 def to_date(v):
     if v is None or v == "":
         return None
+    if isinstance(v, datetime):
+        return v.date()
     return v if isinstance(v, date) else date.fromisoformat(str(v))
 
 
@@ -71,14 +73,17 @@ def transfer_date(양도):
 
 def acquisition_date(취득):
     t = 취득 or {}
-    if t.get("원인") == "신축":
+    원인 = t.get("원인")
+    if 원인 == "신축":
         cands = [to_date(t.get(k)) for k in ("사용승인일", "사실상사용일")]
         cands = [c for c in cands if c]
         if cands:
             return min(cands), "사용승인일과 사실상 사용일 중 빠른 날(시행령 제162조①4호)"
-    balance = t.get("잔금일") or (t.get("대금완납일") if t.get("원인") == "경매" else None)
+        return None, ""
+    balance = (t.get("대금완납일") or t.get("잔금일")) if 원인 == "경매" else t.get("잔금일")
     d, why = _settle(balance, t.get("등기접수일"))
-    done = to_date(t.get("사용승인일"))
-    if t.get("원인") == "분양" and d and done and d < done:
-        return done, "완성일(사용승인일, 시행령 제162조①8호)"
+    if 원인 == "분양" and d:
+        done = [x for x in (to_date(t.get("사용승인일")), to_date(t.get("사실상사용일"))) if x]
+        if done and d < min(done):
+            return min(done), "완성일(사용승인일과 사실상 사용일 중 빠른 날, 시행령 제162조①8호 후단·4호)"
     return d, why
