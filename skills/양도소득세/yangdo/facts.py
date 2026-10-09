@@ -13,6 +13,11 @@ ADDRESS_KEYS = {"소재지", "취득당시소재지"}
 SHARE_MSG = "지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다"
 OK_LAND_USE = ("사업용", "주택부수토지")
 의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 계획 5
+WHOLE_MSG = "금액은 원 단위 정수로 적습니다"
+NONNEG_MSG = "금액은 0 이상이어야 합니다"
+SHAPE_PRICE_MSG = "기준시가는 취득과 양도 칸마다 토지·건물·주택 금액을 적습니다"
+EXPENSE_GROUPS = (("취득부대", "M08"), ("자본적지출", "M09"), ("기타", "M10"), ("양도비", "M11"))
+RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간으로 적습니다"
 
 
 class FactsError(Exception):
@@ -126,6 +131,103 @@ def share(a):
     return Fraction(n, d)
 
 
+def _money(v, 문항, 자산id):
+    """금액 한 칸을 검사한다. None 은 아직 없는 값이라 넘기고(없으면 need 가 묻는다), 정수만 받는다.
+    소수가 없는 실수는 정수로 본다. 글자와 bool 은 받지 않는다(엔진이 int() 와 크기 비교를 섞어 쓴다)."""
+    if v is None:
+        return
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or (isinstance(v, float) and not v.is_integer()):
+        raise Missing(문항, 자산id, WHOLE_MSG)
+    if v < 0:
+        raise Missing(문항, 자산id, NONNEG_MSG)
+
+
+def _check_money(a):
+    """엔진이 읽는 금액 칸 전부. 첫 번째로 걸린 칸 하나만 Missing 으로 올린다."""
+    aid = a.get("id")
+    _money((a.get("양도") or {}).get("매수인부담세액"), "A14", aid)
+    _money(a.get("전체양도가액"), "M01", aid)
+    _money(a.get("전체취득가액"), "M06", aid)
+    ex = a.get("필요경비")
+    if ex is not None and not isinstance(ex, dict):
+        raise Missing("M07", aid, "필요경비는 취득세와 취득부대·자본적지출·기타·양도비 목록으로 나눠 적습니다")
+    ex = ex or {}
+    _money(ex.get("취득세"), "M07", aid)
+    for group, 문항 in EXPENSE_GROUPS:
+        items = ex.get(group)
+        if items is None:
+            continue
+        if not isinstance(items, list):
+            raise Missing(문항, aid, "%s 는 지출마다 내용·지급일·금액·증빙종류·상대방을 적은 목록입니다" % group)
+        for it in items:
+            if not isinstance(it, dict):
+                raise Missing(문항, aid, "%s 는 지출마다 내용·지급일·금액·증빙종류·상대방을 적은 목록입니다" % group)
+            _money(it.get("금액"), 문항, aid)
+    _money(a.get("감가상각비"), "M12", aid)
+    _money(a.get("매매사례가액"), "M21", aid)
+    appraisals = a.get("감정가액")
+    if appraisals is not None:
+        if not isinstance(appraisals, list):
+            raise Missing("M21", aid, "감정가액은 감정평가마다 금액 하나씩 적은 목록입니다")
+        for x in appraisals:
+            _money(x, "M21", aid)
+    bs = a.get("기준시가")
+    if bs is not None:
+        if not isinstance(bs, dict):
+            raise Missing("M22", aid, SHAPE_PRICE_MSG)
+        for side in ("취득", "양도"):
+            part = bs.get(side)
+            if part is None:
+                continue
+            if not isinstance(part, dict):
+                raise Missing("M22", aid, SHAPE_PRICE_MSG)
+            for v in part.values():
+                _money(v, "M22", aid)
+
+
+def _check_residence(a):
+    """거주기간은 [전입일, 전출일] 구간의 목록이다. 끝이 비어 있는 구간은 엔진이 셀 수 없어 받지 않는다."""
+    aid = a.get("id")
+    periods = a.get("거주기간")
+    if periods is None:
+        return
+    if not isinstance(periods, (list, tuple)):
+        raise Missing("H07", aid, RESIDENCE_MSG)
+    for p in periods:
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            raise Missing("H07", aid, RESIDENCE_MSG)
+        try:
+            start, end = dates.to_date(p[0]), dates.to_date(p[1])
+        except ValueError:
+            raise Missing("H07", aid, "거주기간 날짜 형식이 YYYY-MM-DD 가 아닙니다")
+        if start is None or end is None:
+            raise Missing("H07", aid, RESIDENCE_MSG)
+        if end < start:
+            raise Missing("H07", aid, "전출일이 전입일보다 앞섭니다")
+
+
+def _check_asset_ids(f):
+    seen = set()
+    for a in f.get("자산") or []:
+        aid = a.get("id") if isinstance(a, dict) else None
+        if aid is None or (isinstance(aid, str) and not aid.strip()) or isinstance(aid, (list, dict)):
+            raise FactsError("자산마다 비어 있지 않은 id 가 필요합니다")
+        if aid in seen:
+            raise FactsError("자산 id 가 겹칩니다: %s" % aid)
+        seen.add(aid)
+
+
+def _check_house_prices(f, out):
+    houses = get(f, "세대.주택목록")
+    for h in houses if isinstance(houses, list) else []:
+        if not isinstance(h, dict):
+            continue
+        try:
+            _money(h.get("양도당시기준시가"), "X01", h.get("id"))
+        except Missing as m:
+            out["질문"].append(m.to_dict())
+
+
 def _prepare_asset(f, a, out):
     aid = a.get("id")
     종류 = need(a, "종류", "P02", aid)
@@ -159,6 +261,8 @@ def _prepare_asset(f, a, out):
         raise Missing("A17", aid, "취득 잔금일이나 등기접수일이 필요합니다")
     if 취득 < 의제취득기준:
         raise OutOfScope(aid, "1985-01-01 전 취득(의제취득일 적용)", "5")
+    if 취득 > 양도:
+        raise Missing("A18" if 취득원인 == "신축" else "A17", aid, "취득일이 양도일보다 늦습니다")
     # 시기를 먼저 적는다. 질문지가 세대·거주 문항을 금액 문항보다 먼저 물을 수 있도록 엔진값이 시기만으로 돌아간다
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
@@ -173,11 +277,15 @@ def _prepare_asset(f, a, out):
             raise OutOfScope(aid, "비사업용 토지 판정이 필요한 토지(%s)" % 용도, "5")
     if need(a, "계약금액일치", "M04", aid) is False:
         raise OutOfScope(aid, "실제 거래가액과 계약서 금액이 다르다", "없음")
+    if 종류 == "주택":
+        _check_residence(a)
+    _check_money(a)
     if 원인 == "수용":
         out["확인사항"].append("%s: 수용 양도의 조세특례제한법 감면은 계산하지 않았다" % aid)
 
 
 def prepare(f):
+    _check_asset_ids(f)
     out = {"시기": {}, "질문": [], "다루지않음": [], "확인사항": []}
     if get(f, "신고인.거주자") is False:
         out["다루지않음"].append(OutOfScope(None, "비거주자 양도", "없음").to_dict())
@@ -188,6 +296,7 @@ def prepare(f):
             out["질문"].append(m.to_dict())
         except OutOfScope as o:
             out["다루지않음"].append(o.to_dict())
+    _check_house_prices(f, out)
     if get(f, "연간.다른양도"):
         out["확인사항"].append("같은 해 다른 양도는 이 계산에 들어가지 않았다. 기본공제와 합산 비교(소득세법 제104조⑤)를 다시 확인하라")
     return out
