@@ -187,6 +187,47 @@ r = await call('get_ruling', { id: '186576', source: 'nts' });
 check('get_ruling 국세청 — 차단을 숨기지 않고 원인·링크 안내',
   !r.isError && /본문을 받지 못했다/.test(r.text) && /추측해 쓰지 마라/.test(r.text), r.text.slice(0, 300));
 
+// ---- 2026-10-09 결함 회귀 ----
+const today8 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10).replace(/-/g, '');
+const head = (text, key) => (text.match(new RegExp(`^${key}: (.+)$`, 'm')) ?? [])[1] ?? '';
+
+r = await call('get_law_text', { law_name: '주택법', article: '63의2' });
+check('주택법을 다른 법으로 찾지 않는다', !r.isError && head(r.text, '법령') === '주택법', r.text);
+check('날짜 없는 조회는 오늘 시행 중인 판', head(r.text, '시행일').slice(0, 8) <= today8, r.text);
+
+r = await call('get_law_text', { law_name: '상법', article: '1' });
+check('상법을 다른 법으로 찾지 않는다', !r.isError && head(r.text, '법령') === '상법', r.text);
+
+r = await call('amendment_track', { law_name: '주택법' });
+check('amendment_track 주택법', r.text.startsWith('주택법 —'), r.text);
+
+r = await call('get_law_text', { law_name: '없는법령이름시험' });
+check('없는 이름은 다른 법을 주지 않고 실패한다', r.isError && r.text.includes('이름이 정확히 같은 법령이 없다'), r.text);
+
+// 목·세목 누락: 법제처 원 응답의 목내용이 출력에 모두 있는지
+async function rawUnits(mst, efYd, jo) {
+  const u = new URL('https://www.law.go.kr/DRF/lawService.do');
+  for (const [k, v] of Object.entries({ OC: process.env.LAW_OC, type: 'JSON', target: 'eflaw', MST: mst, efYd, JO: jo })) u.searchParams.set(k, v);
+  return (await (await fetch(u)).json()).법령.조문.조문단위;
+}
+function mokTexts(node, inside = false, out = []) {
+  if (typeof node === 'string') { if (inside) { const x = node.replace(/<[^>]+>/g, '').trim(); if (x) out.push(x); } return out; }
+  if (Array.isArray(node)) { node.forEach((n) => mokTexts(n, inside, out)); return out; }
+  if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) mokTexts(v, inside || k === '목내용', out);
+  return out;
+}
+for (const [law, art, jo] of [['소득세법', '104', '010400'], ['소득세법 시행령', '167의3', '016703']]) {
+  const t2 = await call('get_law_text', { law_name: law, article: art });
+  const mst = head(t2.text, 'MST');
+  const ef = head(t2.text, '시행일').slice(0, 8);
+  const want = mokTexts(await rawUnits(mst, ef, jo));
+  const missing = want.filter((x) => !t2.text.includes(x));
+  check(`${law} 제${art}조 목 ${want.length}개가 모두 출력에 있다`, want.length > 0 && missing.length === 0, missing.slice(0, 3).join(' | '));
+}
+
+const all = await call('search_law', { query: '주택법' });
+check('출력에 OC 가 섞이지 않는다', !all.text.includes(process.env.LAW_OC), 'OC 노출');
+
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL\n`);
 proc.kill();
 process.exit(fail ? 1 : 0);
