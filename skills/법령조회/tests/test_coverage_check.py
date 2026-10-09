@@ -31,6 +31,15 @@ def test_parse_taxdoctor_list():
     assert got == {cc.norm("소득세법"): "20260701", cc.norm("소득세법 시행령"): "20261001"}
 
 
+def test_parse_taxdoctor_list_reads_local_tax_tag_at_line_end():
+    text = ("수록 현행 법령 2건:\n"
+            "- 소득세법 (법률, 시행 2026.07.01)\n"
+            "- 지방세법 (법률, 시행 2026.07.01) [지방세]\n"
+            "- 지방세법 시행령 (대통령령, 시행 2026.10.01) [지방세]\n")
+    got = cc.parse_taxdoctor_list(text)
+    assert got == {cc.norm("소득세법"): "20260701", cc.norm("지방세법"): "20260701", cc.norm("지방세법 시행령"): "20261001"}
+
+
 def test_resolve_finds_exact_on_second_page_and_in_force_version():
     search = pages([row("민간임대주택에 관한 특별법", "1", "20260101")],
                    [row("주택법", "289171", "20270309", "20260901"), row("주택법", "289171", "20260908", "20260301")])

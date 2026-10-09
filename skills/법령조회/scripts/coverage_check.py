@@ -51,7 +51,7 @@ def as_list(v):
 def parse_taxdoctor_list(text):
     out = {}
     for line in str(text).splitlines():
-        m = re.match(r"^- (.+?) \(([^,]+), 시행 (\d{4})\.(\d{2})\.(\d{2})\)\s*$", line.strip())
+        m = re.match(r"^- (.+?) \(([^,]+), 시행 (\d{4})\.(\d{2})\.(\d{2})\)(?:\s*\[[^\]]*\])?\s*$", line.strip())
         if m:
             out[norm(m.group(1))] = m.group(3) + m.group(4) + m.group(5)
     return out
