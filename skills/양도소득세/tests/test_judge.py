@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from cases import CASES, asset, facts, house, 마포, 성동, 춘천
+from cases import CASES, addr, asset, facts, house, 마포, 성동, 춘천
 from yangdo import facts as F
 from yangdo import judge as J
 from yangdo import regions, ruleset
@@ -139,7 +139,93 @@ def test_engine_values():
     assert i["조정_취득일"] is True and i["계약일_공고일이전"] is True
     assert ev("K2")["지방소재주택있음"] is True and ev("J")["2024-01-10이후취득주택있음"] is True
     empty = J.engine_values({"자산": [{"id": "X"}]}, {"id": "X"}, {"시기": {}}, RS, REG)
-    assert set(J.EV_KEYS) <= set(empty)
+    assert set(J.EV_KEYS) <= set(empty) and empty["주택별"] == {}
+
+
+def _ev_houses(f):
+    return J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)["주택별"]
+
+
+def test_engine_values_per_house():
+    """집마다의 값. 질문지가 집 단위 문항(X01, X03)을 그 집이 필요할 때만 묻는 데 쓴다."""
+    k2 = _ev_houses(CASES["K2"])
+    assert {h: v["지방소재"] for h, v in k2.items()} == {"H1": False, "H2": False, "H3": True}   # H3 만 춘천
+    j = _ev_houses(CASES["J"])
+    assert j["H1"]["2024-01-10이후취득"] is True and j["H8"]["2024-01-10이후취득"] is False   # 2025-08-01, 2010-01-01
+    assert set(j["H1"]) == set(J.HOUSE_EV_KEYS)
+
+
+def test_engine_values_per_house_boundaries():
+    def acquired(day):
+        f = copy.deepcopy(CASES["J"])
+        f["세대"]["주택목록"][1]["취득일"] = day
+        return _ev_houses(f)["H8"]["2024-01-10이후취득"]
+    assert acquired("2024-01-09") is False and acquired("2024-01-10") is True
+    # 광역시는 군이 아니면 동 지역이다. 군은 지방이다
+    f = copy.deepcopy(CASES["K2"])
+    f["세대"]["주택목록"][2]["소재지"] = {"시도": "부산광역시", "시군구": "해운대구", "읍면동": "우동"}
+    assert _ev_houses(f)["H3"]["지방소재"] is False
+    f["세대"]["주택목록"][2]["소재지"] = {"시도": "부산광역시", "시군구": "기장군", "읍면동": "기장읍"}
+    assert _ev_houses(f)["H3"]["지방소재"] is True
+
+
+@pytest.mark.parametrize("how", ["소재지없음", "소재지가문자열", "모르는시도", "취득일없음", "취득일형식틀림"])
+def test_engine_values_per_house_unknown_is_none(how):
+    f = copy.deepcopy(CASES["K2"])
+    h = f["세대"]["주택목록"][2]
+    if how == "소재지없음":
+        del h["소재지"]
+    elif how == "소재지가문자열":
+        h["소재지"] = "춘천시 석사동"
+    elif how == "모르는시도":
+        h["소재지"] = {"시도": "서울특별", "시군구": "마포구", "읍면동": "공덕동"}
+    elif how == "취득일없음":
+        h["취득일"] = None
+    else:
+        h["취득일"] = "2012.01.01"
+    ev = J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)   # 예외 없이 돌아온다
+    if how.startswith("취득일"):
+        assert ev["주택별"] == {}   # 주택 목록을 날짜로 거르지 못하면 집마다의 값을 내지 않는다
+    else:
+        assert ev["주택별"]["H3"]["지방소재"] is None and ev["주택별"]["H1"]["지방소재"] is False
+
+
+def _ev_first(f):
+    return J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)
+
+
+def _sale(소재지, 취득="2018-01-01", **kw):
+    """양도 2026-03-15 인 주택 하나. 성남시는 2022-11-14 부터 구마다 지정이 갈려 구 이름이 없으면 되묻는다."""
+    a = asset("S", "주택", 소재지, 취득, "2026-03-15", 900_000_000, 500_000_000, **kw)
+    return facts([a], [house("H1", 소재지, 취득, 자산id="S")])
+
+
+def test_engine_values_flags_address_that_needs_more_detail():
+    """고시가 구마다 지정을 가르는 시(성남)를 구 이름 없이 적으면 소재지확인필요(문항 A01 NeedAnswer)와 안내 문장이 나온다."""
+    성남 = addr("경기도", "성남시", "정자동")
+    ev = _ev_first(_sale(성남))
+    assert ev["소재지확인필요"] is True and "구 이름" in ev["소재지안내"]
+    assert ev["취득당시소재지확인필요"] is False and ev["취득당시소재지안내"] is None
+    ok = _ev_first(_sale(addr("경기도", "성남시 분당구", "정자동")))
+    assert ok["소재지확인필요"] is False and ok["소재지안내"] is None
+    typo = _ev_first(_sale(addr("서울특별", "마포구", "공덕동")))
+    assert typo["소재지확인필요"] is True and "시도 이름" in typo["소재지안내"]
+    # 나중 날짜를 모르는 동안은 판정하지 못해 플래그가 서지 않는다
+    f = _sale(성남)
+    del f["자산"][0]["양도"]["잔금일"]
+    assert _ev_first(f)["소재지확인필요"] is False
+
+
+def test_engine_values_flags_acquisition_address_separately():
+    성남 = addr("경기도", "성남시", "정자동")
+    ev = _ev_first(_sale(마포, "2023-03-01", 취득당시소재지=성남))
+    assert ev["취득당시소재지확인필요"] is True and "구 이름" in ev["취득당시소재지안내"]
+    assert ev["소재지확인필요"] is False and ev["소재지안내"] is None
+    # 취득당시소재지를 따로 적지 않으면 취득일에도 소재지를 본다. 그 모자람은 소재지 쪽에 선다
+    same = _ev_first(_sale(성남, "2023-03-01"))
+    assert same["소재지확인필요"] is True and same["취득당시소재지확인필요"] is False
+    # 취득일이 2022-11-14 전이면 성남시 전체가 같은 지정이라 구 이름이 없어도 된다
+    assert _ev_first(_sale(마포, "2018-01-01", 취득당시소재지=성남))["취득당시소재지확인필요"] is False
 
 
 # ---- 검토 반영 1차 ----------------------------------------------------------------------------

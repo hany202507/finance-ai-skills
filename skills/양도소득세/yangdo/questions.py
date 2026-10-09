@@ -8,6 +8,10 @@ judge.engine_values 로 계산한다. 아직 모르는 답이나 엔진값에 �
 후보 자산의 신규 주택, 나머지는 한 번이다. 세대와 주택 단위 문항은 자산이 여럿이면 자산 하나라도 보이는조건이
 참일 때 묻는다(토지를 먼저 적어도 세대 문항이 나온다).
 
+보이는조건의 항목은 [문항 id, 엔진.이름, 주택.이름] 중 하나를 왼쪽에 둔다. 엔진.이름은 자산마다의 엔진값이고,
+주택.이름은 주택 단위 문항에서 그 집의 값(engine_values 의 「주택별」)이다. 집마다 값이 다른 조건(지방 소재, 취득 시기)은
+주택.이름으로 걸어 그 집이 필요할 때만 묻는다.
+
 키 이름으로 거는 답 검사와 소재지 날짜 규칙은 KEY_RULES 한 표에 모았다.
 """
 import copy
@@ -90,27 +94,20 @@ def _dated_bundle(dates, others=()):
     return check
 
 
-def _transfer_address_days(e, asset):
-    """양도 때 소재지(A01). 양도일의 고시를 보고, 취득당시소재지를 따로 안 적었으면 취득일의 고시도 본다."""
-    return [e.get("양도일")] + ([] if asset.get("취득당시소재지") else [e.get("취득일")])
-
-
-def _acquisition_address_days(e, asset):
-    """취득당시소재지(A03). 취득일의 고시만 본다."""
-    return [e.get("취득일")]
-
-
 # 키 이름으로 거는 검사는 이 표 하나에 모은다. 문항.json 의 키가 바뀌면 tests/test_questions.py 의
 # test_every_key_rule_names_a_real_question_key 가 깨진다(표가 조용히 꺼지지 않도록).
 #   답: 답을 사실관계에 넣기 전에 (문항 id, 답, 사실관계) 로 부른다. 틀리면 ValueError. 키 하나짜리 문항에만 건다.
-#   소재지날짜: 이미 적은 주소를 되물을지 가릴 때 어느 날의 고시를 볼지, (엔진값, 자산) -> 날짜 목록. 없으면 _transfer_address_days.
+#       이 검사가 있는 키만 일반 형식 검사(날짜 등)를 건너뛴다. 다른 검사만 있는 키는 일반 검사도 받는다.
+#   주소확인: 이미 적은 주소를 되물을지 가를 때 읽는 엔진값의 이름. 엔진값 <이름>확인필요 가 참이면 <이름>안내 를 안내 문장으로
+#       그 주소 문항을 다시 낸다. 고시 이력을 보는 일은 judge.engine_values 가 하고 여기서는 regions 를 부르지 않는다.
 KEY_RULES = {
     "자산[].지분": {"답": _check_share},                                 # 단독 또는 공동(분자 분모)
     "세대.주택목록": {"답": _check_houses},                               # H04 집마다 id, 취득일, 판 집 연결
     "자산[].거주기간": {"답": _check_periods},                            # H07 [전입일, 전출일] 구간 목록
     "자산[].신축증축": {"답": _dated_bundle(("사용승인일",), ("증축면적",))},   # M23 환산 가산세 5년 판정
     "자산[].토지거래허가": {"답": _dated_bundle(("신청일", "허가일"))},       # X06 허가 신청일과 허가일
-    "자산[].취득당시소재지": {"소재지날짜": _acquisition_address_days},        # A03 취득일 고시만 본다
+    "자산[].소재지": {"주소확인": "소재지"},                                  # A01 양도일(과 취득일)의 고시로 정하지 못하는 주소
+    "자산[].취득당시소재지": {"주소확인": "취득당시소재지"},                    # A03 취득일의 고시로 정하지 못하는 주소
 }
 
 
@@ -204,6 +201,8 @@ def _item(it, f, ev, asset, house, qmap, qid):
     left, op, right = it
     if left.startswith("엔진."):
         val = ev.get(left[3:])
+    elif left.startswith("주택."):   # 이 집의 값. 집 단위 문항이 아니거나 엔진값에 이 집이 없으면 모른다
+        val = ((ev.get("주택별") or {}).get((house or {}).get("id")) or {}).get(left[3:])
     else:
         q2 = qmap.get(left)
         if q2 is None or not q2["키"]:
@@ -270,28 +269,16 @@ def _describe(q, asset, house, 안내=None):
             "모를때확인처": copy.deepcopy(q.get("모를때확인처")), "안내": 안내}
 
 
-def _address_note(q, f, asset, e, reg):
+def _address_note(q, e):
     """주소 문항에 적은 답을 고시 이력이 정하지 못하면 그 안내 문장(구 이름이 빠졌거나 모르는 시도 등).
 
-    engine_values 는 이 경우를 삼키므로 문항 쪽에서 되묻는다. 날짜를 아직 모르거나 정할 수 있으면 None.
+    판단은 judge.engine_values 가 한다(KEY_RULES 의 주소확인 이름으로 <이름>확인필요, <이름>안내 를 읽는다).
+    날짜를 아직 모르면 엔진값이 비어 있어 None, 정할 수 있어도 None.
     """
-    if q["답형식"] != "주소" or asset is None:
+    name = KEY_RULES.get(q["키"][0], {}).get("주소확인") if q["키"] else None
+    if q["답형식"] != "주소" or name is None or not e.get(name + "확인필요"):
         return None
-    addr = read(f, q["키"][0], asset)
-    if not isinstance(addr, dict):
-        return None
-    days = KEY_RULES.get(q["키"][0], {}).get("소재지날짜", _transfer_address_days)(e, asset)
-    for on in days:
-        if not on:
-            continue
-        try:
-            reg.status(judge.CONTROL, addr, on, asset.get("지구해당"))
-        except regions.NeedAnswer as ex:
-            if ex.문항 == "A01":
-                return ex.내용
-        except (KeyError, TypeError, ValueError, AttributeError):
-            pass
-    return None
+    return e.get(name + "안내")
 
 
 def next_questions(f, rules_dir=None, 서식=False, limit=1):
@@ -302,7 +289,6 @@ def next_questions(f, rules_dir=None, 서식=False, limit=1):
     qs = load()["문항"]
     qmap = {q["id"]: q for q in qs}
     ev = context(f, rules_dir)
-    reg = _rules(rules_dir)[1]
     pending = []
     for q in qs:
         if not q["키"] or (q["범위"] == "서식단계" and not 서식):
@@ -312,7 +298,7 @@ def next_questions(f, rules_dir=None, 서식=False, limit=1):
             if _answered(f, q, unit, asset, house):
                 if _marker(q["id"], unit) in (f.get("모름") or []):
                     continue
-                note = _address_note(q, f, asset, ev.get(asset["id"], {}) if asset else {}, reg)
+                note = _address_note(q, ev.get(asset["id"], {}) if asset else {})
                 if note is None:
                     continue
             if any(_visible(q["보이는조건"], f, e, a, house, qmap, q["id"]) is True for a, e in ctxs):
@@ -337,7 +323,7 @@ def _validate(q, value, f):
         raise ValueError("%s 는 시도·시군구·읍면동으로 나눈 dict 로 답한다. 주소 문자열은 받지 않는다" % qid)
     if kind == "목록" and not isinstance(value, list):
         raise ValueError("%s 는 목록으로 답한다" % qid)
-    if kind == "날짜" and not any(k in KEY_RULES for k in keys):  # 묶음으로 답하는 날짜 키는 표의 검사가 맡는다
+    if kind == "날짜" and not (len(keys) == 1 and "답" in KEY_RULES.get(keys[0], {})):  # 묶음으로 답하는 날짜 키는 표의 답 검사가 맡는다
         vals = list(value.values()) if len(keys) > 1 and isinstance(value, dict) else [value]
         if any(v is not None and not _is_iso(v) for v in vals):
             raise ValueError("%s 의 날짜는 YYYY-MM-DD 로 답한다" % qid)
