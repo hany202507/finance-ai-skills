@@ -43,6 +43,53 @@ def test_out_of_scope_and_question():
     assert r["상태"] == "질문" and r["질문"][0]["문항"] == "H07"
 
 
+def _auction_a(**양도):
+    f = copy.deepcopy(CASES["A"])
+    a = f["자산"][0]["양도"]
+    a.update(원인="경매", 잔금일=None)
+    a.update(양도)
+    return f
+
+
+def test_auction_transfer_calculates_on_full_payment_day():
+    r = engine.calculate(_auction_a(대금완납일="2026-11-15"), today="2026-10-09")
+    assert r["상태"] == "완료" and r["검산"] == [] and r["다루지않음"] == []
+    assert r["계산"]["합계"]["산출세액"] == EXPECT["A"]["산출세액"]
+    assert r["계산"]["자산"][0]["판정"]["양도일"] == "2026-11-15"
+
+
+def test_auction_transfer_full_payment_day_wins_over_balance_day():
+    r = engine.calculate(_auction_a(대금완납일="2026-11-15", 잔금일="2026-12-20"), today="2026-10-09")
+    assert r["계산"]["자산"][0]["판정"]["양도일"] == "2026-11-15"
+
+
+def test_auction_transfer_without_any_date_asks_a11():
+    r = engine.calculate(_auction_a(), today="2026-10-09")
+    assert r["상태"] == "질문" and r["질문"][0]["문항"] == "A11"
+
+
+@pytest.mark.parametrize("원인", ["교환", "기타"])
+def test_exchange_and_other_transfer_not_calculated(원인):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["양도"]["원인"] = 원인
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and r["계산"] is None
+    assert r["다루지않음"] == [{"자산": "A", "내용": "%s 으로 양도한 자산" % 원인, "계획": "5"}]
+
+
+def test_unsupported_plan_defaults_to_5_and_mixed_years_has_none():
+    from yangdo import calc
+    assert calc.Unsupported("x").계획 == "5" and calc.Unsupported("x", 계획="없음").계획 == "없음"
+    f = copy.deepcopy(CASES["BC"])
+    f["자산"][0]["양도"]["잔금일"] = "2025-12-01"
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["다루지않음"] == [{"자산": None, "내용": "과세연도가 다른 양도는 연도마다 따로 계산합니다", "계획": "없음"}], r
+    f = copy.deepcopy(CASES["B"])
+    f["자산"][0]["전체양도가액"] = 400_000_000
+    r = engine.calculate(f, today="2026-10-09")
+    assert len(r["다루지않음"]) == 1 and r["다루지않음"][0]["계획"] == "5" and "양도차손" in r["다루지않음"][0]["내용"]
+
+
 def test_personal_data_rejected():
     f = copy.deepcopy(CASES["A"])
     f["신고인"]["성명"] = "홍길동"

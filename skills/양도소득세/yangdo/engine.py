@@ -66,7 +66,7 @@ def calculate(f, rules_dir=None, today=None, workbook_path=None):
             out["질문"].append(m.to_dict())
             return out
         except calc.Unsupported as u:
-            out["다루지않음"].append({"자산": None, "내용": str(u), "계획": "5"})
+            out["다루지않음"].append({"자산": None, "내용": str(u), "계획": u.계획})
             return out
     except (ValueError, TypeError, KeyError) as e:  # 날짜 형식이나 자료형이 틀린 값. 기준정보 오류와 구분한다
         raise _malformed(e) from e
