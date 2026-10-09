@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from cases import CASES, addr, asset, facts, house, 마포, 성동, 송파, 춘천
+from cases import CASES, EXPECT as EXPECT_AMOUNTS, addr, asset, facts, house, 마포, 성동, 송파, 춘천
 from yangdo import facts as F
 from yangdo import judge as J
 from yangdo import regions, ruleset
@@ -615,3 +615,137 @@ def test_temporary_exclusion_deadline_follows_edition_in_force(양도, 기한):
     assert RS.value("중과.한시배제.가목.양도기한", 양도) == 기한
     v = _verdict(_heavy_sale(양도))
     assert v["중과"] is None and any("%s 까지 양도해" % 기한 in m for m in v["확인사항"])
+
+
+# ---- 판 집 자신의 중과배제: 사유(X04), 시행령 제167조의10①9호·11호, 판 집 12호·지방 저가 (최종 재검토 m-2) ----
+# 사례 D(마포 주택 둘, 중과2 로 152,610,000원)에서 중과만 빠지면 사례 H 와 같은 숫자다(양도가액 9억원, 취득가액 6억원, 보유 5년, 표1)
+NO_HEAVY_TAX = EXPECT_AMOUNTS["H"]["산출세액"]
+
+
+def _d_with(mutate):
+    f = copy.deepcopy(CASES["D"])
+    mutate(f)
+    return f
+
+
+def _engine_tax(f):
+    from yangdo import engine
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "완료", (r["질문"], r["다루지않음"])
+    return r["계산"]["합계"]["산출세액"]
+
+
+def _note(v, word):
+    return [m for m in v["확인사항"] if word in m]
+
+
+def test_case_d_is_heavy_without_any_exclusion():
+    v = one("D")
+    assert v["중과"] == "중과2" and _engine_tax(CASES["D"]) == 152_610_000
+
+
+@pytest.mark.parametrize("사유", [["상속5년"], ["사원용"], ["문화유산"], ["저당권3년"], ["어린이집"], ["부득이3억"], ["소송3년"],
+                                 ["조특법감면주택"], ["상속5년", "사원용"]])
+def test_valid_exclusion_reason_removes_heavy(사유):
+    f = _d_with(lambda f: f["자산"][0].update(중과배제_사유=사유))
+    v = run(f)["자산"][0]
+    assert v["중과"] is None and v["장특공"] == "표1"
+    assert len(_note(v, "중과배제 사유 %s 를 입력대로 인정했다" % ", ".join(사유))) == 1
+    assert _engine_tax(f) == NO_HEAVY_TAX
+
+
+@pytest.mark.parametrize("사유", [[], ["해당없음"]])
+def test_no_exclusion_reason_keeps_heavy(사유):
+    f = _d_with(lambda f: f["자산"][0].update(중과배제_사유=사유))
+    assert run(f)["자산"][0]["중과"] == "중과2"
+
+
+def test_long_term_rental_registration_is_noted_but_not_judged():
+    """등록임대주택(시행령 제167조의3①2호)은 판정하지 않는다. 확인사항만 남기고 중과로 계산한다."""
+    f = _d_with(lambda f: f["자산"][0].update(중과배제_사유=["장기임대등록"]))
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과2" and len(_note(v, "등록임대주택 중과배제")) == 1 and not _note(v, "입력대로 인정했다")
+    assert _engine_tax(f) == 152_610_000
+    g = _d_with(lambda f: f["자산"][0].update(중과배제_사유=["장기임대등록", "사원용"]))
+    w = run(g)["자산"][0]
+    assert w["중과"] is None and _note(w, "중과배제 사유 사원용 를 입력대로 인정했다") and _note(w, "등록임대주택 중과배제")
+
+
+def _small_price(가격, 정비=None, 모름=False):
+    def m(f):
+        f["자산"][0]["기준시가"] = {"취득": {"주택": 40_000_000}, "양도": {"주택": 가격}}
+        f["자산"][0]["정비구역"] = 정비
+        if 모름:
+            f["모름"] = ["X02:D"]
+    return _d_with(m)
+
+
+@pytest.mark.parametrize("가격", [90_000_000, 100_000_000])
+def test_item_9_small_house_outside_redevelopment_zone_removes_heavy(가격):
+    f = _small_price(가격, 정비="아니오")
+    v = run(f)["자산"][0]
+    assert v["중과"] is None and len(_note(v, "시행령 제167조의10①9호")) == 1
+    assert _engine_tax(f) == NO_HEAVY_TAX
+
+
+@pytest.mark.parametrize("가격,정비", [(100_000_001, "아니오"), (90_000_000, "예")])
+def test_item_9_needs_price_at_most_100_million_and_no_redevelopment_zone(가격, 정비):
+    f = _small_price(가격, 정비=정비)
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과2" and not _note(v, "제167조의10①9호")
+
+
+def test_item_9_with_unknown_redevelopment_zone_keeps_heavy_with_a_note():
+    v = run(_small_price(90_000_000, 정비=None, 모름=True))["자산"][0]
+    assert v["중과"] == "중과2" and len(_note(v, "정비구역 여부가 정해지지 않아 중과로 계산했다")) == 1
+    r = run(_small_price(90_000_000, 정비=None))   # 답이 없으면 X02 를 묻는다
+    assert [q["문항"] for q in r["질문"]] == ["X02"]
+
+
+def _contract(계약, 계약금):
+    return _d_with(lambda f: f["자산"][0]["양도"].update(계약일=계약, 계약금수령일=계약금))
+
+
+def test_item_11_contract_on_or_before_announcement_removes_heavy():
+    공고일 = REG.status("조정대상지역", 마포, "2026-10-15")["공고일"]    # 2025-10-16 국토교통부공고
+    f = _contract(공고일, 공고일)
+    v = run(f)["자산"][0]
+    assert v["중과"] is None and len(_note(v, "공고일(%s) 이전에 양도 매매계약·계약금 수령을 해 중과하지 않았다" % 공고일)) == 1
+    assert _engine_tax(f) == NO_HEAVY_TAX
+
+
+@pytest.mark.parametrize("계약,계약금", [("2025-10-16", "2025-10-17"), ("2025-10-17", "2025-10-16"), ("2025-10-17", "2025-10-17")])
+def test_item_11_needs_both_contract_and_deposit_on_or_before_announcement(계약, 계약금):
+    v = run(_contract(계약, 계약금))["자산"][0]
+    assert v["중과"] == "중과2" and not _note(v, "공고일(2025-10-16) 이전에 양도")
+
+
+def test_sold_house_of_item_12_removes_heavy():
+    """판 집이 시행령 제167조의3①12호 주택(제12호해당)이면 중과하지 않는다."""
+    f = _d_with(lambda f: f["세대"]["주택목록"][0].update(제12호해당="소형신축"))
+    v = run(f)["자산"][0]
+    assert v["중과"] is None and len(_note(v, "제167조의3①12호 주택이라 중과하지 않았다")) == 1
+    assert _engine_tax(f) == NO_HEAVY_TAX
+
+
+class _RegionWithLocalDesignation:
+    """판 집이 광역시도 수도권도 아닌 지방인데 조정대상지역인 가상의 이력. 지방 저가주택 판정을 시험한다(실제 고시에는 없는 조합이다)."""
+
+    def status(self, regime, addr, on, 지구해당=None):
+        return {"지정": True, "공고": "가짜", "공고일": "2020-01-01", "효력발생일": "2020-01-01", "주석": []}
+
+    def metro(self, addr, on=None):
+        return False
+
+
+def _local_house(기준시가):
+    return _d_with(lambda f: f["자산"][0].update(기준시가={"취득": {"주택": 100_000_000}, "양도": {"주택": 기준시가}}))
+
+
+@pytest.mark.parametrize("가격,중과", [(300_000_000, None), (300_000_001, "중과2")])
+def test_sold_local_cheap_house_removes_heavy(가격, 중과):
+    f = _local_house(가격)
+    r = J.judge(f, F.prepare(f), RS, _RegionWithLocalDesignation())
+    assert r["질문"] == [] and r["다루지않음"] == [], r
+    v = r["자산"][0]
+    assert v["중과"] == 중과 and bool(_note(v, "판 집이 지방 저가주택이거나")) is (중과 is None)
