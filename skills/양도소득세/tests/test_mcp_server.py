@@ -266,12 +266,16 @@ def test_source_style_rules():
             assert "?" not in node.value, node.value
 
 
-def _stdio(msgs, raw_lines=()):
+def _run_stdio(data):
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
-    text = "\n".join(list(raw_lines) + [json.dumps(m, ensure_ascii=False) for m in msgs]) + "\n"
-    p = subprocess.run([sys.executable, SERVER], input=text.encode("utf-8"), capture_output=True, env=env, timeout=240)
+    p = subprocess.run([sys.executable, SERVER], input=data, capture_output=True, env=env, timeout=240)
     assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
     return [json.loads(x) for x in p.stdout.decode("utf-8").split("\n") if x.strip()], p
+
+
+def _stdio(msgs, raw_lines=()):
+    text = "\n".join(list(raw_lines) + [json.dumps(m, ensure_ascii=False) for m in msgs]) + "\n"
+    return _run_stdio(text.encode("utf-8"))
 
 
 def test_stdio_ruleset_info_and_clean_stdout(tmp_path):
@@ -296,7 +300,8 @@ def test_stdio_ruleset_info_and_clean_stdout(tmp_path):
 def test_sum_note_only_when_combined_tax_differs():
     out = call("yangdo_calculate", {"facts": CASES["BF"]})
     t = out["합계"]
-    assert t["산출세액"] == t["합산비교세액"] > t["자산별세액"] and t["호별합산세액"] < t["산출세액"] + 1
+    assert t["산출세액"] == max(t["호별합산세액"], t["합산비교세액"])
+    assert t["산출세액"] == t["합산비교세액"] > t["자산별세액"]
     assert "합산 비교 세액" in out["참고"]
     assert "참고" not in call("yangdo_calculate", {"facts": CASES["A"]})
 
@@ -319,3 +324,138 @@ def test_unexpected_error_is_still_a_tool_error(monkeypatch):
     monkeypatch.setattr(M.engine, "calculate", boom)
     t = err("yangdo_calculate", {"facts": CASES["A"]})
     assert "예상하지 못한" in t and "RuntimeError" in t
+
+
+# ---- Fix 1: 깨진 입력에도 서버가 살아 있다, 임시 파일은 mkstemp, 오류 기록 ----
+
+PING2 = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+
+
+def test_stdio_lone_surrogate_in_error_reply_does_not_kill_server():
+    raw = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"\\ud800"}}'
+    lines, p = _stdio([PING2], raw_lines=[raw])
+    by_id = {x["id"]: x for x in lines}
+    assert by_id[1]["error"]["code"] == -32602 and "\ud800" in by_id[1]["error"]["message"]
+    assert by_id[2]["result"] == {}
+    assert p.stdout.split(b"\n")[0].isascii()
+
+
+def test_stdio_lone_surrogate_in_tool_result_does_not_kill_server():
+    raw = ('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"yangdo_answer","arguments":'
+           '{"facts":{"자산":[{"id":"A"}],"메모":"\\ud800"},"문항":"P01","값":true}}}')
+    lines, _ = _stdio([PING2], raw_lines=[raw])
+    by_id = {x["id"]: x for x in lines}
+    body = json.loads(by_id[1]["result"]["content"][0]["text"])
+    assert body["사실관계"]["메모"] == "\ud800" and body["사실관계"]["신고인"]["거주자"] is True
+    assert by_id[2]["result"] == {}
+
+
+def test_stdio_invalid_utf8_is_a_parse_error_and_server_stays_alive():
+    korean = "한".encode("utf-8")
+    data = (b'\xff\xfe{"jsonrpc":"2.0","id":9,"method":"ping"}\n'
+            b'{"jsonrpc":"2.0","id":8,"method":"ping","params":{"x":"\xff"}}\n'
+            b'{"jsonrpc":"2.0","id":7,"method":"ping","params":{"x":"' + korean[:2] + b'"}}\n'
+            + json.dumps(PING2).encode("ascii") + b"\n"
+            + json.dumps({"jsonrpc": "2.0", "id": 3, "method": "ping", "params": {"x": "한글"}},
+                         ensure_ascii=False).encode("utf-8") + b"\n")
+    lines, _ = _run_stdio(data)
+    assert [x["id"] for x in lines] == [None, None, None, 2, 3]
+    assert [x["error"]["code"] for x in lines[:3]] == [-32700] * 3
+    assert lines[3]["result"] == {} and lines[4]["result"] == {}
+
+
+@pytest.mark.parametrize("name,owner,attr,exc,args", [
+    ("yangdo_next_questions", M.questions, "next_questions", KeyError("키"), {"facts": CASES["A"]}),
+    ("yangdo_answer", M.questions, "answer", TypeError("형"),
+     {"facts": {"자산": [{"id": "A"}]}, "문항": "P01", "값": True}),
+    ("yangdo_calculate", M.engine, "calculate", AttributeError("속성"), {"facts": CASES["A"]}),
+])
+def test_malformed_value_is_logged_to_stderr(monkeypatch, capsys, name, owner, attr, exc, args):
+    def boom(*a, **k):
+        raise exc
+
+    monkeypatch.setattr(owner, attr, boom)
+    t = err(name, args)
+    kind = type(exc).__name__
+    assert "사실관계의 값을 처리하지 못했다" in t and kind in t
+    logged = capsys.readouterr().err
+    assert "Traceback" in logged and kind in logged
+
+
+def test_answer_keeps_unrelated_tmp_sibling(tmp_path):
+    p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
+    other = tmp_path / "f.json.tmp"
+    other.write_text("남의 파일", encoding="utf-8")
+    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert other.read_text(encoding="utf-8") == "남의 파일"
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json", "f.json.tmp"]
+    assert json.loads((tmp_path / "f.json").read_text(encoding="utf-8"))["신고인"]["거주자"] is True
+
+
+def test_answer_failure_keeps_unrelated_tmp_sibling(tmp_path, monkeypatch):
+    p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
+    other = tmp_path / "f.json.tmp"
+    other.write_text("남의 파일", encoding="utf-8")
+
+    def locked(src, dst):
+        raise PermissionError(13, "Permission denied", dst)
+
+    monkeypatch.setattr(M.os, "replace", locked)
+    assert p in err("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert other.read_text(encoding="utf-8") == "남의 파일"
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json", "f.json.tmp"]
+
+
+def test_unencodable_value_is_a_tool_error_and_leaves_no_temp_file(tmp_path):
+    p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
+    before = (tmp_path / "f.json").read_text(encoding="utf-8")
+    with pytest.raises(M.ToolError) as e:
+        M._write_json(p, {"메모": "\ud800"})
+    assert "저장할 수 없는 문자" in str(e.value)
+    assert (tmp_path / "f.json").read_text(encoding="utf-8") == before
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 권한 비트는 윈도우에 없다")
+def test_answer_keeps_file_mode(tmp_path):
+    import stat
+    p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
+    os.chmod(p, 0o640)
+    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert stat.S_IMODE(os.stat(p).st_mode) == 0o640
+
+
+def test_calculate_keeps_unrelated_files_in_out_dir(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    keep = {"메모.txt": "내 파일", "고객자료.csv": "a,b"}
+    for n, body in keep.items():
+        (out / n).write_text(body, encoding="utf-8")
+    done = call("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(out)})
+    assert done["상태"] == "완료" and done["파일"]
+    for n, body in keep.items():
+        assert (out / n).read_text(encoding="utf-8") == body
+    asked = call("yangdo_calculate", {"facts": CASES["L"], "out_dir": str(out)})
+    assert asked["상태"] == "질문"
+    for n, body in keep.items():
+        assert (out / n).read_text(encoding="utf-8") == body
+
+
+def test_instructions_say_how_to_start_a_new_case(tmp_path):
+    r = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    ins = r["result"]["instructions"]
+    assert 'facts: {"자산": [{"id": "A"}]}' in ins and "facts_path" in ins and "사실관계" in ins
+    start = {"자산": [{"id": "A"}]}
+    started = call("yangdo_answer", {"facts": start, "문항": "P01", "값": True})
+    assert started["사실관계"] == {"신고인": {"거주자": True}, "자산": [{"id": "A"}]}
+    asked = call("yangdo_next_questions", {"facts": started["사실관계"], "limit": 10})["다음"]
+    assert any(q["자산"] == "A" and q["id"].startswith("A") for q in asked)
+    p = write_json(tmp_path / "new.json", start)
+    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": False})
+    assert json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))["신고인"]["거주자"] is False
+
+
+def test_empty_facts_is_not_a_start():
+    ids = [q["id"] for q in call("yangdo_next_questions", {"facts": {}, "limit": 10})["다음"]]
+    assert ids == ["P01", "P05"]
+    assert call("yangdo_calculate", {"facts": {}})["질문"][0]["문항"] == "P02"

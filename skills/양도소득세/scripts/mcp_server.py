@@ -11,7 +11,9 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +28,8 @@ from yangdo import facts as F  # noqa: E402
 
 PROTOCOL = "2025-03-26"
 INSTRUCTIONS = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민등록번호, 주소, 전화번호, 계좌)을 넣지 않는다. "
+                '새 사건은 facts: {"자산": [{"id": "A"}]} 로 시작한다. 판 자산마다 항목 하나를 두고 id 는 A, B, ... 로 붙인다. '
+                "이 값을 yangdo_answer 의 facts 로 주고(같은 내용의 파일이면 facts_path), 돌려받은 사실관계를 다음 호출에 이어 쓴다. "
                 "yangdo_next_questions 로 다음 문항을 받고, 사용자의 답을 yangdo_answer 로 넣고, "
                 "남은 문항이 없으면 yangdo_calculate 를 부른다. 계산 결과는 검토용이며 신고 전 최종 판단은 세무 전문가가 한다.")
 FACTS = {"facts_path": {"type": "string", "description": "사실관계 JSON 파일 경로(로컬)"},
@@ -65,6 +69,7 @@ def _why(e):
 
 
 def _malformed(e):
+    traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)  # 엔진 버그인지 입력 탓인지 운영자가 가를 수 있게 남긴다
     return ToolError("사실관계의 값을 처리하지 못했다(%s: %s). 날짜는 YYYY-MM-DD, 금액은 원 단위 정수, 목록 모양은 질문지 문항.json 의 facts키 대로인지 확인한다"
                      % (type(e).__name__, e))
 
@@ -112,16 +117,25 @@ def _read_json(path):
 
 
 def _write_json(path, obj):
+    """같은 폴더에 새 임시 파일을 만들어 쓴 뒤 바꿔 넣는다. 남의 파일을 건드리지 않고, 실패하면 임시 파일을 지운다."""
     real = os.path.expanduser(path)
-    tmp = real + ".tmp"
+    tmp = None
     try:
-        with open(tmp, "w", encoding="utf-8", newline="\n") as fp:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real) or ".", prefix=os.path.basename(real) + ".", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fp:
             json.dump(obj, fp, ensure_ascii=False, indent=1)
-        os.replace(tmp, real)
-    except OSError as e:
         with contextlib.suppress(OSError):
-            os.remove(tmp)
-        raise ToolError("사실관계 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (path, _why(e))) from e
+            shutil.copymode(real, tmp)  # mkstemp 는 소유자만 읽는 권한으로 만든다. 원래 파일의 권한을 잇는다
+        os.replace(tmp, real)
+    except BaseException as e:
+        if tmp:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        if isinstance(e, OSError):
+            raise ToolError("사실관계 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (path, _why(e))) from e
+        if isinstance(e, UnicodeEncodeError):
+            raise ToolError("사실관계에 파일로 저장할 수 없는 문자가 있다(짝 없는 대리 문자). 값을 다시 확인한다") from e
+        raise
 
 
 def _facts(args):
@@ -304,9 +318,10 @@ def handle(req):
 
 
 def main():
-    for stream in (sys.stdin, sys.stdout):
+    for stream, errors in ((sys.stdin, "surrogateescape"), (sys.stdout, "strict")):
         try:
-            stream.reconfigure(encoding="utf-8")
+            # 입력의 잘못된 UTF-8 바이트는 예외 대신 짝 없는 대리 문자로 받아 아래에서 parse error 로 돌려준다
+            stream.reconfigure(encoding="utf-8", errors=errors)
         except AttributeError:
             pass
     try:
@@ -319,7 +334,10 @@ def main():
         if not line:
             continue
         try:
+            line.encode("utf-8")  # surrogateescape 로 들어온 잘못된 바이트는 여기서 걸린다
             req = json.loads(line)
+        except UnicodeEncodeError:
+            resp = _error(None, -32700, "UTF-8 로 읽을 수 없는 바이트가 든 줄이다")
         except ValueError:
             resp = _error(None, -32700, "JSON 으로 읽을 수 없는 줄이다")
         else:
@@ -330,7 +348,10 @@ def main():
                 traceback.print_exc(file=sys.stderr)
                 resp = _error(req.get("id") if isinstance(req, dict) else None, -32603, "내부 오류(%s)" % type(e).__name__)
         if resp is not None:
-            out.write(json.dumps(resp, ensure_ascii=False) + "\n")
+            try:
+                out.write(json.dumps(resp, ensure_ascii=False) + "\n")
+            except UnicodeEncodeError:  # 응답에 짝 없는 대리 문자가 섞였으면 ASCII 이스케이프로 보낸다
+                out.write(json.dumps(resp) + "\n")
             out.flush()
 
 
