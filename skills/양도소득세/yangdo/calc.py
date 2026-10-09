@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """계산. 사실관계·판정·기준정보만 받는 순수 함수다. 원 미만은 단계마다 버린다."""
+from datetime import date
 from decimal import ROUND_FLOOR, Decimal
 from fractions import Fraction
 
@@ -9,6 +10,9 @@ from yangdo.dates import to_date
 
 OK_EVIDENCE = {"세금계산서", "계산서", "카드영수증", "현금영수증", "계좌이체"}
 GROUPS = ("취득부대", "자본적지출", "기타", "양도비")
+# 취득가액을 모를 때 환산하는 경로(M05 모름)에서 취득 상대방(M20)이 이 셋이면 실제 금액이 남아 있을 수 있다
+BUYER_LABELS = {"분양": "건설사·조합(분양)", "공공기관": "국가·지자체·LH 같은 공공기관", "경매": "경매·공매"}
+토지환산_기준일 = date(1990, 8, 29)   # 국세청 작성요령 ㉒. 이날 이전 취득 토지는 1990-01-01 개별공시지가를 토지등급으로 취득 시로 환산한다(M24)
 
 
 class Unsupported(Exception):
@@ -114,6 +118,15 @@ def gain(a, v, rs):
             else:
                 취득, 경비 = 환산, 개산
         out["확인사항"].append("%s: 취득가액을 %s 으로 계산했다. 매매사례가액·감정가액·환산취득가액 순서를 확인하라" % (aid, kind))
+        상대방 = F.get(a, "취득.상대방유형")   # 모를때처리(M20): 실제 금액을 먼저 찾아보라는 안내. 계산은 위 방법 그대로다
+        if 상대방 in BUYER_LABELS:
+            out["확인사항"].append("%s: %s" % (aid, F.NOT_REFLECTED % (
+                "취득 상대방이 %s이다. 실제 취득금액이 남아 있으면 %s 대신 그 금액(계약서)으로 계산해야 하니 먼저 찾아보고 M05 를 다시 답하라. "
+                "찾지 못하면 이 계산대로 쓴다" % (BUYER_LABELS[상대방], kind))))
+        if F.get(a, "토지등급") is not None and to_date(v["취득일"]) <= 토지환산_기준일:   # 모를때처리(M24): 환산을 하지 않고 입력한 기준시가를 쓴다
+            out["확인사항"].append("%s: %s" % (aid, F.NOT_REFLECTED % (
+                "1990-08-29 이전에 취득한 토지의 취득 당시 기준시가 환산(1990-01-01 개별공시지가와 토지등급)은 하지 않았다. "
+                "입력한 취득 당시 기준시가를 그대로 썼다")))
         built = to_date((a.get("신축증축") or {}).get("사용승인일"))
         if kind in ("환산가액", "감정가액") and built and dates.within_years(built, on, 5):
             out["확인사항"].append("%s: 신축·증축 후 5년 안 양도라 환산·감정가액의 5%% 가산세(소득세법 제114조의2) 대상일 수 있다. 가산세는 계산하지 않았다" % aid)

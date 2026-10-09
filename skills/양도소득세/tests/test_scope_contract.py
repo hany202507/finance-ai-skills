@@ -13,7 +13,7 @@ import re
 
 import pytest
 
-from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house, 춘천
+from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house, 춘천, 평택
 from yangdo import SKILL_DIR, engine
 from yangdo import facts as F
 from yangdo import questions as Q
@@ -72,15 +72,21 @@ def test_collect_only_entries_are_real_explained_and_really_unread():
         assert not _is_read(key, src), "%s 를 엔진이 읽는다. COLLECT_ONLY 에서 뺀다" % key
 
 
-def test_collect_only_names_the_keys_review_listed():
+def test_collect_only_names_the_keys_that_truly_do_not_matter():
+    """P06, A04, A20, X06 은 모를때처리가 약속하는 것이 없어 읽지 않아도 된다. 아래 다섯은 약속이 있어 엔진이 읽는다(m-3)."""
     by_id = {q["id"]: q for q in Q.load()["문항"]}
-    for qid in ("T02", "M20", "P06", "H03", "H08", "M24", "A04", "A20", "X06"):
+    for qid in ("P06", "A04", "A20", "X06"):
         assert by_id[qid]["키"][0] in F.COLLECT_ONLY, qid
+    src = _engine_source()
+    for qid in ("T02", "M20", "H03", "H08", "M24"):
+        key = by_id[qid]["키"][0]
+        assert key not in F.COLLECT_ONLY and _is_read(key, src), qid
+        assert by_id[qid]["모를때처리"], qid   # 약속이 적힌 문항이다
 
 
 def test_routed_keys_are_read_by_the_engine_not_collect_only():
     src = _engine_source()
-    for qid in ("P07", "A06", "A13", "A14", "M02", "M03", "L01", "H12", "H13", "A02"):
+    for qid in ("P07", "A06", "A13", "A14", "M02", "M03", "L01", "H12", "H13", "A02", "T02", "M20", "H03", "H08", "M24"):
         for q in Q.load()["문항"]:
             if q["id"] == qid:
                 assert _is_read(q["키"][0], src) and q["키"][0] not in F.COLLECT_ONLY, qid
@@ -402,6 +408,123 @@ def test_expected_amounts_are_unchanged_by_the_routing(name):
 def test_expected_totals_are_unchanged_by_the_routing(name):
     r = engine.calculate(CASES[name], today=TODAY)
     assert r["상태"] == "완료" and r["계산"]["합계"]["산출세액"] == EXPECT_TOTAL[name]["산출세액"]
+
+
+# ---- 모를때처리가 확인사항이나 계획 5 를 약속한 문항(T02, H08, M20, M24, H03)은 답이 있으면 흔적을 남긴다 (m-3) ----
+NOT_REFLECTED = "이 답은 이번 계산에 반영하지 않았다"
+
+
+def _notes(f):
+    r = engine.calculate(f, today=TODAY)
+    assert r["상태"] == "완료", (r["질문"], r["다루지않음"])
+    return r, [x for x in r["확인사항"] if NOT_REFLECTED in x]
+
+
+@pytest.mark.parametrize("원인", ["매매", "분양", "신축"])
+def test_new_house_by_purchase_sale_or_building_is_calculated(원인):
+    f = copy.deepcopy(CASES["G"])
+    f["세대"]["주택목록"][1]["취득원인"] = 원인
+    r, notes = _notes(f)
+    assert r["계산"]["합계"]["산출세액"] == EXPECT["G"]["산출세액"] and notes == []
+
+
+def test_new_house_received_as_a_union_member_is_out_of_scope():
+    """사례 G 의 새 집을 재개발·재건축 조합원으로 받았다고 하면 0원 완료가 아니라 다루지않음 5 다."""
+    f = copy.deepcopy(CASES["G"])
+    f["세대"]["주택목록"][1]["취득원인"] = "조합원"
+    p = F.prepare(f)
+    assert p["다루지않음"] == [] and p["질문"] == []   # 판정(일시적 2주택 후보 확인) 단계에서 걸린다
+    o = _out(f)
+    assert o == [{"자산": "G", "내용": "신규 주택을 재개발·재건축 조합원으로 받았다(시행령 제156조의2·제156조의3, 입주권 특례가 걸려 계산하지 않았다)", "계획": "5"}]
+    assert "T02" not in [x["id"] for x in Q.next_questions(f, limit=None)["다음"]]   # 답한 문항이라 다시 묻지 않는다
+
+
+def test_new_house_cause_in_a_wrong_form_asks_t02():
+    f = copy.deepcopy(CASES["G"])
+    f["세대"]["주택목록"][1]["취득원인"] = ["조합원"]
+    r = engine.calculate(f, today=TODAY)
+    assert r["상태"] == "질문" and [q["문항"] for q in r["질문"]] == ["T02"] and r["다루지않음"] == []
+
+
+def test_new_house_cause_does_not_matter_when_the_house_is_not_the_new_one():
+    """종전 주택이 더 늦게 취득한 집이면 일시적 2주택의 새 집이 아니다. 목록의 다른 집 취득원인은 읽지 않는다."""
+    f = copy.deepcopy(CASES["D"])
+    f["세대"]["주택목록"][1]["취득원인"] = "조합원"   # 송파집 H8 은 2010 취득, D 는 2021 취득이라 새 집이 아니다
+    assert engine.calculate(f, today=TODAY)["계산"]["합계"]["산출세액"] == EXPECT["D"]["산출세액"]
+
+
+def test_part_of_household_lived_apart_gets_a_note_when_residence_is_required():
+    f = copy.deepcopy(CASES["G"])    # 취득일 2019-03-01 마포(조정대상지역)라 거주요건이 있다
+    r, notes = _notes(f)
+    assert notes == []
+    f["자산"][0]["거주_일부미거주"] = True
+    r, notes = _notes(f)
+    assert r["계산"]["합계"]["산출세액"] == EXPECT["G"]["산출세액"]   # 계산은 그대로다
+    assert len(notes) == 1 and notes[0].startswith("G: ") and "따로 산 적" in notes[0] and "H07" in notes[0]
+
+
+def test_lived_apart_answer_does_not_matter_without_the_residence_requirement():
+    f = copy.deepcopy(CASES["A"])    # 2014 취득 송파는 취득 당시 조정대상지역이 아니다
+    f["자산"][0]["거주_일부미거주"] = True
+    r, notes = _notes(f)
+    assert r["계산"]["합계"]["산출세액"] == EXPECT["A"]["산출세액"] and notes == []
+
+
+def _old_land(**kw):
+    """1989 취득 토지. 취득가액을 모르는 환산 경로(M05 모름)다."""
+    a = asset("L9", "토지", 평택, "1989-05-01", "2026-11-01", 1_000_000_000, None, 토지사용현황="사업용",
+              기준시가={"취득": {"토지": 100_000_000}, "양도": {"토지": 500_000_000}}, **kw)
+    return facts([a])
+
+
+def test_buyer_type_note_only_when_actual_price_may_exist():
+    base = engine.calculate(_old_land(), today=TODAY)["계산"]["합계"]["산출세액"]
+    for kind, label in (("분양", "건설사·조합(분양)"), ("공공기관", "공공기관"), ("경매", "경매·공매")):
+        r, notes = _notes(_old_land(취득__상대방유형=kind))
+        assert r["계산"]["합계"]["산출세액"] == base
+        assert len(notes) == 1 and notes[0].startswith("L9: ") and label in notes[0] and "실제 취득금액" in notes[0]
+    for kind in (None, "개인", "모름"):
+        assert _notes(_old_land(취득__상대방유형=kind))[1] == []
+    # 취득가액을 아는 자산은 환산을 쓰지 않으므로 상대방 유형이 계산에 닿지 않는다
+    f = copy.deepcopy(CASES["B"])
+    f["자산"][0]["취득"]["상대방유형"] = "경매"
+    assert _notes(f)[1] == []
+
+
+def test_buyer_type_in_a_wrong_form_asks_m20():
+    p = F.prepare(_old_land(취득__상대방유형=["경매"]))
+    assert [q["문항"] for q in p["질문"]] == ["M20"]
+
+
+def test_old_land_grade_note_when_bought_on_or_before_1990_08_29():
+    base = engine.calculate(_old_land(), today=TODAY)["계산"]["합계"]["산출세액"]
+    r, notes = _notes(_old_land(토지등급=50_000))
+    assert r["계산"]["합계"]["산출세액"] == base
+    assert len(notes) == 1 and notes[0].startswith("L9: ") and "토지등급" in notes[0] and "그대로" in notes[0]
+    assert _notes(_old_land())[1] == []
+    # 1990-08-30 이후 취득이면 이 환산이 걸리지 않으므로 답이 있어도 흔적을 남기지 않는다
+    f = _old_land(토지등급=50_000)
+    f["자산"][0]["취득"]["잔금일"] = "1990-08-30"
+    assert _notes(f)[1] == []
+    f["자산"][0]["취득"]["잔금일"] = "1990-08-29"
+    assert len(_notes(f)[1]) == 1
+
+
+def test_household_members_answer_gets_one_note():
+    f = copy.deepcopy(CASES["D"])
+    assert _notes(f)[1] == []
+    f["세대"]["세대원"] = [{"관계": "자녀", "같은주민등록": False, "주택보유": True}]
+    r, notes = _notes(f)
+    assert r["계산"]["합계"]["산출세액"] == EXPECT["D"]["산출세액"]
+    assert len(notes) == 1 and "세대원" in notes[0] and "H04" in notes[0] and not notes[0].startswith("D: ")
+    f["세대"]["세대원"] = "자녀"
+    assert [q["문항"] for q in F.prepare(f)["질문"]] == ["H03"]
+
+
+def test_household_members_answer_is_ignored_when_only_land_is_sold():
+    f = copy.deepcopy(CASES["F"])
+    f["세대"]["세대원"] = [{"관계": "자녀"}]
+    assert _notes(f)[1] == []
 
 
 # ---- 광교 이의동(지구 단위 지정)에서 A02 모름 ----

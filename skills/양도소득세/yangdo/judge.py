@@ -174,6 +174,19 @@ def _excluded_self(a, me, on, rs, reg):
     return False
 
 
+def _new_house_cause(aid, other):
+    """신규 주택의 취득 원인(T02). 재개발·재건축 조합원으로 받은 집은 입주권 특례(시행령 제156조의2·제156조의3)가 걸려
+    일시적 2주택 처분기한과 주택 수를 이 엔진이 정하지 못하므로 계산하지 않는다. 글자가 아닌 값은 T02 를 되묻는다."""
+    cause = other.get("취득원인")
+    if cause is None:
+        return
+    if not isinstance(cause, str):
+        q = next(x for x in F.load_questions()["문항"] if x["id"] == "T02")
+        raise F.Missing("T02", aid, F.FORM_MSG % ("세대.주택목록[신규].취득원인", F.form_problem(q, cause)))
+    if cause == "조합원":
+        raise F.OutOfScope(aid, "신규 주택을 재개발·재건축 조합원으로 받았다(시행령 제156조의2·제156조의3, 입주권 특례가 걸려 계산하지 않았다)", "5")
+
+
 def _acq_contract_exception(f, a, st):
     공고일 = to_date(st.get("공고일"))
     if not 공고일:
@@ -252,6 +265,10 @@ def _exemption(f, a, rs, v, 취득, 양도):
     보유 = dates.full_years(보유시작, 양도)
     요건거주 = rs.value("비과세.조정취득거주", 양도)
     거주필요 = bool(v["조정_취득일"]["지정"])
+    if 거주필요 and a.get("거주_일부미거주") is True:   # 모를때처리(H08): 사실 판단이라 확인사항으로 낸다. 거주기간은 입력한 구간 그대로 센다
+        v["확인사항"].append(F.NOT_REFLECTED % (
+            "거주 기간 중 세대원 일부가 학교·직장·질병 치료로 따로 산 적이 있다고 답했다. 거주기간(H07)은 입력한 구간 그대로 셌다. "
+            "따로 산 기간을 거주기간으로 볼 수 있는지는 사실을 확인하라(소득세법 시행규칙 제71조③, 시행령 제154조①1호 괄호)"))
     if 거주필요 and v["거주년"] < 요건거주 and _acq_contract_exception(f, a, v["조정_취득일"]):
         거주필요 = False
         v["공고전계약_취득"] = True
@@ -352,6 +369,7 @@ def _house(f, a, prep, rs, reg, v, 취득, 양도):
         if not other.get("취득일"):
             raise F.Missing("H04", aid, "주택 목록 %s 의 취득일이 필요합니다" % other.get("id"))
         if 취득 < to_date(other["취득일"]):
+            _new_house_cause(aid, other)
             v["일시적2주택"] = True
             cand = _temporary(f, a, other, 취득, 양도, rs, reg, v)
     if not 일세대:
