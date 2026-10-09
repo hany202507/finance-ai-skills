@@ -331,6 +331,19 @@ def test_answer_rejects_malformed_answers(qid, value, kw):
         Q.answer(_house_asset_facts(), qid, value, **kw)
 
 
+def test_h11_departure_date_key_matches_the_engine_and_is_asked_only_for_overseas_reasons():
+    """H11 의 facts키는 엔진이 읽는 보유거주예외일자 와 같고, 출국한 날은 해외 사유(해외이주, 해외취학근무)에만 묻는다."""
+    h11 = {x["id"]: x for x in Q.load()["문항"]}["H11"]
+    assert h11["facts키"] == "자산[].보유거주예외일자" and h11["키"] == [h11["facts키"]]
+    assert h11["보이는조건"] == {"모두": [["H10", "in", ["해외이주", "해외취학근무"]]]}
+    for 사유, 묻는다 in (("해외이주", True), ("해외취학근무", True), ("수용", False), ("공공임대5년", False),
+                      ("부득이1년", False), ("해당없음", False)):
+        f = copy.deepcopy(CASES["A"])
+        f["자산"][0].update(보유거주예외=사유, 보유거주예외일자=None)
+        pending = [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+        assert ("H11" in pending) is 묻는다, (사유, pending)
+
+
 def test_answer_accepts_share_dict():
     ok = Q.answer(_house_asset_facts(), "P04", {"구분": "공동", "분자": 1, "분모": 2}, 자산="A")
     assert ok["자산"][0]["지분"]["분모"] == 2
