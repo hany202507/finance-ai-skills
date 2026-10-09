@@ -193,11 +193,15 @@ def test_generated_text_style(tmp_path):
     ("거주기간", [["2014-11-01"]]),
     ("거주기간", "12년"),
 ])
-def test_malformed_values_raise_facts_error(path, value):
+def test_malformed_values_are_facts_error_or_question(path, value):
+    """형식이 틀린 값은 FactsError 이거나 질문 상태다. 다른 예외는 어느 쪽으로도 새면 안 된다."""
     f = copy.deepcopy(CASES["A"])
     f["자산"][0][path] = value
-    with pytest.raises(F.FactsError):
-        engine.calculate(f, today="2026-10-09")
+    try:
+        r = engine.calculate(f, today="2026-10-09")
+    except F.FactsError:
+        return
+    assert r["상태"] == "질문"
 
 
 def test_run_malformed_values_exit_2(tmp_path, capsys):
@@ -205,3 +209,119 @@ def test_run_malformed_values_exit_2(tmp_path, capsys):
     f["자산"][0]["전체양도가액"] = "1억"
     code, out = go(tmp_path, f)
     assert code == 2 and "사실관계의 값을 처리하지 못했다" in capsys.readouterr().out
+
+
+# 출력 쓰기 실패는 종료코드 4. 1 은 검산 실패 전용이다.
+
+def _err_lines(capsys):
+    """stderr 의 줄. 검산 재계산 라이브러리(formulas)가 찍는 진행 막대(tqdm)는 이 스크립트의 출력이 아니라서 뺀다."""
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    return [ln for ln in err.splitlines() if ln.strip() and "it/s" not in ln and "s/it" not in ln]
+
+
+def test_exit_codes_documented():
+    assert "4 출력 파일 쓰기 실패" in run.__doc__ and "1 검산 실패" in run.__doc__
+
+
+@pytest.mark.parametrize("case,name", [
+    ("A", "result.json"),
+    ("A", "양도소득세_검토.md"),
+    ("A", "양도소득세_계산근거.xlsx"),
+    ("L", "질문.md"),
+])
+def test_run_output_blocked_exit_4(tmp_path, capsys, case, name):
+    """쓸 파일 자리에 폴더가 있으면 쓰지 못한다. 역추적 없이 종료코드 4 와 한 줄 안내만 낸다."""
+    out = tmp_path / "out"
+    (out / name).mkdir(parents=True)
+    code, _ = go(tmp_path, CASES[case])
+    lines = _err_lines(capsys)
+    assert code == 4
+    assert len(lines) == 1 and lines[0].startswith("출력 파일을 쓰지 못했습니다: ")
+    assert name in lines[0] and "다시 실행" in lines[0]
+
+
+def test_run_workbook_locked_exit_4(tmp_path, capsys, monkeypatch):
+    """엑셀이 이전 통합 문서를 열어 두면 저장이 PermissionError 로 막힌다."""
+    target = str(tmp_path / "out" / "양도소득세_계산근거.xlsx")
+
+    def locked(res, path):
+        raise PermissionError(13, "Permission denied", path)
+    monkeypatch.setattr(engine.workbook, "write", locked)
+    code, _ = go(tmp_path, CASES["A"])
+    lines = _err_lines(capsys)
+    assert code == 4 and len(lines) == 1
+    assert target in lines[0] and "Permission denied" in lines[0]
+
+
+def test_run_cannot_remove_previous_workbook_exit_4(tmp_path, capsys, monkeypatch):
+    out = tmp_path / "out"
+    code, _ = go(tmp_path, CASES["A"])
+    assert code == 0
+    old = str(out / "양도소득세_계산근거.xlsx")
+    real_remove = os.remove
+
+    def remove(path):
+        if os.path.abspath(path) == os.path.abspath(old):
+            raise PermissionError(13, "Permission denied", path)
+        real_remove(path)
+    monkeypatch.setattr(run.os, "remove", remove)
+    code, _ = go(tmp_path, CASES["A"])
+    lines = _err_lines(capsys)
+    assert code == 4 and len(lines) == 1 and old in lines[0]
+
+
+def test_run_output_dir_is_a_file_exit_4(tmp_path, capsys):
+    (tmp_path / "out").write_text("파일", encoding="utf-8")
+    code, _ = go(tmp_path, CASES["A"])
+    lines = _err_lines(capsys)
+    assert code == 4 and len(lines) == 1 and "out" in lines[0]
+
+
+def test_run_exit_1_still_means_verify_failure(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(engine.verify, "check", lambda res, f, rs: ["V6 A: 시험용 실패"])
+    code, _ = go(tmp_path, CASES["A"])
+    assert code == 1 and "출력 파일을 쓰지 못했습니다" not in capsys.readouterr().err
+
+
+# 같은 출력 폴더에 다시 실행하면 이전 실행의 산출물이 남지 않는다.
+
+def test_rerun_with_question_removes_previous_outputs(tmp_path):
+    code, out = go(tmp_path, CASES["A"])
+    assert code == 0
+    (out / "내메모.txt").write_text("남겨야 함", encoding="utf-8")
+    (out / "다른.xlsx").write_text("남겨야 함", encoding="utf-8")
+    code, out = go(tmp_path, CASES["L"])
+    assert code == 2
+    assert (out / "질문.md").exists() and (out / "result.json").exists()
+    assert json.loads((out / "result.json").read_text(encoding="utf-8"))["상태"] == "질문"
+    assert not (out / "양도소득세_검토.md").exists()
+    assert not (out / "양도소득세_계산근거.xlsx").exists()
+    assert (out / "내메모.txt").read_text(encoding="utf-8") == "남겨야 함"
+    assert (out / "다른.xlsx").exists()
+
+
+def test_rerun_with_completion_removes_previous_question_file(tmp_path):
+    code, out = go(tmp_path, CASES["L"])
+    assert code == 2 and (out / "질문.md").exists()
+    code, out = go(tmp_path, CASES["A"])
+    assert code == 0 and not (out / "질문.md").exists()
+
+
+def test_rerun_with_rejected_facts_removes_previous_outputs(tmp_path):
+    code, out = go(tmp_path, CASES["A"])
+    assert code == 0
+    f = copy.deepcopy(CASES["A"])
+    f["신고인"]["성명"] = "홍길동"
+    code, out = go(tmp_path, f)
+    assert code == 2
+    assert not any((out / n).exists() for n in
+                   ("result.json", "질문.md", "양도소득세_검토.md", "양도소득세_계산근거.xlsx"))
+
+
+def test_unreadable_facts_keeps_previous_outputs(tmp_path):
+    """사실관계 파일 경로를 잘못 적은 것만으로 이전 결과를 지우지 않는다."""
+    code, out = go(tmp_path, CASES["A"])
+    assert code == 0
+    assert run.main(["--사실관계", str(tmp_path / "없음.json"), "--출력", str(out)]) == 2
+    assert (out / "result.json").exists() and (out / "양도소득세_계산근거.xlsx").exists()

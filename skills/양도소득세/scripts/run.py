@@ -3,7 +3,11 @@
 
   python scripts/run.py --사실관계 facts.json --출력 out/ [--오늘 YYYY-MM-DD] [--rules rules/]
 
-종료코드: 0 완료, 1 검산 실패, 2 질문 또는 다루지않음(사실관계 파일을 못 읽거나 값의 형식이 틀리거나 인적사항이 든 경우 포함), 3 기준정보 오류
+종료코드: 0 완료, 1 검산 실패, 2 질문 또는 다루지않음(사실관계 파일을 못 읽거나 값의 형식이 틀리거나 인적사항이 든 경우 포함),
+3 기준정보 오류, 4 출력 파일 쓰기 실패(이전 통합 문서를 엑셀이 열어 둔 경우 등. 파일을 닫고 다시 실행한다)
+
+같은 출력 폴더에 다시 실행하면 먼저 이 스크립트가 쓰는 파일 네 개(result.json, 질문.md, 양도소득세_검토.md, 양도소득세_계산근거.xlsx)만
+지우고 시작한다. 이번 결과가 질문이어도 이전 완료 결과가 옆에 남지 않는다. 다른 파일은 건드리지 않는다.
 """
 import argparse
 import datetime as dt
@@ -19,6 +23,9 @@ from yangdo import QUESTIONS_PATH, engine, ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
 TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
+
+RESULT, QUESTIONS, REVIEW, WORKBOOK = "result.json", "질문.md", "양도소득세_검토.md", "양도소득세_계산근거.xlsx"
+OUTPUT_NAMES = (RESULT, QUESTIONS, REVIEW, WORKBOOK)
 
 
 def won(n):
@@ -115,22 +122,30 @@ def review_md(res):
     return "\n".join(L)
 
 
+def clear_previous(out):
+    """이 스크립트가 쓰는 파일 이름만 지운다. 폴더 안의 다른 파일은 그대로 둔다."""
+    for name in OUTPUT_NAMES:
+        p = os.path.join(out, name)
+        if os.path.isfile(p):
+            os.remove(p)
+
+
 def write_outputs(res, out):
     os.makedirs(out, exist_ok=True)
     paths = []
-    with open(os.path.join(out, "result.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(out, RESULT), "w", encoding="utf-8") as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
-    paths.append(os.path.join(out, "result.json"))
+    paths.append(os.path.join(out, RESULT))
     if res["상태"] == "질문":
-        p = os.path.join(out, "질문.md")
+        p = os.path.join(out, QUESTIONS)
         with open(p, "w", encoding="utf-8") as f:
             f.write(questions_md(res))
         return paths + [p]
-    p = os.path.join(out, "양도소득세_검토.md")
+    p = os.path.join(out, REVIEW)
     with open(p, "w", encoding="utf-8") as f:
         f.write(review_md(res))
     paths.append(p)
-    wb = os.path.join(out, "양도소득세_계산근거.xlsx")
+    wb = os.path.join(out, WORKBOOK)
     return paths + ([wb] if os.path.exists(wb) else [])
 
 
@@ -157,17 +172,23 @@ def main(argv=None):
     if not isinstance(facts, dict):
         print("사실관계 파일의 맨 위는 JSON 객체여야 한다")
         return 2
-    os.makedirs(a.출력, exist_ok=True)
     try:
-        res = engine.calculate(facts, rules_dir=a.rules, today=a.오늘,
-                               workbook_path=os.path.join(a.출력, "양도소득세_계산근거.xlsx"))
-    except ruleset.RuleError as e:
-        print("기준정보 오류: %s" % e)
-        return 3
-    except F.FactsError as e:
-        print(e)
-        return 2
-    write_outputs(res, a.출력)
+        os.makedirs(a.출력, exist_ok=True)
+        clear_previous(a.출력)
+        try:
+            res = engine.calculate(facts, rules_dir=a.rules, today=a.오늘,
+                                   workbook_path=os.path.join(a.출력, WORKBOOK))
+        except ruleset.RuleError as e:
+            print("기준정보 오류: %s" % e)
+            return 3
+        except F.FactsError as e:
+            print(e)
+            return 2
+        write_outputs(res, a.출력)
+    except OSError as e:  # 폴더를 못 만들거나 이전 파일을 못 지우거나 새 파일을 못 쓴 경우. 1 은 검산 실패 전용이다
+        print("출력 파일을 쓰지 못했습니다: %s (%s). 파일을 닫고 다시 실행하십시오." % (
+            e.filename or a.출력, " ".join(str(e.strerror or e).split())), file=sys.stderr)
+        return 4
     if res["상태"] == "질문":
         print("질문 %d개, 다루지않음 %d개. 질문.md 에 적었다" % (len(res["질문"]), len(res["다루지않음"])))
         return 2
