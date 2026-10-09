@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/i
 
 `~/.claude/skills/` 아래에 스킬 폴더가 들어가고, 법령 조회 서버는 `~/.claude/mcp/korean-law` 에 들어갑니다. Claude Code 를 다시 열면 잡힙니다. 회계·세무 스킬은 파이썬 3.10 이상, 법령 서버는 Node.js 18 이상이 필요합니다. 새 판이 나오면 같은 줄을 다시 실행하면 덮어씁니다.
 
-세법자문-회신을 쓰려면 법령 서버를 한 번 등록합니다. OC 는 [open.law.go.kr](https://open.law.go.kr) 에서 OPEN API 활용신청을 하면 받습니다(승인 1~2일).
+세법자문-회신·법령조회 스킬을 쓰려면 법령 서버를 한 번 등록합니다. OC 는 [open.law.go.kr](https://open.law.go.kr) 에서 OPEN API 활용신청을 하면 받습니다(승인 1~2일).
 
 ```bash
 claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈>/.claude/mcp/korean-law/index.js"
