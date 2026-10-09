@@ -275,6 +275,56 @@ def test_resolve_accepts_empty_result_with_root_present():
     assert cc.resolve(lambda name, page: {"LawSearch": {"totalCnt": "0"}}, "주택법", "20261009") is None
 
 
+# ---- 최종 검토 I2: 10쪽(1000행) 한도 ----
+
+def test_all_rows_raises_when_pages_run_out_before_total():
+    many = [row(f"다른법{i}", str(i), "20260101") for i in range(100)]
+    calls = []
+
+    def search(name, page):
+        calls.append(page)
+        return {"LawSearch": {"totalCnt": "1500", "law": many}}
+
+    with pytest.raises(RuntimeError, match="검색 결과가 1500건이라 다 읽지 못했다. 이름을 더 정확히 준다"):
+        cc.resolve(search, "주택법", "20261009")
+    assert calls == list(range(1, 11))
+
+
+def test_all_rows_does_not_raise_when_everything_is_read():
+    search = pages([row("주택법", "1", "20260101")] * 100, [row("주택법", "2", "20260201")] * 20)
+    assert cc.resolve(search, "주택법", "20261009")["법령일련번호"] == "2"
+
+
+# ---- 최종 검토 C1: 옛 이름은 별칭이 없으면 미해소로 남는다 ----
+
+OLD = "지방자치분권 및 지역균형발전에 관한 특별법"
+NEW = "지방자치분권 및 균형성장에 관한 특별법"
+
+
+def _renamed_search(name, page):
+    # 2026-10-09 법제처 현행·시행예정 검색(nw=2,3)의 모양: 옛 이름에는 개칭 전에 공포된 시행예정 판 하나만 있다
+    table = {
+        OLD: [row(NEW, "286737", "20260910", "20260609"), row(OLD, "285293", "20261015", "20260414")],
+        NEW: [row(NEW, "286737", "20260910", "20260609"), row(NEW, "286503", "20261203", "20260602")],
+    }
+    rows = table.get(name, []) if page == 1 else []
+    return {"LawSearch": {"totalCnt": str(len(table.get(name, []))), "law": rows}}
+
+
+def test_old_name_without_alias_stays_unresolved():
+    listing = {"주제": "시험", "법령": [{"이름": OLD, "구분": "비세법"}], "고시": []}
+    rep = cc.check(listing, {"별칭": []}, _renamed_search, fake_admrul, None, "20261009")
+    assert rep["요약"]["미해소"] == 1 and not rep["항목"][0]["해소"]
+
+
+def test_old_name_with_alias_resolves_to_current_name():
+    listing = {"주제": "시험", "법령": [{"이름": OLD, "구분": "비세법"}], "고시": []}
+    aliases = {"별칭": [{"인용명": OLD, "현행명": NEW, "종류": "개칭", "근거": "시험"}]}
+    rep = cc.check(listing, aliases, _renamed_search, fake_admrul, None, "20261009")
+    item = rep["항목"][0]
+    assert item["해소"] and item["현행명"] == NEW and item["MST"] == "286737"
+
+
 # ---- OC 가림 ----
 
 def test_mask_hides_oc_value_and_oc_parameter():

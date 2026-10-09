@@ -59,17 +59,21 @@ def parse_taxdoctor_list(text):
 
 def _all_rows(search, name, key_root, key_rows, max_pages=10):
     rows = []
+    total = 0
     for page in range(1, max_pages + 1):
         d = search(name, page)
         root = d.get(key_root) if isinstance(d, dict) else None
         if not isinstance(root, dict):
             keys = sorted(d) if isinstance(d, dict) else type(d).__name__
             raise RuntimeError(f"법제처 응답 형식이 다르다: {keys}")
-        got =[r for r in as_list(root.get(key_rows)) if isinstance(r, dict)]
+        got = [r for r in as_list(root.get(key_rows)) if isinstance(r, dict)]
         rows.extend(got)
         total = int(root.get("totalCnt") or len(rows))
         if not got or len(rows) >= total:
             break
+    # 1000행에서 끊긴 결과로 「찾지 못함」을 적으면 틀린다
+    if len(rows) < total:
+        raise RuntimeError(f"검색 결과가 {total}건이라 다 읽지 못했다. 이름을 더 정확히 준다: {name}")
     return rows
 
 
