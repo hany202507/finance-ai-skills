@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from cases import CASES, EXPECT, EXPECT_TOTAL
+from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house
 from yangdo import questions as Q
 
 
@@ -550,3 +550,86 @@ def test_next_questions_reports_bad_condition_with_question_id(monkeypatch):
     monkeypatch.setattr(Q, "load", lambda path=None: broken)
     with pytest.raises(ValueError, match=broken["문항"][0]["id"]):
         Q.next_questions({"자산": [{"id": "A"}]})
+
+
+# ---- 자료형 검사는 사실관계 검사와 같은 표(facts.form_problem)를 쓴다 (C1) ----
+def _q(qid):
+    return next(q for q in Q.load()["문항"] if q["id"] == qid)
+
+
+def test_question_definitions_are_loaded_once_for_both_checks():
+    from yangdo import facts as F
+    assert Q.load() is F.load_questions()
+
+
+@pytest.mark.parametrize("qid,value,unit", [
+    ("A07", "false", "자산"), ("A07", 0, "자산"), ("A07", "예", "자산"),
+    ("X04", "해당없음", "자산"), ("X04", ["없는사유"], "자산"), ("X04", [["사원용"]], "자산"),
+    ("A06", ["일괄"], "자산"), ("A06", "통째", "자산"), ("A06", {"구분": "일괄"}, "자산"),
+    ("A02", True, "자산"), ("A02", {"구분": "예"}, "자산"),
+    ("H10", ["해당없음"], "자산"),
+    ("P01", "아니오", "전역"), ("H01", "true", "전역"),
+    ("H02", "30세이상", "전역"), ("H02", ["그냥"], "전역"),
+    ("H05", "없음", "전역"), ("H06", "없음", "전역"),
+])
+def test_answer_and_prepare_reject_the_same_wrong_forms(qid, value, unit):
+    from yangdo import facts as F
+    q = _q(qid)
+    assert F.form_problem(q, value)
+    f = {"자산": [{"id": "A"}]}
+    with pytest.raises(ValueError, match="받는 형식"):
+        Q.answer(f, qid, value, 자산="A" if unit == "자산" else None)
+
+
+@pytest.mark.parametrize("qid,value", [
+    ("A07", True), ("A07", False), ("X04", []), ("X04", ["사원용", "소송3년"]), ("X04", ["해당없음"]),
+    ("A06", "일괄"), ("A02", "모름"), ("P01", False), ("H01", True), ("H02", ["30세이상"]), ("H05", ["없음"]),
+    ("H06", []), ("P04", "단독"), ("P04", {"구분": "공동", "분자": 1, "분모": 2}),
+])
+def test_answer_accepts_the_forms_prepare_accepts(qid, value):
+    from yangdo import facts as F
+    assert F.form_problem(_q(qid), value) is None
+    f = {"자산": [{"id": "A"}]}
+    unit = Q.unit_kind(_q(qid))
+    Q.answer(f, qid, value, 자산="A" if unit == "자산" else None)
+
+
+def test_wrongly_typed_value_is_asked_again_instead_of_counted_as_answered():
+    f = copy.deepcopy(CASES["D"])
+    f["자산"][0]["중과배제_사유"] = "해당없음"
+    assert "X04" in [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+    g = Q.answer(f, "X04", ["해당없음"], 자산="D")
+    assert "X04" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
+    assert g["자산"][0]["중과배제_사유"] == ["해당없음"]
+
+
+def test_moreum_and_right_forms_still_count_as_answered():
+    f = copy.deepcopy(CASES["D"])
+    assert "X04" not in [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+    f["자산"][0]["중과배제_사유"] = None
+    g = Q.answer(f, "X04", Q.MOREUM, 자산="D")
+    assert "X04" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
+
+
+# ---- 지구 안인지 모를 때 문답이 끝난다 (M3) ----
+def _gwanggyo_oracle(지구):
+    a = asset("G1", "주택", addr("경기도", "수원시 영통구", "이의동"), "2019-03-01", "2026-11-15", 1_500_000_000, 800_000_000,
+              거주기간=[["2019-03-01", "2026-11-15"]], 지구해당=지구)
+    return facts([a], [house("H1", a["소재지"], "2019-03-01", 자산id="G1")])
+
+
+def test_dialogue_with_unknown_district_ends_with_out_of_scope():
+    f, asked = replay(_gwanggyo_oracle("모름"))
+    assert asked.count("A02") == 1
+    assert f["자산"][0]["지구해당"] == "모름"
+    r = _engine().calculate(f, today="2026-10-09")
+    assert r["질문"] == [] and r["계산"] is None
+    assert [o["자산"] for o in r["다루지않음"]] == ["G1"] and "지구 안인지 확인되지 않음" in r["다루지않음"][0]["내용"]
+    assert Q.next_questions(f)["다음"] == []
+
+
+def test_dialogue_with_known_district_calculates():
+    for 지구 in ("예", "아니오"):
+        f, asked = replay(_gwanggyo_oracle(지구))
+        r = _engine().calculate(f, today="2026-10-09")
+        assert r["상태"] == "완료", (지구, r["질문"], r["다루지않음"])

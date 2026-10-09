@@ -68,13 +68,14 @@ def test_auction_transfer_without_any_date_asks_a11():
     assert r["상태"] == "질문" and r["질문"][0]["문항"] == "A11"
 
 
-@pytest.mark.parametrize("원인", ["교환", "기타"])
-def test_exchange_and_other_transfer_not_calculated(원인):
+@pytest.mark.parametrize("원인,문구", [("교환", "교환으로 양도한 자산"), ("기타", "기타 원인으로 양도한 자산"),
+                                     ("수용", "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)")])
+def test_exchange_other_and_expropriation_transfer_not_calculated(원인, 문구):
     f = copy.deepcopy(CASES["A"])
     f["자산"][0]["양도"]["원인"] = 원인
     r = engine.calculate(f, today="2026-10-09")
     assert r["상태"] == "질문" and r["계산"] is None
-    assert r["다루지않음"] == [{"자산": "A", "내용": "%s 으로 양도한 자산" % 원인, "계획": "5"}]
+    assert r["다루지않음"] == [{"자산": "A", "내용": 문구, "계획": "5"}]
 
 
 def test_unsupported_plan_defaults_to_5_and_mixed_years_has_none():
