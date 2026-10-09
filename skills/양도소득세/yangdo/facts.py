@@ -109,6 +109,16 @@ def check_personal(f):
         raise FactsError("주민등록번호로 보이는 값은 사실관계에 넣지 않습니다")
 
 
+DISTRICT_UNKNOWN = ("지구 안인지 확인되지 않음(A02 모름). 조정대상지역 해당을 정하지 못해 계산하지 않았다. "
+                    "토지이용계획확인서 등으로 확인해 A02 를 예 또는 아니오로 답하면 계산한다")
+
+
+def district_unknown(f, a):
+    """지구 안인지(A02)를 모른다고 답했는지. 손으로 쓴 지구해당 「모름」이나 모름 목록의 「A02:<자산 id>」 표시다.
+    이 답이 계산을 막는지는 판정(judge)이 정한다. 지구 답이 있어야 조정대상지역을 정하는 주소일 때만 막는다."""
+    return a.get("지구해당") == "모름" or "A02:%s" % a.get("id") in (f.get("모름") or [])
+
+
 def get(obj, path, default=None):
     node = obj
     for p in path.split("."):
@@ -545,12 +555,6 @@ def _prepare_asset(f, a, out, bad):
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
     _check_asset_forms(a, aid)
-    # 지구 안인지 모르면(A02 모름) 조정대상지역 해당을 정하지 못한다. 판정이 A02 를 다시 묻게 두면 질문지는 이미 답한 문항이라
-    # 내지 않아 대화가 끝나지 않는다. 등기하지 않은 미이행 주택은 판정이 조정대상지역을 보지 않는다
-    미등기_미이행 = a.get("등기") is False and a.get("미등기사유") == "미이행"
-    if 종류 == "주택" and not 미등기_미이행 and (a.get("지구해당") == "모름" or "A02:%s" % aid in (f.get("모름") or [])):
-        raise OutOfScope(aid, "지구 안인지 확인되지 않음(A02 모름). 조정대상지역 해당을 정하지 못해 계산하지 않았다. "
-                         "토지이용계획확인서 등으로 확인해 A02 를 예 또는 아니오로 답하면 계산한다", "없음")
     if 종류 == "주택":
         if "H05" not in bad and [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
             raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")

@@ -4,7 +4,8 @@ from fractions import Fraction
 
 import pytest
 
-from cases import CASES, addr, asset, facts, house
+from cases import CASES, EXPECT, addr, asset, facts, house
+from yangdo import engine
 from yangdo import facts as F
 
 
@@ -563,29 +564,67 @@ def _gwanggyo():
     return facts([a], [house("H1", a["소재지"], "2019-03-01", 자산id="G1")])
 
 
+def _calc(f):
+    """A02 모름은 판정이 지구 답을 요구할 때만 걸린다. prepare 가 아니라 판정 단계(judge)가 정한다."""
+    return engine.calculate(f, today="2026-10-09")
+
+
 def test_district_unknown_answer_is_out_of_scope_not_a_loop():
     f = _gwanggyo()
     f["자산"][0]["지구해당"] = "모름"
-    p = F.prepare(f)
-    assert p["질문"] == [] and len(p["다루지않음"]) == 1
-    o = p["다루지않음"][0]
+    r = _calc(f)
+    assert r["질문"] == [] and r["계산"] is None and len(r["다루지않음"]) == 1
+    o = r["다루지않음"][0]
     assert o["자산"] == "G1" and "지구 안인지 확인되지 않음" in o["내용"] and o["계획"] == "없음"
-    assert F.prepare(_gwanggyo())["다루지않음"] == []   # 모르는 답이 없으면 그대로 판정으로 가 A02 를 묻는다
+    assert [q["문항"] for q in _calc(_gwanggyo())["질문"]] == ["A02"]   # 모르는 답이 없으면 판정이 A02 를 묻는다
 
 
 def test_district_unknown_marker_in_list_is_the_same():
     f = _gwanggyo()
     f["모름"] = ["A02:G1"]
-    assert "지구 안인지 확인되지 않음" in F.prepare(f)["다루지않음"][0]["내용"]
+    r = _calc(f)
+    assert r["질문"] == [] and "지구 안인지 확인되지 않음" in r["다루지않음"][0]["내용"]
 
 
 def test_district_unknown_does_not_block_land_or_unregistered_house():
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["지구해당"] = "모름"
-    assert F.prepare(f)["다루지않음"] == []
+    assert _calc(f)["상태"] == "완료"
     f = copy.deepcopy(CASES["E"])
     f["자산"][0]["지구해당"] = "모름"
-    assert F.prepare(f)["다루지않음"] == []
+    assert _calc(f)["상태"] == "완료"
+    # 등기하지 않은 미이행 주택은 판정이 조정대상지역을 보지 않으므로 지구 답이 필요 없다
+    f = _gwanggyo()
+    f["자산"][0].update(등기=False, 미등기사유="미이행", 지구해당="모름")
+    r = _calc(f)
+    assert r["상태"] == "완료" and r["다루지않음"] == []
+
+
+@pytest.mark.parametrize("name", ["A", "B", "D", "G"])
+def test_district_unknown_is_ignored_when_the_address_needs_no_district_answer(name):
+    """송파·해운대·마포처럼 지구 답 없이 조정대상지역을 정할 수 있는 주소는 A02 모름이어도 계산한다(질문지도 그때 A02 를 묻지 않는다)."""
+    base = _calc(copy.deepcopy(CASES[name]))
+    assert base["상태"] == "완료"
+    for mutate in (lambda f: f["자산"][0].update(지구해당="모름"), lambda f: f.update(모름=["A02:%s" % name])):
+        f = copy.deepcopy(CASES[name])
+        mutate(f)
+        r = _calc(f)
+        assert r["상태"] == "완료" and r["다루지않음"] == []
+        assert r["계산"]["합계"]["산출세액"] == base["계산"]["합계"]["산출세액"]
+
+
+def test_district_unknown_on_the_acquisition_address_only_counts_when_that_address_needs_it():
+    """취득 당시 주소가 지구 답을 요구하면 양도 주소가 요구하지 않아도 걸린다. 반대로 요구하지 않으면 걸리지 않는다."""
+    f = _gwanggyo()
+    f["자산"][0].update(소재지=addr("서울특별시", "송파구", "잠실동"), 취득당시소재지=addr("경기도", "수원시 영통구", "이의동"),
+                      지구해당="모름")
+    f["세대"]["주택목록"][0]["소재지"] = f["자산"][0]["소재지"]
+    r = _calc(f)
+    assert r["질문"] == [] and "지구 안인지 확인되지 않음" in r["다루지않음"][0]["내용"]
+    g = _gwanggyo()
+    g["자산"][0].update(소재지=addr("서울특별시", "송파구", "잠실동"), 지구해당="모름")
+    g["세대"]["주택목록"][0]["소재지"] = g["자산"][0]["소재지"]
+    assert _calc(g)["다루지않음"] == []
 
 
 # ---- 취득원인·미등기 토지 ----

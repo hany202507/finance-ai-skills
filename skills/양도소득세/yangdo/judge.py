@@ -409,7 +409,14 @@ def judge_asset(f, a, prep, rs, reg):
             v["확인사항"].append("등기하지 않은 사유(%s)가 시행령 제168조① 제외 사유라 미등기양도자산으로 보지 않았다. 증빙을 확인하라" % 사유)
             v["근거"] += rs.cite("판정.미등기제외", 양도)
     if a["종류"] == "주택" and not v["미등기"]:
-        _house(f, a, prep, rs, reg, v, 취득, 양도)
+        try:
+            _house(f, a, prep, rs, reg, v, 취득, 양도)
+        except F.Missing as m:
+            # 판정이 지구 답(A02)을 요구하는데 모른다고 답했으면 다시 묻지 않고 다루지않음으로 돌린다. 질문지는 이미 답한 문항을 내지 않아
+            # 되물으면 대화가 끝나지 않는다. 지구 답이 필요 없는 주소(엔진값 지구확인필요 거짓)와 미등기 미이행 주택은 이 길을 지나지 않는다
+            if m.문항 == "A02" and F.district_unknown(f, a):
+                raise F.OutOfScope(aid, F.DISTRICT_UNKNOWN, "없음") from None
+            raise
         if v["전액비과세"]:
             return v
     grp = "주택" if a["종류"] == "주택" else "일반"
