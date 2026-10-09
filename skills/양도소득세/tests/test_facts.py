@@ -552,7 +552,8 @@ def test_form_problem_by_answer_form():
     assert F.form_problem(qs["P04"], {"구분": "그냥"})
     assert F.form_problem(qs["H06"], []) is None and F.form_problem(qs["H06"], "없음")
     assert F.form_problem(qs["A11"], "2026.11.15") is None     # 날짜·금액은 이 함수가 보지 않는다
-    assert F.form_problem(qs["P07"], "H1") is None            # 선택지가 없는 선택 문항은 받는 대로 둔다
+    assert F.form_problem(qs["P07"], False) is None and F.form_problem(qs["P07"], True) is None
+    assert F.form_problem(qs["P07"], "아니요") and F.form_problem(qs["P07"], "H1")   # 같은 날 양도(P07)는 예아니오다
 
 
 # ---- 지구 안인지 모르는 답(A02 모름) ----

@@ -172,12 +172,51 @@ def test_houses_sold_on_different_days_or_a_house_and_land_are_not_same_day():
     assert F.prepare(f)["다루지않음"] == []
 
 
-def test_same_day_order_answer_is_out_of_scope_even_for_one_asset_in_the_file():
-    """다른 양도를 따로 돌린 사실관계는 같은 날 양도한 다른 집이 없다. P07 에 답이 있으면 그 사실을 알려 주는 것이다."""
-    p = F.prepare(_mut("A", lambda f: f["연간"].update(같은날양도순서="A")))
+def test_same_day_answer_is_out_of_scope_even_for_one_asset_in_the_file():
+    """다른 양도를 따로 돌린 사실관계는 같은 날 양도한 다른 집이 없다. P07 이 참이면 그 사실을 알려 주는 것이다."""
+    p = F.prepare(_mut("A", lambda f: f["연간"].update(같은날양도순서=True)))
     assert [x["자산"] for x in p["다루지않음"]] == ["A"] and "제154조⑨" in p["다루지않음"][0]["내용"]
-    for nobody in (None, "", "없음", "아니오", "해당없음", False):
+    for nobody in (None, False):
         assert F.prepare(_mut("A", lambda f: f["연간"].update(같은날양도순서=nobody)))["다루지않음"] == []
+
+
+def _bc_same_day(answer):
+    """사례 BC(B 2026-11-20, C 2026-10-30, 서로 다른 날)에서 같은 해 다른 양도(P05)를 참으로 두고 P07 에 답한 사실관계."""
+    f = copy.deepcopy(CASES["BC"])
+    f["연간"].update(다른양도=True, 같은날양도순서=answer)
+    return f
+
+
+@pytest.mark.parametrize("answer", ["아니요", "아니오", "없습니다", "다른 날 팔았음", "해당없음", "없음", "", "A", 0, ["A"]])
+def test_same_day_answer_that_is_not_a_boolean_asks_p07_again(answer):
+    """P07 은 예아니오다. 글자로 답한 「아니요」 가 「같은 날 양도가 있다」 로 읽혀 맞는 계산을 막으면 안 된다."""
+    f = _bc_same_day(answer)
+    p = F.prepare(f)
+    assert [q["문항"] for q in p["질문"]] == ["P07"] and p["다루지않음"] == []
+    r = engine.calculate(f, today=TODAY)
+    assert r["상태"] == "질문" and r["계산"] is None and r["다루지않음"] == []
+    assert [q["문항"] for q in r["질문"]] == ["P07"]
+    assert "P07" in [x["id"] for x in Q.next_questions(f, limit=None)["다음"]]
+
+
+def test_same_day_answer_false_calculates_and_true_is_out_of_scope():
+    r = engine.calculate(_bc_same_day(False), today=TODAY)
+    assert r["상태"] == "완료" and r["계산"]["합계"]["산출세액"] == EXPECT_TOTAL["BC"]["산출세액"] == 75_402_000
+    r = engine.calculate(_bc_same_day(True), today=TODAY)
+    assert r["상태"] == "질문" and r["계산"] is None and r["질문"] == []
+    assert sorted((x["자산"], x["계획"]) for x in r["다루지않음"]) == [("B", "5"), ("C", "5")]
+    assert all("제154조⑨" in x["내용"] for x in r["다루지않음"])
+
+
+def test_p07_is_a_yes_no_question_and_not_asked_once_answered():
+    q = {x["id"]: x for x in Q.load()["문항"]}["P07"]
+    assert q["답형식"] == "예아니오" and not q.get("선택지") and q["키"] == ["연간.같은날양도순서"]
+    assert not hasattr(F, "SAME_DAY_NO")
+    for answered in (False, True):
+        assert "P07" not in [x["id"] for x in Q.next_questions(_bc_same_day(answered), limit=None)["다음"]]
+    assert Q.answer(_bc_same_day(None), "P07", False)["연간"]["같은날양도순서"] is False
+    with pytest.raises(ValueError, match="P07"):
+        Q.answer(_bc_same_day(None), "P07", "아니요")
 
 
 def test_same_day_check_ignores_assets_already_out_of_scope():
