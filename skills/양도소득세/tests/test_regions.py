@@ -134,3 +134,14 @@ def test_load_requires_notice_files(tmp_path):
     shutil.copy(os.path.join(RULES_DIR, "행정구역_대응.json"), tmp_path / "행정구역_대응.json")
     with pytest.raises(FileNotFoundError):
         RG.load(str(tmp_path))
+
+
+def test_empty_district_asks():
+    with pytest.raises(NeedAnswer) as e:
+        REG.status(C, a("서울특별시", "", ""), "2026-03-15")
+    assert e.value.문항 == "A01"
+    assert REG.status(C, a("세종특별자치시", "", "보람동"), "2026-03-15", "아니오")["지정"] is False
+
+
+def test_metro_unknown_sido_is_none():
+    assert REG.metro(a("서울특별", "마포구", "공덕동"), "2026-10-09") is None

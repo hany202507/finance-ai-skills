@@ -138,6 +138,8 @@ class Regions:
         a = self.canon(addr, notes)
         if a["시도"] not in KNOWN_SIDO:
             raise NeedAnswer("A01", "시도 이름 %s 를 알 수 없습니다. 서울특별시·경기도처럼 적어 주세요" % a["시도"])
+        if not a["시군구"]:
+            raise NeedAnswer("A01", "시군구를 적어 주세요")
         self._check_reorg(a, on)
         cur, pend = None, None
         for e in self.events[regime]:
@@ -189,6 +191,8 @@ class Regions:
 
     def metro(self, addr, on=None):
         a = self.canon(addr, on=_d(on) if on is not None else None)
+        if a["시도"] not in KNOWN_SIDO:
+            return None
         if a["시도"] in CAPITAL:
             return True
         if a["시도"] in UNKNOWN_METRO:
