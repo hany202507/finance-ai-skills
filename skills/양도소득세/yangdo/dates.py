@@ -68,7 +68,10 @@ def _settle(balance, registration):
 
 
 def transfer_date(양도):
-    return _settle((양도 or {}).get("잔금일"), (양도 or {}).get("등기접수일"))
+    """양도 시기. 경매는 매수인이 매각대금을 다 낸 날(대금완납일, 없으면 잔금일)이 대금 청산일이다."""
+    t = 양도 or {}
+    balance = (t.get("대금완납일") or t.get("잔금일")) if t.get("원인") == "경매" else t.get("잔금일")
+    return _settle(balance, t.get("등기접수일"))
 
 
 def acquisition_date(취득):

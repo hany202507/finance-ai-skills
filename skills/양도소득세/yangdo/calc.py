@@ -12,7 +12,11 @@ GROUPS = ("취득부대", "자본적지출", "기타", "양도비")
 
 
 class Unsupported(Exception):
-    pass
+    """계산하지 않는 경우. 계획은 그 범위를 다룰 계획 번호이고 「없음」은 계획이 없다는 뜻이다."""
+
+    def __init__(self, message, 계획="5"):
+        super().__init__(message)
+        self.계획 = 계획
 
 
 def floor(x):
@@ -185,7 +189,7 @@ def _table(t):
 def annual(f, verdicts, rs, cd):
     assets = {a["id"]: a for a in f["자산"]}
     if len({v["양도일"][:4] for v in verdicts}) > 1:
-        raise Unsupported("과세연도가 다른 양도는 연도마다 따로 계산한다")
+        raise Unsupported("과세연도가 다른 양도는 연도마다 따로 계산합니다", 계획="없음")
     on0 = min(to_date(v["양도일"]) for v in verdicts)
     rows, 확인, 근거 = [], [], []
     for v in verdicts:

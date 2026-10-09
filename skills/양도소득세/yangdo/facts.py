@@ -251,6 +251,10 @@ def _prepare_asset(f, a, out):
     원인 = need(a, "양도.원인", "P03", aid)
     if 원인 == "부담부증여":
         raise OutOfScope(aid, "부담부증여", "5")
+    if 원인 in ("교환", "기타"):  # 교환은 받은 자산의 시가가 양도가액이라 이 계획이 다루지 않는다
+        raise OutOfScope(aid, "%s 으로 양도한 자산" % 원인, "5")
+    if 원인 not in ("매매", "수용", "경매"):
+        raise Missing("P03", aid, "양도 원인 코드 %s 를 알 수 없습니다" % 원인)
     취득원인 = need(a, "취득.원인", "A15", aid)
     if 취득원인 in ("상속", "증여", "부담부증여", "조합원"):
         raise OutOfScope(aid, "%s 으로 취득한 자산" % 취득원인, "5")

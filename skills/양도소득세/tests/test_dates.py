@@ -59,6 +59,22 @@ def test_transfer_date_only_registration():
     assert dates.transfer_date({"잔금일": None, "등기접수일": "2026-11-10"})[0] == date(2026, 11, 10)
 
 
+def test_transfer_auction_uses_full_payment_day():
+    t = {"원인": "경매", "대금완납일": "2026-11-15", "잔금일": "2026-12-20"}
+    assert dates.transfer_date(t)[0] == date(2026, 11, 15)
+    assert dates.transfer_date({"원인": "경매", "잔금일": "2026-12-20"})[0] == date(2026, 12, 20)
+
+
+def test_transfer_auction_registration_before_payment_is_registration_day():
+    t = {"원인": "경매", "대금완납일": "2026-11-15", "등기접수일": "2026-11-10"}
+    assert dates.transfer_date(t)[0] == date(2026, 11, 10)
+
+
+def test_transfer_sale_ignores_full_payment_day():
+    assert dates.transfer_date({"원인": "매매", "대금완납일": "2026-11-15"})[0] is None
+    assert dates.transfer_date({"원인": "매매", "대금완납일": "2026-11-15", "잔금일": "2026-12-20"})[0] == date(2026, 12, 20)
+
+
 def test_transfer_date_none():
     assert dates.transfer_date({})[0] is None
 

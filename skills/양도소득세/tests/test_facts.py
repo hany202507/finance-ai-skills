@@ -35,6 +35,8 @@ def test_before_2025_is_out_of_scope():
     (("자산", 0, "종류"), "분양권", "5"),
     (("자산", 0, "종류"), "기타자산", "없음"),
     (("자산", 0, "양도", "원인"), "부담부증여", "5"),
+    (("자산", 0, "양도", "원인"), "교환", "5"),
+    (("자산", 0, "양도", "원인"), "기타", "5"),
     (("자산", 0, "취득", "원인"), "상속", "5"),
     (("자산", 0, "계약금액일치"), False, "없음"),
 ])
@@ -46,6 +48,24 @@ def test_scope(path, value, plan):
         node[path[-1]] = value
     p = prep("B", m)
     assert p["다루지않음"] and p["다루지않음"][0]["계획"] == plan
+
+
+@pytest.mark.parametrize("원인", ["교환", "기타"])
+def test_exchange_and_other_transfer_name_the_cause(원인):
+    p = prep("B", lambda f: f["자산"][0]["양도"].update(원인=원인))
+    assert p["다루지않음"] == [{"자산": "B", "내용": "%s 으로 양도한 자산" % 원인, "계획": "5"}]
+    assert p["시기"] == {}
+
+
+@pytest.mark.parametrize("원인", ["매매", "수용", "경매"])
+def test_sale_expropriation_and_auction_are_in_scope(원인):
+    p = prep("B", lambda f: f["자산"][0]["양도"].update(원인=원인))
+    assert p["다루지않음"] == [] and p["질문"] == []
+
+
+def test_unknown_transfer_cause_asks_p03():
+    p = prep("B", lambda f: f["자산"][0]["양도"].update(원인="증여"))
+    assert p["질문"][0]["문항"] == "P03" and "증여" in p["질문"][0]["내용"]
 
 
 def test_household_specials_out_of_scope():
