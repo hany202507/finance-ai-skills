@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import copy
 
+import pytest
+
 from cases import CASES
 from yangdo import engine, ruleset, verify
 
@@ -132,3 +134,10 @@ def test_workbook_check_detects_engine_mismatch(tmp_path):
     r["계산"]["합계"]["산출세액"] += 1000
     msgs = verify.check_workbook(p, r["계산"])
     assert any(m.startswith("W B 산출세액") for m in msgs) and any("합계 산출세액" in m for m in msgs)
+
+
+def test_verify_reads_dates_strictly():
+    """검산도 YYYY-MM-DD 글자만 받는다(파이썬 3.10 과 3.11 이상의 결과가 같다)."""
+    assert verify._years("2014-11-01", "2026-11-15") == 12
+    with pytest.raises(ValueError):
+        verify._years("20141101", "2026-11-15")
