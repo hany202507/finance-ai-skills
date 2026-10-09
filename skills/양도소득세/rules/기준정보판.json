@@ -1,0 +1,12 @@
+{
+ "id": "ca6f9b32bb0ecc4e",
+ "파일": {
+  "ruleset.json": "1ea8a391d2edd749f194d3ffb6436973927618a9ea622f0b7080096f4975bb4d",
+  "고시/조정대상지역.json": "bfca44562d5457182976b27363c0062e474054a9462d7da6fc71e269eca80cff",
+  "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
+  "고시/투기지역.json": "93dd90d7c6813b8a109357fde66a80373d88a48a95d5a5262a1f1960c2e9c7fb",
+  "코드표.json": "cc13ee60829c2d585bdbb386a2682e1b90085ba34d7f7e21d2ba9b76344fdca2",
+  "행정구역_대응.json": "3f3e20ff3ce81354d72c3ee035a036573a6a71063003bd8bf524bd3c53e64978"
+ },
+ "확인일": "2026-10-09"
+}
