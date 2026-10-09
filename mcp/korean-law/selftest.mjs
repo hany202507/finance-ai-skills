@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { articleLabel } from './lib.mjs';
 
 if (!process.env.LAW_OC) {
   console.error('LAW_OC 환경변수에 본인 OC 를 넣고 실행한다. 예: LAW_OC=myid node selftest.mjs');
@@ -167,7 +168,7 @@ check('get_ruling 조세심판원 — 재결요지·주문 본문',
 // 20. 법-령-칙 연계 — 부가법 §60⑩ 이 법인세법·소득세법을 끌어오는 것을 자동으로 잇는가
 r = await call('trace_references', { law_name: '부가가치세법', article: '60' });
 check('trace_references — 타법 인용(법인세법 §75의6·소득세법 §81의9) 적출',
-  !r.isError && /법인세법.*제75의6조/s.test(r.text) && /소득세법.*제81의9조/s.test(r.text), r.text.slice(0, 400));
+  !r.isError && /법인세법.*제75조의6/s.test(r.text) && /소득세법.*제81조의9/s.test(r.text), r.text.slice(0, 400));
 
 // 21. 시행령 역참조 — 법-령 연결의 실제 표현
 check('trace_references — 시행령 역참조(§108 가산세) 적출',
@@ -190,6 +191,7 @@ check('get_ruling 국세청 — 차단을 숨기지 않고 원인·링크 안내
 // ---- 2026-10-09 결함 회귀 ----
 const today8 = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10).replace(/-/g, '');
 const head = (text, key) => (text.match(new RegExp(`^${key}: (.+)$`, 'm')) ?? [])[1] ?? '';
+const normSq = (s) => String(s).replace(/\s+/g, '');
 
 r = await call('get_law_text', { law_name: '주택법', article: '63의2' });
 check('주택법을 다른 법으로 찾지 않는다', !r.isError && head(r.text, '법령') === '주택법', r.text);
@@ -247,11 +249,11 @@ for (const [law, art, jo] of [['소득세법', '104', '010400'], ['소득세법 
   const ef = head(t2.text, '시행일').slice(0, 8);
   let want;
   try { want = mokTexts(await rawUnits(mst, ef, jo)); } catch (e) {
-    check(`${law} 제${art}조 목이 모두 출력에 있다`, false, `원 응답 조회 실패: ${maskKey(e.message)}`);
+    check(`${law} ${articleLabel(art)} 목이 모두 출력에 있다`, false, `원 응답 조회 실패: ${maskKey(e.message)}`);
     continue;
   }
   const missing = want.filter((x) => !t2.text.includes(x));
-  check(`${law} 제${art}조 목 ${want.length}개가 모두 출력에 있다`, want.length > 0 && missing.length === 0, missing.slice(0, 3).join(' | '));
+  check(`${law} ${articleLabel(art)} 목 ${want.length}개가 모두 출력에 있다`, want.length > 0 && missing.length === 0, missing.slice(0, 3).join(' | '));
 }
 
 // OC 노출: 링크가 실제로 나오는 도구로 본다(링크가 없으면 가릴 것이 없어 항상 통과한다). 실패 때 값을 찍지 않도록 detail 은 고정 문구다
@@ -264,6 +266,59 @@ check('search_forms 출력에 링크가 있고 OC 가 섞이지 않는다', !r.i
 // 입력을 되풀이하는 오류 문구에 OC 를 실어 마스킹 자체가 동작하는지도 본다(가림을 빼면 실패한다)
 r = await call('get_law_text', { law_name: `OC=${process.env.LAW_OC}` });
 check('입력으로 들어온 OC 가 오류 문구에 되풀이돼도 가려진다', r.isError && r.text.includes('OC=***') && !leaksOC(r.text), 'OC 노출 또는 되풀이 없음');
+
+// ---- 2026-10-09 최종 검토 수정 회귀 ----
+
+// 가지 조문 출처 URL 이 law.go.kr 에서 실제로 그 조문을 연다(공개 주소라 OC 가 필요 없다).
+// 한글주소 페이지는 iframe 껍데기라 본문은 iframe 주소에서 읽는다. 틀린 형식(제104의3조)이면 오류 페이지가 온다
+r = await call('get_law_text', { law_name: '소득세법', article: '104의3' });
+const src = (r.text.match(/^출처: (\S+)$/m) ?? [])[1] ?? '';
+let urlOk = false, urlDetail = src;
+try {
+  const page = await (await fetch(src, { signal: AbortSignal.timeout(30000) })).text();
+  const inner = (page.match(/<iframe[^>]+src="([^"]+)"/) ?? [])[1]?.replace(/&amp;/g, '&');
+  const frame = inner ? await (await fetch(new URL(inner, 'https://www.law.go.kr'), { signal: AbortSignal.timeout(30000) })).text() : '';
+  urlOk = !page.includes('오류페이지') && frame.includes('제104조의3(비사업용 토지의 범위)');
+  urlDetail = `${src} / iframe ${inner ?? '없음'}`;
+} catch (e) { urlDetail = `${src} / ${e.message}`; }
+check('가지 조문 출처 URL(제104조의3)이 law.go.kr 에서 그 조문을 연다',
+  !r.isError && src === 'https://www.law.go.kr/법령/소득세법/제104조의3' && urlOk, urlDetail);
+
+// 옛 이름: 개칭 뒤 날짜면 새 이름 판, 머리줄에 옛 이름이라고 적는다
+r = await call('get_law_text', { law_name: '경제자유구역의 지정 및 운영에 관한 법률', article: '1', effective_date: '2024-05-01' });
+check('옛 이름 + 개칭 뒤 날짜 — 새 이름 판을 읽고 옛 이름이라고 적는다',
+  !r.isError && head(r.text, '법령') === '경제자유구역의 지정 및 운영에 관한 특별법' && head(r.text, '시행일').includes('은 옛 이름이다'), r.text.slice(0, 400));
+r = await call('get_law_text', { law_name: '경제자유구역의 지정 및 운영에 관한 법률', article: '1', effective_date: '2008-01-01' });
+check('옛 이름 + 개칭 전 날짜 — 옛 이름 판을 읽는다',
+  !r.isError && normSq(head(r.text, '법령')) === normSq('경제자유구역의 지정 및 운영에 관한 법률') && head(r.text, '시행일').startsWith('2007'), r.text.slice(0, 400));
+r = await call('get_law_text', { law_name: '지방자치분권 및 지역균형발전에 관한 특별법', article: '1' });
+check('옛 이름을 날짜 없이 — 오늘 시행 중인 새 이름 판',
+  !r.isError && head(r.text, '법령') === '지방자치분권 및 균형성장에 관한 특별법' && head(r.text, '시행일').slice(0, 8) <= today8, r.text.slice(0, 400));
+
+// 가지 조문 역참조: 시행령이 「법 제104조의3」 을 부른다(예전에는 「법 제104조의3조」 를 찾아 0건이었다)
+r = await call('trace_references', { law_name: '소득세법', article: '104의3' });
+const back = Number((r.text.match(/■ 시행령에서 이 조문을 되부르는 조문 (\d+)건/) ?? [])[1] ?? 0);
+check('trace_references 가지 조문 — 머리 표기 제104조의3, 시행령 역참조 1건 이상',
+  !r.isError && r.text.startsWith('소득세법 제104조의3 — 참조 관계') && back > 0, r.text.slice(0, 600));
+
+// 인증 실패를 「법령이 없다」로 적지 않는다. 틀린 OC 로 서버를 하나 더 띄워 본다(값은 시험용 가짜)
+const bad = spawn(process.execPath, [join(here, 'index.js')], { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, LAW_OC: 'selftest-invalid-oc' } });
+const badText = await new Promise((resolve) => {
+  let b = '';
+  bad.stdout.on('data', (c) => {
+    b += c.toString('utf8');
+    const m = b.split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).find((x) => x?.id === 2);
+    if (m) resolve(m.result?.content?.[0]?.text ?? '');
+  });
+  const send = (o) => bad.stdin.write(JSON.stringify(o) + '\n');
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'selftest', version: '1' } } });
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'search_law', arguments: { query: '주택법' } } });
+  setTimeout(() => resolve('(시간 초과)'), 45000);
+});
+bad.kill();
+check('틀린 OC — 「해당하는 법령이 없다」가 아니라 법제처 실패 문구로 보고',
+  badText.includes('조회 실패') && badText.includes('실패') && !badText.includes('해당하는 법령이 없다'), badText.slice(0, 200));
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL\n`);
 proc.kill();

@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   flattenArticle, joCode, normName, pickExact, pickInForce, todaySeoul, ymd, maskSecrets,
+  lawUrl, articleLabel, pickInForceAcrossNames,
 } from '../lib.mjs';
 
 const fx = (f) => JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', f), 'utf8'));
@@ -18,14 +19,62 @@ function oracle(node, inside = false, out = []) {
   return out;
 }
 
+// 목내용이 배열로 온 곳의 수. fixture 가 이 경우를 실제로 담고 있어야 아래 시험이 뜻이 있다
+function arrayMok(node, n = { c: 0 }) {
+  if (Array.isArray(node)) { node.forEach((x) => arrayMok(x, n)); return n.c; }
+  if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) { if (k === '목내용' && Array.isArray(v)) n.c++; arrayMok(v, n); }
+  return n.c;
+}
+
 for (const f of ['소득세법_104.json', '소득세법시행령_167의3.json']) {
   test(`flattenArticle 이 ${f} 의 항·호·목 문장을 하나도 빠뜨리지 않는다`, () => {
     const units = fx(f).법령.조문.조문단위;
+    assert.ok(oracle(units).length > 0, 'fixture 에 문장이 없다');
+    assert.ok(arrayMok(units) >= 1, 'fixture 에 배열 목내용이 없다');
     const got = new Set(flattenArticle(units));
     const missing = oracle(units).filter((t) => !got.has(t));
     assert.deepEqual(missing.slice(0, 5), [], `빠진 문장 ${missing.length}개`);
   });
 }
+
+test('lawUrl 은 가지 조문을 law.go.kr 한글주소 형식(제104조의3)으로 만든다', () => {
+  assert.equal(lawUrl('소득세법', '104의3'), 'https://www.law.go.kr/법령/소득세법/제104조의3');
+  assert.equal(lawUrl('소득세법', '104-3'), 'https://www.law.go.kr/법령/소득세법/제104조의3');
+  assert.equal(lawUrl('국세기본법', '45-3'), lawUrl('국세기본법', '45의3'));
+  assert.equal(lawUrl('소득세법', '104'), 'https://www.law.go.kr/법령/소득세법/제104조');
+  assert.equal(lawUrl('상속세 및 증여세법'), 'https://www.law.go.kr/법령/상속세%20및%20증여세법');
+});
+
+test('articleLabel 은 조문 번호를 법령 표기로 쓴다', () => {
+  assert.equal(articleLabel('104의3'), '제104조의3');
+  assert.equal(articleLabel('104-3'), '제104조의3');
+  assert.equal(articleLabel(' 60 '), '제60조');
+});
+
+test('pickInForceAcrossNames 는 개칭 뒤 날짜면 새 이름 판, 개칭 전 날짜면 옛 이름 판을 고른다', () => {
+  const r = (name, ef, prom, mst) => ({ 법령명한글: name, 시행일자: ef, 공포일자: prom, 공포번호: '1', 법령일련번호: mst });
+  const rows = [
+    r('옛법', '20080101', '20071201', 'O1'),
+    r('새법', '20090731', '20090130', 'N1'), // 개칭(공포 2009-01-30, 시행 2009-07-31)
+    r('새법', '20240109', '20240109', 'N2'),
+  ];
+  assert.equal(pickInForceAcrossNames(rows, '20090301').법령일련번호, 'O1');
+  assert.equal(pickInForceAcrossNames(rows, '20240501').법령일련번호, 'N2');
+  assert.equal(pickInForceAcrossNames(rows, '20000101'), null);
+});
+
+test('pickInForceAcrossNames 는 개칭 전에 공포돼 개칭 뒤 시행된 옛 이름 판을 현행으로 고르지 않는다', () => {
+  const r = (name, ef, prom, mst) => ({ 법령명한글: name, 시행일자: ef, 공포일자: prom, 공포번호: '1', 법령일련번호: mst });
+  const rows = [
+    r('지역균형발전법', '20261015', '20260414', '285293'),
+    r('균형성장법', '20260910', '20260609', '286737'),
+    r('균형성장법', '20260602', '20260602', '286503'),
+  ];
+  assert.equal(pickInForceAcrossNames(rows, '20261016').법령일련번호, '286737');
+  // 이름이 하나뿐이면 pickInForce 와 같다
+  const one = rows.map((x) => ({ ...x, 법령명한글: '한이름' }));
+  assert.equal(pickInForceAcrossNames(one, '20261016').법령일련번호, pickInForce(one, '20261016').법령일련번호);
+});
 
 test('flattenArticle 은 목내용이 배열이어도 문장을 모은다', () => {
   const node = { 호: [{ 호내용: '1. 가', 목: [{ 목내용: ['가. 첫째', ['  1) 세목']] }] }] };

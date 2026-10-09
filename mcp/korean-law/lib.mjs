@@ -35,15 +35,29 @@ export function flattenArticle(node, out = []) {
   return out;
 }
 
+/** 조문번호 "104의3"·"104-3" → { main: "104", branch: "3" }. 형식이 아니면 null */
+export function articleParts(article) {
+  const m = String(article ?? '').trim().match(/^(\d+)\s*(?:[-의]\s*(\d+))?$/);
+  return m ? { main: String(Number(m[1])), branch: m[2] ? String(Number(m[2])) : '' } : null;
+}
+
+/** 법령 표기: "104의3"·"104-3" → "제104조의3", "60" → "제60조". 가지 번호는 「조」 뒤에 붙는다 */
+export function articleLabel(article) {
+  const p = articleParts(article);
+  if (!p) return `제${String(article ?? '').trim()}조`;
+  return `제${p.main}조${p.branch ? `의${p.branch}` : ''}`;
+}
+
 /**
  * 인용용 법제처 원문 링크.
  * 도구가 링크를 주지 않으면 모델이 링크를 지어낸다. 그래서 모든 조회 응답 끝에 붙인다.
  * 한글 경로는 그대로 두고 공백만 인코딩한다("상속세 및 증여세법" 은 raw 로는 400).
  * 퍼센트 인코딩된 URL 은 사람이 못 읽어서 회신에 붙었을 때 검증이 안 된다.
+ * 가지 조문은 law.go.kr 한글주소 형식대로 "제104조의3" 이다("제104의3조" 는 오류 페이지, 2026-10-09 확인).
  */
 export function lawUrl(lawName, article) {
   const base = `https://www.law.go.kr/법령/${String(lawName ?? '').trim().replace(/ /g, '%20')}`;
-  return article ? `${base}/제${String(article).replace(/-/g, '의')}조` : base;
+  return article ? `${base}/${articleLabel(article)}` : base;
 }
 
 /** 조문단위 → get_law_text 의 article 에 그대로 넣을 수 있는 표기 ("60", "75의8") */
@@ -69,6 +83,23 @@ export function pickInForce(rows, date8) {
     String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')) ||
     Number(b['공포번호'] ?? 0) - Number(a['공포번호'] ?? 0));
   return ok[0] ?? null;
+}
+
+/**
+ * 이름이 바뀐 법령(같은 법령ID)의 여러 이름 행에서 date8 에 시행 중이던 판.
+ * date8 까지 시행된 판 중 가장 늦게 공포된 판의 이름을 그날의 이름으로 보고, 그 이름의 판 중에서 pickInForce 로 고른다.
+ * 시행일만 보면 개칭 전에 공포돼 개칭 뒤에 시행된 옛 이름 판(지방자치분권법 MST 285293, 공포 2026-04-14, 시행 2026-10-15)이
+ * 개칭 뒤 판보다 늦게 시행됐다는 이유로 현행으로 뽑힌다. 이름이 하나뿐이면 pickInForce 와 같다.
+ */
+export function pickInForceAcrossNames(rows, date8) {
+  const ok = asArray(rows).filter((r) => String(r?.['시행일자'] ?? '') <= date8);
+  if (!ok.length) return null;
+  const latest = [...ok].sort((a, b) =>
+    String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')) ||
+    String(b['시행일자']).localeCompare(String(a['시행일자'])) ||
+    Number(b['공포번호'] ?? 0) - Number(a['공포번호'] ?? 0))[0];
+  const name = normName(latest['법령명한글']);
+  return pickInForce(ok.filter((r) => normName(r['법령명한글']) === name), date8);
 }
 
 /** Asia/Seoul 기준 오늘 YYYYMMDD */

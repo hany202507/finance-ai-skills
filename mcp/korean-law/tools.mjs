@@ -2,7 +2,10 @@
  * korean-law 도구 정의와 실행부. 법제처 호출(callApi)과 오늘 날짜(today)를 주입받아
  * 네트워크 없이 시험할 수 있다. index.js 는 진입점(OC 확인·실제 callApi·서버 연결)만 갖는다.
  */
-import { strip, asArray, joCode, flattenArticle, lawUrl, articleRef, normName, pickExact, pickInForce, ymd } from './lib.mjs';
+import {
+  strip, asArray, joCode, flattenArticle, lawUrl, articleRef, articleParts, articleLabel,
+  normName, pickExact, pickInForce, pickInForceAcrossNames, ymd, maskSecrets,
+} from './lib.mjs';
 
 /* ------------------------------------------------------------------ 도구 */
 
@@ -10,12 +13,12 @@ export const TOOLS = [
   {
     name: 'search_law',
     description:
-      '법령을 이름으로 검색해 법령일련번호(MST)·시행일자·공포번호를 돌려준다. get_law_text 로 조문을 뽑기 전 단계. current=false 로 두면 과거·시행예정 버전까지 나온다.',
+      '법령을 이름으로 검색해 법령일련번호(MST)·시행일자·공포번호를 돌려준다. get_law_text 로 조문을 뽑기 전 단계. 기본(current=true)은 법령마다 오늘 시행 중인 판(현행)과 시행예정 판을 보이고, current=false 면 지난 판(연혁)까지 보인다.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '법령명 (예: 부가가치세법, 소득세법 시행령)' },
-        current: { type: 'boolean', description: '현행만 조회(기본 true). false 면 시행일별 전체 버전', default: true },
+        current: { type: 'boolean', description: '기본 true: 현행 판과 시행예정 판. false 면 지난 판(연혁)까지 시행일별 전체', default: true },
         display: { type: 'number', description: '최대 건수 (기본 10)', default: 10 },
       },
       required: ['query'],
@@ -117,7 +120,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         law_name: { type: 'string', description: '법령명' },
-        mst: { type: 'string', description: '법령일련번호. law_name 대신 사용 가능' },
+        mst: { type: 'string', description: '법령일련번호. law_name 대신 쓸 수 있고, 주면 effective_date 에 그 판의 시행일자를 함께 준다' },
         effective_date: { type: 'string', description: '이 날짜에 시행 중이던 버전 (YYYY-MM-DD)' },
       },
     },
@@ -201,17 +204,37 @@ function bareMessage(root) {
 
 /* --------------------------------------------------------------- 실행부 */
 
-export function makeRunTool({ callApi, today }) {
+export function makeRunTool({ callApi: rawCallApi, today }) {
+  /**
+   * 법제처는 인증 실패도 HTTP 200 에 { result: '…실패…', msg } 로 준다. 그대로 두면 루트를 못 찾아
+   * 「이름이 같은 법령이 없다」·「결과 없음」으로 보고된다. 모든 호출에서 실패로 올린다.
+   */
+  async function callApi(path, params) {
+    const d = await rawCallApi(path, params);
+    if (d && typeof d === 'object' && !Array.isArray(d) && String(d.result ?? '').includes('실패')) {
+      throw new Error(maskSecrets(`법제처 응답: ${strip(d.result)} ${strip(d.msg ?? '')}`.trim()));
+    }
+    return d;
+  }
+
   /** eflaw 검색 결과를 끝까지(최대 10쪽) 모은다. nw: '2,3' 현행·시행예정, '1,2,3' 연혁 포함 */
   async function searchVersions(query, nw) {
     const rows = [];
+    let total = 0;
     for (let page = 1; page <= 10; page++) {
       const d = await callApi('lawSearch.do', { target: 'eflaw', query, nw, display: 100, page });
-      const got = asArray(d?.LawSearch?.law).filter((r) => r && typeof r === 'object');
+      const root = d && typeof d === 'object' ? d.LawSearch : null;
+      if (!root || typeof root !== 'object') {
+        const keys = d && typeof d === 'object' ? Object.keys(d).join(', ') : typeof d;
+        throw new Error(`법제처 응답 형식이 다르다(인증 실패일 수 있다): ${keys || '(빈 응답)'}`);
+      }
+      const got = asArray(root.law).filter((r) => r && typeof r === 'object');
       rows.push(...got);
-      const total = Number(d?.LawSearch?.totalCnt ?? rows.length);
+      total = Number(root.totalCnt ?? rows.length);
       if (!got.length || rows.length >= total) break;
     }
+    // 1000행에서 끊긴 결과로 「이름이 같은 법령이 없다」·「그날 판이 없다」를 말하면 틀린다
+    if (rows.length < total) throw new Error(`검색 결과가 ${total}건이라 다 읽지 못했다. 이름을 더 정확히 준다.`);
     return rows;
   }
 
@@ -220,26 +243,71 @@ export function makeRunTool({ callApi, today }) {
     return new Error(`이름이 정확히 같은 법령이 없다: "${lawName}". 비슷한 이름: ${names.join(', ') || '(없음)'}. 옛 이름이면 현행 이름으로 다시 조회하라.`);
   }
 
-  /** 이름이 정확히 같은 법령의, date8(없으면 오늘)에 시행 중이던 판 */
+  const markOf = (r) => strip(r?.['현행연혁코드']);
+  const isAbolished = (r) => /^(타법)?폐지$/.test(strip(r?.['제개정구분명']));
+
+  /**
+   * 이름이 정확히 같은 판을 모은다. 이 이름에 법제처가 「현행」으로 표시한 판이 없으면 옛 이름일 수 있으므로
+   * 법령ID 로 현행 이름을 물어, 이름이 다르면 현행 이름의 판(같은 법령ID)까지 합친다.
+   * 현행 이름으로 조회하면 추가 호출이 없다.
+   * 돌려주는 것: rows(합친 판), current(현행 이름, 모르면 ''), notes(머리줄에 붙일 설명), unknown(현행 이름을 못 얻음)
+   */
+  async function versionsOf(lawName, nw) {
+    const rows = await searchVersions(lawName, nw);
+    let exact = pickExact(rows, lawName);
+    // 현행·시행예정에 이 이름이 없으면 연혁까지 본다. 개칭·폐지된 이름은 연혁에만 있다
+    if (!exact.length && nw !== '1,2,3') exact = pickExact(await searchVersions(lawName, '1,2,3'), lawName);
+    if (!exact.length) throw noExact(lawName, rows);
+    if (exact.some((r) => markOf(r) === '현행')) return { rows: exact, current: strip(exact[0]['법령명한글']), notes: [], unknown: false };
+
+    const ids = [...new Set(exact.map((r) => strip(r['법령ID'])).filter(Boolean))];
+    let current = '';
+    if (ids.length === 1) {
+      try {
+        const d = await callApi('lawService.do', { target: 'eflaw', ID: ids[0], JO: '000100' });
+        current = strip(d?.법령?.기본정보?.['법령명_한글']);
+      } catch { current = ''; }
+    }
+    if (!current) return { rows: exact, current: '', notes: [], unknown: true };
+    if (normName(current) === normName(lawName)) return { rows: exact, current, notes: [], unknown: false };
+    const more = pickExact(await searchVersions(current, nw), current).filter((r) => strip(r['법령ID']) === ids[0]);
+    return { rows: [...exact, ...more], current, notes: [`요청한 이름 "${lawName}" 은 옛 이름이다. 현행 이름: ${current}`], unknown: false };
+  }
+
+  /** 이름이 정확히 같은 법령의, date8(없으면 오늘)에 시행 중이던 판. 옛 이름이면 현행 이름의 판까지 보고 고른다 */
   async function resolveLaw(lawName, effectiveDate) {
     const date8 = effectiveDate ? ymd(effectiveDate) : today();
-    const rows = await searchVersions(lawName, effectiveDate ? '1,2,3' : '2,3');
-    const exact = pickExact(rows, lawName);
-    if (!exact.length) throw noExact(lawName, rows);
-    const hit = pickInForce(exact, date8);
+    const v = await versionsOf(lawName, effectiveDate ? '1,2,3' : '2,3');
+    const hit = pickInForceAcrossNames(v.rows, date8);
     if (!hit) throw new Error(`${date8} 에 시행 중이던 "${lawName}" 판이 없다. amendment_track 으로 시행일 목록을 확인하라.`);
-    return hit;
+    if (isAbolished(hit)) {
+      throw new Error(`"${lawName}" 은 ${date8} 에는 폐지된 법령이다(${strip(hit['제개정구분명'])}, 시행 ${hit['시행일자']}). 대신한 법령은 법령별칭을 확인하라.`);
+    }
+    const last = pickInForce(v.rows, '99999999');
+    if (v.unknown && !v.rows.some((r) => ['현행', '시행예정'].includes(markOf(r))) && last === hit) {
+      throw new Error(`"${lawName}" 은 개칭·폐지됐을 수 있다. 현행 이름으로 조회하거나 법령별칭을 확인하라(이 이름에 현행·시행예정 판이 없고, 고른 판 MST ${hit['법령일련번호']}(시행 ${hit['시행일자']})이 이 이름의 마지막 판이다).`);
+    }
+    const notes = [...v.notes];
+    // 고른 판보다 늦게 시행된 다른 이름의 판(개칭 전에 공포된 옛 이름 판)은 고르지 않지만 숨기지도 않는다
+    const name = normName(hit['법령명한글']);
+    for (const r of v.rows) {
+      if (normName(r['법령명한글']) !== name && String(r['시행일자']) > String(hit['시행일자']) && String(r['시행일자']) <= date8) {
+        notes.push(`옛 이름으로 공포된 판 MST ${r['법령일련번호']}(시행 ${r['시행일자']})이 이 판보다 늦게 시행됐다. 그 개정분은 mst 로 따로 읽어 대조하라`);
+      }
+    }
+    return { ...hit, _notes: notes };
   }
 
   /** 부칙용: 이름이 같은 판 중 가장 늦게 공포된 것(시행예정 부칙까지 보려고). 시행일이 아니라 공포일 순이다 */
   async function resolveLatestPromulgated(lawName) {
-    const rows = await searchVersions(lawName, '2,3');
-    const exact = pickExact(rows, lawName);
-    if (!exact.length) throw noExact(lawName, rows);
-    return [...exact].sort((a, b) =>
+    const v = await versionsOf(lawName, '2,3');
+    const hit = [...v.rows].sort((a, b) =>
       String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')) ||
       Number(b['공포번호'] ?? 0) - Number(a['공포번호'] ?? 0) ||
       String(b['시행일자'] ?? '').localeCompare(String(a['시행일자'] ?? '')))[0];
+    const notes = [...v.notes];
+    if (v.unknown) notes.push('이 이름에 현행 판이 없다. 개칭·폐지됐을 수 있다');
+    return { ...hit, _notes: notes };
   }
 
   /** 그 판을 eflaw 로 읽는다. 비어 오면 실패한다(공포본으로 대신 읽지 않는다) */
@@ -249,7 +317,10 @@ export function makeRunTool({ callApi, today }) {
     const d = await callApi('lawService.do', params);
     const units = asArray(d?.법령?.조문?.조문단위);
     if (!units.length) {
-      throw new Error(`법제처가 ${strip(meta['법령명한글'])} (MST ${params.MST}, 시행 ${params.efYd}) 의 조문을 주지 않았다. 시행일자가 그 판의 실제 시행일과 같은지 확인하라. 공포본(target=law)으로 대신 읽지 않는다.`);
+      const what = article
+        ? `${articleLabel(article)} 본문이 비어 있다. 그 판에 이 조문이 없거나 시행일자가 판과 다르다(amendment_track·get_law_outline 으로 확인하라).`
+        : '조문이 비어 있다. 시행일자가 그 판의 실제 시행일과 같은지 확인하라.';
+      throw new Error(`법제처가 준 ${strip(meta['법령명한글'])} (MST ${params.MST}, 시행 ${params.efYd}) ${what} 공포본(target=law)으로 대신 읽지 않는다.`);
     }
     return { d, units };
   }
@@ -257,6 +328,8 @@ export function makeRunTool({ callApi, today }) {
   function statusOf(ef, t) {
     return ef > t ? '시행예정' : null;
   }
+
+  const withNotes = (s, meta) => (meta?._notes?.length ? `${s}; ${meta._notes.join('; ')}` : s);
 
   return async function runTool(name, args = {}) {
     const t = today();
@@ -307,9 +380,10 @@ export function makeRunTool({ callApi, today }) {
         const picked = wanted ? units.filter((u) => String(u?.조문번호) === wanted) : units;
         const bodyText = flattenArticle(picked.length ? picked : units).join('\n');
         const ef = strip(info['시행일자'] ?? meta['시행일자']);
-        const why = args.mst
-          ? `지정한 판${statusOf(ef, t) ? ', ' + statusOf(ef, t) : ''}`
-          : args.effective_date ? `${args.effective_date} 시점 시행 판` : `오늘 ${t} 기준 시행 중인 판`;
+        const st = statusOf(ef, t) ? `, ${statusOf(ef, t)}` : '';
+        const why = withNotes(args.mst
+          ? `지정한 판${st}`
+          : args.effective_date ? `${args.effective_date} 시점 시행 판${st}` : `오늘 ${t} 기준 시행 중인 판`, meta);
         const lawNameOut = strip(info['법령명_한글'] ?? meta['법령명한글'] ?? '');
         const header = [
           `법령: ${lawNameOut}`,
@@ -327,10 +401,11 @@ export function makeRunTool({ callApi, today }) {
         const meta = await resolveLaw(args.law_name, args.effective_date);
         const lawName = strip(meta['법령명한글']);
         const { units } = await readVersion(meta, args.article);
-        const wanted = String(args.article).match(/^(\d+)/)[1];
-        const picked = units.filter((u) => String(u?.조문번호) === wanted);
+        const parts = articleParts(args.article); // readVersion 의 joCode 가 형식을 이미 검사했다
+        const self = `${parts.main}${parts.branch ? '의' + parts.branch : ''}`;
+        const picked = units.filter((u) => String(u?.조문번호) === parts.main);
         const text = flattenArticle(picked.length ? picked : units).join('\n');
-        if (!text) throw new Error(`${lawName} 제${args.article}조 본문을 받지 못했다.`);
+        if (!text) throw new Error(`${lawName} ${articleLabel(self)} 본문을 받지 못했다.`);
         const cross = new Map();
         for (const m of text.matchAll(/「([^」]+)」\s*제(\d+)조(?:의(\d+))?/g)) {
           const ref = `${m[2]}${m[3] ? '의' + m[3] : ''}`;
@@ -339,10 +414,12 @@ export function makeRunTool({ callApi, today }) {
         const inner = new Set();
         for (const m of text.matchAll(/(?<!」\s*)제(\d+)조(?:의(\d+))?/g)) {
           const ref = `${m[1]}${m[2] ? '의' + m[2] : ''}`;
-          if (ref !== String(args.article).replace(/-/g, '의')) inner.add(ref);
+          if (ref !== self) inner.add(ref);
         }
         const vague = (text.match(/같은 (조|항|호|법|목)|준용|전단|후단|각 목|대통령령으로 정하는|기획재정부령으로 정하는/g) ?? []).length;
-        const lines = [`${lawName} 제${args.article}조 — 참조 관계`, `  ${lawUrl(lawName, args.article)}`, '─'.repeat(50)];
+        const lines = [`${lawName} ${articleLabel(self)} — 참조 관계`, `  ${lawUrl(lawName, self)}`];
+        if (meta._notes?.length) lines.push(`  (${meta._notes.join('; ')})`);
+        lines.push('─'.repeat(50));
         lines.push(`■ 이 조문이 부르는 타법 조문 ${cross.size}건`);
         for (const { law, art } of cross.values()) {
           let title = '';
@@ -352,21 +429,23 @@ export function makeRunTool({ callApi, today }) {
             const u2 = u2s.find((u) => (u?.['조문여부'] ?? '조문') === '조문');
             title = strip(u2?.['조문제목'] ?? '');
           } catch (e) { title = `(조회 실패: ${e.message.slice(0, 60)})`; }
-          lines.push(`  「${law}」 제${art}조 ${title}\n      ${lawUrl(law, art)}`);
+          lines.push(`  「${law}」 ${articleLabel(art)} ${title}\n      ${lawUrl(law, art)}`);
         }
         if (!cross.size) lines.push('  (없음)');
-        lines.push(`■ 같은 법 내부 인용 ${inner.size}건: ${inner.size ? [...inner].map((a) => `제${a}조`).join(', ') : '(없음)'}`);
+        lines.push(`■ 같은 법 내부 인용 ${inner.size}건: ${inner.size ? [...inner].map(articleLabel).join(', ') : '(없음)'}`);
         if (args.reverse !== false) {
+          // 시행령은 모법을 「법 제104조의3제1항」처럼 부른다. 가지 번호는 「조」 뒤에 오고,
+          // 제104조의3 이 제104조의30 을, 제60조가 제60조의2 를 잡지 않게 뒤를 막는다. 「농어촌특별세법 제60조」 같은 다른 법 이름도 빼려고 앞을 막는다
+          const pat = new RegExp(`(?<![가-힣])법 제${parts.main}조${parts.branch ? '의' + parts.branch : ''}(?!\\d|의\\d)`);
           for (const suffix of ['시행령', '시행규칙']) {
             const sub = `${lawName} ${suffix}`;
             try {
               const m3 = await resolveLaw(sub, args.effective_date);
               const { units: all } = await readVersion(m3);
               const arts = all.filter((u) => (u?.['조문여부'] ?? '조문') === '조문');
-              const pat = new RegExp(`법 제${String(args.article).replace(/의/, '조의').replace(/^(\d+)$/, '$1')}조`);
               const hit = arts.filter((u) => pat.test(flattenArticle(u).join(' ')));
               lines.push(`■ ${suffix}에서 이 조문을 되부르는 조문 ${hit.length}건`);
-              for (const u of hit) lines.push(`  제${articleRef(u)}조 ${strip(u['조문제목']) || ''}\n      ${lawUrl(sub, articleRef(u))}`);
+              for (const u of hit) lines.push(`  ${articleLabel(articleRef(u))} ${strip(u['조문제목']) || ''}\n      ${lawUrl(sub, articleRef(u))}`);
               if (!hit.length) lines.push('  (없음)');
             } catch {
               lines.push(`■ ${suffix} — 조회 실패. **확인되지 않았다**(없다는 뜻이 아니다).`);
@@ -378,12 +457,13 @@ export function makeRunTool({ callApi, today }) {
       }
 
       case 'get_addenda': {
-        let mst = args.mst, metaName = args.law_name ?? '';
+        let mst = args.mst, metaName = args.law_name ?? '', notes = [];
         if (!mst) {
           if (!args.law_name) throw new Error('law_name 또는 mst 중 하나는 있어야 한다.');
           const meta = await resolveLatestPromulgated(args.law_name);
           mst = meta['법령일련번호'];
           metaName = strip(meta['법령명한글']);
+          notes = meta._notes ?? [];
         }
         // 부칙은 가장 늦게 공포된 판에서 읽는다. 시행예정 부칙(적용례)까지 보려고 target=law 를 쓰는 유일한 곳이다
         const d = await callApi('lawService.do', { target: 'law', MST: mst });
@@ -404,7 +484,7 @@ export function makeRunTool({ callApi, today }) {
           out.push(`■ 부칙 <제${r['부칙공포번호']}호, ${date}>\n` + b.map((x) => `  ${x}`).join('\n'));
         }
         if (!out.length) return `${nameOut}: 조건에 맞는 부칙이 없다(전체 ${rows.length}건 중 ${skipped}건 제외).\n출처: ${lawUrl(nameOut)}`;
-        const head = [`${nameOut} — 부칙 ${rows.length}건 중 ${out.length}건 (MST ${mst}, 가장 늦게 공포된 판 기준)`, keys.length ? `키워드: ${keys.join(' / ')}` : null, since8 ? `${args.since} 이후 공포분` : null, '─'.repeat(50)].filter(Boolean).join('\n');
+        const head = [`${nameOut} — 부칙 ${rows.length}건 중 ${out.length}건 (MST ${mst}, 가장 늦게 공포된 판 기준)`, notes.length ? `(${notes.join('; ')})` : null, keys.length ? `키워드: ${keys.join(' / ')}` : null, since8 ? `${args.since} 이후 공포분` : null, '─'.repeat(50)].filter(Boolean).join('\n');
         const tail = [];
         if (args.include_reason !== false) {
           const reason = [].concat(d?.법령?.제개정이유?.['제개정이유내용']).flat(Infinity).map(strip).filter(Boolean).join(' ');
@@ -433,7 +513,7 @@ export function makeRunTool({ callApi, today }) {
             if (x) lines.push(`\n[${x}]`);
           } else { arts++; lines.push(`  제${articleRef(u)}조 ${strip(u['조문제목']) || '(제목 없음)'}`); }
         }
-        return [`${nm} — 조문 ${arts}개 (시행 ${strip(info['시행일자'] ?? meta['시행일자'])})`, '─'.repeat(50), lines.join('\n').trim(), `\n출처: ${lawUrl(nm)}`].join('\n');
+        return [`${nm} — 조문 ${arts}개 (${withNotes(`시행 ${strip(info['시행일자'] ?? meta['시행일자'])}`, meta)})`, '─'.repeat(50), lines.join('\n').trim(), `\n출처: ${lawUrl(nm)}`].join('\n');
       }
 
       case 'scan_articles': {
@@ -453,7 +533,7 @@ export function makeRunTool({ callApi, today }) {
               const matched = ls.filter((x) => keys.some((k) => x.includes(k)));
               if (matched.length) hits.push({ u, matched });
             }
-            const head = `■ ${strip(meta['법령명한글'])} (시행 ${meta['시행일자']}) — 조문 ${real.length}개 중 ${hits.length}개 매칭\n  ${lawUrl(strip(meta['법령명한글']))}`;
+            const head = `■ ${strip(meta['법령명한글'])} (${withNotes(`시행 ${meta['시행일자']}`, meta)}) — 조문 ${real.length}개 중 ${hits.length}개 매칭\n  ${lawUrl(strip(meta['법령명한글']))}`;
             if (!hits.length) { blocks.push(`${head}\n  (매칭 없음)`); continue; }
             const b = hits.map(({ u, matched }) => {
               const line = `  제${articleRef(u)}조 ${strip(u['조문제목']) || '(제목 없음)'}   → get_law_text(article="${articleRef(u)}")`;
@@ -471,17 +551,18 @@ export function makeRunTool({ callApi, today }) {
       }
 
       case 'amendment_track': {
-        const rows = await searchVersions(args.law_name, '1,2,3');
-        const exact = pickExact(rows, args.law_name);
-        if (!exact.length) throw noExact(args.law_name, rows);
-        const cur = pickInForce(exact, t);
+        const v = await versionsOf(args.law_name, '1,2,3');
+        const exact = [...v.rows];
+        const cur = pickInForceAcrossNames(exact, t);
         exact.sort((a, b) => String(b['시행일자']).localeCompare(String(a['시행일자'])) || String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')));
+        const named = v.notes.length > 0; // 이름이 둘 이상이면 줄마다 이름을 붙인다
         return [
-          `${strip(exact[0]['법령명한글'])} — 시행일별 개정 이력 ${exact.length}건 (상태는 오늘 ${t} 기준으로 계산)`,
+          `${strip((cur ?? exact[0])['법령명한글'])} — 시행일별 개정 이력 ${exact.length}건 (상태는 오늘 ${t} 기준으로 계산)`,
+          ...v.notes.map((n) => `(${n})`),
           '─'.repeat(50),
           ...exact.slice(0, args.display ?? 30).map((r) => {
             const s = String(r['시행일자']) > t ? '시행예정' : r === cur ? '현행' : '연혁';
-            return `시행 ${r['시행일자']} · ${s} · ${strip(r['제개정구분명'])} · 공포 ${r['공포번호']}호(${r['공포일자'] ?? '-'}) · MST ${r['법령일련번호']}`;
+            return `시행 ${r['시행일자']} · ${s} · ${strip(r['제개정구분명'])} · 공포 ${r['공포번호']}호(${r['공포일자'] ?? '-'}) · MST ${r['법령일련번호']}${named ? ` · ${strip(r['법령명한글'])}` : ''}`;
           }),
         ].join('\n');
       }
