@@ -21,7 +21,10 @@ GAP_EXEMPT_REASONS = {"공공임대5년", "수용", "부득이1년"}
 EV_KEYS = ["지구확인필요", "행정구역대응없음", "조정_취득일", "계약일_공고일이전", "세대주택수", "세대주택수_중과",
            "보유년", "거주년", "보유거주미충족", "비과세후보", "일시적2주택후보", "처분기한초과",
            "종전수도권_신규수도권밖", "과세", "중과후보", "지방소재주택있음", "양도주택기준시가_1억이하",
-           "2024-01-10이후취득주택있음", "양도일", "취득일", "감정가액사용", "토지건물안분필요", "신규주택id"]
+           "2024-01-10이후취득주택있음", "양도일", "취득일", "감정가액사용", "토지건물안분필요", "신규주택id",
+           "소재지확인필요", "소재지안내", "취득당시소재지확인필요", "취득당시소재지안내", "주택별"]
+# 집마다의 엔진값 이름. engine_values 의 「주택별」 은 {주택 id: {이 이름: 값}} 이고 문항의 보이는조건은 「주택.<이름>」 으로 읽는다
+HOUSE_EV_KEYS = ["지방소재", "2024-01-10이후취득"]
 
 
 def _status(reg, addr, on, 지구, aid):
@@ -394,14 +397,32 @@ def _lt(x, y):
     return None if x is None or y is None else x < y
 
 
+def house_values(h, 양도, prep, reg):
+    """주택 목록 한 채의 엔진값(HOUSE_EV_KEYS). 모르면 None.
+
+    지방소재: 수도권도 아니고 광역시(군 제외)·세종(읍면 제외)의 동 지역도 아니면 참. 중과 주택 수의 지방 저가 제외(count_for_heavy)가
+    쓰는 reg.metro 와 같은 규칙이다. 소재지를 모르거나 지역을 정하지 못하면 None.
+    2024-01-10이후취득: 시행령 제167조의3①12호 가목의 시작일(소형신축_시작) 이후에 취득했으면 참. 취득일은 house_acq 와 같은 규칙이다.
+    """
+    metro = _try(lambda: reg.metro(h["소재지"], 양도))
+    acq = _try(lambda: house_acq(h, prep))
+    return {"지방소재": None if metro is None else not metro,
+            "2024-01-10이후취득": None if acq is None else acq >= 소형신축_시작}
+
+
 def engine_values(f, a, prep, rs, reg):
     """질문지 보이는조건의 엔진값. 모르는 값은 None 이고 예외를 던지지 않는다.
 
     사실관계가 반쯤 채워져 있어도(주택 목록의 소재지 없음, 거주 구간의 끝 날짜 없음 등) 읽는 곳마다 _try 로 감싸
     그 값만 None 으로 둔다.
+
+    소재지확인필요, 취득당시소재지확인필요: 적어 둔 주소가 고시 이력으로 지역을 정하기에 모자라면(구 이름이 빠진 시군구, 모르는 시도 등,
+    NeedAnswer A01) 참이고, 되물을 안내 문장이 소재지안내, 취득당시소재지안내에 들어간다. 문항이 아니라 되묻기에 쓴다.
+    주택별: {주택 id: house_values}. 양도일에 세대가 가진 주택(houses_at)만 들어간다. 주택 목록을 정하지 못하면 빈 dict.
     """
     ev = dict.fromkeys(EV_KEYS)
-    ev["지구확인필요"] = ev["행정구역대응없음"] = False
+    ev["지구확인필요"] = ev["행정구역대응없음"] = ev["소재지확인필요"] = ev["취득당시소재지확인필요"] = False
+    ev["주택별"] = {}
     aid = a.get("id")
     t = (prep.get("시기") or {}).get(aid)
     if not t:
@@ -412,12 +433,17 @@ def engine_values(f, a, prep, rs, reg):
     취득, 양도 = 날짜
     ev.update(양도일=t["양도일"], 취득일=t["취득일"], 보유년=_try(lambda: dates.full_years(취득, 양도)))
     if a.get("소재지"):
-        for addr, on in ((a["소재지"], 양도), (a.get("취득당시소재지") or a["소재지"], 취득)):
+        # 취득일의 주소는 취득당시소재지를 따로 적었으면 그 주소(A03), 아니면 소재지(A01)다
+        for name, addr, on in (("소재지", a["소재지"], 양도),
+                               ("취득당시소재지" if a.get("취득당시소재지") else "소재지",
+                                a.get("취득당시소재지") or a["소재지"], 취득)):
             try:
                 reg.status(CONTROL, addr, on, a.get("지구해당"))
             except NeedAnswer as e:
                 ev["지구확인필요"] = ev["지구확인필요"] or e.문항 == "A02"
                 ev["행정구역대응없음"] = ev["행정구역대응없음"] or e.문항 == "A03"
+                if e.문항 == "A01" and not ev[name + "확인필요"]:
+                    ev[name + "확인필요"], ev[name + "안내"] = True, e.내용
             except _SOFT:
                 pass
     st_acq = _try(lambda: reg.status(CONTROL, a.get("취득당시소재지") or a["소재지"], 취득, a.get("지구해당")))
@@ -442,6 +468,8 @@ def engine_values(f, a, prep, rs, reg):
         ev.update(과세=True, 중과후보=False, 비과세후보=False)
         return ev
     houses = _try(lambda: F.houses_at(f, 양도, prep)) if F.get(f, "세대.주택목록") is not None else None
+    if houses is not None:
+        ev["주택별"] = {h["id"]: house_values(h, 양도, prep, reg) for h in houses if h.get("id")}
     me = _try(lambda: self_house(f, a, houses)) if houses is not None else None
     if me is None:
         return ev

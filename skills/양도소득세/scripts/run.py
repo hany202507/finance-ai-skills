@@ -8,6 +8,7 @@
 
 같은 출력 폴더에 다시 실행하면 먼저 이 스크립트가 쓰는 파일 네 개(result.json, 질문.md, 양도소득세_검토.md, 양도소득세_계산근거.xlsx)만
 지우고 시작한다. 이번 결과가 질문이어도 이전 완료 결과가 옆에 남지 않는다. 다른 파일은 건드리지 않는다.
+통합 문서를 맨 먼저 지운다. 엑셀이 열어 둔 파일은 지워지지 않으므로, 그 경우 종료코드 4 로 멈추고 폴더는 그대로 남는다.
 """
 import argparse
 import datetime as dt
@@ -123,8 +124,11 @@ def review_md(res):
 
 
 def clear_previous(out):
-    """이 스크립트가 쓰는 파일 이름만 지운다. 폴더 안의 다른 파일은 그대로 둔다."""
-    for name in OUTPUT_NAMES:
+    """이 스크립트가 쓰는 파일 이름만 지운다. 폴더 안의 다른 파일은 그대로 둔다.
+
+    통합 문서를 먼저 지운다. 엑셀이 열어 둔 파일은 지워지지 않아서(PermissionError), 막히면 다른 이전 결과를 지우기 전에 멈춘다.
+    """
+    for name in (WORKBOOK,) + tuple(n for n in OUTPUT_NAMES if n != WORKBOOK):
         p = os.path.join(out, name)
         if os.path.isfile(p):
             os.remove(p)

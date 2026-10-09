@@ -208,7 +208,8 @@ def test_run_malformed_values_exit_2(tmp_path, capsys):
     f = copy.deepcopy(CASES["A"])
     f["자산"][0]["전체양도가액"] = "1억"
     code, out = go(tmp_path, f)
-    assert code == 2 and "사실관계의 값을 처리하지 못했다" in capsys.readouterr().out
+    assert code == 2 and "질문 1개" in capsys.readouterr().out
+    assert "[M01]" in (out / "질문.md").read_text(encoding="utf-8")
 
 
 # 출력 쓰기 실패는 종료코드 4. 1 은 검산 실패 전용이다.
@@ -254,10 +255,18 @@ def test_run_workbook_locked_exit_4(tmp_path, capsys, monkeypatch):
     assert target in lines[0] and "Permission denied" in lines[0]
 
 
+def _snapshot(folder):
+    return {p.name: p.read_bytes() for p in folder.iterdir()}
+
+
 def test_run_cannot_remove_previous_workbook_exit_4(tmp_path, capsys, monkeypatch):
+    """엑셀이 이전 통합 문서를 잡고 있으면 지우기가 막힌다. 통합 문서를 먼저 지우려 해서, 막히면 다른 파일도 그대로 남는다."""
     out = tmp_path / "out"
     code, _ = go(tmp_path, CASES["A"])
     assert code == 0
+    (out / "내메모.txt").write_text("남겨야 함", encoding="utf-8")
+    before = _snapshot(out)
+    assert {"result.json", "양도소득세_검토.md", "양도소득세_계산근거.xlsx", "내메모.txt"} == set(before)
     old = str(out / "양도소득세_계산근거.xlsx")
     real_remove = os.remove
 
@@ -269,13 +278,14 @@ def test_run_cannot_remove_previous_workbook_exit_4(tmp_path, capsys, monkeypatc
     code, _ = go(tmp_path, CASES["A"])
     lines = _err_lines(capsys)
     assert code == 4 and len(lines) == 1 and old in lines[0]
+    assert _snapshot(out) == before   # 이전 결과 파일이 하나도 지워지지 않았고 새로 쓴 것도 없다
 
 
 def test_run_output_dir_is_a_file_exit_4(tmp_path, capsys):
     (tmp_path / "out").write_text("파일", encoding="utf-8")
     code, _ = go(tmp_path, CASES["A"])
     lines = _err_lines(capsys)
-    assert code == 4 and len(lines) == 1 and "out" in lines[0]
+    assert code == 4 and len(lines) == 1 and str(tmp_path / "out") in lines[0]
 
 
 def test_run_exit_1_still_means_verify_failure(tmp_path, capsys, monkeypatch):
