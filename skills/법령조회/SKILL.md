@@ -35,7 +35,7 @@ description: 세법·관련 법령·고시를 조회해 근거 조문을 확정�
 | 세법이 아닌 법령 | korean-law `get_law_text` | 법제처API | TaxDoctor 에 없다(주택법, 민간임대주택법 등) |
 | 별표·서식 | TaxDoctor `get_annex` | 법제처API `get_annexes`, korean-law `search_forms` | 서식 란 번호는 원본 PDF·HWP 로 확인한다 |
 | 고시·공고 | 법제처 행정규칙 연혁 | 관보 검색 | 지역 목록은 첨부 PDF 에만 있다 |
-| 해석·쟁점 | korean-law `search_rulings` → 조세심판원 `get_ruling` | TaxDoctor `search_interpretations`·`search_cases` | 심판례는 본문이 온다. 예규는 목록뿐이라 taxlaw 링크를 열어야 ★★★ |
+| 해석·쟁점 | korean-law `search_rulings` → 조세심판원 `get_ruling` | TaxDoctor `search_interpretations`·`search_cases` | 심판례는 본문이 온다. 예규는 목록만 오므로 taxlaw 링크를 열어 본문을 읽은 것만 인용한다 |
 
 ## 대조 규칙과 등급
 
@@ -45,6 +45,7 @@ description: 세법·관련 법령·고시를 조회해 근거 조문을 확정�
 | ★★☆ | 원문은 한 곳에서만 읽었다. 또는 2차 자료(보도자료, 해설)로만 확인했다 |
 | ☆ | 확인하지 못했다 |
 
+- 위 등급은 법령 조문에 붙인다. 심판례·해석례·예규는 본문을 읽고 출처 링크를 그대로 옮겼으면 ★★★, 목록·제목만 봤으면 ★★☆ 다
 - 결론에 쓰는 조문은 ★★★ 이어야 한다. ★★☆ 나 ☆ 가 하나라도 있으면 결론 옆에 적는다
 - 두 곳이 같은 판인지는 `MST@시행일` 로 본다. TaxDoctor 원천 스냅샷 `moleg-eflaw:<MST>@<시행일>` 이 korean-law 머리의 `MST`·`시행일` 과 같아야 한다
 - 원문이 다르면 쓰지 않고 그 사실을 보고한다. 어느 쪽이 맞는지 추측하지 않는다
