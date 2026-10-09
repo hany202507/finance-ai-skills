@@ -147,3 +147,42 @@ def test_new_build_question_text():
 def test_share_validation(bad):
     with pytest.raises(F.FactsError):
         F.share({"지분": bad})
+
+
+@pytest.mark.parametrize("where", ["asset", "acq", "house"])
+def test_address_string_in_location_slot_rejected(where):
+    f = copy.deepcopy(CASES["B"])
+    s = "부산광역시 해운대구 우동 1-1 합성아파트"
+    if where == "asset":
+        f["자산"][0]["소재지"] = s
+    elif where == "acq":
+        f["자산"][0]["취득당시소재지"] = s
+    else:
+        f["세대"]["주택목록"][1]["소재지"] = s
+    with pytest.raises(F.FactsError):
+        F.check_personal(f)
+
+
+def test_long_digit_run_is_not_resident_number():
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["메모"] = "계약번호 2026111512345678"
+    F.check_personal(f)
+
+
+def test_house_bad_date_asks():
+    f = copy.deepcopy(CASES["BC"])
+    f["세대"]["주택목록"][2]["취득일"] = "2015.03.01"
+    with pytest.raises(F.Missing) as e:
+        F.houses_at(f, F.dates.to_date("2026-10-30"), F.prepare(f))
+    assert e.value.문항 == "H04"
+
+
+@pytest.mark.parametrize("bad", [{"분자": 1, "분모": 2}, {"구분": "공동", "분자": 1.5, "분모": 2}])
+def test_share_more_validation(bad):
+    with pytest.raises(F.FactsError):
+        F.share({"지분": bad})
+
+
+def test_all_cases_pass_personal_check():
+    for f in CASES.values():
+        F.check_personal(f)

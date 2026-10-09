@@ -8,7 +8,9 @@ from yangdo import dates, 첫양도일
 
 PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인",
                  "주소", "도로명주소", "지번주소", "상세주소", "거주지"}
-RRN = re.compile(r"\d{6}-?[1-8]\d{6}")
+RRN = re.compile(r"(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)")
+ADDRESS_KEYS = {"소재지", "취득당시소재지"}
+SHARE_MSG = "지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다"
 OK_LAND_USE = ("사업용", "주택부수토지")
 의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 계획 5
 
@@ -56,10 +58,22 @@ def _walk_values(o):
         yield o
 
 
+def _walk_pairs(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield k, v
+            yield from _walk_pairs(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _walk_pairs(v)
+
+
 def check_personal(f):
     bad = PERSONAL_KEYS & set(_walk_keys(f))
     if bad:
         raise FactsError("인적사항 %s 는 사실관계에 넣지 않습니다. 신고인.json 에 따로 두십시오" % sorted(bad))
+    if any(k in ADDRESS_KEYS and v is not None and not isinstance(v, dict) for k, v in _walk_pairs(f)):
+        raise FactsError("소재지는 시도·시군구·읍면동으로 나눠 적습니다. 주소 문자열은 넣지 않습니다")
     if any(RRN.search(v) for v in _walk_values(f)):
         raise FactsError("주민등록번호로 보이는 값은 사실관계에 넣지 않습니다")
 
@@ -80,16 +94,33 @@ def need(obj, path, 문항, 자산id, 내용=None):
     return v
 
 
+def _whole(v):
+    if isinstance(v, bool):
+        raise FactsError("지분 분자·분모는 정수여야 합니다")
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, str) and re.fullmatch(r"[0-9]+", v):
+        return int(v)
+    raise FactsError("지분 분자·분모는 정수여야 합니다")
+
+
 def share(a):
     j = (a or {}).get("지분") or "단독"
-    if j == "단독" or (isinstance(j, dict) and j.get("구분", "단독") == "단독"):
+    if j == "단독":
         return Fraction(1)
-    if not (isinstance(j, dict) and j.get("구분") == "공동"):
-        raise FactsError("지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다")
-    try:
-        n, d = int(j["분자"]), int(j["분모"])
-    except (KeyError, TypeError, ValueError):
-        raise FactsError("지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다")
+    if not isinstance(j, dict):
+        raise FactsError(SHARE_MSG)
+    if "구분" not in j:
+        if "분자" in j or "분모" in j:
+            raise FactsError(SHARE_MSG)
+        return Fraction(1)
+    if j["구분"] == "단독":
+        return Fraction(1)
+    if j["구분"] != "공동":
+        raise FactsError(SHARE_MSG)
+    n, d = _whole(j.get("분자")), _whole(j.get("분모"))
     if not 0 < n <= d:
         raise FactsError("지분 분자·분모는 0 < 분자 <= 분모 인 정수여야 합니다")
     return Fraction(n, d)
@@ -168,8 +199,11 @@ def houses_at(f, on, prep):
     for h in get(f, "세대.주택목록") or []:
         aid = h.get("자산id")
         t = (prep.get("시기") or {}).get(aid) if aid else None
-        acq = dates.to_date(t["취득일"]) if t else dates.to_date(h.get("취득일"))
-        sold = dates.to_date(t["양도일"]) if t else dates.to_date(h.get("양도일"))
+        try:
+            acq = dates.to_date(t["취득일"]) if t else dates.to_date(h.get("취득일"))
+            sold = dates.to_date(t["양도일"]) if t else dates.to_date(h.get("양도일"))
+        except ValueError:
+            raise Missing("H04", aid, "주택 목록 %s 의 날짜 형식이 YYYY-MM-DD 가 아닙니다" % h.get("id"))
         if acq is None:
             raise Missing("H04", aid, "주택 목록 %s 의 취득일이 필요합니다" % h.get("id"))
         if acq > on:
