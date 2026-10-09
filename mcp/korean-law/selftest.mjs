@@ -193,7 +193,32 @@ const head = (text, key) => (text.match(new RegExp(`^${key}: (.+)$`, 'm')) ?? []
 
 r = await call('get_law_text', { law_name: '주택법', article: '63의2' });
 check('주택법을 다른 법으로 찾지 않는다', !r.isError && head(r.text, '법령') === '주택법', r.text);
-check('날짜 없는 조회는 오늘 시행 중인 판', head(r.text, '시행일').slice(0, 8) <= today8, r.text);
+const dateLine = head(r.text, '시행일').match(/^(\d{8}) \(오늘 (\d{8}) 기준 시행 중인 판\)$/);
+check('날짜 없는 조회의 시행일 줄이 「오늘 … 기준 시행 중인 판」 형식이고 오늘이 서울 오늘이다', !!dateLine && dateLine[2] === today8, r.text);
+
+// 오늘 시행 판은 도구 코드를 거치지 않고 법제처 원 응답에서 따로 구한다(공포일이 아니라 시행일 기준, 시행 전 판 제외)
+async function rawInForce(lawName, date8) {
+  const squash = (x) => String(x ?? '').replace(/\s+/g, '');
+  const rows = [];
+  for (let page = 1; page <= 10; page++) {
+    const u = new URL('https://www.law.go.kr/DRF/lawSearch.do');
+    for (const [k, v] of Object.entries({ OC: process.env.LAW_OC, type: 'JSON', target: 'eflaw', query: lawName, nw: '2,3', display: 100, page })) u.searchParams.set(k, String(v));
+    const d = await (await fetch(u)).json();
+    const got = [d?.LawSearch?.law ?? []].flat().filter((x) => x && typeof x === 'object');
+    rows.push(...got);
+    if (!got.length || rows.length >= Number(d?.LawSearch?.totalCnt ?? rows.length)) break;
+  }
+  const inForce = rows
+    .filter((x) => squash(x['법령명한글']) === squash(lawName) && String(x['시행일자']) <= date8)
+    .sort((a, b) => String(b['시행일자']).localeCompare(String(a['시행일자'])) || String(b['공포일자']).localeCompare(String(a['공포일자'])));
+  return inForce.length ? String(inForce[0]['시행일자']) : '';
+}
+const maskKey = (s) => String(s).split(process.env.LAW_OC).join('***');
+let expectedEf = '', rawErr = '';
+try { expectedEf = await rawInForce('주택법', today8); } catch (e) { rawErr = maskKey(e.message); }
+check('날짜 없는 조회의 시행일이 원 응답에서 따로 구한 오늘 시행 판과 같다',
+  !rawErr && expectedEf !== '' && head(r.text, '시행일').slice(0, 8) === expectedEf,
+  rawErr ? `원 응답 조회 실패: ${rawErr}` : `기대 ${expectedEf} / 실제 ${head(r.text, '시행일')}`);
 
 r = await call('get_law_text', { law_name: '상법', article: '1' });
 check('상법을 다른 법으로 찾지 않는다', !r.isError && head(r.text, '법령') === '상법', r.text);
@@ -220,13 +245,25 @@ for (const [law, art, jo] of [['소득세법', '104', '010400'], ['소득세법 
   const t2 = await call('get_law_text', { law_name: law, article: art });
   const mst = head(t2.text, 'MST');
   const ef = head(t2.text, '시행일').slice(0, 8);
-  const want = mokTexts(await rawUnits(mst, ef, jo));
+  let want;
+  try { want = mokTexts(await rawUnits(mst, ef, jo)); } catch (e) {
+    check(`${law} 제${art}조 목이 모두 출력에 있다`, false, `원 응답 조회 실패: ${maskKey(e.message)}`);
+    continue;
+  }
   const missing = want.filter((x) => !t2.text.includes(x));
   check(`${law} 제${art}조 목 ${want.length}개가 모두 출력에 있다`, want.length > 0 && missing.length === 0, missing.slice(0, 3).join(' | '));
 }
 
-const all = await call('search_law', { query: '주택법' });
-check('출력에 OC 가 섞이지 않는다', !all.text.includes(process.env.LAW_OC), 'OC 노출');
+// OC 노출: 링크가 실제로 나오는 도구로 본다(링크가 없으면 가릴 것이 없어 항상 통과한다). 실패 때 값을 찍지 않도록 detail 은 고정 문구다
+const leaksOC = (text) => text.includes(process.env.LAW_OC) || /OC=(?!\*\*\*)/.test(text);
+r = await call('search_rulings', { query: '양도소득세', source: 'nts', display: 5 });
+check('search_rulings 출력에 링크가 있고 OC 가 섞이지 않는다', !r.isError && /http/.test(r.text) && !leaksOC(r.text), 'OC 노출 또는 링크 없음');
+r = await call('search_forms', { query: '양도소득과세표준' });
+check('search_forms 출력에 링크가 있고 OC 가 섞이지 않는다', !r.isError && /http/.test(r.text) && !leaksOC(r.text), 'OC 노출 또는 링크 없음');
+// 위 두 도구의 링크는 실제로는 OC 가 없는 주소(taxlaw.nts.go.kr, flDownload)만 골라 쓴다. 가림 처리를 빼도 통과하므로
+// 입력을 되풀이하는 오류 문구에 OC 를 실어 마스킹 자체가 동작하는지도 본다(가림을 빼면 실패한다)
+r = await call('get_law_text', { law_name: `OC=${process.env.LAW_OC}` });
+check('입력으로 들어온 OC 가 오류 문구에 되풀이돼도 가려진다', r.isError && r.text.includes('OC=***') && !leaksOC(r.text), 'OC 노출 또는 되풀이 없음');
 
 console.log(`\n결과: ${pass} PASS / ${fail} FAIL\n`);
 proc.kill();
