@@ -15,6 +15,9 @@ CONTROL = "조정대상지역"
 소형신축_시작 = date(2024, 1, 10)  # 시행령 제167조의3①12호 가목. 문항 X03 을 보일지 정하는 데만 쓴다
 EXEMPT_REASONS = {"공공임대5년", "수용", "해외이주", "해외취학근무", "부득이1년"}
 EXTEND_REASONS = {"자산관리공사", "경매신청", "공매", "현금청산소송"}
+# 시행령 제154조①1호(공공임대 5년 거주), 2호 가목(수용), 3호(부득이한 사유 1년 거주). 2호 나목·다목(해외 출국)은 빠진다.
+# 이 셋은 제155조① 후단이 「종전 주택 취득 1년 뒤 신규 주택 취득」 요건을 적용하지 않는다고 정한다
+GAP_EXEMPT_REASONS = {"공공임대5년", "수용", "부득이1년"}
 EV_KEYS = ["지구확인필요", "행정구역대응없음", "조정_취득일", "계약일_공고일이전", "세대주택수", "세대주택수_중과",
            "보유년", "거주년", "보유거주미충족", "비과세후보", "일시적2주택후보", "처분기한초과",
            "종전수도권_신규수도권밖", "과세", "중과후보", "지방소재주택있음", "양도주택기준시가_1억이하",
@@ -60,7 +63,10 @@ def _blank(a, t):
 def one_household(f):
     if F.need(f, "세대.배우자", "H01", None):
         return True
-    return any(c != "해당없음" for c in F.need(f, "세대.1세대요건", "H02", None))
+    요건 = F.need(f, "세대.1세대요건", "H02", None)
+    if not isinstance(요건, (list, tuple)):  # 문항 H02 는 복수선택이라 목록이지만 문자열 하나로 와도 글자 단위로 돌지 않는다
+        요건 = [요건] if 요건 else []
+    return any(c != "해당없음" for c in 요건)
 
 
 def self_house(f, a, houses):
@@ -68,6 +74,24 @@ def self_house(f, a, houses):
         if h.get("자산id") == a["id"]:
             return h
     raise F.Missing("H04", a["id"], "판 집을 세대 주택 목록에 넣고 자산id 로 이어 주세요")
+
+
+def holding_start(a, 취득):
+    """비과세 보유기간을 세는 시작일. 주택이 아닌 건물을 주거용으로 바꿔 쓰면 주거 사용을 시작한 날부터 센다(시행령 제154조⑤ 단서)."""
+    return max(취득, to_date(a.get("주거사용개시일")) or 취득)
+
+
+def house_acq(h, prep):
+    """주택 목록 항목의 취득일. 판 자산과 이어진 집(자산id)은 prepare 가 정한 취득 시기를 쓴다(houses_at 과 같은 규칙)."""
+    aid = h.get("자산id")
+    t = (prep.get("시기") or {}).get(aid) if aid else None
+    return to_date(t["취득일"]) if t else to_date(h.get("취득일"))
+
+
+def _with_acq(h, prep):
+    """취득일을 house_acq 로 바꾼 사본. 신규 주택의 취득일이 houses_at 과 어긋나지 않게 한다."""
+    d = house_acq(h, prep)
+    return dict(h, 취득일=d.isoformat() if d else None)
 
 
 def _sale_base_price(a, h):
@@ -99,7 +123,7 @@ def disposal_years(f, a, other, 양도, rs, reg):
     if not (종전["지정"] and 새집["지정"]):
         return base, cites, []
     공고일 = to_date(새집["공고일"])
-    if 공고일 and (신규 <= 공고일 or (계약 and 계약금 and 계약금 <= 공고일)):
+    if 공고일 and (신규 <= 공고일 or (계약 and 계약금 and 계약 <= 공고일 and 계약금 <= 공고일)):
         return base, cites, ["신규 주택 취득·계약이 조정대상지역 공고일(%s) 이전이라 2년 기한을 적용하지 않았다(시행령 제155조①1호 괄호)" % 공고일]
     return (rs.value("일시적2주택.처분기한.조정", 양도),
             rs.cite("일시적2주택.처분기한.조정", 양도) + rs.cite("일시적2주택.조정기한.신규취득시작", 양도), [])
@@ -150,7 +174,10 @@ def _acq_contract_exception(f, a, st):
 def _temporary(f, a, other, 취득, 양도, rs, reg, v):
     신규 = to_date(other["취득일"])
     기관 = bool(F.get(f, "세대.기관이전종사자"))
-    간격 = 기관 or dates.full_years(취득, 신규) >= rs.value("일시적2주택.취득간격", 양도)
+    채움 = 기관 or dates.full_years(취득, 신규) >= rs.value("일시적2주택.취득간격", 양도)
+    사유 = F.get(a, "보유거주예외")  # 여기서는 묻지 않는다. 문항 H10 은 보유·거주 미달일 때만 나온다
+    면제 = 사유 in GAP_EXEMPT_REASONS
+    간격 = 채움 or 면제
     years, cites, notes = disposal_years(f, a, other, 양도, rs, reg)
     기한일 = dates.add_years(신규, years)
     v["처분기한"] = 기한일.isoformat()
@@ -164,13 +191,16 @@ def _temporary(f, a, other, 취득, 양도, rs, reg, v):
             v["근거"] += rs.cite("판정.처분기한연장", 양도)
             v["확인사항"].append("처분기한(%s)이 지났지만 %s 사유로 기한 안 양도로 보았다(시행령 제155조⑱). 증빙을 확인하라"
                               % (v["처분기한"], 연장))
+    if 면제 and not 채움:
+        v["확인사항"].append("종전 주택 양도가 시행령 제154조① 예외 사유(%s)에 해당해 종전 주택 취득 1년 뒤 신규 주택을 취득해야 한다는 요건을 "
+                          "적용하지 않았다(시행령 제155조① 후단). 증빙을 확인하라" % 사유)
     if not 간격:
         v["확인사항"].append("신규 주택을 종전 주택 취득 1년 안에 취득해 일시적 2주택 특례를 적용하지 않았다")
     return 간격 and 기한내
 
 
 def _exemption(f, a, rs, v, 취득, 양도):
-    보유시작 = max(취득, to_date(a.get("주거사용개시일")) or 취득)
+    보유시작 = holding_start(a, 취득)
     if 보유시작 != 취득:
         v["근거"] += rs.cite("판정.주거용전환", 양도)
     보유 = dates.full_years(보유시작, 양도)
@@ -267,7 +297,7 @@ def _house(f, a, prep, rs, reg, v, 취득, 양도):
     if 일세대 and n == 1:
         cand = True
     elif 일세대 and n == 2:
-        other = [h for h in houses if h is not me][0]
+        other = _with_acq([h for h in houses if h is not me][0], prep)
         if not other.get("취득일"):
             raise F.Missing("H04", aid, "주택 목록 %s 의 취득일이 필요합니다" % other.get("id"))
         if 취득 < to_date(other["취득일"]):
@@ -333,9 +363,13 @@ def judge_asset(f, a, prep, rs, reg):
 
 def judge(f, prep, rs, reg):
     out = {"질문": [], "다루지않음": [], "자산": [], "확인사항": [], "경고": []}
+    돌려보냄 = {x.get("자산") for x in (prep.get("질문") or []) + (prep.get("다루지않음") or [])}
     for a in f.get("자산") or []:
-        if a.get("id") not in (prep.get("시기") or {}):
-            continue  # prepare 가 질문이나 다루지않음으로 이미 돌려보냈다
+        aid = a.get("id")
+        # 시기를 못 정했거나, 정했어도 prepare 가 질문이나 다루지않음으로 돌려보낸 자산은 판정하지 않는다.
+        # prepare 는 시기를 먼저 적은 뒤 소재지 질문(A01)과 다루지않음 검사를 하므로 시기만 보면 놓친다
+        if aid not in (prep.get("시기") or {}) or aid in 돌려보냄:
+            continue
         try:
             out["자산"].append(judge_asset(f, a, prep, rs, reg))
         except F.Missing as m:
@@ -345,23 +379,38 @@ def judge(f, prep, rs, reg):
     return out
 
 
+_SOFT = (F.Missing, F.OutOfScope, NeedAnswer, KeyError, TypeError, ValueError, IndexError, AttributeError)
+
+
 def _try(fn):
     try:
         return fn()
-    except (F.Missing, F.OutOfScope, NeedAnswer, KeyError, TypeError, ValueError, IndexError):
+    except _SOFT:
         return None
 
 
+def _lt(x, y):
+    """x < y. 둘 중 하나라도 모르면 None."""
+    return None if x is None or y is None else x < y
+
+
 def engine_values(f, a, prep, rs, reg):
-    """질문지 보이는조건의 엔진값. 모르는 값은 None 이고 예외를 던지지 않는다."""
+    """질문지 보이는조건의 엔진값. 모르는 값은 None 이고 예외를 던지지 않는다.
+
+    사실관계가 반쯤 채워져 있어도(주택 목록의 소재지 없음, 거주 구간의 끝 날짜 없음 등) 읽는 곳마다 _try 로 감싸
+    그 값만 None 으로 둔다.
+    """
     ev = dict.fromkeys(EV_KEYS)
     ev["지구확인필요"] = ev["행정구역대응없음"] = False
     aid = a.get("id")
     t = (prep.get("시기") or {}).get(aid)
     if not t:
         return ev
-    취득, 양도 = to_date(t["취득일"]), to_date(t["양도일"])
-    ev.update(양도일=t["양도일"], 취득일=t["취득일"], 보유년=dates.full_years(취득, 양도))
+    날짜 = _try(lambda: (to_date(t["취득일"]), to_date(t["양도일"])))
+    if not 날짜 or None in 날짜:
+        return ev
+    취득, 양도 = 날짜
+    ev.update(양도일=t["양도일"], 취득일=t["취득일"], 보유년=_try(lambda: dates.full_years(취득, 양도)))
     if a.get("소재지"):
         for addr, on in ((a["소재지"], 양도), (a.get("취득당시소재지") or a["소재지"], 취득)):
             try:
@@ -369,21 +418,26 @@ def engine_values(f, a, prep, rs, reg):
             except NeedAnswer as e:
                 ev["지구확인필요"] = ev["지구확인필요"] or e.문항 == "A02"
                 ev["행정구역대응없음"] = ev["행정구역대응없음"] or e.문항 == "A03"
+            except _SOFT:
+                pass
     st_acq = _try(lambda: reg.status(CONTROL, a.get("취득당시소재지") or a["소재지"], 취득, a.get("지구해당")))
     st_sale = _try(lambda: reg.status(CONTROL, a["소재지"], 양도, a.get("지구해당")))
     ev["조정_취득일"] = st_acq["지정"] if st_acq else None
     if st_acq and st_acq["지정"] and st_acq["공고일"]:
-        계약, 계약금 = to_date(F.get(a, "취득.계약일")), to_date(F.get(a, "취득.계약금지급일"))
-        if 계약 and 계약금:
-            ev["계약일_공고일이전"] = 계약 <= to_date(st_acq["공고일"]) and 계약금 <= to_date(st_acq["공고일"])
+        def 계약이_공고일_이전():
+            계약, 계약금 = to_date(F.get(a, "취득.계약일")), to_date(F.get(a, "취득.계약금지급일"))
+            if 계약 and 계약금:
+                return 계약 <= to_date(st_acq["공고일"]) and 계약금 <= to_date(st_acq["공고일"])
+            return None
+        ev["계약일_공고일이전"] = _try(계약이_공고일_이전)
     elif st_acq:
         ev["계약일_공고일이전"] = False
-    p = _sale_base_price(a, None)
-    ev["양도주택기준시가_1억이하"] = None if p is None else p <= rs.value("중과.소형.기준시가", 양도)
+    p = _try(lambda: _sale_base_price(a, None))
+    ev["양도주택기준시가_1억이하"] = None if p is None else _try(lambda: p <= rs.value("중과.소형.기준시가", 양도))
     ev["감정가액사용"] = a.get("취득가액_확인") == "모름" and not a.get("매매사례가액") and bool(a.get("감정가액"))
     ev["토지건물안분필요"] = a.get("종류") == "건물" and not a.get("토지건물구분")
     if a.get("거주기간") is not None:
-        ev["거주년"] = dates.residence_years(a["거주기간"], 취득, 양도)[0]
+        ev["거주년"] = _try(lambda: dates.residence_years(a["거주기간"], 취득, 양도)[0])
     if a.get("종류") in ("토지", "건물"):
         ev.update(과세=True, 중과후보=False, 비과세후보=False)
         return ev
@@ -393,31 +447,41 @@ def engine_values(f, a, prep, rs, reg):
         return ev
     n = len(houses)
     others = [h for h in houses if h is not me]
+    신규 = _try(lambda: _with_acq(others[0], prep)) if n == 2 else None
     ev["세대주택수"] = n
-    ev["지방소재주택있음"] = any(reg.metro(h["소재지"], 양도) is not True for h in houses)
-    ev["2024-01-10이후취득주택있음"] = any(to_date(h.get("취득일")) and to_date(h["취득일"]) >= 소형신축_시작 for h in houses)
+    ev["지방소재주택있음"] = any(_try(lambda h=h: reg.metro(h["소재지"], 양도)) is not True for h in houses)
+
+    def 신축_이후(h):
+        d = _try(lambda: house_acq(h, prep))
+        return d is not None and d >= 소형신축_시작
+    ev["2024-01-10이후취득주택있음"] = any(신축_이후(h) for h in houses)
     ev["세대주택수_중과"] = _try(lambda: count_for_heavy(f, a, houses, me, 양도, rs, reg)[0])
-    temp = bool(n == 2 and _try(lambda: 취득 < to_date(others[0]["취득일"])))
+    temp = bool(신규 is not None and _try(lambda: 취득 < to_date(신규["취득일"])))
     ev["일시적2주택후보"] = temp
     if temp:
-        ev["신규주택id"] = others[0]["id"]
-        r = _try(lambda: disposal_years(f, a, others[0], 양도, rs, reg))
+        ev["신규주택id"] = 신규.get("id")
+        r = _try(lambda: disposal_years(f, a, 신규, 양도, rs, reg))
         if r:
-            ev["처분기한초과"] = 양도 > dates.add_years(to_date(others[0]["취득일"]), r[0])
-        ev["종전수도권_신규수도권밖"] = reg.capital(a["소재지"]) and not reg.capital(others[0]["소재지"])
+            ev["처분기한초과"] = _try(lambda: 양도 > dates.add_years(to_date(신규["취득일"]), r[0]))
+        ev["종전수도권_신규수도권밖"] = _try(lambda: reg.capital(a["소재지"]) and not reg.capital(신규["소재지"]))
     일세대 = _try(lambda: one_household(f))
     ev["비과세후보"] = None if 일세대 is None else bool(일세대 and (n == 1 or temp))
     if ev["비과세후보"] is False:
         ev["보유거주미충족"] = False
     elif ev["비과세후보"]:
-        보유미달 = ev["보유년"] < rs.value("비과세.보유", 양도)
+        # 보유 햇수는 judge_asset 의 _exemption 과 같은 시작일로 센다. ev["보유년"] 은 취득일 기준 그대로다
+        보유 = _try(lambda: dates.full_years(holding_start(a, 취득), 양도))
+        보유미달 = _lt(보유, _try(lambda: rs.value("비과세.보유", 양도)))
         if ev["조정_취득일"] is False:
             거주미달 = False
         elif ev["조정_취득일"] is None or ev["거주년"] is None:
             거주미달 = None
         else:
-            거주미달 = ev["거주년"] < rs.value("비과세.조정취득거주", 양도)
-        ev["보유거주미충족"] = True if (보유미달 or 거주미달) else (None if 거주미달 is None else False)
+            거주미달 = _lt(ev["거주년"], _try(lambda: rs.value("비과세.조정취득거주", 양도)))
+        if 보유미달 or 거주미달:
+            ev["보유거주미충족"] = True
+        else:
+            ev["보유거주미충족"] = None if (보유미달 is None or 거주미달 is None) else False
     full = _try(lambda: judge_asset(f, a, prep, rs, reg))
     if full:
         ev["과세"] = not full["전액비과세"]
