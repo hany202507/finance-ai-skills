@@ -106,3 +106,31 @@ def test_metro():
 def test_renamed_with_low_grade_is_noted():
     s = REG.status(C, a("광주광역시", "서구", "치평동"), "2021-06-01")
     assert s["지정"] is True and s["주석"]
+
+
+def test_city_without_district_must_name_district():
+    with pytest.raises(NeedAnswer) as e:
+        REG.status(C, a("경기도", "성남시", "정자동"), "2024-01-01")
+    assert e.value.문항 == "A01"
+    assert REG.status(C, a("경기도", "성남시 분당구", "정자동"), "2024-01-01")["지정"] is False
+
+
+def test_metro_uses_date_for_merger():
+    assert REG.metro(a("광주광역시", "서구", "치평동"), "2025-06-01") is True
+    assert REG.metro(a("광주광역시", "광산구", "수완동"), "2025-06-01") is True
+    assert REG.metro(a("전라남도", "순천시", "조례동"), "2025-06-01") is False
+    assert REG.metro(a("광주광역시", "서구", "치평동"), "2026-10-09") is None
+
+
+def test_city_form_alias_and_unknown_sido():
+    assert REG.status(C, a("서울시", "마포구", "공덕동"), "2026-03-15")["지정"] is True
+    with pytest.raises(NeedAnswer) as e:
+        REG.status(C, a("서울특별", "마포구", "공덕동"), "2026-03-15")
+    assert e.value.문항 == "A01"
+
+
+def test_load_requires_notice_files(tmp_path):
+    import shutil
+    shutil.copy(os.path.join(RULES_DIR, "행정구역_대응.json"), tmp_path / "행정구역_대응.json")
+    with pytest.raises(FileNotFoundError):
+        RG.load(str(tmp_path))

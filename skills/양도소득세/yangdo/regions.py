@@ -15,11 +15,14 @@ SIDO_SHORT = {"서울": "서울특별시", "부산": "부산광역시", "대구"
               "광주": "광주광역시", "대전": "대전광역시", "울산": "울산광역시", "세종": "세종특별자치시",
               "경기": "경기도", "강원": "강원특별자치도", "충북": "충청북도", "충남": "충청남도",
               "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도", "경남": "경상남도",
-              "제주": "제주특별자치도"}
+              "제주": "제주특별자치도",
+              "서울시": "서울특별시", "부산시": "부산광역시", "대구시": "대구광역시", "인천시": "인천광역시",
+              "대전시": "대전광역시", "울산시": "울산광역시", "세종시": "세종특별자치시"}
 CAPITAL = {"서울특별시", "인천광역시", "경기도"}
-METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시"}
+METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시", "광주광역시"}
 SEJONG = "세종특별자치시"
 UNKNOWN_METRO = {"전남광주통합특별시"}
+KNOWN_SIDO = set(SIDO_SHORT.values()) | {"전남광주통합특별시"}
 
 
 class NeedAnswer(Exception):
@@ -57,13 +60,15 @@ class Regions:
                 out.append(e)
             self.events[name] = out
 
-    def _sido(self, s, notes=None):
+    def _sido(self, s, notes=None, on=None):
         s = _clean(s)
         s = SIDO_SHORT.get(s, s)
         seen = set()
         while s in self.rename and s not in seen:
             seen.add(s)
             r = self.rename[s]
+            if on is not None and _d(r["시작"]) > on:
+                break
             if notes is not None and r.get("등급") != "★★★":
                 notes.append("%s 를 %s 로 바꿔 판정했다(%s, %s)" % (s, r["새"], r["등급"], r.get("근거", "")))
             s = r["새"]
@@ -75,8 +80,8 @@ class Regions:
         r2["시군구"] = SEJONG if r2["시도"] == SEJONG else _clean(r["시군구"])
         return r2
 
-    def canon(self, addr, notes=None):
-        a = {"시도": self._sido((addr or {}).get("시도"), notes),
+    def canon(self, addr, notes=None, on=None):
+        a = {"시도": self._sido((addr or {}).get("시도"), notes, on),
              "시군구": _clean((addr or {}).get("시군구")), "읍면동": _clean((addr or {}).get("읍면동"))}
         if a["시도"] == SEJONG:
             a["시군구"] = SEJONG
@@ -101,6 +106,8 @@ class Regions:
 
     def _match(self, r, a, 지구):
         """True, False, 또는 지구 답에 달렸으면 '?'."""
+        if r["시도"] == a["시도"] and " " not in a["시군구"] and r["시군구"].startswith(a["시군구"] + " "):
+            raise NeedAnswer("A01", "%s 는 구마다 지정이 갈립니다. 구 이름까지 적어 주세요" % a["시군구"])
         if r["시도"] != a["시도"] or not _prefix(r["시군구"], a["시군구"]):
             return False
         if r.get("범위") == "전역":
@@ -129,6 +136,8 @@ class Regions:
         on = _d(on)
         notes = []
         a = self.canon(addr, notes)
+        if a["시도"] not in KNOWN_SIDO:
+            raise NeedAnswer("A01", "시도 이름 %s 를 알 수 없습니다. 서울특별시·경기도처럼 적어 주세요" % a["시도"])
         self._check_reorg(a, on)
         cur, pend = None, None
         for e in self.events[regime]:
@@ -179,7 +188,7 @@ class Regions:
         return False
 
     def metro(self, addr, on=None):
-        a = self.canon(addr)
+        a = self.canon(addr, on=_d(on) if on is not None else None)
         if a["시도"] in CAPITAL:
             return True
         if a["시도"] in UNKNOWN_METRO:
@@ -200,9 +209,10 @@ def load(rules_dir=None):
     notices = {}
     for name in REGIMES:
         p = os.path.join(rules_dir, "고시", name + ".json")
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                notices[name] = json.load(f)
+        if not os.path.exists(p):
+            raise FileNotFoundError("고시 파일이 없다: %s" % p)
+        with open(p, encoding="utf-8") as f:
+            notices[name] = json.load(f)
     with open(os.path.join(rules_dir, "행정구역_대응.json"), encoding="utf-8") as f:
         admin = json.load(f)
     return Regions(notices, admin)
