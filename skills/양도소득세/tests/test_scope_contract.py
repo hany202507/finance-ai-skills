@@ -13,7 +13,7 @@ import re
 
 import pytest
 
-from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house
+from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house, 춘천
 from yangdo import SKILL_DIR, engine
 from yangdo import facts as F
 from yangdo import questions as Q
@@ -217,6 +217,44 @@ def test_p07_is_a_yes_no_question_and_not_asked_once_answered():
     assert Q.answer(_bc_same_day(None), "P07", False)["연간"]["같은날양도순서"] is False
     with pytest.raises(ValueError, match="P07"):
         Q.answer(_bc_same_day(None), "P07", "아니요")
+
+
+def _with_sold_listed_house(name, 양도일, **kw):
+    """사실관계 name 의 주택 목록에 자산과 이어지지 않은 집을 하나 더 넣는다. 양도일이 있으면 그날 판 집이다."""
+    f = copy.deepcopy(CASES[name])
+    f["세대"]["주택목록"].append(house("H7", 춘천, "2015-03-01", 양도일=양도일, **kw))
+    return f
+
+
+def test_house_sold_on_the_same_day_in_the_house_list_is_out_of_scope():
+    """자산으로 넣지 않고 주택 목록에만 적은 집이 판 집과 같은 날 팔렸으면 같은 날 여러 채 양도다(m-1)."""
+    f = _with_sold_listed_house("B", "2026-11-20")   # B 의 양도일과 같은 날
+    p = F.prepare(f)
+    assert p["다루지않음"] == [{"자산": "B", "내용": "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "계획": "5"}]
+    assert len(_out(f)) == 1
+    g = _with_sold_listed_house("C", "2026-10-30")   # 반대로 C 쪽(순서가 다른 집)에서도 같다
+    assert [x["자산"] for x in F.prepare(g)["다루지않음"]] == ["C"]
+
+
+@pytest.mark.parametrize("양도일", ["2026-11-19", "2026-11-21", "2025-11-20", None])
+def test_house_sold_on_another_day_in_the_house_list_is_not_same_day(양도일):
+    f = _with_sold_listed_house("B", 양도일)
+    assert F.prepare(f)["다루지않음"] == []
+
+
+def test_listed_house_linked_to_the_sold_asset_is_not_counted_twice():
+    f = copy.deepcopy(CASES["B"])
+    f["세대"]["주택목록"][0]["양도일"] = "2026-11-20"   # 자산 B 와 이어진 집. 같은 집이라 같은 날 둘이 아니다
+    assert F.prepare(f)["다루지않음"] == []
+    assert engine.calculate(f, today=TODAY)["계산"]["합계"]["산출세액"] == EXPECT["B"]["산출세액"]
+
+
+def test_listed_house_with_a_malformed_sale_date_is_left_to_the_house_check():
+    f = _with_sold_listed_house("B", "20261120")
+    p = F.prepare(f)
+    assert p["다루지않음"] == []
+    r = engine.calculate(f, today=TODAY)
+    assert r["상태"] == "질문" and "H04" in [q["문항"] for q in r["질문"]]
 
 
 def test_same_day_check_ignores_assets_already_out_of_scope():

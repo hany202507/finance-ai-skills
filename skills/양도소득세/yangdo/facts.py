@@ -455,6 +455,7 @@ def _route_same_day(f, out):
     사실관계에 같은 날 양도한 주택 자산이 둘 이상이거나, 같은날양도순서(P07, 예아니오)가 참이면 그 날의 주택 자산을 돌려보낸다.
     P07 은 다른 양도를 따로 돌린 사실관계에서도 같은 날 양도를 알려 준다. 참이 아닌 값은 같은 날 양도가 없다는 뜻이다.
     예아니오가 아닌 값(글자 「아니요」 등)은 prepare 의 자료형 검사(form_rules)가 P07 을 되묻는다.
+    자산으로 넣지 않고 세대 주택목록에만 적은 집도 양도일(`양도일`)이 있으면 같은 날 양도한 집으로 센다(houses_at 이 그 날짜로 보유 여부를 정한다).
     """
     선언 = get(f, "연간.같은날양도순서") is True
     이미 = {x["자산"] for x in out["다루지않음"]}
@@ -464,10 +465,28 @@ def _route_same_day(f, out):
         t = out["시기"].get(aid)
         if t and a.get("종류") == "주택" and aid not in 이미:
             by_day.setdefault(t["양도일"], []).append(aid)
-    for ids in by_day.values():
-        if len(ids) >= 2 or 선언:
+    listed = _listed_sale_days(f, out)
+    for day, ids in by_day.items():
+        if len(ids) >= 2 or 선언 or day in listed:
             for aid in ids:
                 out["다루지않음"].append(OutOfScope(aid, "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "5").to_dict())
+
+
+def _listed_sale_days(f, out):
+    """판 날(양도일)이 적힌 주택목록 집의 양도일 모음. 시기를 정한 자산과 이어진 집(자산id)은 그 자산이 이미 세므로 뺀다.
+    날짜 형식이 틀린 집은 여기서 건너뛴다. houses_at 이 H04 로 되묻는다."""
+    houses = get(f, "세대.주택목록")
+    days = set()
+    for h in houses if isinstance(houses, list) else []:
+        if not isinstance(h, dict) or h.get("자산id") in out["시기"]:
+            continue
+        try:
+            day = dates.to_date(h.get("양도일"))
+        except ValueError:
+            continue
+        if day is not None:
+            days.add(day.isoformat())
+    return days
 
 
 def _prepare_asset(f, a, out, bad):
