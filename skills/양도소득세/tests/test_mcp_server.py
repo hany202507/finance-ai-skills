@@ -364,6 +364,13 @@ def test_stdio_invalid_utf8_is_a_parse_error_and_server_stays_alive():
     assert lines[3]["result"] == {} and lines[4]["result"] == {}
 
 
+def test_stdio_deeply_nested_line_is_a_parse_error_and_server_stays_alive():
+    data = b"[" * 200000 + b"]" * 200000 + b"\n" + json.dumps(PING2).encode("ascii") + b"\n"
+    lines, _ = _run_stdio(data)
+    assert [x["id"] for x in lines] == [None, 2]
+    assert lines[0]["error"]["code"] == -32700 and lines[1]["result"] == {}
+
+
 @pytest.mark.parametrize("name,owner,attr,exc,args", [
     ("yangdo_next_questions", M.questions, "next_questions", KeyError("키"), {"facts": CASES["A"]}),
     ("yangdo_answer", M.questions, "answer", TypeError("형"),

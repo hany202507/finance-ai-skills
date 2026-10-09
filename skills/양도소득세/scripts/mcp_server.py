@@ -338,7 +338,7 @@ def main():
             req = json.loads(line)
         except UnicodeEncodeError:
             resp = _error(None, -32700, "UTF-8 로 읽을 수 없는 바이트가 든 줄이다")
-        except ValueError:
+        except (ValueError, RecursionError):  # 중첩이 지나치게 깊은 줄도 읽지 못한 줄로 다룬다
             resp = _error(None, -32700, "JSON 으로 읽을 수 없는 줄이다")
         else:
             try:
