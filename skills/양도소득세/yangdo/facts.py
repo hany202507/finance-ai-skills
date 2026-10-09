@@ -12,6 +12,7 @@ from datetime import date
 from fractions import Fraction
 
 from yangdo import QUESTIONS_PATH, dates, 첫양도일
+from yangdo.regions import CAPITAL, SIDO_SHORT
 
 PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인",
                  "주소", "도로명주소", "지번주소", "상세주소", "거주지"}
@@ -30,6 +31,9 @@ RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간
 FORM_MSG = "%s 의 값 형식이 맞지 않습니다. 받는 형식: %s"
 FORM_KINDS = ("예아니오", "선택", "복수선택", "목록")
 CHOICE_DICT_KEYS = {"자산[].지분"}  # 선택 문항인데 {구분: 공동, 분자, 분모} 묶음으로도 답하는 키
+LAND_NAMES = ("대지면적", "정착면적", "용도지역")
+LAND_MSG = "부수토지는 대지면적·정착면적(제곱미터)·용도지역을 이름으로 한 dict 로 적습니다"
+SAME_DAY_NO = (False, "", "없음", "아니오", "해당없음")  # 같은날양도순서(P07)에 이런 답이면 같은 날 양도가 없다는 뜻이다
 
 # 질문지(범위 계획1)가 묻지만 엔진이 읽지 않는 키. 문항.json 의 키 그대로 적고 읽지 않는 이유를 한 줄로 적는다.
 # 여기 든 키는 prepare 의 자료형 검사도 받지 않는다(answer() 는 받는다). 엔진이 읽기 시작하면 이 표에서 지운다.
@@ -204,6 +208,32 @@ def form_rules(path=None):
     return _FORM_RULES[path]
 
 
+def _land_ratio(zone, capital):
+    """부수토지 비과세 배율(시행령 제154조⑦). 도시지역 안 수도권의 주거·상업·공업지역 3배, 수도권 녹지지역 5배,
+    수도권 밖 도시지역 5배, 그 밖의 용도지역(관리·농림·자연환경보전) 10배. 용도지역 이름으로 정하지 못하면 None."""
+    if "녹지" in zone:
+        return 5
+    if any(w in zone for w in ("주거", "상업", "공업")):
+        return 3 if capital else 5
+    if any(w in zone for w in ("관리", "농림", "자연환경")):
+        return 10
+    return None
+
+
+def land_problem(value):
+    """L01 부수토지 답의 모양. 맞으면 None, 틀리면 안내. 질문지 answer() 와 prepare() 가 같이 쓴다."""
+    if not isinstance(value, dict) or set(value) - set(LAND_NAMES):
+        return LAND_MSG
+    for name in LAND_NAMES[:2]:
+        v = value.get(name)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+            return "%s 은 0 보다 큰 숫자로 적습니다" % name
+    zone = value.get("용도지역")
+    if not isinstance(zone, str) or _land_ratio(zone, True) is None:
+        return "용도지역은 제1종일반주거지역, 자연녹지지역, 계획관리지역처럼 토지이용계획확인서의 이름으로 적습니다"
+    return None
+
+
 def _whole(v):
     if isinstance(v, bool):
         raise FactsError("지분 분자·분모는 정수여야 합니다")
@@ -260,6 +290,7 @@ def _check_money(a):
     aid = a.get("id")
     _money((a.get("양도") or {}).get("매수인부담세액"), "A14", aid)
     _money(a.get("전체양도가액"), "M01", aid)
+    _money(a.get("시가참고"), "M03", aid)
     _money(a.get("전체취득가액"), "M06", aid)
     ex = a.get("필요경비")
     if ex is not None and not isinstance(ex, dict):
@@ -386,6 +417,60 @@ def _check_asset_forms(a, aid):
                 raise m
 
 
+def _route_house(a, aid):
+    """엔진이 계산하지 않는 주택 사실. 답이 있으면 계산하지 않고 다루지않음(계획 5)으로 돌린다."""
+    if a.get("다가구일괄양도") not in (None, "일괄"):
+        raise OutOfScope(aid, "다가구주택을 호실별로 나눠 양도(시행령 제155조⑮, 호실마다 한 채로 본다)", "5")
+    if get(a, "양도.용도변경특약") is True:
+        raise OutOfScope(aid, "매매계약 뒤 주택 외 용도로 바꿔 양도(시행령 제154조① 괄호, 1주택 판정일이 매매계약일)", "5")
+    if a.get("비거주자전환") is True:
+        raise OutOfScope(aid, "비거주자일 때부터 보유한 주택을 거주자로 전환한 뒤 양도(보유·거주기간 통산, 시행령 제154조⑧2호)", "5")
+    if a.get("재건축통산") is True:
+        raise OutOfScope(aid, "멸실 뒤 재건축한 주택(보유·거주기간 통산, 시행령 제154조⑧1호)", "5")
+    land = a.get("부수토지")
+    if land is not None:
+        problem = land_problem(land)
+        if problem:
+            raise Missing("L01", aid, problem)
+        sido = get(a, "소재지.시도")
+        ratio = _land_ratio(land["용도지역"], SIDO_SHORT.get(sido, sido) in CAPITAL)
+        if land["대지면적"] > land["정착면적"] * ratio:
+            raise OutOfScope(aid, "주택부수토지가 건물 정착면적의 %d배를 넘는다(%s, 시행령 제154조⑦). 넘는 땅은 비사업용 토지로 본다"
+                             % (ratio, land["용도지역"]), "5")
+
+
+def _route_price(a, aid, out):
+    """양도가액에 영향을 주는 사실. 금액 형식 검사 뒤에 부른다."""
+    if (get(a, "양도.매수인부담세액") or 0) > 0:
+        raise OutOfScope(aid, "매수인이 부담한 양도소득세가 있는 양도", "5")
+    if a.get("매수인관계") not in (None, "타인"):
+        시가, 가액 = a.get("시가참고"), a.get("전체양도가액")
+        if 시가 is not None and 가액 is not None and 가액 < 시가:
+            raise OutOfScope(aid, "특수관계인에게 시가보다 낮게 양도(부당행위계산 부인 검토 대상)", "5")
+        out["확인사항"].append("%s: 특수관계인 거래는 시가와 비교해 부당행위계산 부인 대상인지 확인한다(소득세법 제101조)" % aid)
+
+
+def _route_same_day(f, out):
+    """같은 날 주택을 여러 채 양도하면 거주자가 고른 순서대로 양도한 것으로 본다(시행령 제154조⑨). 순서를 반영하지 않으므로 계산하지 않는다.
+
+    사실관계에 같은 날 양도한 주택 자산이 둘 이상이거나, 같은날양도순서(P07)에 없다는 뜻이 아닌 답이 있으면 그 날의 주택 자산을 돌려보낸다.
+    P07 은 다른 양도를 따로 돌린 사실관계에서도 같은 날 양도를 알려 준다.
+    """
+    답 = get(f, "연간.같은날양도순서")
+    선언 = 답 is not None and 답 not in SAME_DAY_NO
+    이미 = {x["자산"] for x in out["다루지않음"]}
+    by_day = {}
+    for a in f.get("자산") or []:
+        aid = a.get("id")
+        t = out["시기"].get(aid)
+        if t and a.get("종류") == "주택" and aid not in 이미:
+            by_day.setdefault(t["양도일"], []).append(aid)
+    for ids in by_day.values():
+        if len(ids) >= 2 or 선언:
+            for aid in ids:
+                out["다루지않음"].append(OutOfScope(aid, "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "5").to_dict())
+
+
 def _prepare_asset(f, a, out, bad):
     aid = a.get("id")
     종류 = need(a, "종류", "P02", aid)
@@ -434,6 +519,7 @@ def _prepare_asset(f, a, out, bad):
             raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")
         if "H06" not in bad and get(f, "세대.입주권분양권"):
             raise OutOfScope(aid, "세대가 조합원입주권·분양권을 가진 경우", "5")
+        _route_house(a, aid)
     if 종류 == "토지" and a.get("등기") is not False:
         용도 = need(a, "토지사용현황", "A21", aid)
         if 용도 not in OK_LAND_USE:
@@ -443,6 +529,7 @@ def _prepare_asset(f, a, out, bad):
     if 종류 == "주택":
         _check_residence(a)
     _check_money(a)
+    _route_price(a, aid, out)
     if 원인 == "수용":
         out["확인사항"].append("%s: 수용 양도의 조세특례제한법 감면은 계산하지 않았다" % aid)
 
@@ -464,6 +551,7 @@ def prepare(f):
             out["다루지않음"].append(o.to_dict())
     _check_house_prices(f, out)
     _check_house_forms(f, out)
+    _route_same_day(f, out)
     if "P05" not in bad and get(f, "연간.다른양도"):
         out["확인사항"].append("같은 해 다른 양도는 이 계산에 들어가지 않았다. 기본공제와 합산 비교(소득세법 제104조⑤)를 다시 확인하라")
     return out

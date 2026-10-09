@@ -67,6 +67,13 @@ def _check_periods(qid, value, f):
         raise ValueError("%s 는 [전입일, 전출일] 구간의 목록으로 답한다. 날짜는 YYYY-MM-DD" % qid)
 
 
+def _check_land(qid, value, f):
+    """L01. 대지면적, 정착면적, 용도지역으로 부수토지 배율을 가른다. 사실관계 검사와 같은 함수(facts.land_problem)를 쓴다."""
+    problem = F.land_problem(value)
+    if problem:
+        raise ValueError("%s: %s" % (qid, problem))
+
+
 def _dated_bundle(dates, others=()):
     """키 하나에 이름 붙은 묶음(dict)으로 답하는 날짜 문항의 검사. 날짜 하나만 적은 문자열은 받지 않는다.
 
@@ -93,6 +100,7 @@ def _dated_bundle(dates, others=()):
 #       그 주소 문항을 다시 낸다. 고시 이력을 보는 일은 judge.engine_values 가 하고 여기서는 regions 를 부르지 않는다.
 KEY_RULES = {
     "자산[].지분": {"답": _check_share},                                 # 단독 또는 공동(분자 분모)
+    "자산[].부수토지": {"답": _check_land},                               # L01 대지면적, 정착면적, 용도지역
     "세대.주택목록": {"답": _check_houses},                               # H04 집마다 id, 취득일, 판 집 연결
     "자산[].거주기간": {"답": _check_periods},                            # H07 [전입일, 전출일] 구간 목록
     "자산[].신축증축": {"답": _dated_bundle(("사용승인일",), ("증축면적",))},   # M23 환산 가산세 5년 판정
