@@ -23,6 +23,7 @@ from yangdo import ruleset as R  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 
 BOX = set("│┌┐└┘├┤┬┴┼─|")
+UNITS = {"원", "년", "율", "날짜", "세율표", "율표", "근거"}
 
 
 def squash(s):
@@ -39,6 +40,7 @@ def load_pans(rules_dir):
         listing = json.load(f)
     out = {}
     for law, vers in listing["법령"].items():
+        vers = sorted(vers, key=lambda v: v["시행일"])
         pans = []
         for i, v in enumerate(vers):
             with open(os.path.join(rules_dir, "조문", v["파일"]), encoding="utf-8") as f:
@@ -106,9 +108,16 @@ def build(rules_dir):
     rules = {}
     for rule in spec["규칙"]:
         key, hist, prev_end = rule["key"], [], "처음"
+        if rule["단위"] not in UNITS:
+            fails.append("%s: 단위 %s 를 알 수 없다" % (key, rule["단위"]))
         for e in rule["이력"]:
             if rule["단위"] != "근거" and e.get("값") is None:
                 fails.append("%s: 값이 비었다" % key)
+            if not e.get("근거"):
+                fails.append("%s: 근거가 없다" % key)
+            for g in e.get("근거") or []:
+                if not g.get("발췌") or any(not str(x).strip() for x in g["발췌"]):
+                    fails.append("%s: %s %s 발췌가 비었다" % (key, g.get("법령"), g.get("조")))
             s = to_date(e["시작"])
             if prev_end != "처음" and (prev_end is None or s is None or s <= prev_end):
                 fails.append("%s: 이력 구간이 겹친다" % key)

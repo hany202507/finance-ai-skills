@@ -130,8 +130,32 @@ def test_taxdoctor_mismatch_blocks(tmp_path):
 
 def test_overlapping_history_fails(tmp_path):
     bad = json.loads(json.dumps(RULES))
-    bad["규칙"][0]["이력"][1]["시작"] = "2025-02-01"
-    assert built(tmp_path, bad)[1] == 1
+    bad["규칙"][1]["이력"] = [
+        {"시작": "2025-01-01", "끝": "2026-01-01", "기준일": "양도일", "값": 2, "근거": [g(["보유기간이 2년 이상인 주택"])]},
+        {"시작": "2025-06-01", "끝": None, "기준일": "양도일", "값": 2, "근거": [g(["보유기간이 2년 이상인 주택"])]}]
+    d, code, msgs = built(tmp_path, bad)
+    assert code == 1 and any("겹친다" in m for m in msgs)
+
+
+@pytest.mark.parametrize("mutate,word", [
+    (lambda r: r["규칙"][1]["이력"][0].update(근거=[]), "근거가 없다"),
+    (lambda r: r["규칙"][1]["이력"][0]["근거"][0].update(발췌=[]), "발췌가 비었다"),
+    (lambda r: r["규칙"][1]["이력"][0]["근거"][0].update(발췌=[" "]), "발췌가 비었다"),
+    (lambda r: r["규칙"][3].update(단위="세율"), "단위"),
+])
+def test_empty_grounds_and_unknown_unit_fail(tmp_path, mutate, word):
+    bad = json.loads(json.dumps(RULES))
+    mutate(bad)
+    d, code, msgs = built(tmp_path, bad)
+    assert code == 1 and any(word in m for m in msgs)
+
+
+def test_cite_date_is_version_in_force_on_date(tmp_path):
+    d, _, _ = built(tmp_path)
+    rs = R.load(d)
+    assert rs.cite("중과.한시배제.보유", "2025-01-15")[0]["시행일"] == "2025-01-01"
+    assert rs.cite("중과.한시배제.보유", "2026-03-01")[0]["시행일"] == "2025-02-28"
+    assert rs.cite("일시적2주택.조정기한.신규취득시작", "2025-06-01")[0]["시행일"] == "2025-02-28"
 
 
 def test_edition_detects_edit_and_rebuild(tmp_path):

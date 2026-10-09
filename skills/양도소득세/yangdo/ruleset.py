@@ -58,6 +58,15 @@ def _conv(unit, v):
     return v  # 날짜는 문자열 그대로
 
 
+def _in_force(pans, on):
+    """대조에 통과한 판 중 on 에 시행 중이던 판의 시행일. on 이 모든 판보다 이르면(부칙 근거 등) 가장 이른 판."""
+    dates = sorted(p["시행일"] for p in pans)
+    if not dates:
+        return None
+    before = [x for x in dates if x <= str(to_date(on))]
+    return before[-1] if before else dates[0]
+
+
 class Ruleset:
     def __init__(self, data, edition):
         self.data = data
@@ -96,7 +105,7 @@ class Ruleset:
         out = []
         for g in self.entry(key, on)["근거"]:
             out.append({"key": key, "법령": g["법령"], "조항": _label(g["조"], g.get("항", ""), g.get("공포번호")),
-                        "시행일": max((p["시행일"] for p in g.get("판", [])), default=None),
+                        "시행일": _in_force(g.get("판", []), on),
                         "발췌": g["발췌"], "URL": g["URL"]})
         return out
 
