@@ -142,7 +142,7 @@ def test_malformed_value_comes_back_as_question():
 
 
 def test_today_is_validated_and_accepted():
-    for bad in ("2026-13-01", "26", "오늘", 20261009):
+    for bad in ("2026-13-01", "26", "오늘", 20261009, "20261009", "2026-W41-5", ""):
         assert "오늘" in err("yangdo_calculate", {"facts": CASES["A"], "오늘": bad})
     ok = call("yangdo_calculate", {"facts": CASES["A"], "오늘": "2026-10-09"})
     assert ok["기준정보"]["오늘"] == "2026-10-09"

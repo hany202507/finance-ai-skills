@@ -79,9 +79,7 @@ def _blank(a, t):
 def one_household(f):
     if F.need(f, "세대.배우자", "H01", None):
         return True
-    요건 = F.need(f, "세대.1세대요건", "H02", None)
-    if not isinstance(요건, (list, tuple)):  # 문항 H02 는 복수선택이라 목록이지만 문자열 하나로 와도 글자 단위로 돌지 않는다
-        요건 = [요건] if 요건 else []
+    요건 = F.need(f, "세대.1세대요건", "H02", None)   # 복수선택이라 목록이다. 목록이 아니면 prepare 가 H02 를 되묻는다
     return any(c != "해당없음" for c in 요건)
 
 

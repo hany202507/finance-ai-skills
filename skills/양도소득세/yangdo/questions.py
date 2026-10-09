@@ -21,6 +21,7 @@ import os
 
 from yangdo import RULES_DIR, judge, regions, ruleset
 from yangdo import facts as F
+from yangdo.dates import to_date
 
 MOREUM = "모름"
 _RULES = {}
@@ -29,7 +30,15 @@ OPS = {"==": lambda a, b: a == b, "!=": lambda a, b: a != b, "in": lambda a, b: 
        "<": lambda a, b: a < b, ">": lambda a, b: a > b}
 
 
-_is_iso = F.is_iso   # 날짜 규칙은 facts 와 하나다
+def _is_iso(v):
+    """YYYY-MM-DD 로 적은 실제 있는 날짜 글자인지. 형식과 달력은 dates.to_date 가 보고, 20261115 같은 붙여 쓴 날짜는 받지 않는다."""
+    if not isinstance(v, str) or not v:
+        return False
+    try:
+        to_date(v)
+    except ValueError:
+        return False
+    return True
 
 
 def _check_share(qid, value, f):

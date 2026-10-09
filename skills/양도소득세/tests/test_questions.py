@@ -306,24 +306,42 @@ def _house_asset_facts():
 @pytest.mark.parametrize("qid,value,kw", [
     pytest.param("A11", "2026.11.15", {"자산": "A"}, id="date-format"),
     pytest.param("A11", "2026-13-40", {"자산": "A"}, id="date-no-such-day"),
+    pytest.param("A11", "20261115", {"자산": "A"}, id="date-compact-iso"),
+    pytest.param("A11", "2026-W46-7", {"자산": "A"}, id="date-week-form"),
     pytest.param("A11", {"잔금일": "2026-11-15"}, {"자산": "A"}, id="date-dict-for-plain-date"),
     pytest.param("A01", "서울특별시 송파구 잠실동", {"자산": "A"}, id="address-string"),
     pytest.param("A01", {"시도": "서울특별시"}, {"자산": "A"}, id="address-no-sigungu"),
     pytest.param("P04", "공동", {"자산": "A"}, id="share-no-numerator-denominator"),
     pytest.param("A11", None, {"자산": "A"}, id="empty-is-not-moreum"),
     pytest.param("A17", {"잔금일": None, "등기접수일": None}, {"자산": "A"}, id="two-keys-all-empty"),
+    pytest.param("A17", {"잔금일": "20141101"}, {"자산": "A"}, id="two-keys-compact-iso"),
     pytest.param("A17", {"결제일": "2014-11-01"}, {"자산": "A"}, id="two-keys-unknown-name"),
     pytest.param("A17", "2014-11-01", {"자산": "A"}, id="two-keys-needs-dict"),
     pytest.param("H07", [["2014-11-01"]], {"자산": "A"}, id="period-has-two-ends"),
     pytest.param("H07", [["2020-01-01", "2014-11-01"]], {"자산": "A"}, id="period-reversed"),
+    pytest.param("H07", [["20141101", "20261115"]], {"자산": "A"}, id="period-compact-iso"),
     pytest.param("H04", [{"소재지": {"시도": "서울특별시", "시군구": "마포구"}}], {}, id="houses-no-id"),
     pytest.param("H04", [{"id": "H1", "자산id": None}], {}, id="houses-other-house-no-date"),
+    pytest.param("H04", [{"id": "H1", "자산id": None, "취득일": "20141101"}], {}, id="houses-compact-iso"),
     pytest.param("H04", [{"id": "H1", "자산id": "Z", "취득일": "2014-11-01"}], {}, id="houses-sold-house-not-linked"),
     pytest.param("X09", True, {}, id="no-such-question"),
 ])
 def test_answer_rejects_malformed_answers(qid, value, kw):
     with pytest.raises(ValueError):
         Q.answer(_house_asset_facts(), qid, value, **kw)
+
+
+def test_h11_departure_date_key_matches_the_engine_and_is_asked_only_for_overseas_reasons():
+    """H11 의 facts키는 엔진이 읽는 보유거주예외일자 와 같고, 출국한 날은 해외 사유(해외이주, 해외취학근무)에만 묻는다."""
+    h11 = {x["id"]: x for x in Q.load()["문항"]}["H11"]
+    assert h11["facts키"] == "자산[].보유거주예외일자" and h11["키"] == [h11["facts키"]]
+    assert h11["보이는조건"] == {"모두": [["H10", "in", ["해외이주", "해외취학근무"]]]}
+    for 사유, 묻는다 in (("해외이주", True), ("해외취학근무", True), ("수용", False), ("공공임대5년", False),
+                      ("부득이1년", False), ("해당없음", False)):
+        f = copy.deepcopy(CASES["A"])
+        f["자산"][0].update(보유거주예외=사유, 보유거주예외일자=None)
+        pending = [q["id"] for q in Q.next_questions(f, limit=None)["다음"]]
+        assert ("H11" in pending) is 묻는다, (사유, pending)
 
 
 def test_answer_accepts_share_dict():

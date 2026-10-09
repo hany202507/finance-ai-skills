@@ -461,6 +461,8 @@ def test_acquisition_same_day_as_transfer_is_allowed():
     ("D", lambda f: f["세대"].update(특례주택="없음"), "H05"),               # 다루지않음이 되던 값
     ("D", lambda f: f["세대"].update(특례주택=["상속"]), "H05"),
     ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": "30세이상"}), "H02"),
+    ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": "해당없음"}), "H02"),   # 복수선택이라 글자 하나로 오면 되묻는다
+    ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": ""}), "H02"),
     ("A", lambda f: f["세대"].update(배우자=False, **{"1세대요건": ["그냥"]}), "H02"),
     ("D", lambda f: f["자산"][0].update(보유거주예외=["해당없음"]), "H10"),
     ("D", lambda f: f["자산"][0].update(보유거주예외="모름"), "H10"),

@@ -17,7 +17,6 @@ from yangdo.regions import CAPITAL, SIDO_SHORT
 PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인",
                  "주소", "도로명주소", "지번주소", "상세주소", "거주지"}
 RRN = re.compile(r"(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)")
-_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
 ADDRESS_KEYS = {"소재지", "취득당시소재지"}
 SHARE_MSG = "지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다"
 OK_LAND_USE = ("사업용", "주택부수토지")
@@ -130,17 +129,6 @@ def need(obj, path, 문항, 자산id, 내용=None):
     return v
 
 
-def is_iso(v):
-    """YYYY-MM-DD 로 적은 실제 있는 날짜인지. 질문지 answer() 와 prepare() 가 같은 규칙을 쓴다."""
-    if not isinstance(v, str) or not _ISO.fullmatch(v):
-        return False
-    try:
-        date.fromisoformat(v)
-    except ValueError:
-        return False
-    return True
-
-
 def split_key(key):
     """문항 키가 놓인 곳. ('자산'|'주택'|'전역', 경로 조각). 자산[] 은 자산마다, 세대.주택목록[] 은 집마다 있다."""
     parts = key.split(".")
@@ -167,7 +155,7 @@ def form_problem(q, value):
     """문항 q 의 답형식에 이 값이 맞는지 본다. 맞으면 None, 틀리면 받는 형식을 설명한 글.
 
     예아니오는 bool, 선택은 선택지 코드 하나(글자), 복수선택은 선택지 코드의 목록, 목록은 list 다.
-    그 밖의 답형식(날짜, 금액, 주소 등)은 여기서 보지 않는다. 날짜는 is_iso, 금액은 _money 가 본다.
+    그 밖의 답형식(날짜, 금액, 주소 등)은 여기서 보지 않는다. 날짜는 dates.to_date, 금액은 _money 가 본다.
     값이 없는 것(None)은 아직 답하지 않은 것이라 호출하는 쪽이 따로 다룬다.
     질문지 answer() 가 답을 받을 때와 prepare() 가 사실관계를 읽을 때 같은 함수를 쓴다.
     """
