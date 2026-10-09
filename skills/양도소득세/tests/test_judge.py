@@ -331,9 +331,9 @@ def test_disposal_years_announcement_exception_needs_both_dates(계약, 계약�
     assert y == years, notes
 
 
-@pytest.mark.parametrize("값,기대", [("해당없음", False), ("30세이상", True), (["해당없음"], False),
-                                    (["소득독립", "해당없음"], True), ([], False), ("", False)])
-def test_one_household_accepts_a_plain_string(값, 기대):
+@pytest.mark.parametrize("값,기대", [(["해당없음"], False), (["30세이상"], True), (["소득독립", "해당없음"], True), ([], False)])
+def test_one_household_reads_the_requirement_list(값, 기대):
+    """H02 는 복수선택이라 목록으로 온다. 글자 하나로 온 값은 prepare 가 H02 를 되묻고 여기까지 오지 않는다."""
     assert J.one_household({"세대": {"배우자": False, "1세대요건": 값}}) is 기대
 
 
