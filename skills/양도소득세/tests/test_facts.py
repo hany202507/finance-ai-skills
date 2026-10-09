@@ -105,3 +105,45 @@ def test_share():
     assert F.share({"지분": "단독"}) == 1
     assert F.share({"지분": {"구분": "공동", "분자": 1, "분모": 2}}) == Fraction(1, 2)
     assert F.share({}) == 1
+
+
+@pytest.mark.parametrize("key", ["주소", "도로명주소", "상세주소"])
+def test_address_keys_rejected(key):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0][key] = "합성시 합성로 1"
+    with pytest.raises(F.FactsError):
+        F.check_personal(f)
+
+
+def test_resident_number_value_rejected():
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["메모"] = "합성 900101-1234567"
+    with pytest.raises(F.FactsError):
+        F.check_personal(f)
+
+
+def test_house_without_acquisition_date_asks():
+    f = copy.deepcopy(CASES["BC"])
+    f["세대"]["주택목록"][2]["취득일"] = None
+    p = F.prepare(f)
+    with pytest.raises(F.Missing) as e:
+        F.houses_at(f, F.dates.to_date("2026-10-30"), p)
+    assert e.value.문항 == "H04"
+
+
+def test_unknown_kind_asks_and_bad_date_asks():
+    p = prep("B", lambda f: f["자산"][0].update(종류="주텍"))
+    assert p["질문"][0]["문항"] == "P02"
+    p = prep("B", lambda f: f["자산"][0]["양도"].update(잔금일="2026.11.20"))
+    assert p["질문"][0]["문항"] == "A11"
+
+
+def test_new_build_question_text():
+    p = prep("B", lambda f: f["자산"][0]["취득"].update(원인="신축", 잔금일=None))
+    assert p["질문"][0]["문항"] == "A18" and "사용승인일" in p["질문"][0]["내용"]
+
+
+@pytest.mark.parametrize("bad", ["공동", {"구분": "공동", "분자": 3, "분모": 2}, {"구분": "공동", "분자": 1, "분모": 0}])
+def test_share_validation(bad):
+    with pytest.raises(F.FactsError):
+        F.share({"지분": bad})

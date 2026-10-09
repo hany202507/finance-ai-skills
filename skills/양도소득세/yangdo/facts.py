@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """사실관계 JSON 검사. 원자료 날짜로 취득·양도 시기를 정하고, 범위와 빠진 사실을 모은다."""
+import re
 from datetime import date
 from fractions import Fraction
 
 from yangdo import dates, 첫양도일
 
-PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인"}
+PERSONAL_KEYS = {"성명", "주민등록번호", "외국인등록번호", "전화번호", "휴대전화", "환급계좌", "계좌번호", "이메일", "양수인",
+                 "주소", "도로명주소", "지번주소", "상세주소", "거주지"}
+RRN = re.compile(r"\d{6}-?[1-8]\d{6}")
 OK_LAND_USE = ("사업용", "주택부수토지")
 의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 계획 5
 
@@ -42,10 +45,23 @@ def _walk_keys(o):
             yield from _walk_keys(v)
 
 
+def _walk_values(o):
+    if isinstance(o, dict):
+        for v in o.values():
+            yield from _walk_values(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _walk_values(v)
+    elif isinstance(o, str):
+        yield o
+
+
 def check_personal(f):
     bad = PERSONAL_KEYS & set(_walk_keys(f))
     if bad:
         raise FactsError("인적사항 %s 는 사실관계에 넣지 않습니다. 신고인.json 에 따로 두십시오" % sorted(bad))
+    if any(RRN.search(v) for v in _walk_values(f)):
+        raise FactsError("주민등록번호로 보이는 값은 사실관계에 넣지 않습니다")
 
 
 def get(obj, path, default=None):
@@ -68,7 +84,15 @@ def share(a):
     j = (a or {}).get("지분") or "단독"
     if j == "단독" or (isinstance(j, dict) and j.get("구분", "단독") == "단독"):
         return Fraction(1)
-    return Fraction(int(j["분자"]), int(j["분모"]))
+    if not (isinstance(j, dict) and j.get("구분") == "공동"):
+        raise FactsError("지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다")
+    try:
+        n, d = int(j["분자"]), int(j["분모"])
+    except (KeyError, TypeError, ValueError):
+        raise FactsError("지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다")
+    if not 0 < n <= d:
+        raise FactsError("지분 분자·분모는 0 < 분자 <= 분모 인 정수여야 합니다")
+    return Fraction(n, d)
 
 
 def _prepare_asset(f, a, out):
@@ -76,22 +100,32 @@ def _prepare_asset(f, a, out):
     종류 = need(a, "종류", "P02", aid)
     if 종류 in ("겸용주택", "입주권", "분양권"):
         raise OutOfScope(aid, "%s 양도" % 종류, "5")
-    if 종류 not in ("주택", "토지", "건물"):
+    if 종류 == "기타자산":
         raise OutOfScope(aid, "주식·회원권 등 그 밖의 자산", "없음")
+    if 종류 not in ("주택", "토지", "건물"):
+        raise Missing("P02", aid, "종류 코드 %s 를 알 수 없습니다" % 종류)
     원인 = need(a, "양도.원인", "P03", aid)
     if 원인 == "부담부증여":
         raise OutOfScope(aid, "부담부증여", "5")
     취득원인 = need(a, "취득.원인", "A15", aid)
     if 취득원인 in ("상속", "증여", "부담부증여", "조합원"):
         raise OutOfScope(aid, "%s 으로 취득한 자산" % 취득원인, "5")
-    양도, 양도근거 = dates.transfer_date(a.get("양도"))
+    try:
+        양도, 양도근거 = dates.transfer_date(a.get("양도"))
+    except ValueError:
+        raise Missing("A11", aid, "양도 날짜 형식이 YYYY-MM-DD 가 아닙니다")
     if 양도 is None:
         raise Missing("A11", aid, "잔금일이나 등기접수일이 필요합니다")
     if 양도 < dates.to_date(첫양도일):
         raise OutOfScope(aid, "%s 전 양도" % 첫양도일, "없음")
-    취득, 취득근거 = dates.acquisition_date(a.get("취득"))
+    try:
+        취득, 취득근거 = dates.acquisition_date(a.get("취득"))
+    except ValueError:
+        raise Missing("A18" if 취득원인 == "신축" else "A17", aid, "취득 날짜 형식이 YYYY-MM-DD 가 아닙니다")
     if 취득 is None:
-        raise Missing("A18" if 취득원인 == "신축" else "A17", aid, "취득 잔금일이나 등기접수일이 필요합니다")
+        if 취득원인 == "신축":
+            raise Missing("A18", aid, "사용승인일이나 사실상 사용일이 필요합니다")
+        raise Missing("A17", aid, "취득 잔금일이나 등기접수일이 필요합니다")
     if 취득 < 의제취득기준:
         raise OutOfScope(aid, "1985-01-01 전 취득(의제취득일 적용)", "5")
     # 시기를 먼저 적는다. 질문지가 세대·거주 문항을 금액 문항보다 먼저 물을 수 있도록 엔진값이 시기만으로 돌아간다
@@ -136,7 +170,9 @@ def houses_at(f, on, prep):
         t = (prep.get("시기") or {}).get(aid) if aid else None
         acq = dates.to_date(t["취득일"]) if t else dates.to_date(h.get("취득일"))
         sold = dates.to_date(t["양도일"]) if t else dates.to_date(h.get("양도일"))
-        if acq is None or acq > on:
+        if acq is None:
+            raise Missing("H04", aid, "주택 목록 %s 의 취득일이 필요합니다" % h.get("id"))
+        if acq > on:
             continue
         if sold is not None and sold < on:
             continue
