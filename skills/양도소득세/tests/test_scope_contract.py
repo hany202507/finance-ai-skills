@@ -19,8 +19,6 @@ from yangdo import facts as F
 from yangdo import questions as Q
 
 TODAY = "2026-10-09"
-# 다른 수정 묶음이 judge.py 에서 읽기로 한 키. 그 묶음이 합쳐지면 이 허용은 필요 없지만 남겨 두어도 시험은 깨지지 않는다
-READ_BY_JUDGE = {"자산[].보유거주예외일자"}   # H11 출국일(시행령 제154조①2호 나목·다목 단서)
 
 
 def _engine_source():
@@ -57,7 +55,7 @@ def test_is_read_matches_both_reading_styles():
 def test_every_plan1_key_is_read_or_declared_collect_only():
     src = _engine_source()
     unread = [(qid, k) for qid, k in _plan1_keys()
-              if not _is_read(k, src) and k not in F.COLLECT_ONLY and k not in READ_BY_JUDGE]
+              if not _is_read(k, src) and k not in F.COLLECT_ONLY]
     assert not unread, ("질문지가 묻는데 엔진이 읽지 않는 키. 읽어서 계산하거나 다루지않음으로 돌리거나 facts.COLLECT_ONLY 에 이유와 "
                         "함께 적는다: %s" % unread)
 
