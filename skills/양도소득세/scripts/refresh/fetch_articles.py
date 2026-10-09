@@ -156,7 +156,7 @@ def fetch(rules_dir, api, td, today):
     base = os.path.join(rules_dir, "조문")
     listing = {"기준시작": watch["기준시작"], "받은날": today, "법령": {}}
     record = {"확인일": today, "법령": {}, "TaxDoctor": []}
-    report = {"새판": 0, "오류": [], "불일치": 0}
+    report = {"새판": 0, "오류": [], "불일치": 0, "갱신": 0}
     for law, arts in watch["법령"].items():
         try:
             vers = pick_versions(_search_all(api, law), law, start8, today8)
@@ -166,7 +166,7 @@ def fetch(rules_dir, api, td, today):
                 rel = "%s/%s@%s.json" % (law, v["MST"], v["시행일"])
                 path = os.path.join(base, rel)
                 v["파일"] = rel
-                if os.path.exists(path):
+                if os.path.exists(path) and v["상태"] != "시행예정":
                     continue
                 j = api("lawService.do", {"target": "eflaw", "MST": v["MST"], "efYd": v["시행일"].replace("-", "")})
                 got = str(((j.get("법령") or {}).get("기본정보") or {}).get("시행일자", ""))
@@ -179,10 +179,16 @@ def fetch(rules_dir, api, td, today):
                 doc = {"법령": law, "MST": v["MST"], "시행일": v["시행일"], "공포일": v["공포일"],
                        "공포번호": v["공포번호"], "조문": {a: units[a] for a in arts},
                        "부칙": own_addenda(j, v["공포번호"])}
+                text = json.dumps(doc, ensure_ascii=False, indent=1, sort_keys=True)
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        if f.read() != text:
+                            report["갱신"] += 1
+                else:
+                    report["새판"] += 1
                 os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(doc, f, ensure_ascii=False, indent=1, sort_keys=True)
-                report["새판"] += 1
+                with open(path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
             listing["법령"][law] = [{k: v[k] for k in ("MST", "시행일", "공포일", "공포번호", "상태", "파일")}
                                    for v in vers]
             cur = [v for v in vers if v["상태"] == "현행"][0]
@@ -195,9 +201,9 @@ def fetch(rules_dir, api, td, today):
         except Exception as e:  # 법령 하나가 실패해도 나머지를 계속 본다
             report["오류"].append(str(e))
     os.makedirs(base, exist_ok=True)
-    with open(os.path.join(base, "판목록.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(base, "판목록.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(listing, f, ensure_ascii=False, indent=1)
-    with open(os.path.join(rules_dir, "확인기록.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(rules_dir, "확인기록.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(record, f, ensure_ascii=False, indent=1)
     return report
 
@@ -237,7 +243,7 @@ def main(argv=None):
         print("수집 준비 실패: %s" % e)
         return 1
     rep = fetch(a.rules, api, td, a.오늘)
-    print("새 판 %d개, TaxDoctor 불일치 %d건" % (rep["새판"], rep["불일치"]))
+    print("새 판 %d개, 시행예정 판 갱신 %d개, TaxDoctor 불일치 %d건" % (rep["새판"], rep["갱신"], rep["불일치"]))
     for e in rep["오류"]:
         print("오류: %s" % mask(e))
     return 1 if rep["오류"] or rep["불일치"] else 0

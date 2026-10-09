@@ -98,3 +98,30 @@ def test_fetch_reports_taxdoctor_mismatch(tmp_path):
     rec = json.loads((rules / "확인기록.json").read_text(encoding="utf-8"))
     assert rec["TaxDoctor"][0]["일치"] is False
     assert rep["불일치"] == 1
+
+
+def test_upcoming_version_is_refetched_but_current_is_not(tmp_path):
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    (rules / "감시조문.json").write_text(json.dumps(
+        {"기준시작": "2025-01-01", "법령": {"소득세법": ["103"]}}, ensure_ascii=False), encoding="utf-8")
+    calls = []
+
+    def api(path, params):
+        calls.append((path, params.get("MST")))
+        if path == "lawSearch.do":
+            return {"LawSearch": {"law": [dict(r, 법령ID="001") for r in ROWS[:5]] if params["page"] == 1 else []}}
+        j = json.loads(json.dumps(LAW_JSON))
+        j["법령"]["기본정보"]["시행일자"] = params["efYd"]
+        return j
+
+    td = lambda law, label: "moleg-eflaw:4@20260701#x"
+    fa.fetch(str(rules), api, td, "2026-10-09")
+    up = rules / "조문" / "소득세법" / "5@2027-01-01.json"
+    up.write_text(up.read_text(encoding="utf-8").replace("250만원", "300만원"), encoding="utf-8")
+    calls.clear()
+    rep = fa.fetch(str(rules), api, td, "2026-10-09")
+    fetched = [m for p, m in calls if p == "lawService.do"]
+    assert fetched == ["5"] and rep["갱신"] == 1 and rep["새판"] == 0
+    assert "250만원" in up.read_text(encoding="utf-8")
+    assert b"\r\n" not in (rules / "조문" / "판목록.json").read_bytes()
