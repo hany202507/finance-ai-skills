@@ -7,6 +7,8 @@ judge.engine_values 로 계산한다. 아직 모르는 답이나 엔진값에 �
 단위는 문항의 키로 정한다. 자산[] 은 자산마다, 세대.주택목록[] 은 주택마다, 세대.주택목록[신규] 는 일시적 2주택
 후보 자산의 신규 주택, 나머지는 한 번이다. 세대와 주택 단위 문항은 자산이 여럿이면 자산 하나라도 보이는조건이
 참일 때 묻는다(토지를 먼저 적어도 세대 문항이 나온다).
+
+키 이름으로 거는 답 검사와 소재지 날짜 규칙은 KEY_RULES 한 표에 모았다.
 """
 import copy
 import json
@@ -23,6 +25,93 @@ _ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
 OPS = {"==": lambda a, b: a == b, "!=": lambda a, b: a != b, "in": lambda a, b: a in b,
        "not_in": lambda a, b: a not in b, ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
        "<": lambda a, b: a < b, ">": lambda a, b: a > b}
+
+
+def _is_iso(v):
+    if not isinstance(v, str) or not _ISO.fullmatch(v):
+        return False
+    try:
+        date.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
+
+
+def _check_share(qid, value, f):
+    """지분은 단독 또는 {구분: 공동, 분자, 분모}."""
+    try:
+        F.share({"지분": value})
+    except F.FactsError as e:
+        raise ValueError("%s: %s" % (qid, e))
+
+
+def _check_houses(qid, value, f):
+    """H04. 집마다 id 가 있어야 주택 단위 문항을 답할 수 있고, 취득일은 판 집이 아니면 필요하다."""
+    if not isinstance(value, list) or not all(isinstance(h, dict) for h in value):
+        raise ValueError("%s 는 집마다 dict 인 목록으로 답한다" % qid)
+    ids = [h.get("id") for h in value]
+    if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError("%s 는 집마다 겹치지 않는 id 가 있어야 한다" % qid)
+    for h in value:
+        d = h.get("취득일")
+        if d is None and not h.get("자산id"):
+            raise ValueError("%s 의 집 %s 는 취득일이 필요하다(판 집이면 자산id 로 잇는다)" % (qid, h["id"]))
+        if d is not None and not _is_iso(d):
+            raise ValueError("%s 의 집 %s 취득일은 YYYY-MM-DD 로 적는다" % (qid, h["id"]))
+    linked = {h.get("자산id") for h in value}
+    for a in f.get("자산") or []:
+        if a.get("종류") == "주택" and a.get("id") not in linked:
+            raise ValueError("%s 에 판 집(자산 %s)이 없다. 자산id 로 이어 넣는다" % (qid, a.get("id")))
+
+
+def _check_periods(qid, value, f):
+    ok = isinstance(value, list) and all(
+        isinstance(p, (list, tuple)) and len(p) == 2 and _is_iso(p[0]) and _is_iso(p[1]) and p[0] <= p[1]
+        for p in value)
+    if not ok:
+        raise ValueError("%s 는 [전입일, 전출일] 구간의 목록으로 답한다. 날짜는 YYYY-MM-DD" % qid)
+
+
+def _dated_bundle(dates, others=()):
+    """키 하나에 이름 붙은 묶음(dict)으로 답하는 날짜 문항의 검사. 날짜 하나만 적은 문자열은 받지 않는다.
+
+    엔진은 이 값을 dict 로 읽는다(.get). dates 는 YYYY-MM-DD 여야 하고 others 는 값 모양을 따지지 않는다.
+    """
+    names = list(dates) + list(others)
+
+    def check(qid, value, f):
+        if not isinstance(value, dict):
+            raise ValueError("%s 는 %s 를 이름으로 한 dict 로 답한다. 날짜 하나만 적은 문자열은 받지 않는다" % (qid, names))
+        if set(value) - set(names) or all(value.get(n) is None for n in names):
+            raise ValueError("%s 는 %s 중 값이 있는 것만 dict 로 답한다" % (qid, names))
+        for n in dates:
+            if value.get(n) is not None and not _is_iso(value[n]):
+                raise ValueError("%s 의 %s 는 YYYY-MM-DD 로 답한다" % (qid, n))
+    return check
+
+
+def _transfer_address_days(e, asset):
+    """양도 때 소재지(A01). 양도일의 고시를 보고, 취득당시소재지를 따로 안 적었으면 취득일의 고시도 본다."""
+    return [e.get("양도일")] + ([] if asset.get("취득당시소재지") else [e.get("취득일")])
+
+
+def _acquisition_address_days(e, asset):
+    """취득당시소재지(A03). 취득일의 고시만 본다."""
+    return [e.get("취득일")]
+
+
+# 키 이름으로 거는 검사는 이 표 하나에 모은다. 문항.json 의 키가 바뀌면 tests/test_questions.py 의
+# test_every_key_rule_names_a_real_question_key 가 깨진다(표가 조용히 꺼지지 않도록).
+#   답: 답을 사실관계에 넣기 전에 (문항 id, 답, 사실관계) 로 부른다. 틀리면 ValueError. 키 하나짜리 문항에만 건다.
+#   소재지날짜: 이미 적은 주소를 되물을지 가릴 때 어느 날의 고시를 볼지, (엔진값, 자산) -> 날짜 목록. 없으면 _transfer_address_days.
+KEY_RULES = {
+    "자산[].지분": {"답": _check_share},                                 # 단독 또는 공동(분자 분모)
+    "세대.주택목록": {"답": _check_houses},                               # H04 집마다 id, 취득일, 판 집 연결
+    "자산[].거주기간": {"답": _check_periods},                            # H07 [전입일, 전출일] 구간 목록
+    "자산[].신축증축": {"답": _dated_bundle(("사용승인일",), ("증축면적",))},   # M23 환산 가산세 5년 판정
+    "자산[].토지거래허가": {"답": _dated_bundle(("신청일", "허가일"))},       # X06 허가 신청일과 허가일
+    "자산[].취득당시소재지": {"소재지날짜": _acquisition_address_days},        # A03 취득일 고시만 본다
+}
 
 
 def load(path=None):
@@ -105,9 +194,13 @@ def _answered(f, q, unit, asset, house):
     return any(read(f, k, asset, house) is not None for k in q["키"])
 
 
-def _item(it, f, ev, asset, house, qmap):
+def _item(it, f, ev, asset, house, qmap, qid):
     if isinstance(it, dict):
-        return _visible(it, f, ev, asset, house, qmap)
+        return _visible(it, f, ev, asset, house, qmap, qid)
+    if not (isinstance(it, (list, tuple)) and len(it) == 3 and isinstance(it[0], str)
+            and isinstance(it[1], str) and it[1] in OPS):
+        raise ValueError("%s 의 보이는조건 항목 모양을 모른다: %r. [문항 id 나 엔진.이름, 연산자 %s, 값] 이어야 한다"
+                         % (qid, it, list(OPS)))
     left, op, right = it
     if left.startswith("엔진."):
         val = ev.get(left[3:])
@@ -124,14 +217,18 @@ def _item(it, f, ev, asset, house, qmap):
         return None
 
 
-def _visible(cond, f, ev, asset, house, qmap):
-    """참, 거짓, 또는 아직 모르면 None."""
+def _visible(cond, f, ev, asset, house, qmap, qid):
+    """참, 거짓, 또는 아직 모르면 None. 조건 모양이 정의와 다르면 ValueError(문항 id 를 적는다)."""
     if cond == "항상":
         return True
-    if "모두" in cond:
-        rs = [_item(it, f, ev, asset, house, qmap) for it in cond["모두"]]
+    if not (isinstance(cond, dict) and len(cond) == 1 and next(iter(cond)) in ("모두", "하나라도")
+            and isinstance(next(iter(cond.values())), list)):
+        raise ValueError("%s 의 보이는조건 모양을 모른다: %r. '항상' 이거나 모두 또는 하나라도 중 하나를 목록으로 가진 dict 여야 한다"
+                         % (qid, cond))
+    (group, items), = cond.items()
+    rs = [_item(it, f, ev, asset, house, qmap, qid) for it in items]
+    if group == "모두":
         return False if False in rs else (None if None in rs else True)
-    rs = [_item(it, f, ev, asset, house, qmap) for it in cond.get("하나라도", [])]
     return True if True in rs else (None if None in rs else False)
 
 
@@ -183,10 +280,7 @@ def _address_note(q, f, asset, e, reg):
     addr = read(f, q["키"][0], asset)
     if not isinstance(addr, dict):
         return None
-    if q["키"][0].endswith(".취득당시소재지"):
-        days = [e.get("취득일")]
-    else:
-        days = [e.get("양도일")] + ([] if asset.get("취득당시소재지") else [e.get("취득일")])
+    days = KEY_RULES.get(q["키"][0], {}).get("소재지날짜", _transfer_address_days)(e, asset)
     for on in days:
         if not on:
             continue
@@ -221,46 +315,9 @@ def next_questions(f, rules_dir=None, 서식=False, limit=1):
                 note = _address_note(q, f, asset, ev.get(asset["id"], {}) if asset else {}, reg)
                 if note is None:
                     continue
-            if any(_visible(q["보이는조건"], f, e, a, house, qmap) is True for a, e in ctxs):
+            if any(_visible(q["보이는조건"], f, e, a, house, qmap, q["id"]) is True for a, e in ctxs):
                 pending.append(_describe(q, asset, house, note))
     return {"다음": pending[:limit], "남은": len(pending), "엔진값": ev}
-
-
-def _is_iso(v):
-    if not isinstance(v, str) or not _ISO.fullmatch(v):
-        return False
-    try:
-        date.fromisoformat(v)
-    except ValueError:
-        return False
-    return True
-
-
-def _check_houses(qid, value, f):
-    """H04. 집마다 id 가 있어야 주택 단위 문항을 답할 수 있고, 취득일은 판 집이 아니면 필요하다."""
-    if not isinstance(value, list) or not all(isinstance(h, dict) for h in value):
-        raise ValueError("%s 는 집마다 dict 인 목록으로 답한다" % qid)
-    ids = [h.get("id") for h in value]
-    if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
-        raise ValueError("%s 는 집마다 겹치지 않는 id 가 있어야 한다" % qid)
-    for h in value:
-        d = h.get("취득일")
-        if d is None and not h.get("자산id"):
-            raise ValueError("%s 의 집 %s 는 취득일이 필요하다(판 집이면 자산id 로 잇는다)" % (qid, h["id"]))
-        if d is not None and not _is_iso(d):
-            raise ValueError("%s 의 집 %s 취득일은 YYYY-MM-DD 로 적는다" % (qid, h["id"]))
-    linked = {h.get("자산id") for h in value}
-    for a in f.get("자산") or []:
-        if a.get("종류") == "주택" and a.get("id") not in linked:
-            raise ValueError("%s 에 판 집(자산 %s)이 없다. 자산id 로 이어 넣는다" % (qid, a.get("id")))
-
-
-def _check_periods(qid, value):
-    ok = isinstance(value, list) and all(
-        isinstance(p, (list, tuple)) and len(p) == 2 and _is_iso(p[0]) and _is_iso(p[1]) and p[0] <= p[1]
-        for p in value)
-    if not ok:
-        raise ValueError("%s 는 [전입일, 전출일] 구간의 목록으로 답한다. 날짜는 YYYY-MM-DD" % qid)
 
 
 def _validate(q, value, f):
@@ -280,19 +337,14 @@ def _validate(q, value, f):
         raise ValueError("%s 는 시도·시군구·읍면동으로 나눈 dict 로 답한다. 주소 문자열은 받지 않는다" % qid)
     if kind == "목록" and not isinstance(value, list):
         raise ValueError("%s 는 목록으로 답한다" % qid)
-    if kind == "날짜":
+    if kind == "날짜" and not any(k in KEY_RULES for k in keys):  # 묶음으로 답하는 날짜 키는 표의 검사가 맡는다
         vals = list(value.values()) if len(keys) > 1 and isinstance(value, dict) else [value]
         if any(v is not None and not _is_iso(v) for v in vals):
             raise ValueError("%s 의 날짜는 YYYY-MM-DD 로 답한다" % qid)
-    if keys[-1].endswith(".지분"):
-        try:
-            F.share({"지분": value})
-        except F.FactsError as e:
-            raise ValueError("%s: %s" % (qid, e))
-    if keys == ["세대.주택목록"]:
-        _check_houses(qid, value, f)
-    if keys[-1].endswith(".거주기간"):
-        _check_periods(qid, value)
+    if len(keys) == 1:
+        check = KEY_RULES.get(keys[0], {}).get("답")
+        if check:
+            check(qid, value, f)
 
 
 def answer(f, qid, value, 자산=None, 주택=None):

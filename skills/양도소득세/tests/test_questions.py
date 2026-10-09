@@ -140,29 +140,75 @@ def test_moreum_is_a_value_when_choice_has_it():
     assert g["자산"][0]["취득"]["상대방유형"] == "모름" and not g.get("모름")
 
 
-def test_answer_rejects_malformed_answers():
-    f = {"자산": [{"id": "A", "종류": "주택"}]}
-    bad = [("A11", "2026.11.15", {"자산": "A"}),              # 날짜 형식
-           ("A11", "2026-13-40", {"자산": "A"}),
-           ("A01", "서울특별시 송파구 잠실동", {"자산": "A"}),   # 주소 문자열
-           ("A01", {"시도": "서울특별시"}, {"자산": "A"}),       # 시군구 없음
-           ("P04", "공동", {"자산": "A"}),                     # 분자 분모 없음
-           ("A11", None, {"자산": "A"}),                      # 빈 답은 모름이 아니다
-           ("A17", {"잔금일": None, "등기접수일": None}, {"자산": "A"}),
-           ("A17", {"결제일": "2014-11-01"}, {"자산": "A"}),   # 없는 키
-           ("A17", "2014-11-01", {"자산": "A"}),               # 키가 둘이면 dict
-           ("H07", [["2014-11-01"]], {"자산": "A"}),           # 구간은 둘이다
-           ("H07", [["2020-01-01", "2014-11-01"]], {"자산": "A"}),
-           ("H04", [{"소재지": {"시도": "서울특별시", "시군구": "마포구"}}], {}),   # id 없음
-           ("H04", [{"id": "H1", "자산id": None}], {}),        # 취득일 없는 다른 집
-           ("H04", [{"id": "H1", "자산id": "Z", "취득일": "2014-11-01"}], {}),   # 판 집을 잇지 않음
-           ("X09", True, {}),                                  # 없는 문항
-           ]
-    for qid, v, kw in bad:
-        with pytest.raises(ValueError):
-            Q.answer(f, qid, v, **kw)
-    ok = Q.answer(f, "P04", {"구분": "공동", "분자": 1, "분모": 2}, 자산="A")
+def _house_asset_facts():
+    return {"자산": [{"id": "A", "종류": "주택"}]}
+
+
+@pytest.mark.parametrize("qid,value,kw", [
+    pytest.param("A11", "2026.11.15", {"자산": "A"}, id="date-format"),
+    pytest.param("A11", "2026-13-40", {"자산": "A"}, id="date-no-such-day"),
+    pytest.param("A11", {"잔금일": "2026-11-15"}, {"자산": "A"}, id="date-dict-for-plain-date"),
+    pytest.param("A01", "서울특별시 송파구 잠실동", {"자산": "A"}, id="address-string"),
+    pytest.param("A01", {"시도": "서울특별시"}, {"자산": "A"}, id="address-no-sigungu"),
+    pytest.param("P04", "공동", {"자산": "A"}, id="share-no-numerator-denominator"),
+    pytest.param("A11", None, {"자산": "A"}, id="empty-is-not-moreum"),
+    pytest.param("A17", {"잔금일": None, "등기접수일": None}, {"자산": "A"}, id="two-keys-all-empty"),
+    pytest.param("A17", {"결제일": "2014-11-01"}, {"자산": "A"}, id="two-keys-unknown-name"),
+    pytest.param("A17", "2014-11-01", {"자산": "A"}, id="two-keys-needs-dict"),
+    pytest.param("H07", [["2014-11-01"]], {"자산": "A"}, id="period-has-two-ends"),
+    pytest.param("H07", [["2020-01-01", "2014-11-01"]], {"자산": "A"}, id="period-reversed"),
+    pytest.param("H04", [{"소재지": {"시도": "서울특별시", "시군구": "마포구"}}], {}, id="houses-no-id"),
+    pytest.param("H04", [{"id": "H1", "자산id": None}], {}, id="houses-other-house-no-date"),
+    pytest.param("H04", [{"id": "H1", "자산id": "Z", "취득일": "2014-11-01"}], {}, id="houses-sold-house-not-linked"),
+    pytest.param("X09", True, {}, id="no-such-question"),
+])
+def test_answer_rejects_malformed_answers(qid, value, kw):
+    with pytest.raises(ValueError):
+        Q.answer(_house_asset_facts(), qid, value, **kw)
+
+
+def test_answer_accepts_share_dict():
+    ok = Q.answer(_house_asset_facts(), "P04", {"구분": "공동", "분자": 1, "분모": 2}, 자산="A")
     assert ok["자산"][0]["지분"]["분모"] == 2
+
+
+def test_structured_date_answers_are_accepted():
+    """M23, X06 은 날짜 하나가 아니라 이름 붙인 묶음으로 답한다. 엔진은 .get 으로 읽는다."""
+    f = _house_asset_facts()
+    g = Q.answer(f, "M23", {"사용승인일": "2020-05-01", "증축면적": 90}, 자산="A")
+    assert g["자산"][0]["신축증축"] == {"사용승인일": "2020-05-01", "증축면적": 90}
+    assert (g["자산"][0].get("신축증축") or {}).get("사용승인일") == "2020-05-01"
+    h = Q.answer(f, "X06", {"신청일": "2026-04-01", "허가일": "2026-05-01"}, 자산="A")
+    assert h["자산"][0]["토지거래허가"] == {"신청일": "2026-04-01", "허가일": "2026-05-01"}
+    part = Q.answer(f, "X06", {"신청일": "2026-04-01"}, 자산="A")  # 허가는 아직 안 난 경우
+    assert part["자산"][0]["토지거래허가"] == {"신청일": "2026-04-01"}
+    only_area = Q.answer(f, "M23", {"증축면적": 90}, 자산="A")
+    assert only_area["자산"][0]["신축증축"] == {"증축면적": 90}
+    assert f == _house_asset_facts()
+
+
+@pytest.mark.parametrize("qid,value", [
+    pytest.param("M23", "2020-05-01", id="m23-plain-date-string"),   # 엔진이 .get 을 부르므로 문자열이 들어가면 안 된다
+    pytest.param("M23", {"사용승인일": "2020.05.01"}, id="m23-date-format"),
+    pytest.param("M23", {"사용승인일": "2020-02-31"}, id="m23-no-such-day"),
+    pytest.param("M23", {"사용승인일": 20200501}, id="m23-date-not-string"),
+    pytest.param("M23", {"준공일": "2020-05-01"}, id="m23-unknown-name"),
+    pytest.param("M23", {"사용승인일": None, "증축면적": None}, id="m23-all-empty"),
+    pytest.param("M23", {}, id="m23-empty-dict"),
+    pytest.param("X06", "2026-05-01", id="x06-plain-date-string"),
+    pytest.param("X06", {"신청일": "2026/04/01"}, id="x06-date-format"),
+    pytest.param("X06", {"신청일": "2026-04-01", "허가일": "곧"}, id="x06-second-date-bad"),
+    pytest.param("X06", {"접수일": "2026-04-01"}, id="x06-unknown-name"),
+    pytest.param("X06", {"신청일": None, "허가일": None}, id="x06-all-empty"),
+])
+def test_structured_date_answers_reject_wrong_shapes(qid, value):
+    with pytest.raises(ValueError):
+        Q.answer(_house_asset_facts(), qid, value, 자산="A")
+
+
+def test_moreum_still_works_for_structured_date_questions():
+    g = Q.answer(_house_asset_facts(), "M23", Q.MOREUM, 자산="A")
+    assert g["모름"] == ["M23:A"] and "신축증축" not in g["자산"][0]
 
 
 def test_answer_rejects_personal_data():
@@ -247,3 +293,64 @@ def test_rules_are_reloaded_when_edition_file_changes(tmp_path):
     assert Q._rules(d) is not first
     assert len([k for k in Q._RULES if k[0] == d]) == 1  # 옛 판은 버린다
     assert Q.next_questions({"자산": [{"id": "A"}]}, rules_dir=d)["다음"][0]["id"] == "P01"
+
+
+# 키 이름으로 거는 검사는 Q.KEY_RULES 한 표에 모았다. 문항의 키가 바뀌면 여기서 깨진다.
+def _all_question_keys():
+    return {k for q in Q.load()["문항"] for k in q["키"]}
+
+
+def test_every_key_rule_names_a_real_question_key():
+    assert Q.KEY_RULES
+    missing = set(Q.KEY_RULES) - _all_question_keys()
+    assert not missing, "문항.json 에 없는 키: %s" % sorted(missing)
+
+
+def test_key_rules_hooks_are_known_and_callable():
+    for key, hooks in Q.KEY_RULES.items():
+        assert hooks and set(hooks) <= {"답", "소재지날짜"}, key
+        assert all(callable(fn) for fn in hooks.values()), key
+
+
+def test_answer_rules_sit_on_single_key_questions():
+    """답 검사는 키 하나짜리 문항의 답 전체를 받는다. 키가 둘이면 답이 dict 라 같은 검사를 쓸 수 없다."""
+    by_key = {}
+    for q in Q.load()["문항"]:
+        for k in q["키"]:
+            by_key.setdefault(k, []).append(q)
+    for key, hooks in Q.KEY_RULES.items():
+        if "답" in hooks:
+            assert all(len(q["키"]) == 1 for q in by_key[key]), key
+
+
+def test_every_condition_in_definition_has_a_known_shape():
+    qs = Q.load()["문항"]
+    qmap = {q["id"]: q for q in qs}
+    for q in qs:
+        # 빈 사실관계로 평가한다. 모양이 틀린 조건이면 ValueError 가 난다(값을 몰라 None 이어도 모양은 끝까지 본다)
+        Q._visible(q["보이는조건"], {}, {}, None, None, qmap, q["id"])
+
+
+@pytest.mark.parametrize("cond", [
+    pytest.param({"또는": [["P01", "==", True]]}, id="unknown-group-name"),
+    pytest.param({}, id="empty-dict"),
+    pytest.param({"모두": [], "하나라도": []}, id="both-groups"),
+    pytest.param({"모두": "P01"}, id="group-not-list"),
+    pytest.param([["P01", "==", True]], id="bare-list"),
+    pytest.param("가끔", id="unknown-string"),
+    pytest.param({"모두": [["P01", "=~", True]]}, id="unknown-operator"),
+    pytest.param({"모두": [["P01", "=="]]}, id="item-too-short"),
+    pytest.param({"모두": ["P01"]}, id="item-not-list"),
+    pytest.param({"모두": [{"또는": []}]}, id="nested-unknown-group"),
+])
+def test_unknown_condition_shape_names_the_question(cond):
+    with pytest.raises(ValueError, match="Z99"):
+        Q._visible(cond, {}, {}, None, None, {}, "Z99")
+
+
+def test_next_questions_reports_bad_condition_with_question_id(monkeypatch):
+    broken = copy.deepcopy(Q.load())
+    broken["문항"][0]["보이는조건"] = {"또는": []}
+    monkeypatch.setattr(Q, "load", lambda path=None: broken)
+    with pytest.raises(ValueError, match=broken["문항"][0]["id"]):
+        Q.next_questions({"자산": [{"id": "A"}]})
