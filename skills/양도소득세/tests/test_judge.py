@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from cases import CASES, addr, asset, facts, house, 마포, 성동, 춘천
+from cases import CASES, addr, asset, facts, house, 마포, 성동, 송파, 춘천
 from yangdo import facts as F
 from yangdo import judge as J
 from yangdo import regions, ruleset
@@ -348,3 +348,236 @@ def test_new_house_acquisition_date_follows_linked_asset_timing():
     assert v["처분기한"] == "2028-08-10"     # 신규 취득 2026-08-10 + 2년(조정대상지역 간 이동)
     ev = J.engine_values(f, f["자산"][0], prep, RS, REG)
     assert ev["신규주택id"] == "H2" and ev["처분기한초과"] is False
+
+
+# ---- 최종 검토 반영: 해외 출국 예외(H11) -------------------------------------------------------
+def _departure(사유, 출국, 취득="2025-05-01", 양도="2026-11-15", 가액=1_000_000_000):
+    """보유 2년을 못 채운 송파 아파트 한 채에 해외이주·해외취학근무 예외를 건다."""
+    a = asset("Y", "주택", 송파, 취득, 양도, 가액, 800_000_000, 거주기간=[], 보유거주예외=사유, 보유거주예외일자=출국,
+              취득__계약일=취득, 취득__계약금지급일=취득)   # 조정대상지역 취득이라 계약일을 묻는다(공고일 뒤라 거주 면제는 없다)
+    return facts([a], [house("H1", 송파, 취득, 자산id="Y")])
+
+
+def _verdict(f):
+    r = run(f)
+    assert r["질문"] == [] and r["다루지않음"] == [], r
+    return r["자산"][0]
+
+
+@pytest.mark.parametrize("사유", ["해외이주", "해외취학근무"])
+def test_departure_exemption_applies_when_owned_on_departure_and_sold_within_two_years(사유):
+    v = _verdict(_departure(사유, "2025-09-01"))
+    assert v["비과세"] is True and v["전액비과세"] is True
+    assert any("출국일(2025-09-01)" in m and "154조①2호" in m for m in v["확인사항"])
+
+
+@pytest.mark.parametrize("사유", ["해외이주", "해외취학근무"])
+def test_departure_before_acquisition_is_not_exempt(사유):
+    """출국 2023-01-01, 취득 2025-06-01, 양도 2026-11-15. 출국일에 그 집이 없었으므로 예외가 아니다."""
+    v = _verdict(_departure(사유, "2023-01-01", 취득="2025-06-01"))
+    assert v["비과세"] is False and v["전액비과세"] is False
+    assert any("출국일(2023-01-01) 현재 이 주택을 보유하지 않았" in m for m in v["확인사항"])
+    assert not any("예외(%s" % 사유 in m for m in v["확인사항"])
+
+
+@pytest.mark.parametrize("출국,적용", [("2024-11-15", True), ("2024-11-14", False)])
+def test_departure_two_year_limit_includes_last_day(출국, 적용):
+    """양도 2026-11-15 는 출국 2024-11-15 로부터 2년째 날이라 안에 든다. 하루 앞선 출국은 2년을 넘긴다."""
+    v = _verdict(_departure("해외이주", 출국, 취득="2024-05-01"))
+    assert v["비과세"] is 적용
+    if not 적용:
+        assert any("2년 안에 양도하지 않" in m for m in v["확인사항"])
+
+
+@pytest.mark.parametrize("취득,적용", [("2025-09-01", True), ("2025-09-02", False)])
+def test_departure_acquired_on_departure_day_counts_as_owned(취득, 적용):
+    assert _verdict(_departure("해외취학근무", "2025-09-01", 취득=취득))["비과세"] is 적용
+
+
+@pytest.mark.parametrize("사유", ["해외이주", "해외취학근무"])
+def test_departure_date_missing_asks_h11(사유):
+    f = _departure(사유, None)
+    q = run(f)["질문"]
+    assert [(x["문항"], x["자산"]) for x in q] == [("H11", "Y")]
+
+
+def test_departure_date_unknown_does_not_exempt():
+    f = _departure("해외이주", None)
+    f["모름"] = ["H11:Y"]
+    v = _verdict(f)
+    assert v["비과세"] is False and any("출국일을 알 수 없" in m for m in v["확인사항"])
+
+
+@pytest.mark.parametrize("사유", ["수용", "공공임대5년", "부득이1년"])
+def test_other_exemptions_do_not_need_departure_date(사유):
+    v = _verdict(_departure(사유, None))
+    assert v["비과세"] is True and v["전액비과세"] is True
+
+
+# ---- 최종 검토 반영: 주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤) -------------
+def _converted(가액=2_000_000_000, 거주=(("2023-06-01", "2026-11-15"),), 전환="2023-06-01"):
+    a = asset("W", "주택", 송파, "2010-03-01", "2026-11-15", 가액, 800_000_000, 주택유형="주거용근생",
+              주거사용개시일=전환, 거주기간=[list(x) for x in 거주])
+    return facts([a], [house("H1", 송파, "2010-03-01", 자산id="W")])
+
+
+def test_converted_building_with_table2_is_out_of_scope():
+    """근생 건물을 2023-06-01 에 주거로 바꾸고 20억에 팔면 표2 가 걸린다. 건물 기간은 표1 이라 표2 를 전 기간에 줄 수 없다."""
+    r = run(_converted())
+    assert r["자산"] == [] and r["질문"] == []
+    assert r["다루지않음"] == [{"자산": "W", "내용": "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "계획": "5"}]
+
+
+def test_converted_building_fully_exempt_is_unaffected():
+    v = run(_converted(가액=1_000_000_000))["자산"][0]
+    assert v["전액비과세"] is True and v["장특공"] == "없음"
+
+
+def test_converted_building_without_table2_is_unaffected():
+    """거주 2년 미만이면 표1 이라 제95조⑤ 의 표2 합산이 걸리지 않는다."""
+    r = run(_converted(거주=(("2025-12-01", "2026-11-15"),)))
+    assert r["다루지않음"] == [] and r["자산"][0]["장특공"] == "표1"
+
+
+def test_house_never_converted_still_gets_table2():
+    f = _converted(전환=None)
+    assert run(f)["자산"][0]["장특공"] == "표2"
+    f["자산"][0]["주거사용개시일"] = "2010-03-01"   # 취득일과 같으면 바꾼 것이 아니다
+    assert run(f)["자산"][0]["장특공"] == "표2"
+
+
+def test_converted_building_reaches_engine_as_out_of_scope():
+    from yangdo import engine
+    r = engine.calculate(_converted(), today="2026-10-09")
+    assert r["상태"] == "질문" and r["계산"] is None
+    assert r["다루지않음"][0]["계획"] == "5" and "제95조⑤" in r["다루지않음"][0]["내용"]
+
+
+# ---- 최종 검토 반영: 일반주택 10호 확인사항 ----------------------------------------------------
+def test_heavy_two_houses_notes_item_10_of_article_167_10():
+    notes = one("D")["확인사항"]
+    m = [x for x in notes if "제167조의10①10호" in x]
+    assert len(m) == 1
+    assert "제167조의10①1호부터 7호까지" in m[0] and "다른 주택의 배제 사유를 확인하라" in m[0] and "중과하지 않는다" in m[0]
+
+
+def test_heavy_three_houses_notes_item_10_of_article_167_3():
+    notes = one("K")["확인사항"]
+    m = [x for x in notes if "제167조의3①10호" in x]
+    assert len(m) == 1
+    assert "제167조의3①1호부터 8호까지 및 8호의2" in m[0] and "일반주택" in m[0] and "다른 주택의 배제 사유를 확인하라" in m[0]
+    assert not any("제167조의10①10호" in x for x in notes)
+
+
+def test_item_10_note_absent_when_not_heavy():
+    for name in ("A", "B", "H", "I"):
+        assert not any("10호" in x and "배제 사유를 확인" in x for x in one(name)["확인사항"]), name
+
+
+# ---- 최종 검토 반영: 처분기한 연장 사유(시행령 제155조⑱) ---------------------------------------
+@pytest.mark.parametrize("사유,호", [("자산관리공사", "1호"), ("경매신청", "2호"), ("공매", "3호"), ("현금청산소송", "4호 또는 5호")])
+def test_extension_reason_names_the_item_of_155_18(사유, 호):
+    """G2 는 신규 주택 취득 3년이 하루 지난 뒤 양도한다. 연장 사유가 있으면 기한 안 양도로 본다. 현금청산소송 코드는 4호와 5호(수용재결·매도청구)를 함께 맡는다."""
+    v = one("G2", lambda f: f["자산"][0].update(처분기한연장사유=사유))
+    assert v["일세대일주택"] is True and v["전액비과세"] is True
+    m = [x for x in v["확인사항"] if "제155조⑱" in x]
+    assert len(m) == 1 and ("제155조⑱%s" % 호) in m[0] and 사유 in m[0]
+
+
+def test_no_extension_reason_keeps_deadline_passed():
+    v = one("G2")
+    assert v["일세대일주택"] is False and not any("제155조⑱" in x for x in v["확인사항"])
+
+
+def test_extension_option_codes_match_question_bank():
+    """T03 선택지의 연장 사유 코드는 모두 판정이 읽는 코드다. 4호와 5호는 같은 코드(현금청산소송) 하나가 맡는다."""
+    import json
+    from yangdo import QUESTIONS_PATH
+    with open(QUESTIONS_PATH, encoding="utf-8") as fh:
+        q = {x["id"]: x for x in json.load(fh)["문항"]}["T03"]
+    codes = {c["코드"] for c in q["선택지"]} - {"해당없음"}
+    assert codes == J.EXTEND_REASONS
+    assert "수용재결" in next(c["표시"] for c in q["선택지"] if c["코드"] == "현금청산소송")
+
+
+# ---- 최종 검토 반영: judge() 최상위 확인사항·경고 -----------------------------------------------
+def _two_heavy_assets():
+    """중과로 계산되는 주택 둘(D, E2). 집은 판 집 둘과 송파집, 모두 셋이다."""
+    from cases import D자산
+    d2 = copy.deepcopy(D자산)
+    d2["id"] = "E2"
+    return facts([D자산, d2], [house("H1", 마포, "2021-03-01", 자산id="D"), house("H2", 마포, "2021-03-01", 자산id="E2"),
+                              house("H8", addr("서울특별시", "송파구", "잠실동"), "2010-01-01")])
+
+
+def test_judge_top_level_lists_aggregate_per_asset_notes():
+    r = run(_two_heavy_assets())
+    assert [v["id"] for v in r["자산"]] == ["D", "E2"]
+    want_notes = ["%s: %s" % (v["id"], m) for v in r["자산"] for m in v["확인사항"]]
+    want_warns = ["%s: %s" % (v["id"], w) for v in r["자산"] for w in v["경고"]]
+    assert r["확인사항"] == want_notes and r["경고"] == want_warns
+    assert {x.split(": ")[0] for x in r["확인사항"]} == {"D", "E2"}
+    assert {w.split(": ")[0] for w in r["경고"]} == {"D", "E2"}
+
+
+def test_judge_top_level_warnings_carry_asset_id():
+    r = run(copy.deepcopy(CASES["D"]))
+    assert r["경고"] and all(w.startswith("D: ") for w in r["경고"]) and any("계류" in w for w in r["경고"])
+    assert run(copy.deepcopy(CASES["H"]))["경고"] == []
+
+
+def test_judge_top_level_lists_have_no_duplicates():
+    r = run(_two_heavy_assets())
+    assert len(set(r["확인사항"])) == len(r["확인사항"]) and len(set(r["경고"])) == len(r["경고"])
+
+
+# ---- 최종 검토 반영: 경계일 회귀 시험(최종 검토에서 손으로 확인한 날짜) --------------------------
+@pytest.mark.parametrize("신규,양도,계약,years", [
+    ("2026-08-03", "2026-11-01", None, 3),           # 부칙 제36737호: 신규 취득이 2026-08-03 이전이면 종전 규정
+    ("2026-08-04", "2026-11-01", None, 2),           # 2026-08-04 이후 취득이면 2년
+    ("2026-08-10", "2026-11-01", "2026-08-03", 3),   # 계약과 계약금 지급이 2026-08-03 이전이면 3년
+    ("2026-08-10", "2026-11-01", "2026-08-04", 2),
+    ("2026-08-10", "2026-09-30", None, 3),           # 종전 주택 양도가 2026-10-01 전이면 3년
+    ("2026-08-10", "2026-10-01", None, 2),
+])
+def test_disposal_years_supplementary_rule_boundaries(신규, 양도, 계약, years):
+    f, a, other = _pair(신규, 양도, 계약)
+    y, cites, notes = J.disposal_years(f, a, other, F.dates.to_date(양도), RS, REG)
+    assert y == years, notes
+
+
+def test_supplementary_contract_exception_needs_deposit_on_or_before_cutoff_too():
+    f, a, other = _pair("2026-08-10", "2026-11-01", "2026-08-03")
+    other["계약금지급일"] = "2026-08-04"
+    y, _, _ = J.disposal_years(f, a, other, F.dates.to_date("2026-11-01"), RS, REG)
+    assert y == 2
+
+
+@pytest.mark.parametrize("양도,기한", [("2026-09-30", "2029-08-10"), ("2026-10-01", "2028-08-10")])
+def test_temporary_deadline_switches_on_2026_10_01(양도, 기한):
+    f, _, _ = _pair("2026-08-10", 양도)
+    assert _verdict(f)["처분기한"] == 기한
+
+
+def _heavy_sale(양도, 소재지=송파, 취득="2021-03-01"):
+    """송파 주택 둘 중 하나를 양도일에 판다. 계약은 양도 30일 전이라 조정대상지역 공고일 뒤다."""
+    from datetime import timedelta
+    계약 = (F.dates.to_date(양도) - timedelta(days=30)).isoformat()
+    a = asset("T", "주택", 소재지, 취득, 양도, 900_000_000, 600_000_000, 양도__계약일=계약, 양도__계약금수령일=계약,
+              기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}})
+    return facts([a], [house("H1", 소재지, 취득, 자산id="T"), house("H8", 송파, "2010-01-01")])
+
+
+@pytest.mark.parametrize("양도,중과", [("2026-05-09", None), ("2026-05-10", "중과2")])
+def test_temporary_exclusion_ends_after_2026_05_09(양도, 중과):
+    v = _verdict(_heavy_sale(양도))
+    assert v["중과"] == 중과
+    assert any("한시배제 가목" in m for m in v["확인사항"]) is (중과 is None)
+
+
+@pytest.mark.parametrize("양도,기한", [("2025-02-27", "2025-05-09"), ("2025-02-28", "2026-05-09")])
+def test_temporary_exclusion_deadline_follows_edition_in_force(양도, 기한):
+    """2025-02-28 판부터 한시배제 양도기한이 2025-05-09 에서 2026-05-09 로 늘었다."""
+    assert RS.value("중과.한시배제.가목.양도기한", 양도) == 기한
+    v = _verdict(_heavy_sale(양도))
+    assert v["중과"] is None and any("%s 까지 양도해" % 기한 in m for m in v["확인사항"])

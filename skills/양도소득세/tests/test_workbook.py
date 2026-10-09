@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import pytest
+
 from yangdo import workbook as W
 
 TABLE = [[0, 0, "0.06"], [14000000, 840000, "0.15"], [50000000, 6240000, "0.24"], [88000000, 15360000, "0.35"],
@@ -10,7 +12,8 @@ LOCAL = [[0, 0, "0.006"], [14000000, 84000, "0.015"], [50000000, 624000, "0.024"
 
 
 def row(id, 종류, v, c):
-    base_v = {"id": id, "종류": 종류, "고가주택": False, "전액비과세": False, "미등기": False, "중과": None, "단기": None}
+    base_v = {"id": id, "종류": 종류, "양도일": "2026-10-01", "고가주택": False, "전액비과세": False, "미등기": False,
+              "중과": None, "단기": None}
     base_v.update(v)
     return {"id": id, "판정": base_v, "계산": c}
 
@@ -87,3 +90,69 @@ def test_same_rate_rows_are_summed_by_formula(tmp_path):
     bad = copy.deepcopy(result)
     bad["합계"]["호별합산세액"] = 182532000  # 자산별로만 세액을 낸 값이면 대조에서 걸려야 한다
     assert any("호별합산세액" in m for m in W.compare(p, bad))
+
+
+# ---- 최종 검토 반영 ---------------------------------------------------------------------------
+def _sheet(path, **kw):
+    import openpyxl
+    return openpyxl.load_workbook(path, **kw)["계산"]
+
+
+def test_unregistered_rate_label_has_no_none(tmp_path):
+    """미등기 행의 세율 칸은 「미등기·None」 이 아니라 「미등기」 로 적는다."""
+    p = W.write(RESULT, str(tmp_path / "w.xlsx"))
+    ws = _sheet(p)
+    labels = {ws["A%d" % r].value: ws["C%d" % r].value for r in range(2, 6)}
+    assert labels == {"A": "주택·기본", "J": "중과2·2년미만", "E": "미등기", "G": "주택·기본"}
+    assert not any("None" in str(ws["C%d" % r].value) for r in range(2, 6))
+
+
+@pytest.mark.parametrize("bad_id", ["=1+1", "+1", "-1+1", "@SUM(A1)", '=HYPERLINK("http://x","a")', "\t=1", "\r=1"])
+def test_user_text_never_becomes_a_formula(tmp_path, bad_id):
+    import copy
+    result = copy.deepcopy(RESULT)
+    result["자산"][0]["id"] = bad_id
+    p = W.write(result, str(tmp_path / "w.xlsx"))
+    cell = _sheet(p)["A2"]
+    assert cell.value == bad_id and cell.data_type == "s"
+    assert W.compare(p, result) == []   # 수식으로 쓴 칸과 대조는 그대로 맞는다
+
+
+def test_formula_cells_stay_formulas(tmp_path):
+    ws = _sheet(W.write(RESULT, str(tmp_path / "w.xlsx")))
+    assert ws["I2"].data_type == "f" and ws["R2"].data_type == "f" and ws["Q2"].data_type == "f"
+
+
+def _group_result(order):
+    """같은 묶음에 가산세율이 다른 두 자산. X 는 10-15 양도(가산 0.25), Y 는 07-01 양도(가산 0.20)."""
+    x = row("X", "주택", {"중과": "중과2", "양도일": "2026-10-15"},
+            calc(900000000, 800000000, 100000000, 100000000, "0", 0, 100000000, 0, 100000000,
+                 45000000, 4500000, None, "0.25", None, "0.025", 그룹="중과2", 종류="기본", 묶음="중과2"))
+    y = row("Y", "주택", {"중과": "중과2", "양도일": "2026-07-01"},
+            calc(900000000, 800000000, 100000000, 100000000, "0", 0, 100000000, 0, 100000000,
+                 44000000, 4400000, None, "0.20", None, "0.020", 그룹="중과2", 종류="기본", 묶음="중과2"))
+    rows = {"XY": [x, y], "YX": [y, x]}[order]
+    return {"자산": rows, "합계": {"과세표준": 200000000, "자산별세액": 89000000, "호별합산세액": 0, "합산비교세액": 0,
+                               "산출세액": 0, "지방_자산별": 8900000, "지방_호별합산": 0, "지방_합산비교": 0, "지방소득세": 0},
+            "세율표": {"국세": TABLE, "지방": LOCAL}}
+
+
+@pytest.mark.parametrize("order", ["XY", "YX"])
+def test_group_row_takes_rates_from_earliest_transfer(tmp_path, order):
+    """묶음 행의 세율은 입력 순서가 아니라 양도일이 가장 이른 구성원(Y)의 행에서 가져온다."""
+    result = _group_result(order)
+    ws = _sheet(W.write(result, str(tmp_path / "w.xlsx")))
+    group_row = 2 + len(result["자산"]) + 5   # n + 7
+    assert ws["A%d" % group_row].value == "묶음 중과2"
+    src = int(ws["E%d" % group_row].value.lstrip("=E"))
+    assert ws["A%d" % src].value == "Y"
+    assert ws["V%d" % group_row].value == "=V%d" % src
+
+
+def test_recalc_does_not_print_progress_bar(tmp_path, capsys):
+    p = W.write(RESULT, str(tmp_path / "w.xlsx"))
+    capsys.readouterr()
+    cells = W.recalc(p)
+    err = capsys.readouterr().err
+    assert "it/s" not in err and "%|" not in err and "\r" not in err
+    assert cells[("계산", "R2")] is not None

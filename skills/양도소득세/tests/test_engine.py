@@ -382,3 +382,101 @@ def test_unreadable_facts_keeps_previous_outputs(tmp_path):
     assert code == 0
     assert run.main(["--사실관계", str(tmp_path / "없음.json"), "--출력", str(out)]) == 2
     assert (out / "result.json").exists() and (out / "양도소득세_계산근거.xlsx").exists()
+
+
+def test_engine_notes_and_warnings_come_from_judge_once():
+    """판정의 확인사항·경고를 엔진이 한 번만 받는다(자산 번호가 앞에 붙고 겹치지 않는다)."""
+    r = calc("D")
+    assert len(set(r["확인사항"])) == len(r["확인사항"]) and len(set(r["경고"])) == len(r["경고"])
+    assert any(m.startswith("D: ") and "제167조의10①10호" in m for m in r["확인사항"])
+    assert [w for w in r["경고"] if w.startswith("D: ")] and any("계류" in w for w in r["경고"])
+
+
+# ---- 최종 검토 반영: 모양이 틀린 사실관계는 역추적 없이 FactsError, 종료코드 2 -------------------
+BAD_HOUSE_LISTS = [{"H1": 1}, ["H1"], "H1", [1], [[]]]
+
+
+@pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
+def test_malformed_house_list_is_facts_error(bad):
+    f = copy.deepcopy(CASES["A"])
+    f["세대"]["주택목록"] = bad
+    with pytest.raises(F.FactsError) as e:
+        engine.calculate(f, today="2026-10-09")
+    assert "사실관계의 값을 처리하지 못했다" in str(e.value)
+
+
+@pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
+def test_run_malformed_house_list_exit_2(tmp_path, capsys, bad):
+    f = copy.deepcopy(CASES["A"])
+    f["세대"]["주택목록"] = bad
+    code, out = go(tmp_path, f)
+    cap = capsys.readouterr()
+    assert code == 2 and "Traceback" not in cap.err and "사실관계의 값을 처리하지 못했다" in cap.out
+
+
+def test_engine_wraps_attribute_and_index_errors(monkeypatch):
+    """prepare 안에서 AttributeError 나 IndexError 가 나도 FactsError 로 바꾼다."""
+    for exc in (AttributeError("'str' object has no attribute 'get'"), IndexError("list index out of range")):
+        def boom(f, exc=exc):
+            raise exc
+        monkeypatch.setattr(F, "prepare", boom)
+        with pytest.raises(F.FactsError) as e:
+            engine.calculate(copy.deepcopy(CASES["A"]), today="2026-10-09")
+        assert type(exc).__name__ in str(e.value)
+
+
+@pytest.mark.parametrize("bad", ["20261009", "2026-W41-5", "내일", "2026-10-9"])
+def test_engine_today_must_be_iso(bad):
+    """오늘 날짜도 YYYY-MM-DD 글자만 받는다. 파이썬 3.11 이상에서만 통하던 형식을 막는다."""
+    with pytest.raises(F.FactsError):
+        engine.calculate(copy.deepcopy(CASES["A"]), today=bad)
+
+
+@pytest.mark.parametrize("path", ["양도", "취득"])
+def test_compact_dates_in_facts_are_asked_not_calculated(path):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0][path]["잔금일"] = "20261115" if path == "양도" else "20141101"
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and r["계산"] is None
+    assert any("YYYY-MM-DD" in q["내용"] for q in r["질문"])
+
+
+def test_compact_residence_dates_are_asked_not_calculated():
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["거주기간"] = [["20141101", "20261115"]]
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and [q["문항"] for q in r["질문"]] == ["H07"]
+
+
+def test_run_stderr_has_no_progress_bar(tmp_path, capsys):
+    """검산용 재계산 라이브러리(formulas)의 진행 막대가 표준오류에 찍히지 않는다."""
+    code, _ = go(tmp_path, CASES["A"])
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "it/s" not in err and "%|" not in err and "\r" not in err and err.strip() == ""
+
+
+def _case_a_with_residence(periods):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["거주기간"] = periods
+    return engine.calculate(f, today="2026-10-09")
+
+
+def test_duplicate_residence_period_gives_same_result_as_one():
+    """같은 거주 구간을 두 번 적어도 거주 햇수는 늘지 않는다(이전에는 1년이 2년이 되어 표2 를 받았다)."""
+    one_year = ["2014-11-01", "2015-11-01"]
+    once = _case_a_with_residence([one_year])
+    twice = _case_a_with_residence([one_year, list(one_year)])
+    for r in (once, twice):
+        assert r["상태"] == "완료" and r["검산"] == []
+        v = r["계산"]["자산"][0]["판정"]
+        assert (v["거주년"], v["장특공"]) == (1, "표1")
+    assert twice["계산"]["합계"] == once["계산"]["합계"]
+    assert twice["계산"]["자산"][0]["계산"] == once["계산"]["자산"][0]["계산"]
+
+
+def test_overlapping_residence_periods_use_the_union():
+    full = _case_a_with_residence([["2014-11-01", "2026-11-15"]])
+    overlapped = _case_a_with_residence([["2014-11-01", "2026-11-15"], ["2016-01-01", "2020-01-01"], ["2014-11-01", "2026-11-15"]])
+    assert overlapped["계산"]["합계"] == full["계산"]["합계"]
+    assert overlapped["계산"]["자산"][0]["판정"]["거주년"] == 12 == full["계산"]["자산"][0]["판정"]["거주년"]

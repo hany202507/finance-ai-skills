@@ -2,16 +2,16 @@
 """독립 검산. 판정 경로와 상관없는 사실과 닫힌 식으로 엔진 값을 다시 본다.
 워크북과 엔진이 맞는 것은 판정이 맞다는 증거가 아니다. 둘이 같은 판정을 쓰기 때문이다."""
 import calendar
-from datetime import date
 from decimal import Decimal
 
 from yangdo import calc, workbook
+from yangdo.dates import to_date
 
 STEP = 1_000_000
 
 
 def _years(a, b):
-    a, b = date.fromisoformat(a), date.fromisoformat(b)
+    a, b = to_date(a), to_date(b)
     day = min(a.day, calendar.monthrange(b.year, a.month)[1])
     return b.year - a.year - ((b.month, b.day) < (a.month, day))
 
@@ -41,7 +41,7 @@ def check(result, f, rs):
     assets = {a["id"]: a for a in f["자산"]}
     for row in result["자산"]:
         v, c, a, aid = row["판정"], row["계산"], assets[row["id"]], row["id"]
-        on = date.fromisoformat(v["양도일"])
+        on = to_date(v["양도일"])
         if v["전액비과세"]:
             if a["전체양도가액"] > rs.value("고가주택기준", on) or c["산출세액"] or c["지방소득세"]:
                 fails.append("V1 %s: 전액비과세인데 양도가액 %s 또는 세액이 기준을 벗어난다" % (aid, a["전체양도가액"]))
@@ -73,7 +73,7 @@ def check(result, f, rs):
             want = Decimal(c["양도차익"]) * (P - c["고가주택기준"]) / P
             if abs(Decimal(c["과세양도차익"]) - want) > 1:
                 fails.append("V9 %s: 고가주택 과세양도차익 %s, 닫힌 식 %s" % (aid, c["과세양도차익"], want))
-    first = min(date.fromisoformat(r["판정"]["양도일"]) for r in result["자산"])
+    first = min(to_date(r["판정"]["양도일"]) for r in result["자산"])
     if 공제합 > rs.value("기본공제", first):
         fails.append("V4: 기본공제 합 %s 이 한도를 넘는다" % 공제합)
     fails += _totals(result)

@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """계산근거 워크북. 입력을 바꾸면 세액이 따라 바뀌도록 수식으로 쓴다.
 recalc 는 formulas 로 워크북을 독립 재계산해 셀 값을 돌려준다(엔진과 대조용)."""
+import contextlib
+import io
 import os
+import re
+import sys
 
 import openpyxl
 from openpyxl.styles import Font
@@ -20,18 +24,44 @@ def summary_cells(n, groups):
             "지방_자산별": "S%d" % a, "지방_호별합산": "S%d" % h, "지방_합산비교": "S%d" % b, "지방소득세": "S%d" % c}
 
 
+def _earliest(rows, members):
+    """묶음 구성원 가운데 양도일이 가장 이르고(같으면 id 가 앞선) 자산의 입력 순번. calc.group_anchor 와 같은 규칙이다."""
+    return min(members, key=lambda i: (rows[i]["판정"].get("양도일") or "", rows[i]["id"]))
+
+
 def _groups(rows):
-    """합산묶음 이름 -> 첫 구성원의 입력 순번(0부터). 과세 자산만, 처음 나온 순서."""
-    out = {}
+    """합산묶음 이름 -> 대표 구성원의 입력 순번(0부터). 대표는 묶음 세율의 기준일이 되는 가장 이른 양도일의 자산이다.
+    과세 자산만, 대표의 (양도일, 묶음 이름) 순서라 입력 순서와 상관없다."""
+    members = {}
     for i, row in enumerate(rows):
         key = row["계산"].get("합산묶음")
         if key:
-            out.setdefault(key, i)
-    return out
+            members.setdefault(key, []).append(i)
+    out = {key: _earliest(rows, idx) for key, idx in members.items()}
+    return dict(sorted(out.items(), key=lambda kv: (rows[kv[1]]["판정"].get("양도일") or "", kv[0])))
 
 
 def _num(v):
     return float(v) if v is not None else None
+
+
+def _rate_label(c):
+    """세율 칸 글자. 미등기처럼 세율종류가 없는 행은 「미등기·None」 이 아니라 그룹 이름만 쓴다."""
+    return "·".join(str(x) for x in (c.get("세율그룹"), c.get("세율종류")) if x)
+
+
+TEXT_COLS = ("id", "종류", "세율", "합산묶음")   # 글자를 담는 열. 나머지 열은 숫자이거나 이 모듈이 만든 수식이다
+TEXT_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _put(ws, addr, value):
+    """셀에 값을 쓴다. 사용자가 적은 글자(자산 id 등)가 수식 문자로 시작해도 수식이 되지 않도록 글자로 고정한다.
+    수식은 이 함수를 거치지 않고 직접 쓴다."""
+    ws[addr] = value
+    if isinstance(value, str) and value.startswith(TEXT_LEAD):
+        cell = ws[addr]
+        cell.data_type = "s"
+        cell.quotePrefix = True
 
 
 def _p(x, sheet):
@@ -66,7 +96,7 @@ def write(result, path):
         v, c = row["판정"], row["계산"]
         rate = c["적용세율"]
         values = {
-            "id": row["id"], "종류": v["종류"], "세율": "%s·%s" % (c.get("세율그룹"), c.get("세율종류")),
+            "id": row["id"], "종류": v["종류"], "세율": _rate_label(c),
             "단일세율": _num(rate["단일"]), "가산세율": _num(rate["가산"]),
             "양도가액": c["양도가액"], "취득가액": c["취득가액"] or 0, "필요경비": c["필요경비"] or 0,
             "양도차익": "=F{r}-G{r}-H{r}".format(r=r), "고가주택": 1 if v["고가주택"] else 0,
@@ -81,7 +111,10 @@ def write(result, path):
             "전체양도가액": c["전체양도가액"], "합산묶음": c.get("합산묶음") or "",
         }
         for name, letter in COL.items():
-            ws["%s%d" % (letter, r)] = values[name]
+            if name in TEXT_COLS:
+                _put(ws, "%s%d" % (letter, r), values[name])
+            else:
+                ws["%s%d" % (letter, r)] = values[name]
     n = len(rows)
     last = n + 1
     ws["A%d" % (n + 3)] = "자산별 합"
@@ -94,7 +127,7 @@ def write(result, path):
     ws["A%d" % hrow] = "호별 합산"
     for g, (key, i) in enumerate(groups.items()):
         gr, src = first_row + g, i + 2
-        ws["A%d" % gr] = "묶음 %s" % key
+        _put(ws, "A%d" % gr, "묶음 %s" % key)
         ws["Q%d" % gr] = '=SUMIF(X2:X{l},"{k}",Q2:Q{l})'.format(l=last, k=key.replace('"', '""'))
         ws["T%d" % gr] = 0
         for letter in ("D", "E", "U", "V"):
@@ -113,10 +146,27 @@ def write(result, path):
     return path
 
 
+_PROGRESS = re.compile(r"[0-9]+%\||it/s|s/it")
+
+
+@contextlib.contextmanager
+def _quiet_progress():
+    """formulas 가 계산 중 표준오류에 찍는 진행 막대(tqdm)를 가린다. 진행 막대가 아닌 출력은 그대로 다시 내보낸다."""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            yield
+    finally:
+        for chunk in re.split(r"[\r\n]+", buf.getvalue()):
+            if chunk.strip() and not _PROGRESS.search(chunk):
+                print(chunk, file=sys.stderr)
+
+
 def recalc(path):
     import formulas
     base = os.path.basename(path).upper()
-    sol = formulas.ExcelModel().loads(path).finish().calculate()
+    with _quiet_progress():
+        sol = formulas.ExcelModel().loads(path).finish().calculate()
     out = {}
     for k, v in sol.items():
         ku = k.upper()
