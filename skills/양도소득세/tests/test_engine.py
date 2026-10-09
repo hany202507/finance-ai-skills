@@ -454,3 +454,29 @@ def test_run_stderr_has_no_progress_bar(tmp_path, capsys):
     err = capsys.readouterr().err
     assert code == 0
     assert "it/s" not in err and "%|" not in err and "\r" not in err and err.strip() == ""
+
+
+def _case_a_with_residence(periods):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["거주기간"] = periods
+    return engine.calculate(f, today="2026-10-09")
+
+
+def test_duplicate_residence_period_gives_same_result_as_one():
+    """같은 거주 구간을 두 번 적어도 거주 햇수는 늘지 않는다(이전에는 1년이 2년이 되어 표2 를 받았다)."""
+    one_year = ["2014-11-01", "2015-11-01"]
+    once = _case_a_with_residence([one_year])
+    twice = _case_a_with_residence([one_year, list(one_year)])
+    for r in (once, twice):
+        assert r["상태"] == "완료" and r["검산"] == []
+        v = r["계산"]["자산"][0]["판정"]
+        assert (v["거주년"], v["장특공"]) == (1, "표1")
+    assert twice["계산"]["합계"] == once["계산"]["합계"]
+    assert twice["계산"]["자산"][0]["계산"] == once["계산"]["자산"][0]["계산"]
+
+
+def test_overlapping_residence_periods_use_the_union():
+    full = _case_a_with_residence([["2014-11-01", "2026-11-15"]])
+    overlapped = _case_a_with_residence([["2014-11-01", "2026-11-15"], ["2016-01-01", "2020-01-01"], ["2014-11-01", "2026-11-15"]])
+    assert overlapped["계산"]["합계"] == full["계산"]["합계"]
+    assert overlapped["계산"]["자산"][0]["판정"]["거주년"] == 12 == full["계산"]["자산"][0]["판정"]["거주년"]

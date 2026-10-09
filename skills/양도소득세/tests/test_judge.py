@@ -529,3 +529,55 @@ def test_judge_top_level_warnings_carry_asset_id():
 def test_judge_top_level_lists_have_no_duplicates():
     r = run(_two_heavy_assets())
     assert len(set(r["확인사항"])) == len(r["확인사항"]) and len(set(r["경고"])) == len(r["경고"])
+
+
+# ---- 최종 검토 반영: 경계일 회귀 시험(최종 검토에서 손으로 확인한 날짜) --------------------------
+@pytest.mark.parametrize("신규,양도,계약,years", [
+    ("2026-08-03", "2026-11-01", None, 3),           # 부칙 제36737호: 신규 취득이 2026-08-03 이전이면 종전 규정
+    ("2026-08-04", "2026-11-01", None, 2),           # 2026-08-04 이후 취득이면 2년
+    ("2026-08-10", "2026-11-01", "2026-08-03", 3),   # 계약과 계약금 지급이 2026-08-03 이전이면 3년
+    ("2026-08-10", "2026-11-01", "2026-08-04", 2),
+    ("2026-08-10", "2026-09-30", None, 3),           # 종전 주택 양도가 2026-10-01 전이면 3년
+    ("2026-08-10", "2026-10-01", None, 2),
+])
+def test_disposal_years_supplementary_rule_boundaries(신규, 양도, 계약, years):
+    f, a, other = _pair(신규, 양도, 계약)
+    y, cites, notes = J.disposal_years(f, a, other, F.dates.to_date(양도), RS, REG)
+    assert y == years, notes
+
+
+def test_supplementary_contract_exception_needs_deposit_on_or_before_cutoff_too():
+    f, a, other = _pair("2026-08-10", "2026-11-01", "2026-08-03")
+    other["계약금지급일"] = "2026-08-04"
+    y, _, _ = J.disposal_years(f, a, other, F.dates.to_date("2026-11-01"), RS, REG)
+    assert y == 2
+
+
+@pytest.mark.parametrize("양도,기한", [("2026-09-30", "2029-08-10"), ("2026-10-01", "2028-08-10")])
+def test_temporary_deadline_switches_on_2026_10_01(양도, 기한):
+    f, _, _ = _pair("2026-08-10", 양도)
+    assert _verdict(f)["처분기한"] == 기한
+
+
+def _heavy_sale(양도, 소재지=송파, 취득="2021-03-01"):
+    """송파 주택 둘 중 하나를 양도일에 판다. 계약은 양도 30일 전이라 조정대상지역 공고일 뒤다."""
+    from datetime import timedelta
+    계약 = (F.dates.to_date(양도) - timedelta(days=30)).isoformat()
+    a = asset("T", "주택", 소재지, 취득, 양도, 900_000_000, 600_000_000, 양도__계약일=계약, 양도__계약금수령일=계약,
+              기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}})
+    return facts([a], [house("H1", 소재지, 취득, 자산id="T"), house("H8", 송파, "2010-01-01")])
+
+
+@pytest.mark.parametrize("양도,중과", [("2026-05-09", None), ("2026-05-10", "중과2")])
+def test_temporary_exclusion_ends_after_2026_05_09(양도, 중과):
+    v = _verdict(_heavy_sale(양도))
+    assert v["중과"] == 중과
+    assert any("한시배제 가목" in m for m in v["확인사항"]) is (중과 is None)
+
+
+@pytest.mark.parametrize("양도,기한", [("2025-02-27", "2025-05-09"), ("2025-02-28", "2026-05-09")])
+def test_temporary_exclusion_deadline_follows_edition_in_force(양도, 기한):
+    """2025-02-28 판부터 한시배제 양도기한이 2025-05-09 에서 2026-05-09 로 늘었다."""
+    assert RS.value("중과.한시배제.가목.양도기한", 양도) == 기한
+    v = _verdict(_heavy_sale(양도))
+    assert v["중과"] is None and any("%s 까지 양도해" % 기한 in m for m in v["확인사항"])
