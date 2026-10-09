@@ -74,9 +74,8 @@ def calculate(f, rules_dir=None, today=None, workbook_path=None):
     if workbook_path:
         workbook.write(res, workbook_path)
         fails += verify.check_workbook(workbook_path, res)
-    for v in j["자산"]:
-        out["확인사항"] += ["%s: %s" % (v["id"], m) for m in v["확인사항"]]
-        out["경고"] += ["%s: %s" % (v["id"], w) for w in v["경고"]]
+    out["확인사항"] += j["확인사항"]
+    out["경고"] += j["경고"]
     out["확인사항"] = _dedupe(out["확인사항"] + res["확인사항"])
     out["경고"] = _dedupe(out["경고"])
     out.update(상태="완료" if not fails else "검산실패", 계산=res, 검산=fails)

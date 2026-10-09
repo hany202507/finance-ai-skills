@@ -382,3 +382,11 @@ def test_unreadable_facts_keeps_previous_outputs(tmp_path):
     assert code == 0
     assert run.main(["--사실관계", str(tmp_path / "없음.json"), "--출력", str(out)]) == 2
     assert (out / "result.json").exists() and (out / "양도소득세_계산근거.xlsx").exists()
+
+
+def test_engine_notes_and_warnings_come_from_judge_once():
+    """판정의 확인사항·경고를 엔진이 한 번만 받는다(자산 번호가 앞에 붙고 겹치지 않는다)."""
+    r = calc("D")
+    assert len(set(r["확인사항"])) == len(r["확인사항"]) and len(set(r["경고"])) == len(r["경고"])
+    assert any(m.startswith("D: ") and "제167조의10①10호" in m for m in r["확인사항"])
+    assert [w for w in r["경고"] if w.startswith("D: ")] and any("계류" in w for w in r["경고"])
