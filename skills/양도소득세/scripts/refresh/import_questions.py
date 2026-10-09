@@ -65,8 +65,16 @@ def keys_of(raw):
     return out
 
 
+# 계획 3 이 5 로 바뀌면 받침 없는 숫자(오) 뒤라 조사도 바뀐다. 「계획 5 으로」 는 「계획 5 로」, 「계획 5 은」 은 「계획 5 는」
+_PARTICLE_AFTER_5 = {"으로": "로", "은": "는", "이": "가", "을": "를"}
+_PLAN5_PARTICLE = re.compile(r"(계획 ?5) (%s)(?![가-힣])" % "|".join(_PARTICLE_AFTER_5))
+
+
 def _plan5(s):
-    return None if s is None else str(s).replace("계획3", "계획5").replace("계획 3", "계획 5")
+    if s is None:
+        return None
+    s = str(s).replace("계획3", "계획5").replace("계획 3", "계획 5")
+    return _PLAN5_PARTICLE.sub(lambda m: "%s %s" % (m.group(1), _PARTICLE_AFTER_5[m.group(2)]), s)
 
 
 def _value(maps, kinds, qid, v):

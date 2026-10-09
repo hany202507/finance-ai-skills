@@ -341,3 +341,17 @@ def test_unknown_district_ends_with_out_of_scope_not_a_repeated_question():
     assert "A02" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
     h = Q.answer(g, "A02", "예", 자산="G1")   # 확인한 뒤 답을 바꾸면 계산한다
     assert engine.calculate(h, today=TODAY)["상태"] == "완료"
+
+
+# ---- 질문지 범위 문구의 조사 (T6) ----
+def test_plan_number_particles_follow_the_vowel_of_five():
+    import import_questions as IQ
+    assert IQ._plan5("답에 따라 계획 3 으로 넘긴다") == "답에 따라 계획 5 로 넘긴다"
+    assert IQ._plan5("계획 3 은 목록으로") == "계획 5 는 목록으로"
+    assert IQ._plan5("계획3 이 맞다") == "계획5 가 맞다"
+    assert IQ._plan5("계획 3 이후") == "계획 5 이후"
+    assert IQ._plan5("계획 3 에서") == "계획 5 에서"
+    assert IQ._plan5(None) is None
+    legend = IQ.convert({"이름": "t", "범위": "계획 3 은 목록으로", "엔진값": {}, "섹션": [], "계획3목록": [], "다루지않음": [],
+                         "출처": [], "범위표기": {"계획3 진입": "답에 따라 계획 3 으로 넘긴다"}, "문항": []})["범위표기"]
+    assert legend == {"계획5 진입": "답에 따라 계획 5 로 넘긴다"}
