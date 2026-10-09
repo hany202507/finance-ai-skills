@@ -62,7 +62,19 @@ test('todaySeoul 은 UTC 15시 이후를 다음 날로 본다', () => {
   assert.equal(todaySeoul(new Date('2026-10-08T14:59:00Z')), '20261008');
 });
 
-test('ymd', () => assert.equal(ymd('2026-10-09'), '20261009'));
+test('ymd 는 여러 날짜 표기를 8자리로 맞춘다', () => {
+  assert.equal(ymd('2026-10-09'), '20261009');
+  assert.equal(ymd('20240701'), '20240701');
+  assert.equal(ymd('2024.7.1'), '20240701');
+  assert.equal(ymd('2024년 7월 1일'), '20240701');
+});
+
+test('ymd 는 날짜가 아니면 조용히 넘기지 않고 실패한다', () => {
+  assert.throws(() => ymd('abc'), /날짜 형식이 아니다: "abc"\. YYYY-MM-DD 로 준다\./);
+  assert.throws(() => ymd('2024-13-01'), /날짜 형식이 아니다/);
+  assert.throws(() => ymd('2024-07-32'), /날짜 형식이 아니다/);
+  assert.throws(() => ymd(''), /날짜 형식이 아니다/);
+});
 
 test('maskSecrets 는 OC 값과 OC= 파라미터를 가린다', () => {
   assert.equal(maskSecrets('a OC=abc&x abc', 'abc'), 'a OC=***&x ***');

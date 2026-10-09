@@ -231,12 +231,15 @@ export function makeRunTool({ callApi, today }) {
     return hit;
   }
 
-  /** 부칙용: 이름이 같은 판 중 가장 늦게 공포된 것(시행예정 부칙까지 보려고) */
+  /** 부칙용: 이름이 같은 판 중 가장 늦게 공포된 것(시행예정 부칙까지 보려고). 시행일이 아니라 공포일 순이다 */
   async function resolveLatestPromulgated(lawName) {
     const rows = await searchVersions(lawName, '2,3');
     const exact = pickExact(rows, lawName);
     if (!exact.length) throw noExact(lawName, rows);
-    return pickInForce(exact, '99991231');
+    return [...exact].sort((a, b) =>
+      String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')) ||
+      Number(b['공포번호'] ?? 0) - Number(a['공포번호'] ?? 0) ||
+      String(b['시행일자'] ?? '').localeCompare(String(a['시행일자'] ?? '')))[0];
   }
 
   /** 그 판을 eflaw 로 읽는다. 비어 오면 실패한다(공포본으로 대신 읽지 않는다) */

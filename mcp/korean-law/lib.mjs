@@ -77,7 +77,20 @@ export function todaySeoul(now = new Date()) {
   return k.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
-export const ymd = (s) => String(s ?? '').replace(/\D/g, '').slice(0, 8);
+/**
+ * 날짜를 YYYYMMDD 로 맞춘다. "20240701", "2024-07-01", "2024.7.1", "2024년 7월 1일" 을 받는다.
+ * 숫자만 남기면 "2024.7.1" 이 "202471" 이 되어 문자열 비교가 엉뚱한 판을 고른다. 날짜가 아니면 실패한다.
+ */
+export function ymd(s) {
+  const raw = String(s ?? '').trim();
+  const m = raw.match(/^(\d{4})(\d{2})(\d{2})$/) || raw.match(/^\D*(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D*$/);
+  const mo = m ? Number(m[2]) : 0;
+  const d = m ? Number(m[3]) : 0;
+  if (!m || mo < 1 || mo > 12 || d < 1 || d > 31) {
+    throw new Error(`날짜 형식이 아니다: "${raw}". YYYY-MM-DD 로 준다.`);
+  }
+  return `${m[1]}${String(mo).padStart(2, '0')}${String(d).padStart(2, '0')}`;
+}
 
 /** 법제처 응답 링크에 OC 가 평문으로 섞여 온다. 내보내기 전에 가린다 */
 export function maskSecrets(text, oc) {

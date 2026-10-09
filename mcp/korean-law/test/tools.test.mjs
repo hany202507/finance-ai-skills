@@ -104,3 +104,39 @@ test('search_law 는 이름이 같은 법령을 맨 앞에, 표시를 붙여 보
   const out = await run('search_law', { query: '주택법' });
   assert.match(out, /^★ 이름 일치 · 주택법/);
 });
+
+test('effective_date 를 한글 날짜로 줘도 그 날 시행 중인 판을 읽는다', async () => {
+  const api = fakeApi((path) => {
+    if (path === 'lawSearch.do') {
+      return page([
+        row('주택법', '300003', '20241001', '20240901', '3'),
+        row('주택법', '300002', '20240701', '20240601', '2'),
+        row('주택법', '300001', '20240101', '20231201', '1'),
+      ]);
+    }
+    if (path === 'lawService.do') return body('주택법', '20240701', [unit('1', '제1조(목적)')]);
+  });
+  const run = makeRunTool({ callApi: api, today: TODAY });
+  await run('get_law_text', { law_name: '주택법', effective_date: '2024년 7월 1일' });
+  const svc = api.calls.find((c) => c.path === 'lawService.do');
+  assert.deepEqual([svc.MST, svc.efYd], ['300002', '20240701']);
+});
+
+test('get_addenda 는 시행일이 아니라 공포일이 가장 늦은 판에서 부칙을 읽는다', async () => {
+  const api = fakeApi((path) => {
+    if (path === 'lawSearch.do') {
+      return page([
+        row('주택법', 'OLD_PROM', '20270101', '20251230', '9'),
+        row('주택법', 'NEW_PROM', '20260701', '20260301', '5'),
+      ]);
+    }
+    if (path === 'lawService.do') {
+      return { 법령: { 기본정보: { 법령명_한글: '주택법' }, 부칙: { 부칙단위: [{ 부칙공포일자: '20260301', 부칙공포번호: '5', 부칙내용: ['제1조(시행일) 이 법은 공포한 날부터 시행한다.'] }] } } };
+    }
+  });
+  const run = makeRunTool({ callApi: api, today: TODAY });
+  const out = await run('get_addenda', { law_name: '주택법' });
+  const svc = api.calls.find((c) => c.path === 'lawService.do');
+  assert.deepEqual([svc.target, svc.MST], ['law', 'NEW_PROM']);
+  assert.match(out, /MST NEW_PROM/);
+});
