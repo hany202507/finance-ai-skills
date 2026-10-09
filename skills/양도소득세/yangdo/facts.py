@@ -208,6 +208,18 @@ def form_rules(path=None):
     return _FORM_RULES[path]
 
 
+def with_ro(word):
+    """「교환」 은 「교환으로」, 「기타」 는 「기타로」. 받침이 없거나 ㄹ 받침이면 로, 그 밖에는 으로."""
+    code = ord(word[-1]) - 0xAC00 if word else -1
+    if 0 <= code < 11172:
+        return word + ("로" if code % 28 in (0, 8) else "으로")
+    return word + "로"
+
+
+def _cause(원인):
+    return "기타 원인으로" if 원인 == "기타" else with_ro(원인)
+
+
 def _land_ratio(zone, capital):
     """부수토지 비과세 배율(시행령 제154조⑦). 도시지역 안 수도권의 주거·상업·공업지역 3배, 수도권 녹지지역 5배,
     수도권 밖 도시지역 5배, 그 밖의 용도지역(관리·농림·자연환경보전) 10배. 용도지역 이름으로 정하지 못하면 None."""
@@ -484,12 +496,18 @@ def _prepare_asset(f, a, out, bad):
     if 원인 == "부담부증여":
         raise OutOfScope(aid, "부담부증여", "5")
     if 원인 in ("교환", "기타"):  # 교환은 받은 자산의 시가가 양도가액이라 이 계획이 다루지 않는다
-        raise OutOfScope(aid, "%s 으로 양도한 자산" % 원인, "5")
-    if 원인 not in ("매매", "수용", "경매"):
+        raise OutOfScope(aid, "%s 양도한 자산" % _cause(원인), "5")
+    if 원인 == "수용":  # 수용의 양도시기는 대금 청산일, 수용 개시일, 소유권이전등기접수일 중 빠른 날이다(시행령 제162조①7호)
+        raise OutOfScope(aid, "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", "5")
+    if 원인 not in ("매매", "경매"):
         raise Missing("P03", aid, "양도 원인 코드 %s 를 알 수 없습니다" % 원인)
     취득원인 = need(a, "취득.원인", "A15", aid)
     if 취득원인 in ("상속", "증여", "부담부증여", "조합원"):
-        raise OutOfScope(aid, "%s 으로 취득한 자산" % 취득원인, "5")
+        raise OutOfScope(aid, "%s 취득한 자산" % _cause(취득원인), "5")
+    if 취득원인 == "기타":  # 점유취득(시행령 제162조①6호), 환지(9호)는 취득시기가 매매와 다르다
+        raise OutOfScope(aid, "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", "5")
+    if 취득원인 not in ("매매", "분양", "신축", "경매", "공공매입"):
+        raise Missing("A15", aid, "취득 원인 코드 %s 를 알 수 없습니다" % 취득원인)
     try:
         양도, 양도근거 = dates.transfer_date(a.get("양도"))
     except ValueError:
@@ -514,13 +532,19 @@ def _prepare_asset(f, a, out, bad):
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
     _check_asset_forms(a, aid)
+    # 지구 안인지 모르면(A02 모름) 조정대상지역 해당을 정하지 못한다. 판정이 A02 를 다시 묻게 두면 질문지는 이미 답한 문항이라
+    # 내지 않아 대화가 끝나지 않는다. 등기하지 않은 미이행 주택은 판정이 조정대상지역을 보지 않는다
+    미등기_미이행 = a.get("등기") is False and a.get("미등기사유") == "미이행"
+    if 종류 == "주택" and not 미등기_미이행 and (a.get("지구해당") == "모름" or "A02:%s" % aid in (f.get("모름") or [])):
+        raise OutOfScope(aid, "지구 안인지 확인되지 않음(A02 모름). 조정대상지역 해당을 정하지 못해 계산하지 않았다. "
+                         "토지이용계획확인서 등으로 확인해 A02 를 예 또는 아니오로 답하면 계산한다", "없음")
     if 종류 == "주택":
         if "H05" not in bad and [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
             raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")
         if "H06" not in bad and get(f, "세대.입주권분양권"):
             raise OutOfScope(aid, "세대가 조합원입주권·분양권을 가진 경우", "5")
         _route_house(a, aid)
-    if 종류 == "토지" and a.get("등기") is not False:
+    if 종류 == "토지":
         용도 = need(a, "토지사용현황", "A21", aid)
         if 용도 not in OK_LAND_USE:
             raise OutOfScope(aid, "비사업용 토지 판정이 필요한 토지(%s)" % 용도, "5")
@@ -530,8 +554,6 @@ def _prepare_asset(f, a, out, bad):
         _check_residence(a)
     _check_money(a)
     _route_price(a, aid, out)
-    if 원인 == "수용":
-        out["확인사항"].append("%s: 수용 양도의 조세특례제한법 감면은 계산하지 않았다" % aid)
 
 
 def prepare(f):

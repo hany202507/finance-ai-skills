@@ -4,7 +4,7 @@ from fractions import Fraction
 
 import pytest
 
-from cases import CASES
+from cases import CASES, addr, asset, facts, house
 from yangdo import facts as F
 
 
@@ -50,15 +50,21 @@ def test_scope(path, value, plan):
     assert p["다루지않음"] and p["다루지않음"][0]["계획"] == plan
 
 
-@pytest.mark.parametrize("원인", ["교환", "기타"])
-def test_exchange_and_other_transfer_name_the_cause(원인):
+@pytest.mark.parametrize("원인,문구", [("교환", "교환으로 양도한 자산"), ("기타", "기타 원인으로 양도한 자산")])
+def test_exchange_and_other_transfer_name_the_cause(원인, 문구):
     p = prep("B", lambda f: f["자산"][0]["양도"].update(원인=원인))
-    assert p["다루지않음"] == [{"자산": "B", "내용": "%s 으로 양도한 자산" % 원인, "계획": "5"}]
+    assert p["다루지않음"] == [{"자산": "B", "내용": 문구, "계획": "5"}]
     assert p["시기"] == {}
 
 
-@pytest.mark.parametrize("원인", ["매매", "수용", "경매"])
-def test_sale_expropriation_and_auction_are_in_scope(원인):
+def test_expropriation_transfer_is_out_of_scope_without_the_old_note():
+    p = prep("B", lambda f: f["자산"][0]["양도"].update(원인="수용"))
+    assert p["다루지않음"] == [{"자산": "B", "내용": "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", "계획": "5"}]
+    assert p["시기"] == {} and p["확인사항"] == []
+
+
+@pytest.mark.parametrize("원인", ["매매", "경매"])
+def test_sale_and_auction_are_in_scope(원인):
     p = prep("B", lambda f: f["자산"][0]["양도"].update(원인=원인))
     assert p["다루지않음"] == [] and p["질문"] == []
 
@@ -93,9 +99,9 @@ def test_land_use_scope():
     assert p["질문"][0]["문항"] == "A21"
 
 
-def test_expropriation_note_and_other_sales_note():
-    p = prep("B", lambda f: (f["자산"][0]["양도"].update(원인="수용"), f["연간"].update(다른양도=True)))
-    assert len(p["확인사항"]) == 2
+def test_other_sales_note():
+    p = prep("B", lambda f: f["연간"].update(다른양도=True))
+    assert len(p["확인사항"]) == 1 and "제104조⑤" in p["확인사항"][0]
 
 
 def test_personal_keys_rejected():
@@ -545,3 +551,65 @@ def test_form_problem_by_answer_form():
     assert F.form_problem(qs["H06"], []) is None and F.form_problem(qs["H06"], "없음")
     assert F.form_problem(qs["A11"], "2026.11.15") is None     # 날짜·금액은 이 함수가 보지 않는다
     assert F.form_problem(qs["P07"], "H1") is None            # 선택지가 없는 선택 문항은 받는 대로 둔다
+
+
+# ---- 지구 안인지 모르는 답(A02 모름) ----
+def _gwanggyo():
+    a = asset("G1", "주택", addr("경기도", "수원시 영통구", "이의동"), "2019-03-01", "2026-11-15", 1_500_000_000, 800_000_000,
+              거주기간=[["2019-03-01", "2026-11-15"]])
+    return facts([a], [house("H1", a["소재지"], "2019-03-01", 자산id="G1")])
+
+
+def test_district_unknown_answer_is_out_of_scope_not_a_loop():
+    f = _gwanggyo()
+    f["자산"][0]["지구해당"] = "모름"
+    p = F.prepare(f)
+    assert p["질문"] == [] and len(p["다루지않음"]) == 1
+    o = p["다루지않음"][0]
+    assert o["자산"] == "G1" and "지구 안인지 확인되지 않음" in o["내용"] and o["계획"] == "없음"
+    assert F.prepare(_gwanggyo())["다루지않음"] == []   # 모르는 답이 없으면 그대로 판정으로 가 A02 를 묻는다
+
+
+def test_district_unknown_marker_in_list_is_the_same():
+    f = _gwanggyo()
+    f["모름"] = ["A02:G1"]
+    assert "지구 안인지 확인되지 않음" in F.prepare(f)["다루지않음"][0]["내용"]
+
+
+def test_district_unknown_does_not_block_land_or_unregistered_house():
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["지구해당"] = "모름"
+    assert F.prepare(f)["다루지않음"] == []
+    f = copy.deepcopy(CASES["E"])
+    f["자산"][0]["지구해당"] = "모름"
+    assert F.prepare(f)["다루지않음"] == []
+
+
+# ---- 취득원인·미등기 토지 ----
+def test_other_acquisition_cause_is_out_of_scope():
+    p = prep("B", lambda f: f["자산"][0]["취득"].update(원인="기타"))
+    assert p["다루지않음"] == [{"자산": "B", "내용": "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", "계획": "5"}]
+    assert p["시기"] == {}
+
+
+@pytest.mark.parametrize("원인,문구", [("상속", "상속으로 취득한 자산"), ("증여", "증여로 취득한 자산"),
+                                      ("부담부증여", "부담부증여로 취득한 자산"), ("조합원", "조합원으로 취득한 자산")])
+def test_acquisition_cause_particle(원인, 문구):
+    p = prep("B", lambda f: f["자산"][0]["취득"].update(원인=원인))
+    assert p["다루지않음"] == [{"자산": "B", "내용": 문구, "계획": "5"}]
+
+
+@pytest.mark.parametrize("word,want", [("교환", "교환으로"), ("기타", "기타로"), ("증여", "증여로"), ("부담부증여", "부담부증여로"),
+                                       ("상속", "상속으로"), ("조합원", "조합원으로"), ("수용", "수용으로"), ("경매", "경매로"),
+                                       ("물", "물로"), ("분양", "분양으로"), ("A", "A로")])
+def test_with_ro_picks_ro_after_vowel_or_rieul(word, want):
+    assert F.with_ro(word) == want
+
+
+def test_unregistered_land_still_needs_land_use():
+    """등기하지 않은 토지도 제외 사유(장기할부 등)가 있으면 비사업용 토지 판정이 필요하다. 사용 현황을 건너뛰지 않는다."""
+    def m(use):
+        return lambda f: f["자산"][0].update(미등기사유="장기할부", 토지사용현황=use)
+    assert [q["문항"] for q in prep("E", m(None))["질문"]] == ["A21"]
+    assert prep("E", m("나대지"))["다루지않음"][0]["계획"] == "5"
+    assert prep("E", m("사업용"))["다루지않음"] == []

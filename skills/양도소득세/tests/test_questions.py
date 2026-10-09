@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from cases import CASES, EXPECT, EXPECT_TOTAL
+from cases import CASES, EXPECT, EXPECT_TOTAL, addr, asset, facts, house
 from yangdo import questions as Q
 
 
@@ -609,3 +609,27 @@ def test_moreum_and_right_forms_still_count_as_answered():
     f["자산"][0]["중과배제_사유"] = None
     g = Q.answer(f, "X04", Q.MOREUM, 자산="D")
     assert "X04" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
+
+
+# ---- 지구 안인지 모를 때 문답이 끝난다 (M3) ----
+def _gwanggyo_oracle(지구):
+    a = asset("G1", "주택", addr("경기도", "수원시 영통구", "이의동"), "2019-03-01", "2026-11-15", 1_500_000_000, 800_000_000,
+              거주기간=[["2019-03-01", "2026-11-15"]], 지구해당=지구)
+    return facts([a], [house("H1", a["소재지"], "2019-03-01", 자산id="G1")])
+
+
+def test_dialogue_with_unknown_district_ends_with_out_of_scope():
+    f, asked = replay(_gwanggyo_oracle("모름"))
+    assert asked.count("A02") == 1
+    assert f["자산"][0]["지구해당"] == "모름"
+    r = _engine().calculate(f, today="2026-10-09")
+    assert r["질문"] == [] and r["계산"] is None
+    assert [o["자산"] for o in r["다루지않음"]] == ["G1"] and "지구 안인지 확인되지 않음" in r["다루지않음"][0]["내용"]
+    assert Q.next_questions(f)["다음"] == []
+
+
+def test_dialogue_with_known_district_calculates():
+    for 지구 in ("예", "아니오"):
+        f, asked = replay(_gwanggyo_oracle(지구))
+        r = _engine().calculate(f, today="2026-10-09")
+        assert r["상태"] == "완료", (지구, r["질문"], r["다루지않음"])

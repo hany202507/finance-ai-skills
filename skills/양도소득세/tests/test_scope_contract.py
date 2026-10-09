@@ -325,3 +325,19 @@ def test_expected_amounts_are_unchanged_by_the_routing(name):
 def test_expected_totals_are_unchanged_by_the_routing(name):
     r = engine.calculate(CASES[name], today=TODAY)
     assert r["상태"] == "완료" and r["계산"]["합계"]["산출세액"] == EXPECT_TOTAL[name]["산출세액"]
+
+
+# ---- 광교 이의동(지구 단위 지정)에서 A02 모름 ----
+def test_unknown_district_ends_with_out_of_scope_not_a_repeated_question():
+    a = asset("G1", "주택", addr("경기도", "수원시 영통구", "이의동"), "2019-03-01", "2026-11-15", 1_500_000_000, 800_000_000,
+              거주기간=[["2019-03-01", "2026-11-15"]])
+    f = facts([a], [house("H1", a["소재지"], "2019-03-01", 자산id="G1")])
+    first = engine.calculate(f, today=TODAY)
+    assert [q["문항"] for q in first["질문"]] == ["A02"]
+    g = Q.answer(f, "A02", Q.MOREUM, 자산="G1")
+    r = engine.calculate(g, today=TODAY)
+    assert r["질문"] == [] and r["계산"] is None
+    assert len(r["다루지않음"]) == 1 and "지구 안인지 확인되지 않음" in r["다루지않음"][0]["내용"]
+    assert "A02" not in [q["id"] for q in Q.next_questions(g, limit=None)["다음"]]
+    h = Q.answer(g, "A02", "예", 자산="G1")   # 확인한 뒤 답을 바꾸면 계산한다
+    assert engine.calculate(h, today=TODAY)["상태"] == "완료"
