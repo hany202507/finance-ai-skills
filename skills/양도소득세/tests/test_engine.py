@@ -393,17 +393,16 @@ def test_engine_notes_and_warnings_come_from_judge_once():
     assert [w for w in r["경고"] if w.startswith("D: ")] and any("계류" in w for w in r["경고"])
 
 
-# ---- 최종 검토 반영: 모양이 틀린 사실관계는 역추적 없이 FactsError, 종료코드 2 -------------------
+# ---- 최종 검토 반영: 모양이 틀린 주택 목록은 역추적 없이 H04 로 되묻고, 종료코드 2 ------------------
 BAD_HOUSE_LISTS = [{"H1": 1}, ["H1"], "H1", [1], [[]]]
 
 
 @pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
-def test_malformed_house_list_is_facts_error(bad):
+def test_malformed_house_list_asks_h04(bad):
     f = copy.deepcopy(CASES["A"])
     f["세대"]["주택목록"] = bad
-    with pytest.raises(F.FactsError) as e:
-        engine.calculate(f, today="2026-10-09")
-    assert "사실관계의 값을 처리하지 못했다" in str(e.value)
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and any(q["문항"] == "H04" for q in r["질문"])
 
 
 @pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
@@ -412,7 +411,8 @@ def test_run_malformed_house_list_exit_2(tmp_path, capsys, bad):
     f["세대"]["주택목록"] = bad
     code, out = go(tmp_path, f)
     cap = capsys.readouterr()
-    assert code == 2 and "Traceback" not in cap.err and "사실관계의 값을 처리하지 못했다" in cap.out
+    assert code == 2 and "Traceback" not in cap.err and "질문 1개" in cap.out
+    assert "[H04]" in (out / "질문.md").read_text(encoding="utf-8")
 
 
 def test_engine_wraps_attribute_and_index_errors(monkeypatch):

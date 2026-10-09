@@ -506,6 +506,7 @@ def _two_heavy_assets():
     from cases import D자산
     d2 = copy.deepcopy(D자산)
     d2["id"] = "E2"
+    d2["양도"]["잔금일"] = "2026-10-20"  # 같은 날 여러 채 양도는 다루지않음이라 날을 나눈다
     return facts([D자산, d2], [house("H1", 마포, "2021-03-01", 자산id="D"), house("H2", 마포, "2021-03-01", 자산id="E2"),
                               house("H8", addr("서울특별시", "송파구", "잠실동"), "2010-01-01")])
 
