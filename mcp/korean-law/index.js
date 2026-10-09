@@ -18,6 +18,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { strip, asArray, joCode, flattenArticle, lawUrl, articleRef } from './lib.mjs';
 
 const OC = process.env.LAW_OC;
 if (!OC) {
@@ -68,8 +69,6 @@ async function callApi(path, params) {
   throw new Error(`법제처 API가 JSON이 아닌 응답을 반환했다(지원하지 않는 조회 조합일 수 있음). 앞부분: ${head}`);
 }
 
-const strip = (s) => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\r/g, '').trim();
-
 /**
  * 법제처는 "일치하는 판례가 없습니다" 같은 안내를 **객체가 아니라 맨 문자열**로 돌려줄 때가 있다.
  * 그걸 그대로 Object.entries() 에 넣으면 문자열이 글자 단위로 쪼개져
@@ -80,45 +79,6 @@ const strip = (s) => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\r/g, '').
 function bareMessage(root) {
   if (typeof root === 'string') return strip(root) || '빈 응답';
   return null;
-}
-const asArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
-
-/** 조문번호 "12" → "001200", "45-3"·"45의3" → "004503" */
-function joCode(article) {
-  const m = String(article).trim().match(/^(\d+)\s*(?:[-의]\s*(\d+))?$/);
-  if (!m) throw new Error(`조문번호 형식이 아니다: "${article}" (예: "12", "45의3", "45-3")`);
-  return m[1].padStart(4, '0') + (m[2] ? m[2].padStart(2, '0') : '00');
-}
-
-/** 응답 트리에서 조문/항/호/목 텍스트만 순서대로 긁는다 */
-function flattenArticle(node, out = []) {
-  if (Array.isArray(node)) { for (const n of node) flattenArticle(n, out); return out; }
-  if (node && typeof node === 'object') {
-    for (const [k, v] of Object.entries(node)) {
-      if (typeof v === 'string' && ['조문내용', '항내용', '호내용', '목내용'].includes(k)) {
-        const t = strip(v);
-        if (t) out.push(t);
-      } else flattenArticle(v, out);
-    }
-  }
-  return out;
-}
-
-/**
- * 인용용 법제처 원문 링크.
- * 도구가 링크를 주지 않으면 모델이 링크를 지어낸다. 그래서 모든 조회 응답 끝에 붙인다.
- */
-function lawUrl(lawName, article) {
-  // 한글 경로는 그대로 두고 공백만 인코딩한다("상속세 및 증여세법" 은 raw 로는 400).
-  // 퍼센트 인코딩된 URL 은 사람이 못 읽어서 회신에 붙었을 때 검증이 안 된다.
-  const base = `https://www.law.go.kr/법령/${String(lawName ?? '').trim().replace(/ /g, '%20')}`;
-  return article ? `${base}/제${String(article).replace(/-/g, '의')}조` : base;
-}
-
-/** 조문단위 → get_law_text 의 article 에 그대로 넣을 수 있는 표기 ("60", "75의8") */
-function articleRef(u) {
-  const branch = Number(u?.['조문가지번호'] ?? 0);
-  return `${u?.['조문번호']}${branch ? `의${branch}` : ''}`;
 }
 
 /* ------------------------------------------------------------- 법령 조회 */
