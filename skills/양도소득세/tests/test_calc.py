@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+import cases
 from cases import CASES, EXPECT, EXPECT_TOTAL
 from yangdo import calc as C
 from yangdo import codes, ruleset
@@ -129,6 +130,7 @@ def test_two_assets_same_year(pair, names):
     first = sorted(names, key=lambda n: VERDICTS[n]["양도일"])[0]
     by = {row["id"]: row["계산"] for row in r["자산"]}
     assert by[first]["기본공제"] == 2_500_000 and sum(c["기본공제"] for c in by.values()) == 2_500_000
+    assert got["호별합산세액"] == {"BC": 75_402_000, "BF": 206_274_000}[pair]
     assert any(x["key"] == "판정.합산비교" for x in r["근거"])
 
 
@@ -150,7 +152,7 @@ def test_short_term_winner():
     assert c["적용세율"] == {"단일": "0.60", "가산": "0.20", "지방단일": "0.060", "지방가산": "0.020"}
     v = dict(VERDICTS["J"], 단기="2년미만")
     big = C.rate_tax(v, 1_400_000_000, RS, C.to_date("2026-10-01"))
-    assert big[1] == "누진"  # 과표 13.08억 초과면 누진+20% 가 크다(규격서 p34)
+    assert big[1] == "누진"  # 과표 13.188억 초과면 누진+20% 가 크다(규격서 p34)
 
 
 def test_ltd_table2_min_row():
@@ -168,3 +170,22 @@ def test_local_is_tenth():
     for name in EXPECT:
         c = run(name)["자산"][0]["계산"]
         assert abs(c["지방소득세"] * 10 - c["산출세액"]) <= 10, name
+
+
+def test_same_rate_assets_are_aggregated():
+    f = cases.facts([cases.B자산, cases.C자산, cases.F자산],
+                    [cases.house("H1", cases.해운대_우, "2019-11-10", 자산id="B"),
+                     cases.house("H2", cases.해운대_중, "2026-01-10", 자산id="C"), cases.춘천집])
+    r = C.annual(f, [VERDICTS["B"], VERDICTS["C"], VERDICTS["F"]], RS, CD)
+    t = r["합계"]
+    assert (t["호별합산세액"], t["합산비교세액"], t["산출세액"]) == (240_574_000, 227_274_000, 240_574_000)
+    assert (t["지방_호별합산"], t["지방소득세"]) == (24_057_400, 24_057_400)
+    rows = {(x["세율구분"]): (x["과세표준"], x["산출세액"]) for x in r["세율별"]}
+    assert rows == {"10": (579_200_000, 207_324_000), "46": (47_500_000, 33_250_000)}
+
+
+def test_short_term_crossover_boundary():
+    v = dict(VERDICTS["J"])
+    on = C.to_date("2026-10-01")
+    assert C.rate_tax(v, 1_318_800_000, RS, on)[1] == "단일"
+    assert C.rate_tax(v, 1_318_800_001, RS, on)[1] == "누진"

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """계산. 사실관계·판정·기준정보만 받는 순수 함수다. 원 미만은 단계마다 버린다."""
-from collections import Counter
 from decimal import ROUND_FLOOR, Decimal
 from fractions import Fraction
 
@@ -166,6 +165,15 @@ def rate_group(v, winner):
     return g, (v["단기"] if winner == "단일" else "기본")
 
 
+def merge_key(v):
+    """같은 세율로 과세표준을 합산하는 묶음(소득세법 제104조⑤2호). 기본세율 자산은 종류와 상관없이 한 묶음이다."""
+    if v["미등기"]:
+        return "미등기"
+    if v["단기"]:
+        return "%s·%s·%s" % (v["중과"] or "일반", "주택" if v["종류"] == "주택" else "일반", v["단기"])
+    return v["중과"] or "기본"
+
+
 def _s(x):
     return None if x is None else str(x)
 
@@ -208,6 +216,7 @@ def annual(f, verdicts, rs, cd):
             c["지방소득세"] = rate_tax(v, c["과세표준"], rs, on, local=True)[0]
         nat, loc = rates(v, rs, on), rates(v, rs, on, True)
         c["적용세율"] = {"단일": _s(nat["단일"]), "가산": _s(nat["가산"]), "지방단일": _s(loc["단일"]), "지방가산": _s(loc["가산"])}
+        c["합산묶음"] = None if v["전액비과세"] else merge_key(v)
         grp, kind = rate_group(v, winner)
         c["세율그룹"], c["세율종류"] = grp, kind
         c["코드"] = {"과세구분": cd.tax_class(v["전액비과세"]), "국내외분": cd.data["국내외분"]["국내"],
@@ -216,6 +225,28 @@ def annual(f, verdicts, rs, cd):
                      "장특공적용구분": cd.data["장기보유특별공제적용구분코드"]["기본"],
                      "보유기간": cd.holding_code(v), "거주기간": cd.residence_code(v)}
     taxed = [r for r in rows if not r["판정"]["전액비과세"]]
+    묶음 = {}
+    for r in taxed:
+        묶음.setdefault(r["계산"]["합산묶음"], []).append(r)
+    호별 = 지방호별 = 0
+    세율별 = {}
+    for members in 묶음.values():
+        v0 = members[0]["판정"]
+        on_g = to_date(v0["양도일"])
+        s = sum(m["계산"]["과세표준"] for m in members)
+        t, w = rate_tax(v0, s, rs, on_g)
+        lt = rate_tax(v0, s, rs, on_g, local=True)[0]
+        호별 += t
+        지방호별 += lt
+        if len(members) >= 2:  # 묶음이 세율구분을 정한다
+            grp, kind = rate_group(v0, w)
+            for m in members:
+                m["계산"]["세율그룹"], m["계산"]["세율종류"] = grp, kind
+                m["계산"]["코드"]["세율구분"] = cd.rate_code(grp, kind)
+        k = (members[0]["계산"]["코드"]["국내외분"], members[0]["계산"]["코드"]["세율구분"])
+        x = 세율별.setdefault(k, {"국내외분": k[0], "세율구분": k[1], "과세표준": 0, "산출세액": 0})
+        x["과세표준"] += s
+        x["산출세액"] += t
     자산별 = sum(r["계산"]["산출세액"] for r in rows)
     지방자산별 = sum(r["계산"]["지방소득세"] for r in rows)
     합산 = 지방합산 = 0
@@ -224,18 +255,9 @@ def annual(f, verdicts, rs, cd):
         합산 = floor(progressive(s, rs.value("기본세율", on0)))
         지방합산 = floor(progressive(s, rs.value("지방.기본세율", on0)))
         근거 += rs.cite("판정.합산비교", on0)
-        same = Counter((r["판정"]["중과"], r["판정"]["단기"]) for r in taxed if r["판정"]["중과"] or r["판정"]["단기"])
-        if any(n >= 2 for n in same.values()):
-            확인.append("같은 호의 세율이 둘 이상 자산에 걸려 소득세법 제104조⑤2호 단서(같은 호 자산 과표 합산 비교)를 확인해야 한다. 이 계산은 단서를 적용하지 않았다")
-    합계 = {"과세표준": sum(r["계산"]["과세표준"] for r in rows), "자산별세액": 자산별, "합산비교세액": 합산,
-            "산출세액": max(자산별, 합산), "지방_자산별": 지방자산별, "지방_합산비교": 지방합산,
-            "지방소득세": max(지방자산별, 지방합산)}
-    세율별 = {}
-    for r in taxed:
-        k = (r["계산"]["코드"]["국내외분"], r["계산"]["코드"]["세율구분"])
-        x = 세율별.setdefault(k, {"국내외분": k[0], "세율구분": k[1], "과세표준": 0, "산출세액": 0})
-        x["과세표준"] += r["계산"]["과세표준"]
-        x["산출세액"] += r["계산"]["산출세액"]
+    합계 = {"과세표준": sum(r["계산"]["과세표준"] for r in rows), "자산별세액": 자산별, "호별합산세액": 호별,
+            "합산비교세액": 합산, "산출세액": max(호별, 합산), "지방_자산별": 지방자산별, "지방_호별합산": 지방호별,
+            "지방_합산비교": 지방합산, "지방소득세": max(지방호별, 지방합산)}
     return {"자산": rows, "합계": 합계, "세율별": list(세율별.values()),
             "세율표": {"국세": _table(rs.value("기본세율", on0)), "지방": _table(rs.value("지방.기본세율", on0))},
             "근거": 근거, "확인사항": 확인}
