@@ -6,6 +6,7 @@
 2025-01-01 에 시행 중이던 판부터 시행예정 판까지 받는다. 이미 받은 판 파일은 다시 받지 않는다.
 OC 는 환경변수 LAW_OC 또는 `claude mcp get korean-law` 에서 읽고 출력하지 않는다.
 종료코드: 0 정상, 1 수집 실패 또는 TaxDoctor 불일치.
+한 법령이라도 수집에 실패하면 판목록.json 과 확인기록.json 은 덮어쓰지 않는다. 모든 파일은 임시 파일을 거쳐 바꿔 넣는다.
 """
 import argparse
 import datetime as dt
@@ -14,6 +15,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import unicodedata
 import urllib.parse
 
@@ -36,24 +38,27 @@ def norm_text(s):
     return unicodedata.normalize("NFC", s).strip()
 
 
+def _add_text(v, out):
+    """본문 칸의 값을 순서대로 모은다. 문자열, 중첩 목록(목내용이 [[가목, 세목...]] 로 온다), 딕셔너리를 모두 받는다."""
+    if isinstance(v, str):
+        t = norm_text(v)
+        if t:
+            out.append(t)
+    elif isinstance(v, list):
+        for x in v:
+            _add_text(x, out)
+    elif isinstance(v, dict):
+        _collect(v, out)
+
+
 def _collect(node, out):
     if isinstance(node, list):
         for n in node:
             _collect(n, out)
     elif isinstance(node, dict):
         for k, v in node.items():
-            if k in TEXT_KEYS and isinstance(v, str):
-                t = norm_text(v)
-                if t:
-                    out.append(t)
-            elif k in TEXT_KEYS and isinstance(v, list):
-                for x in v:
-                    if isinstance(x, str):
-                        t = norm_text(x)
-                        if t:
-                            out.append(t)
-                    else:
-                        _collect(x, out)
+            if k in TEXT_KEYS:
+                _add_text(v, out)
             elif isinstance(v, (dict, list)):
                 _collect(v, out)
     return out
@@ -63,6 +68,24 @@ def _flat(v):
     if isinstance(v, list):
         return "\n".join(_flat(x) for x in v)
     return str(v or "")
+
+
+def _write_atomic(path, text):
+    """같은 폴더에 임시 파일을 쓰고 os.replace 로 바꿔 넣는다. 도중에 끊겨도 옛 파일이 남는다."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _sha(s):
@@ -149,6 +172,10 @@ def _search_all(api, name):
 
 
 def fetch(rules_dir, api, td, today):
+    """법령마다 판을 받아 저장한다. 한 법령이라도 실패하면 판목록.json 과 확인기록.json 은 쓰지 않는다.
+
+    판 파일은 하나씩 원자적으로 쓰므로 실패 뒤에도 온전하다. 다음 실행은 받아 둔 판을 건너뛰고 이어 받는다.
+    """
     with open(os.path.join(rules_dir, "감시조문.json"), encoding="utf-8") as f:
         watch = json.load(f)
     start8 = watch["기준시작"].replace("-", "")
@@ -156,12 +183,13 @@ def fetch(rules_dir, api, td, today):
     base = os.path.join(rules_dir, "조문")
     listing = {"기준시작": watch["기준시작"], "받은날": today, "법령": {}}
     record = {"확인일": today, "법령": {}, "TaxDoctor": []}
-    report = {"새판": 0, "오류": [], "불일치": 0, "갱신": 0}
+    report = {"새판": 0, "오류": [], "불일치": 0, "갱신": 0, "색인쓰기": False}
     for law, arts in watch["법령"].items():
         try:
             vers = pick_versions(_search_all(api, law), law, start8, today8)
             if not vers:
                 raise RuntimeError("%s: 판이 0건이다" % law)
+            new_files, updated = 0, 0
             for v in vers:
                 rel = "%s/%s@%s.json" % (law, v["MST"], v["시행일"])
                 path = os.path.join(base, rel)
@@ -183,28 +211,31 @@ def fetch(rules_dir, api, td, today):
                 if os.path.exists(path):
                     with open(path, encoding="utf-8") as f:
                         if f.read() != text:
-                            report["갱신"] += 1
+                            updated += 1
                 else:
-                    report["새판"] += 1
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(text)
-            listing["법령"][law] = [{k: v[k] for k in ("MST", "시행일", "공포일", "공포번호", "상태", "파일")}
-                                   for v in vers]
+                    new_files += 1
+                _write_atomic(path, text)
             cur = [v for v in vers if v["상태"] == "현행"][0]
             drf = "%s@%s" % (cur["MST"], cur["시행일"].replace("-", ""))
-            record["법령"][law] = {"현행": drf, "판수": len(vers)}
+            checks = []
             for a in arts:
                 k = td_key(td(law, _label(a)))
-                record["TaxDoctor"].append({"법령": law, "조": a, "DRF": drf, "TaxDoctor": k, "일치": k == drf})
-                report["불일치"] += int(k != drf)
+                checks.append({"법령": law, "조": a, "DRF": drf, "TaxDoctor": k, "일치": k == drf})
+            # 법령 하나를 끝까지 받은 뒤에만 색인 후보와 집계에 넣는다
+            listing["법령"][law] = [{k: v[k] for k in ("MST", "시행일", "공포일", "공포번호", "상태", "파일")}
+                                   for v in vers]
+            record["법령"][law] = {"현행": drf, "판수": len(vers)}
+            record["TaxDoctor"] += checks
+            report["새판"] += new_files
+            report["갱신"] += updated
+            report["불일치"] += sum(1 for c in checks if not c["일치"])
         except Exception as e:  # 법령 하나가 실패해도 나머지를 계속 본다
             report["오류"].append(str(e))
-    os.makedirs(base, exist_ok=True)
-    with open(os.path.join(base, "판목록.json"), "w", encoding="utf-8", newline="\n") as f:
-        json.dump(listing, f, ensure_ascii=False, indent=1)
-    with open(os.path.join(rules_dir, "확인기록.json"), "w", encoding="utf-8", newline="\n") as f:
-        json.dump(record, f, ensure_ascii=False, indent=1)
+    if report["오류"]:
+        return report  # 일부만 담긴 목록으로 옛 색인을 덮어쓰지 않는다
+    _write_atomic(os.path.join(base, "판목록.json"), json.dumps(listing, ensure_ascii=False, indent=1))
+    _write_atomic(os.path.join(rules_dir, "확인기록.json"), json.dumps(record, ensure_ascii=False, indent=1))
+    report["색인쓰기"] = True
     return report
 
 
@@ -246,6 +277,8 @@ def main(argv=None):
     print("새 판 %d개, 시행예정 판 갱신 %d개, TaxDoctor 불일치 %d건" % (rep["새판"], rep["갱신"], rep["불일치"]))
     for e in rep["오류"]:
         print("오류: %s" % mask(e))
+    if not rep["색인쓰기"]:
+        print("수집 오류가 있어 판목록.json 과 확인기록.json 은 덮어쓰지 않았다. 받은 판 파일은 남아 있으니 다시 돌리면 이어서 받는다")
     return 1 if rep["오류"] or rep["불일치"] else 0
 
 
