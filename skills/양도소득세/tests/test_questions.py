@@ -22,7 +22,19 @@ def oracle_value(oracle, q):
     return vals if any(v is not None for v in vals.values()) else None
 
 
-def replay(oracle):
+HOUSE_DETAILS = ("양도당시기준시가", "제12호해당")   # 문항 X01, X03 이 집마다 묻는 값
+
+
+def bare_house_list(value):
+    """H04 의 답에서 집마다 따로 묻는 값(X01, X03)을 뺀다. 집 목록을 소재지·취득일만으로 답한 사용자와 같다."""
+    return [{k: v for k, v in h.items() if k not in HOUSE_DETAILS} for h in value]
+
+
+def replay_units(oracle, bare_houses=False):
+    """오라클로 문답을 끝까지 돌린다. (사실관계, [(문항 id, 자산 id, 주택 id)]) 를 돌려준다.
+
+    bare_houses 면 H04 를 집마다 따로 묻는 값 없이 답해, X01, X03 이 나오는 집만 그 값을 오라클에서 받는다.
+    """
     f = {"자산": [{"id": a["id"]} for a in oracle["자산"]]}
     asked = []
     for _ in range(400):
@@ -31,9 +43,16 @@ def replay(oracle):
             return f, asked
         q = nq["다음"][0]
         v = oracle_value(oracle, q)
+        if bare_houses and q["id"] == "H04":
+            v = bare_house_list(v)
         f = Q.answer(f, q["id"], Q.MOREUM if v is None else v, 자산=q["자산"], 주택=q["주택"])
-        asked.append(q["id"])
+        asked.append((q["id"], q["자산"], q["주택"]))
     raise AssertionError("문답이 끝나지 않는다: %s" % asked[-10:])
+
+
+def replay(oracle):
+    f, units = replay_units(oracle)
+    return f, [u[0] for u in units]
 
 
 def dialogue(name):
@@ -46,7 +65,147 @@ def test_dialogue_reaches_same_result(name):
     r = _engine().calculate(f, today="2026-10-09")
     assert r["상태"] == "완료", (asked, r["질문"], r["다루지않음"])
     assert r["계산"]["합계"]["산출세액"] == EXPECT[name]["산출세액"]
-    assert len(asked) == len(set(asked)) or name in ("K2", "J")  # 주택마다 묻는 문항은 id 가 겹친다
+    assert len(asked) == len(set(asked)), asked  # 집마다 묻는 문항은 그 집이 필요할 때만 나와 id 가 겹치지 않는다
+    # 오라클이 답하지 못해 「모름」으로 넘긴 문항은 값이 원래 없는 선택 문항(A12 등기접수일, T01 신규 주택 계약일)뿐이다
+    assert {m.split(":")[0] for m in f.get("모름") or []} <= {"A12", "T01"}, f["모름"]
+
+
+def _units(name, qid, bare=True):
+    return [u[1:] for u in replay_units(CASES[name], bare_houses=bare)[1] if u[0] == qid]
+
+
+@pytest.mark.parametrize("name,x01,x03", [
+    ("K2", [(None, "H3")], []),    # 서울 집 H1, H2 는 묻지 않는다. 춘천 집 H3 만 묻는다
+    ("J", [], [(None, "H1")]),     # 2010년 취득 집 H8 은 묻지 않는다. 2025-08-01 취득 집 H1 만 묻는다
+    ("K", [], []), ("D", [], []), ("G", [], []), ("G2", [], []),   # 서울 집뿐이거나 중과 후보가 아니거나 2024-01-10 전에 산 집뿐이다
+])
+def test_house_questions_are_asked_only_for_the_houses_that_need_them(name, x01, x03):
+    """X01(양도 당시 기준시가)은 수도권·광역시 동 지역·세종 동 지역이 아닌 집만, X03(제12호 해당)은 2024-01-10 이후 취득한 집만 묻는다."""
+    f, units = replay_units(CASES[name], bare_houses=True)
+    assert [u[1:] for u in units if u[0] == "X01"] == x01
+    assert [u[1:] for u in units if u[0] == "X03"] == x03
+    assert not [m for m in f.get("모름") or [] if m.startswith(("X01", "X03"))]   # 오라클이 답하지 못한 집 문항이 없다
+
+
+@pytest.mark.parametrize("name", ["K2", "J", "G", "K"])
+def test_dialogue_with_bare_house_list_reaches_same_result(name):
+    """집 목록을 소재지·취득일만으로 답해도, 필요한 집만 따로 물어 같은 세액에 이른다(K2 는 H3 의 기준시가가 중과 주택 수를 가른다)."""
+    f, asked = replay_units(CASES[name], bare_houses=True)
+    r = _engine().calculate(f, today="2026-10-09")
+    assert r["상태"] == "완료", (asked, r["질문"], r["다루지않음"])
+    assert r["계산"]["합계"]["산출세액"] == EXPECT[name]["산출세액"]
+
+
+def test_house_questions_on_complete_facts_skip_houses_that_do_not_need_them():
+    """다 채운 사실관계에서도 서울 집의 X01 은 남은 문항이 아니다(전에는 H1, H2 가 남아 있었다)."""
+    assert _pending_house_questions(CASES["K2"]) == [] and _pending_house_questions(CASES["J"]) == []
+
+
+def _pending_house_questions(f):
+    return [(q["id"], q["주택"]) for q in Q.next_questions(f, limit=None)["다음"] if q["주택"]]
+
+
+def _set_house(f, hid, **kw):
+    h = next(x for x in f["세대"]["주택목록"] if x["id"] == hid)
+    h.update(kw)
+    return h
+
+
+def test_provincial_house_with_heavy_conditions_still_gets_x01():
+    f = copy.deepcopy(CASES["K2"])
+    _set_house(f, "H3", 양도당시기준시가=None)
+    assert _pending_house_questions(f) == [("X01", "H3")]
+
+
+def test_house_acquired_from_2024_01_10_still_gets_x03():
+    f = copy.deepcopy(CASES["J"])
+    _set_house(f, "H8", 취득일="2024-01-10", 제12호해당=None)
+    assert _pending_house_questions(f) == [("X03", "H8")]
+    _set_house(f, "H8", 취득일="2024-01-09")   # 하루 전이면 묻지 않는다
+    assert _pending_house_questions(f) == []
+
+
+def test_house_with_unknown_location_waits_instead_of_asking():
+    """집의 소재지를 모르면 지방인지 모른다. 보이는조건이 모름이라 아직 묻지 않는다."""
+    f = copy.deepcopy(CASES["K2"])
+    h = _set_house(f, "H3", 양도당시기준시가=None)
+    del h["소재지"]
+    assert _pending_house_questions(f) == []
+
+
+def test_house_term_is_three_valued_and_read_per_house():
+    ev = {"주택별": {"H1": {"지방소재": True}, "H2": {"지방소재": False}, "H4": {"지방소재": None}}}
+    cond = {"모두": [["주택.지방소재", "==", True]]}
+
+    def vis(house):
+        return Q._visible(cond, {}, ev, None, house, {}, "Z99")
+    assert vis({"id": "H1"}) is True
+    assert vis({"id": "H2"}) is False
+    assert vis({"id": "H4"}) is None       # 값을 모른다
+    assert vis({"id": "H9"}) is None       # 엔진값에 없는 집
+    assert vis(None) is None               # 집 단위 문항이 아니다
+    assert Q._visible(cond, {}, {}, None, {"id": "H1"}, {}, "Z99") is None   # 주택별 값이 없다
+
+
+def _condition_terms(c):
+    """보이는조건의 항목 왼쪽(문항 id, 엔진.이름, 주택.이름)을 모두 낸다."""
+    if c == "항상":
+        return
+    for it in c.get("모두", []) + c.get("하나라도", []):
+        if isinstance(it, dict):
+            yield from _condition_terms(it)
+        else:
+            yield it[0]
+
+
+def test_house_terms_appear_only_on_house_questions():
+    """주택.* 조건은 집마다 묻는 문항에서만 읽을 수 있다. 다른 문항에 쓰면 조용히 영영 안 나온다."""
+    for q in Q.load()["문항"]:
+        if any(t.startswith("주택.") for t in _condition_terms(q["보이는조건"])):
+            assert Q.unit_kind(q) == "주택", q["id"]
+
+
+def _engine_value_names():
+    """tests/cases.py 의 모든 사례에서 judge.engine_values 가 내놓는 이름. (자산마다의 이름, 집마다의 이름)"""
+    from yangdo import facts as F, judge as J, regions, ruleset
+    rs, reg = ruleset.load(), regions.load()
+    per_asset, per_house = set(), set()
+    for f in CASES.values():
+        prep = F.prepare(f)
+        for a in f["자산"]:
+            ev = J.engine_values(f, a, prep, rs, reg)
+            per_asset |= set(ev)
+            for values in ev["주택별"].values():
+                per_house |= set(values)
+    return per_asset, per_house
+
+
+def test_every_engine_term_names_a_value_engine_values_returns():
+    """엔진.이름이나 주택.이름을 잘못 적으면 그 값이 늘 모름이라 문항이 조용히 영영 나오지 않는다. 이름이 맞는지 여기서 잡는다."""
+    per_asset, per_house = _engine_value_names()
+    assert per_house, "사례에서 집마다의 엔진값이 하나도 나오지 않았다"
+    used = {t for q in Q.load()["문항"] for t in _condition_terms(q["보이는조건"]) if t.startswith(("엔진.", "주택."))}
+    assert used
+    wrong = sorted(t for t in used if t[3:] not in (per_asset if t.startswith("엔진.") else per_house))
+    assert not wrong, "engine_values 가 내놓지 않는 이름: %s" % wrong
+
+
+def test_documented_engine_values_exist():
+    """문항.json 의 엔진값 설명에 적힌 이름도 engine_values 에 있어야 한다."""
+    per_asset, per_house = _engine_value_names()
+    docs = Q.load()["엔진값"]
+    assert all(k.startswith(("엔진.", "주택.")) for k in docs)
+    wrong = sorted(k for k in docs if k[3:] not in (per_asset if k.startswith("엔진.") else per_house))
+    assert not wrong, wrong
+
+
+def test_engine_term_check_catches_a_misspelled_name(monkeypatch):
+    broken = copy.deepcopy(Q.load())
+    x01 = next(q for q in broken["문항"] if q["id"] == "X01")
+    x01["보이는조건"]["모두"].append(["엔진.지방소재주택잇음", "==", True])   # 오타
+    monkeypatch.setattr(Q, "load", lambda path=None: broken)
+    with pytest.raises(AssertionError, match="지방소재주택잇음"):
+        test_every_engine_term_names_a_value_engine_values_returns()
 
 
 def test_exempt_case_skips_expense_questions():
@@ -206,6 +365,20 @@ def test_structured_date_answers_reject_wrong_shapes(qid, value):
         Q.answer(_house_asset_facts(), qid, value, 자산="A")
 
 
+def test_generic_date_check_is_skipped_only_for_keys_with_an_answer_check(monkeypatch):
+    """KEY_RULES 에 든 키라고 일반 날짜 검사를 건너뛰지 않는다. 그 키의 규칙에 「답」 검사가 있을 때만 건너뛴다."""
+    q = next(x for x in Q.load()["문항"] if x["id"] == "A11")
+    assert q["답형식"] == "날짜" and len(q["키"]) == 1
+    key = q["키"][0]
+    f = _house_asset_facts()
+    monkeypatch.setitem(Q.KEY_RULES, key, {"주소확인": "소재지"})    # 답 검사가 없는 규칙
+    with pytest.raises(ValueError):
+        Q.answer(f, "A11", "2026.11.15", 자산="A")
+    assert Q.answer(f, "A11", "2026-11-15", 자산="A")["자산"][0]["양도"]["잔금일"] == "2026-11-15"
+    monkeypatch.setitem(Q.KEY_RULES, key, {"답": lambda qid, value, facts: None})   # 답 검사가 맡는다
+    assert Q.answer(f, "A11", "2026.11.15", 자산="A")["자산"][0]["양도"]["잔금일"] == "2026.11.15"
+
+
 def test_moreum_still_works_for_structured_date_questions():
     g = Q.answer(_house_asset_facts(), "M23", Q.MOREUM, 자산="A")
     assert g["모름"] == ["M23:A"] and "신축증축" not in g["자산"][0]
@@ -254,6 +427,24 @@ def test_unresolved_address_is_asked_again_with_hint(addr, hint):
     f = _house_sale_facts(addr)
     nq = [q for q in Q.next_questions(f, limit=None)["다음"] if q["id"] == "A01"]
     assert len(nq) == 1 and hint in nq[0]["안내"] and nq[0]["자산"] == "A"
+
+
+def test_address_hint_comes_from_engine_values_not_from_regions(monkeypatch):
+    """되묻기는 judge.engine_values 의 소재지확인필요, 소재지안내 를 읽는다. 문항 쪽에서 regions 를 다시 부르지 않는다."""
+    from yangdo import judge
+    f = _house_sale_facts({"시도": "서울특별시", "시군구": "마포구", "읍면동": "공덕동"})   # 고시 이력이 정하는 주소
+    assert "A01" not in _ids(f)
+    real = judge.engine_values
+
+    def flagged(*args):
+        return dict(real(*args), 소재지확인필요=True, 소재지안내="엔진값이 준 안내")
+    monkeypatch.setattr(judge, "engine_values", flagged)
+    again = [q for q in Q.next_questions(f, limit=None)["다음"] if q["id"] == "A01"]
+    assert len(again) == 1 and again[0]["안내"] == "엔진값이 준 안내"
+    assert Q._address_note({"답형식": "주소", "키": ["자산[].소재지"]}, {"소재지확인필요": False, "소재지안내": "x"}) is None
+    assert Q._address_note({"답형식": "주소", "키": ["자산[].취득당시소재지"]},
+                           {"취득당시소재지확인필요": True, "취득당시소재지안내": "y"}) == "y"
+    assert Q._address_note({"답형식": "날짜", "키": ["자산[].양도.잔금일"]}, {"소재지확인필요": True}) is None
 
 
 def test_resolved_address_is_not_asked_again():
@@ -307,9 +498,14 @@ def test_every_key_rule_names_a_real_question_key():
 
 
 def test_key_rules_hooks_are_known_and_callable():
+    from yangdo import judge as J
     for key, hooks in Q.KEY_RULES.items():
-        assert hooks and set(hooks) <= {"답", "소재지날짜"}, key
-        assert all(callable(fn) for fn in hooks.values()), key
+        assert hooks and set(hooks) <= {"답", "주소확인"}, key
+        if "답" in hooks:
+            assert callable(hooks["답"]), key
+        if "주소확인" in hooks:   # 엔진값 <이름>확인필요, <이름>안내 가 engine_values 에 있어야 한다
+            name = hooks["주소확인"]
+            assert name + "확인필요" in J.EV_KEYS and name + "안내" in J.EV_KEYS, key
 
 
 def test_answer_rules_sit_on_single_key_questions():
