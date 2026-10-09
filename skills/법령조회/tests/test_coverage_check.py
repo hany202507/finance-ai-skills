@@ -1,5 +1,9 @@
+import io
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import coverage_check as cc  # noqa: E402
@@ -111,3 +115,179 @@ def test_main_exit_codes(tmp_path, monkeypatch):
     code = cc.main(["--목록", str(lp), "--별칭", str(ap), "--출력", str(op), "--기준일", "20261009", "--TaxDoctor생략"])
     assert code == 1
     assert json.loads(op.read_text(encoding="utf-8"))["요약"]["미해소"] == 2
+
+
+# ---- 수정 1: TaxDoctor JSON-RPC 응답 처리 ----
+
+SSE_NOTE = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}\n\n'
+SSE_RESULT = 'event: message\ndata: {"jsonrpc":"2.0","id":2,"result":{"content":[]}}\n\n'
+SSE_ERROR = 'event: message\ndata: {"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Invalid params"}}\n\n'
+
+
+def test_parse_rpc_body_single_json():
+    msg = cc.parse_rpc_body('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}', 1)
+    assert msg["result"] == {"ok": True}
+
+
+def test_parse_rpc_body_sse_skips_notification_event_before_result():
+    msg = cc.parse_rpc_body(SSE_NOTE + SSE_RESULT, 2)
+    assert msg["id"] == 2 and msg["result"] == {"content": []}
+
+
+def test_parse_rpc_body_sse_with_crlf_line_endings():
+    msg = cc.parse_rpc_body((SSE_NOTE + SSE_RESULT).replace("\n", "\r\n"), 2)
+    assert msg["id"] == 2
+
+
+def test_parse_rpc_body_sse_error_raises():
+    with pytest.raises(RuntimeError, match="TaxDoctor 오류: -32602 Invalid params"):
+        cc.parse_rpc_body(SSE_NOTE + SSE_ERROR, 2)
+
+
+def test_parse_rpc_body_plain_json_error_raises():
+    with pytest.raises(RuntimeError, match="TaxDoctor 오류: -32000 boom"):
+        cc.parse_rpc_body('{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}', 1)
+
+
+def test_parse_rpc_body_raises_when_no_message_has_the_request_id():
+    with pytest.raises(RuntimeError, match="id 2"):
+        cc.parse_rpc_body(SSE_NOTE, 2)
+
+
+def _tools_call_body(text):
+    result = {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": text}]}}
+    return SSE_NOTE + "event: message\ndata: " + json.dumps(result, ensure_ascii=False) + "\n\n"
+
+
+def test_taxdoctor_names_sends_initialized_notification_with_session(monkeypatch):
+    calls = []
+
+    def fake_post(payload, sid=None):
+        calls.append((payload["method"], sid, "id" in payload))
+        if payload["method"] == "initialize":
+            return '{"jsonrpc":"2.0","id":1,"result":{}}', "SID-1"
+        if payload["method"] == "notifications/initialized":
+            return "", None
+        return _tools_call_body("수록 현행 법령 1건 (국세 1):\n- 소득세법 (법률, 시행 2026.07.01)\n"), None
+
+    monkeypatch.setattr(cc, "_post", fake_post)
+    assert cc.taxdoctor_names() == {cc.norm("소득세법"): "20260701"}
+    assert calls == [("initialize", None, True), ("notifications/initialized", "SID-1", False), ("tools/call", "SID-1", True)]
+
+
+def test_taxdoctor_names_reports_rpc_error_instead_of_generic_message(monkeypatch):
+    def fake_post(payload, sid=None):
+        if payload["method"] == "initialize":
+            return '{"jsonrpc":"2.0","id":1,"result":{}}', "SID-1"
+        if payload["method"] == "notifications/initialized":
+            return "", None
+        return SSE_ERROR, None
+
+    monkeypatch.setattr(cc, "_post", fake_post)
+    with pytest.raises(RuntimeError, match="TaxDoctor 오류: -32602"):
+        cc.taxdoctor_names()
+
+
+# ---- 수정 2: 종료코드와 출력 인코딩 ----
+
+def _inputs(tmp_path, listing=LISTING, aliases=ALIASES):
+    lp = tmp_path / "l.json"; ap = tmp_path / "a.json"; op = tmp_path / "o.json"
+    lp.write_text(json.dumps(listing, ensure_ascii=False), encoding="utf-8")
+    ap.write_text(json.dumps(aliases, ensure_ascii=False), encoding="utf-8")
+    return lp, ap, op
+
+
+def _run(lp, ap, op):
+    return cc.main(["--목록", str(lp), "--별칭", str(ap), "--출력", str(op), "--기준일", "20261009", "--TaxDoctor생략"])
+
+
+def test_main_exit_code_0_when_everything_resolves(tmp_path, monkeypatch):
+    listing = {"주제": "시험", "법령": [{"이름": "소득세법", "구분": "세법"}, {"이름": "주택법", "구분": "비세법"}], "고시": []}
+    lp, ap, op = _inputs(tmp_path, listing, {"별칭": []})
+    monkeypatch.setattr(cc, "make_sources", lambda use_td: (fake_search, fake_admrul, None))
+    assert _run(lp, ap, op) == 0
+    assert json.loads(op.read_text(encoding="utf-8"))["요약"]["미해소"] == 0
+
+
+def test_main_exit_code_2_when_list_file_is_missing(tmp_path, monkeypatch, capsys):
+    lp, ap, op = _inputs(tmp_path)
+    lp.unlink()
+    monkeypatch.setattr(cc, "make_sources", lambda use_td: (fake_search, fake_admrul, None))
+    assert _run(lp, ap, op) == 2
+    err = capsys.readouterr().err
+    assert "입력 파일을 읽지 못했다" in err and str(lp) in err
+    assert not op.exists()
+
+
+def test_main_exit_code_2_when_alias_file_is_invalid_json(tmp_path, monkeypatch, capsys):
+    lp, ap, op = _inputs(tmp_path)
+    ap.write_text("{ 깨진 json", encoding="utf-8")
+    monkeypatch.setattr(cc, "make_sources", lambda use_td: (fake_search, fake_admrul, None))
+    assert _run(lp, ap, op) == 2
+    err = capsys.readouterr().err
+    assert "입력 파일을 읽지 못했다" in err and str(ap) in err
+
+
+def test_main_exit_code_2_when_response_shape_is_unexpected(tmp_path, monkeypatch):
+    lp, ap, op = _inputs(tmp_path)
+    monkeypatch.setattr(cc, "make_sources", lambda use_td: (lambda name, page: {"result": "OC 인증 확인 바랍니다"}, fake_admrul, None))
+    assert _run(lp, ap, op) == 2
+
+
+def test_main_prints_utf8_even_when_stdout_cannot_encode_korean(tmp_path, monkeypatch):
+    lp, ap, op = _inputs(tmp_path)
+    monkeypatch.setattr(cc, "make_sources", lambda use_td: (fake_search, fake_admrul, None))
+    pipe = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+    monkeypatch.setattr(sys, "stdout", pipe)
+    assert _run(lp, ap, op) == 1
+    pipe.flush()
+    assert "누락 검사" in pipe.buffer.getvalue().decode("utf-8")
+
+
+# ---- 수정 3: 응답 형식 검사 ----
+
+@pytest.mark.parametrize("bad", [{"result": "OC 인증 확인 바랍니다"}, {}, None])
+def test_resolve_raises_when_law_search_root_is_missing(bad):
+    with pytest.raises(RuntimeError, match="법제처 응답 형식이 다르다"):
+        cc.resolve(lambda name, page: bad, "주택법", "20261009")
+
+
+def test_resolve_error_names_the_keys_it_got():
+    with pytest.raises(RuntimeError, match="result"):
+        cc.resolve(lambda name, page: {"result": "OC 인증 확인 바랍니다"}, "주택법", "20261009")
+
+
+def test_find_admrul_raises_when_root_is_missing():
+    with pytest.raises(RuntimeError, match="법제처 응답 형식이 다르다"):
+        cc.find_admrul(lambda name, page: {"LawSearch": {"totalCnt": "0"}}, "조정대상지역", "85055")
+
+
+def test_resolve_accepts_empty_result_with_root_present():
+    assert cc.resolve(lambda name, page: {"LawSearch": {"totalCnt": "0"}}, "주택법", "20261009") is None
+
+
+# ---- OC 가림 ----
+
+def test_mask_hides_oc_value_and_oc_parameter():
+    text = "GET https://www.law.go.kr/DRF/lawSearch.do?OC=hany123&type=JSON 실패, hany123 거절"
+    out = cc._mask(text, "hany123")
+    assert "hany123" not in out and "OC=***&type=JSON" in out
+
+
+def test_mask_without_known_oc_still_masks_parameter(monkeypatch):
+    monkeypatch.delenv("LAW_OC", raising=False)
+    monkeypatch.setattr(cc, "_OC_SEEN", None)
+    assert cc._mask("?OC=zzz&type=JSON LAW_OC=zzz") == "?OC=***&type=JSON LAW_OC=***"
+
+
+def test_main_masks_oc_in_collection_failure(tmp_path, monkeypatch, capsys):
+    lp, ap, op = _inputs(tmp_path)
+
+    def boom(use_td):
+        raise RuntimeError("urlopen 실패 https://www.law.go.kr/DRF/lawSearch.do?OC=secret99&type=JSON, 값 secret99")
+
+    monkeypatch.setattr(cc, "make_sources", boom)
+    monkeypatch.setattr(cc, "_OC_SEEN", "secret99")
+    assert _run(lp, ap, op) == 2
+    err = capsys.readouterr().err
+    assert "수집 실패" in err and "secret99" not in err

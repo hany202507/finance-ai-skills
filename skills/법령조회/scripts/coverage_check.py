@@ -22,6 +22,17 @@ from pathlib import Path
 DRF = "https://www.law.go.kr/DRF/lawSearch.do"
 TAXDOCTOR = "https://mcp.taxdoctorai.com/mcp"
 
+_OC_SEEN = None  # get_oc 가 읽은 값. 오류 메시지에서 가리는 데만 쓴다
+
+
+def _mask(text, oc=None):
+    """메시지에서 법제처 OC 값과 `OC=...` 를 `***` 로 바꾼다."""
+    s = str(text)
+    oc = oc or _OC_SEEN or os.environ.get("LAW_OC")
+    if oc:
+        s = s.replace(oc, "***")
+    return re.sub(r"OC=[^&\s'\"]*", "OC=***", s)
+
 
 def norm(name):
     return re.sub(r"\s+", "", str(name or "")).replace("·", "ㆍ").replace("・", "ㆍ")
@@ -49,9 +60,12 @@ def parse_taxdoctor_list(text):
 def _all_rows(search, name, key_root, key_rows, max_pages=10):
     rows = []
     for page in range(1, max_pages + 1):
-        d = search(name, page) or {}
-        root = d.get(key_root) or {}
-        got = [r for r in as_list(root.get(key_rows)) if isinstance(r, dict)]
+        d = search(name, page)
+        root = d.get(key_root) if isinstance(d, dict) else None
+        if not isinstance(root, dict):
+            keys = sorted(d) if isinstance(d, dict) else type(d).__name__
+            raise RuntimeError(f"법제처 응답 형식이 다르다: {keys}")
+        got =[r for r in as_list(root.get(key_rows)) if isinstance(r, dict)]
         rows.extend(got)
         total = int(root.get("totalCnt") or len(rows))
         if not got or len(rows) >= total:
@@ -120,14 +134,16 @@ def check(listing, aliases, search, search_admrul, td_names, date8):
 
 
 def get_oc():
+    global _OC_SEEN
     oc = os.environ.get("LAW_OC")
-    if oc:
-        return oc
-    out = subprocess.run("claude mcp get korean-law", capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True).stdout
-    m = re.search(r"LAW_OC=(\S+)", out)
-    if not m:
-        raise RuntimeError("LAW_OC 를 찾지 못했다. 환경변수로 넣거나 korean-law MCP 를 등록한다")
-    return m.group(1)
+    if not oc:
+        out = subprocess.run("claude mcp get korean-law", capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True).stdout
+        m = re.search(r"LAW_OC=(\S+)", out)
+        if not m:
+            raise RuntimeError("LAW_OC 를 찾지 못했다. 환경변수로 넣거나 korean-law MCP 를 등록한다")
+        oc = m.group(1)
+    _OC_SEEN = oc
+    return oc
 
 
 def _get_json(url):
@@ -162,22 +178,69 @@ def make_sources(use_td):
     return search, search_admrul, td
 
 
-def _rpc(method, params, sid=None, rid=1):
-    body = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}).encode()
+def parse_rpc_body(raw, rid):
+    """JSON-RPC 응답 본문(JSON 하나 또는 SSE 이벤트 여러 개)에서 id 가 rid 인 메시지를 돌려준다.
+
+    그 메시지에 error 가 있으면 RuntimeError("TaxDoctor 오류: <code> <message>").
+    """
+    text = str(raw).strip()
+    if text[:1] in ("{", "["):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"TaxDoctor 응답이 JSON 이 아니다: {e}") from e
+        msgs = [m for m in as_list(data) if isinstance(m, dict)]
+        found = data if isinstance(data, dict) else next((m for m in msgs if str(m.get("id")) == str(rid)), None)
+    else:
+        msgs, event = [], []
+        for line in text.splitlines() + [""]:
+            if line.startswith("data:"):
+                piece = line[5:]
+                event.append(piece[1:] if piece.startswith(" ") else piece)
+            elif not line.strip():
+                payload = "\n".join(event).strip()
+                event = []
+                if payload:
+                    try:
+                        m = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(m, dict):
+                        msgs.append(m)
+        found = next((m for m in msgs if str(m.get("id")) == str(rid)), None)
+    if found is None:
+        raise RuntimeError(f"TaxDoctor 응답에서 id {rid} 결과를 찾지 못했다 (메시지 {len(msgs)}개)")
+    err = found.get("error")
+    if err:
+        err = err if isinstance(err, dict) else {"message": err}
+        raise RuntimeError(f"TaxDoctor 오류: {err.get('code', '')} {err.get('message', '')}".rstrip())
+    return found
+
+
+def _post(payload, sid=None):
+    """JSON-RPC 메시지 하나를 보내고 (응답 본문, 새 세션 ID) 를 돌려준다."""
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "finance-ai-skills coverage_check"}
     if sid:
         headers["Mcp-Session-Id"] = sid
-    req = urllib.request.Request(TAXDOCTOR, data=body, headers=headers, method="POST")
+    req = urllib.request.Request(TAXDOCTOR, data=json.dumps(payload).encode(), headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=60) as r:
         raw = r.read().decode("utf-8", "replace")
         sid2 = r.headers.get("Mcp-Session-Id")
-    if raw.lstrip().startswith("event:") or "data:" in raw[:20]:
-        raw = "\n".join(line[5:].strip() for line in raw.splitlines() if line.startswith("data:"))
-    return json.loads(raw), sid2
+    return raw, sid2
+
+
+def _rpc(method, params, sid=None, rid=1):
+    raw, sid2 = _post({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}, sid)
+    return parse_rpc_body(raw, rid), sid2
+
+
+def _notify(method, sid=None):
+    _post({"jsonrpc": "2.0", "method": method}, sid)  # 202 · 빈 본문이 정상이라 본문은 읽지 않는다
 
 
 def taxdoctor_names():
     _, sid = _rpc("initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "coverage_check", "version": "1"}})
+    _notify("notifications/initialized", sid)
     res, _ = _rpc("tools/call", {"name": "list_laws", "arguments": {}}, sid, 2)
     text = "\n".join(c.get("text", "") for c in res.get("result", {}).get("content", []) if c.get("type") == "text")
     names = parse_taxdoctor_list(text)
@@ -205,14 +268,25 @@ def main(argv=None):
     ap.add_argument("--기준일", default=None)
     ap.add_argument("--TaxDoctor생략", action="store_true")
     a = ap.parse_args(argv)
-    listing = json.loads(Path(a.목록).read_text(encoding="utf-8"))
-    aliases = json.loads(Path(a.별칭).read_text(encoding="utf-8"))
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+    loaded = []
+    for p in (a.목록, a.별칭):
+        try:
+            loaded.append(json.loads(Path(p).read_text(encoding="utf-8")))
+        except (OSError, ValueError) as e:  # JSONDecodeError · UnicodeDecodeError 는 ValueError
+            print(_mask(f"입력 파일을 읽지 못했다: {p}: {e}")[:300], file=sys.stderr)
+            return 2
+    listing, aliases = loaded
     date8 = a.기준일 or today_seoul()
     try:
         search, search_admrul, td = make_sources(not a.TaxDoctor생략)
         rep = check(listing, aliases, search, search_admrul, td, date8)
     except Exception as e:  # noqa: BLE001
-        print(f"수집 실패: {str(e)[:300]}", file=sys.stderr)
+        print(f"수집 실패: {_mask(e)[:300]}", file=sys.stderr)
         return 2
     out = Path(a.출력)
     out.write_text(json.dumps(rep, ensure_ascii=False, indent=1, sort_keys=False) + "\n", encoding="utf-8")
