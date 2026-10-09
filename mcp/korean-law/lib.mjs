@@ -86,20 +86,17 @@ export function pickInForce(rows, date8) {
 }
 
 /**
- * 이름이 바뀐 법령(같은 법령ID)의 여러 이름 행에서 date8 에 시행 중이던 판.
- * date8 까지 시행된 판 중 가장 늦게 공포된 판의 이름을 그날의 이름으로 보고, 그 이름의 판 중에서 pickInForce 로 고른다.
- * 시행일만 보면 개칭 전에 공포돼 개칭 뒤에 시행된 옛 이름 판(지방자치분권법 MST 285293, 공포 2026-04-14, 시행 2026-10-15)이
- * 개칭 뒤 판보다 늦게 시행됐다는 이유로 현행으로 뽑힌다. 이름이 하나뿐이면 pickInForce 와 같다.
+ * 이름이 바뀐 법령(같은 법령ID)의 판 중 date8 에 시행 중이던 판.
+ * 현행 이름의 판이 date8 까지 하나라도 시행됐으면 현행 이름의 판에서, 아니면 요청한 이름의 판에서 pickInForce 로 고른다.
+ * 이름을 섞어 시행일·공포일로 고르면 틀린다. 시행일로 고르면 개칭 전에 공포돼 개칭 뒤에 시행된 옛 이름 판
+ * (지방자치분권법 MST 285293, 공포 2026-04-14, 시행 2026-10-15)이 뽑히고, 공포일로 고르면 개칭 공포 뒤·시행 전에
+ * 옛 이름으로 공포된 개정(법제처는 판을 시행일의 이름으로 싣는다)이 개칭 시행 뒤에도 뽑힌다.
+ * 현행 이름을 모르거나('') 요청한 이름과 같으면 pickInForce 와 같다.
  */
-export function pickInForceAcrossNames(rows, date8) {
-  const ok = asArray(rows).filter((r) => String(r?.['시행일자'] ?? '') <= date8);
-  if (!ok.length) return null;
-  const latest = [...ok].sort((a, b) =>
-    String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')) ||
-    String(b['시행일자']).localeCompare(String(a['시행일자'])) ||
-    Number(b['공포번호'] ?? 0) - Number(a['공포번호'] ?? 0))[0];
-  const name = normName(latest['법령명한글']);
-  return pickInForce(ok.filter((r) => normName(r['법령명한글']) === name), date8);
+export function pickInForceRenamed(rows, requestedName, currentName, date8) {
+  const byName = (n) => asArray(rows).filter((r) => normName(r?.['법령명한글']) === normName(n));
+  if (!currentName || normName(currentName) === normName(requestedName)) return pickInForce(rows, date8);
+  return pickInForce(byName(currentName), date8) ?? pickInForce(byName(requestedName), date8);
 }
 
 /** Asia/Seoul 기준 오늘 YYYYMMDD */

@@ -252,6 +252,48 @@ test('C1 amendment_track 도 옛 이름이면 현행 이름의 판까지 보이�
   assert.doesNotMatch(out, /시행 20090101 · 현행/);
 });
 
+// ---- C1 반례 D: 개칭 공포 뒤·시행 전에 옛 이름으로 공포된 개정 ----
+// 개칭 R: 공포 2025-06-01, 시행 2026-01-01(새 이름). 그 사이 옛 이름 개정 Y: 공포 2025-09-01, 시행 2025-10-01.
+// 법제처는 판을 시행일에 쓰던 이름으로 싣기 때문에 Y 는 옛 이름이다
+function renameApiD() {
+  const mk = (name, mst, ef, prom, mark) => ({ ...row(name, mst, ef, prom, '1', 'D00001'), 현행연혁코드: mark });
+  const oldRows = [mk('D옛법', 'Y', '20251001', '20250901', '연혁'), mk('D옛법', 'O1', '20200101', '20200101', '연혁')];
+  const newRows = [mk('D새법', 'R', '20260101', '20250601', '현행')];
+  return fakeApi((path, p) => {
+    if (path === 'lawSearch.do' && p.query === 'D옛법') return page(p.nw === '2,3' ? [] : oldRows);
+    if (path === 'lawSearch.do' && p.query === 'D새법') return page(newRows);
+    if (path === 'lawService.do' && p.ID === 'D00001') return { 법령: { 기본정보: { 법령명_한글: 'D새법' } } };
+    if (path === 'lawService.do' && p.MST) return body(p.MST === 'R' ? 'D새법' : 'D옛법', p.efYd, [unit('1', '제1조(목적)')]);
+  });
+}
+const readMst = (api) => api.calls.filter((c) => c.path === 'lawService.do' && c.MST).map((c) => [c.MST, c.efYd]);
+
+for (const [label, args, today, want] of [
+  ['날짜 없이(오늘 2026-03-01)', {}, '20260301', ['R', '20260101']],
+  ['effective_date 2026-03-01', { effective_date: '2026-03-01' }, '20261009', ['R', '20260101']],
+  ['effective_date 2025-11-01', { effective_date: '2025-11-01' }, '20261009', ['Y', '20251001']],
+]) {
+  test(`C1 반례 D: 옛 이름 ${label} → ${want[0]}`, async () => {
+    const api = renameApiD();
+    const out = await makeRunTool({ callApi: api, today: () => today })('get_law_text', { law_name: 'D옛법', ...args });
+    assert.deepEqual(readMst(api), [want]);
+    assert.ok(header2(out).includes('요청한 이름 "D옛법" 은 옛 이름이다. 현행 이름: D새법'), header2(out));
+    assert.doesNotMatch(header2(out), /옛 이름으로 공포된 판/);
+  });
+}
+
+test('C1 반례 D: 현행 이름으로 조회해도 R 을 읽는다', async () => {
+  const api = renameApiD();
+  await makeRunTool({ callApi: api, today: () => '20260301' })('get_law_text', { law_name: 'D새법' });
+  assert.deepEqual(readMst(api), [['R', '20260101']]);
+});
+
+test('C1 반례 D: amendment_track 은 오늘 2026-03-01 에 R 을 현행, Y 를 연혁으로 적는다', async () => {
+  const out = await makeRunTool({ callApi: renameApiD(), today: () => '20260301' })('amendment_track', { law_name: 'D옛법' });
+  assert.match(out, /시행 20260101 · 현행 · .*MST R/);
+  assert.match(out, /시행 20251001 · 연혁 · .*MST Y/);
+});
+
 // ---- C2. trace_references 가지 조문 ----
 
 function traceApi(articleText, decreeUnits) {

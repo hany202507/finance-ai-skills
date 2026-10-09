@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   flattenArticle, joCode, normName, pickExact, pickInForce, todaySeoul, ymd, maskSecrets,
-  lawUrl, articleLabel, pickInForceAcrossNames,
+  lawUrl, articleLabel, pickInForceRenamed,
 } from '../lib.mjs';
 
 const fx = (f) => JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', f), 'utf8'));
@@ -51,29 +51,44 @@ test('articleLabel 은 조문 번호를 법령 표기로 쓴다', () => {
   assert.equal(articleLabel(' 60 '), '제60조');
 });
 
-test('pickInForceAcrossNames 는 개칭 뒤 날짜면 새 이름 판, 개칭 전 날짜면 옛 이름 판을 고른다', () => {
-  const r = (name, ef, prom, mst) => ({ 법령명한글: name, 시행일자: ef, 공포일자: prom, 공포번호: '1', 법령일련번호: mst });
+const rr = (name, ef, prom, mst) => ({ 법령명한글: name, 시행일자: ef, 공포일자: prom, 공포번호: '1', 법령일련번호: mst });
+
+test('pickInForceRenamed 는 현행 이름 판이 시행 중이면 그 이름에서, 아니면 요청한 이름에서 고른다', () => {
   const rows = [
-    r('옛법', '20080101', '20071201', 'O1'),
-    r('새법', '20090731', '20090130', 'N1'), // 개칭(공포 2009-01-30, 시행 2009-07-31)
-    r('새법', '20240109', '20240109', 'N2'),
+    rr('옛법', '20080101', '20071201', 'O1'),
+    rr('새법', '20090731', '20090130', 'N1'), // 개칭(공포 2009-01-30, 시행 2009-07-31)
+    rr('새법', '20240109', '20240109', 'N2'),
   ];
-  assert.equal(pickInForceAcrossNames(rows, '20090301').법령일련번호, 'O1');
-  assert.equal(pickInForceAcrossNames(rows, '20240501').법령일련번호, 'N2');
-  assert.equal(pickInForceAcrossNames(rows, '20000101'), null);
+  assert.equal(pickInForceRenamed(rows, '옛법', '새법', '20090301').법령일련번호, 'O1');
+  assert.equal(pickInForceRenamed(rows, '옛법', '새법', '20240501').법령일련번호, 'N2');
+  assert.equal(pickInForceRenamed(rows, '옛법', '새법', '20000101'), null);
 });
 
-test('pickInForceAcrossNames 는 개칭 전에 공포돼 개칭 뒤 시행된 옛 이름 판을 현행으로 고르지 않는다', () => {
-  const r = (name, ef, prom, mst) => ({ 법령명한글: name, 시행일자: ef, 공포일자: prom, 공포번호: '1', 법령일련번호: mst });
+test('pickInForceRenamed 는 개칭 전에 공포돼 개칭 뒤 시행된 옛 이름 판(285293)을 고르지 않는다', () => {
   const rows = [
-    r('지역균형발전법', '20261015', '20260414', '285293'),
-    r('균형성장법', '20260910', '20260609', '286737'),
-    r('균형성장법', '20260602', '20260602', '286503'),
+    rr('지역균형발전법', '20261015', '20260414', '285293'),
+    rr('균형성장법', '20260910', '20260609', '286737'),
+    rr('균형성장법', '20260602', '20260602', '286503'),
   ];
-  assert.equal(pickInForceAcrossNames(rows, '20261016').법령일련번호, '286737');
-  // 이름이 하나뿐이면 pickInForce 와 같다
-  const one = rows.map((x) => ({ ...x, 법령명한글: '한이름' }));
-  assert.equal(pickInForceAcrossNames(one, '20261016').법령일련번호, pickInForce(one, '20261016').법령일련번호);
+  assert.equal(pickInForceRenamed(rows, '지역균형발전법', '균형성장법', '20261016').법령일련번호, '286737');
+  assert.equal(pickInForceRenamed(rows, '지역균형발전법', '균형성장법', '20261009').법령일련번호, '286737');
+});
+
+test('pickInForceRenamed 반례 D: 개칭 공포 뒤·시행 전에 옛 이름으로 공포된 개정 Y 는 개칭 시행 뒤에 고르지 않는다', () => {
+  // 개칭 R: 공포 2025-06-01, 시행 2026-01-01(새 이름). 그 사이 옛 이름 개정 Y: 공포 2025-09-01, 시행 2025-10-01
+  const rows = [
+    rr('옛법', '20200101', '20200101', 'O1'),
+    rr('옛법', '20251001', '20250901', 'Y'),
+    rr('새법', '20260101', '20250601', 'R'),
+  ];
+  assert.equal(pickInForceRenamed(rows, '옛법', '새법', '20260301').법령일련번호, 'R');
+  assert.equal(pickInForceRenamed(rows, '옛법', '새법', '20251101').법령일련번호, 'Y');
+});
+
+test('pickInForceRenamed 는 이름이 하나이거나 현행 이름을 모르면 pickInForce 와 같다', () => {
+  const one = [rr('한이름', '20260910', '20260609', 'A'), rr('한이름', '20261015', '20260414', 'B')];
+  assert.equal(pickInForceRenamed(one, '한이름', '한이름', '20261016').법령일련번호, pickInForce(one, '20261016').법령일련번호);
+  assert.equal(pickInForceRenamed(one, '한이름', '', '20261016').법령일련번호, pickInForce(one, '20261016').법령일련번호);
 });
 
 test('flattenArticle 은 목내용이 배열이어도 문장을 모은다', () => {

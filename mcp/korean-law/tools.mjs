@@ -4,7 +4,7 @@
  */
 import {
   strip, asArray, joCode, flattenArticle, lawUrl, articleRef, articleParts, articleLabel,
-  normName, pickExact, pickInForce, pickInForceAcrossNames, ymd, maskSecrets,
+  normName, pickExact, pickInForce, pickInForceRenamed, ymd, maskSecrets,
 } from './lib.mjs';
 
 /* ------------------------------------------------------------------ 도구 */
@@ -278,7 +278,7 @@ export function makeRunTool({ callApi: rawCallApi, today }) {
   async function resolveLaw(lawName, effectiveDate) {
     const date8 = effectiveDate ? ymd(effectiveDate) : today();
     const v = await versionsOf(lawName, effectiveDate ? '1,2,3' : '2,3');
-    const hit = pickInForceAcrossNames(v.rows, date8);
+    const hit = pickInForceRenamed(v.rows, lawName, v.current, date8);
     if (!hit) throw new Error(`${date8} 에 시행 중이던 "${lawName}" 판이 없다. amendment_track 으로 시행일 목록을 확인하라.`);
     if (isAbolished(hit)) {
       throw new Error(`"${lawName}" 은 ${date8} 에는 폐지된 법령이다(${strip(hit['제개정구분명'])}, 시행 ${hit['시행일자']}). 대신한 법령은 법령별칭을 확인하라.`);
@@ -288,10 +288,12 @@ export function makeRunTool({ callApi: rawCallApi, today }) {
       throw new Error(`"${lawName}" 은 개칭·폐지됐을 수 있다. 현행 이름으로 조회하거나 법령별칭을 확인하라(이 이름에 현행·시행예정 판이 없고, 고른 판 MST ${hit['법령일련번호']}(시행 ${hit['시행일자']})이 이 이름의 마지막 판이다).`);
     }
     const notes = [...v.notes];
-    // 고른 판보다 늦게 시행된 다른 이름의 판(개칭 전에 공포된 옛 이름 판)은 고르지 않지만 숨기지도 않는다
-    const name = normName(hit['법령명한글']);
+    // 현행 이름 판을 골랐을 때, 그보다 늦게 시행된 옛 이름(요청한 이름) 판은 고르지 않지만 숨기지도 않는다
+    // (개칭 전에 공포돼 개칭 뒤에 시행된 판, 지방자치분권법 MST 285293). 설명은 그 판이 실제로 옛 이름일 때만 붙인다
+    const old = normName(lawName);
+    const pickedOld = normName(hit['법령명한글']) === old;
     for (const r of v.rows) {
-      if (normName(r['법령명한글']) !== name && String(r['시행일자']) > String(hit['시행일자']) && String(r['시행일자']) <= date8) {
+      if (!pickedOld && normName(r['법령명한글']) === old && String(r['시행일자']) > String(hit['시행일자']) && String(r['시행일자']) <= date8) {
         notes.push(`옛 이름으로 공포된 판 MST ${r['법령일련번호']}(시행 ${r['시행일자']})이 이 판보다 늦게 시행됐다. 그 개정분은 mst 로 따로 읽어 대조하라`);
       }
     }
@@ -553,7 +555,7 @@ export function makeRunTool({ callApi: rawCallApi, today }) {
       case 'amendment_track': {
         const v = await versionsOf(args.law_name, '1,2,3');
         const exact = [...v.rows];
-        const cur = pickInForceAcrossNames(exact, t);
+        const cur = pickInForceRenamed(exact, args.law_name, v.current, t);
         exact.sort((a, b) => String(b['시행일자']).localeCompare(String(a['시행일자'])) || String(b['공포일자'] ?? '').localeCompare(String(a['공포일자'] ?? '')));
         const named = v.notes.length > 0; // 이름이 둘 이상이면 줄마다 이름을 붙인다
         return [
