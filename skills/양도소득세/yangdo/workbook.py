@@ -9,14 +9,25 @@ from openpyxl.styles import Font
 COL = {"id": "A", "종류": "B", "세율": "C", "단일세율": "D", "가산세율": "E", "양도가액": "F", "취득가액": "G",
        "필요경비": "H", "양도차익": "I", "고가주택": "J", "고가주택기준": "K", "과세양도차익": "L", "장특공률": "M",
        "장특공": "N", "양도소득금액": "O", "기본공제": "P", "과세표준": "Q", "산출세액": "R", "지방소득세": "S",
-       "전액비과세": "T", "지방단일세율": "U", "지방가산세율": "V", "전체양도가액": "W"}
+       "전액비과세": "T", "지방단일세율": "U", "지방가산세율": "V", "전체양도가액": "W", "합산묶음": "X"}
 ROW_CHECK = ("양도차익", "과세양도차익", "장특공", "양도소득금액", "과세표준", "산출세액", "지방소득세")
 
 
-def summary_cells(n):
-    a, b, c = n + 3, n + 4, n + 5
-    return {"자산별세액": "R%d" % a, "합산비교세액": "R%d" % b, "산출세액": "R%d" % c,
-            "지방_자산별": "S%d" % a, "지방_합산비교": "S%d" % b, "지방소득세": "S%d" % c}
+def summary_cells(n, groups):
+    """n 은 자산 행 수, groups 는 합산묶음 수. 묶음 행은 n+7 부터, 그 바로 아래가 호별 합산 행이다."""
+    a, b, c, h = n + 3, n + 4, n + 5, n + 7 + groups
+    return {"자산별세액": "R%d" % a, "호별합산세액": "R%d" % h, "합산비교세액": "R%d" % b, "산출세액": "R%d" % c,
+            "지방_자산별": "S%d" % a, "지방_호별합산": "S%d" % h, "지방_합산비교": "S%d" % b, "지방소득세": "S%d" % c}
+
+
+def _groups(rows):
+    """합산묶음 이름 -> 첫 구성원의 입력 순번(0부터). 과세 자산만, 처음 나온 순서."""
+    out = {}
+    for i, row in enumerate(rows):
+        key = row["계산"].get("합산묶음")
+        if key:
+            out.setdefault(key, i)
+    return out
 
 
 def _num(v):
@@ -67,7 +78,7 @@ def write(result, path):
             "산출세액": _tax(r, "D", "E", "세율표"), "지방소득세": _tax(r, "U", "V", "지방세율표"),
             "전액비과세": 1 if v["전액비과세"] else 0,
             "지방단일세율": _num(rate["지방단일"]), "지방가산세율": _num(rate["지방가산"]),
-            "전체양도가액": c["전체양도가액"],
+            "전체양도가액": c["전체양도가액"], "합산묶음": c.get("합산묶음") or "",
         }
         for name, letter in COL.items():
             ws["%s%d" % (letter, r)] = values[name]
@@ -77,11 +88,26 @@ def write(result, path):
     ws["A%d" % (n + 4)] = "합산 비교(소득세법 제104조⑤)"
     ws["A%d" % (n + 5)] = "산출세액"
     ws["Q%d" % (n + 4)] = "=SUMIF(T2:T{l},0,Q2:Q{l})".format(l=last)
+    groups = _groups(rows)
+    first_row = n + 7
+    hrow = first_row + len(groups)
+    ws["A%d" % hrow] = "호별 합산"
+    for g, (key, i) in enumerate(groups.items()):
+        gr, src = first_row + g, i + 2
+        ws["A%d" % gr] = "묶음 %s" % key
+        ws["Q%d" % gr] = '=SUMIF(X2:X{l},"{k}",Q2:Q{l})'.format(l=last, k=key.replace('"', '""'))
+        ws["T%d" % gr] = 0
+        for letter in ("D", "E", "U", "V"):
+            if ws["%s%d" % (letter, src)].value is not None:
+                ws["%s%d" % (letter, gr)] = "=%s%d" % (letter, src)
+        ws["R%d" % gr] = _tax(gr, "D", "E", "세율표")
+        ws["S%d" % gr] = _tax(gr, "U", "V", "지방세율표")
     for col, sheet in (("R", "세율표"), ("S", "지방세율표")):
         ws["%s%d" % (col, n + 3)] = "=SUM({c}2:{c}{l})".format(c=col, l=last)
         ws["%s%d" % (col, n + 4)] = "=IF(COUNTIF(T2:T{l},0)>=2,ROUNDDOWN(ROUND({p},6),0),0)".format(
             l=last, p=_p("Q%d" % (n + 4), sheet))
-        ws["%s%d" % (col, n + 5)] = "=MAX({c}{a},{c}{b})".format(c=col, a=n + 3, b=n + 4)
+        ws["%s%d" % (col, hrow)] = ("=SUM({c}{a}:{c}{b})".format(c=col, a=first_row, b=hrow - 1) if groups else 0)
+        ws["%s%d" % (col, n + 5)] = "=MAX({c}{h},{c}{b})".format(c=col, h=hrow, b=n + 4)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     wb.save(path)
     return path
@@ -124,7 +150,8 @@ def compare(path, result):
             got = cells.get(("계산", "%s%d" % (COL[name], i)))
             if not _eq(got, c[name]):
                 fails.append("W %s %s: 워크북 %s, 엔진 %s" % (row["id"], name, got, c[name]))
-    for name, addr in summary_cells(len(result["자산"])).items():
+    groups = len(_groups(result["자산"]))
+    for name, addr in summary_cells(len(result["자산"]), groups).items():
         got = cells.get(("계산", addr))
         if not _eq(got, result["합계"][name]):
             fails.append("W 합계 %s: 워크북 %s, 엔진 %s" % (name, got, result["합계"][name]))
