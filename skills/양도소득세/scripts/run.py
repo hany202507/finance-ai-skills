@@ -11,7 +11,6 @@
 통합 문서를 맨 먼저 지운다. 엑셀이 열어 둔 파일은 지워지지 않으므로, 그 경우 종료코드 4 로 멈추고 폴더는 그대로 남는다.
 """
 import argparse
-import datetime as dt
 import json
 import os
 import sys
@@ -20,7 +19,7 @@ SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL not in sys.path:
     sys.path.insert(0, SKILL)
 
-from yangdo import QUESTIONS_PATH, engine, ruleset  # noqa: E402
+from yangdo import QUESTIONS_PATH, dates, engine, ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
 TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
@@ -154,10 +153,14 @@ def write_outputs(res, out):
 
 
 def _iso_date(s):
+    """--오늘 의 값. 다른 날짜 입력과 같은 dates.to_date 로 읽어 YYYY-MM-DD 글자만 받는다(파이썬 3.10 과 3.11 이상이 같다)."""
     try:
-        return dt.date.fromisoformat(s).isoformat()
+        d = dates.to_date(s)
     except ValueError:
+        d = None
+    if d is None:
         raise argparse.ArgumentTypeError("날짜는 YYYY-MM-DD 로 적습니다: %s" % s)
+    return d.isoformat()
 
 
 def main(argv=None):

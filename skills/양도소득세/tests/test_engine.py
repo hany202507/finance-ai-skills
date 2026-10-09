@@ -219,6 +219,18 @@ def test_run_bad_date_argument(tmp_path):
         go(tmp_path, CASES["A"], "--오늘", "내일")
 
 
+@pytest.mark.parametrize("today", ["20261115", "2026-W46-7", "2026-11-15T10:00", "2026-1-5", "2026-02-30", "2026-13-01"])
+def test_run_today_argument_takes_only_yyyy_mm_dd(tmp_path, today):
+    """파이썬 3.11 이상의 date.fromisoformat 은 붙여 쓴 날짜를 받는다. 3.10 과 같은 입력에 같은 결과를 내도록 dates.to_date 로 읽는다."""
+    with pytest.raises(SystemExit):
+        go(tmp_path, CASES["A"], "--오늘", today)
+
+
+def test_run_today_argument_is_read_by_the_shared_date_reader():
+    assert run._iso_date("2026-11-15") == "2026-11-15"
+    assert "fromisoformat" not in open(run.__file__, encoding="utf-8").read()
+
+
 def test_question_file_uses_question_bank(tmp_path):
     f = copy.deepcopy(CASES["A"])
     f["자산"][0]["거주기간"] = None

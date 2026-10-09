@@ -20,6 +20,10 @@ DEPARTURE_REASONS = {"해외이주": "나목", "해외취학근무": "다목"}
 # 시행령 제155조⑱ 각 호. 현금청산소송 코드는 4호(현금청산금 소송)와 5호(수용재결·매도청구소송)를 함께 맡는다(문항 T03 선택지 표시)
 EXTEND_ITEMS = {"자산관리공사": "1호", "경매신청": "2호", "공매": "3호", "현금청산소송": "4호 또는 5호"}
 EXTEND_REASONS = set(EXTEND_ITEMS)
+# ⑱ 본문은 290841@2026-10-01 판에서도 「다른 주택을 취득한 날부터 3년이 되는 날 현재」 다. 처분기한이 2년으로 줄어든 사례(2026-10-01 이후 조정대상지역 간 이동)에
+# 이 연장을 적용한 것은 문언만으로 확인되지 않은 해석이라 연장을 적용할 때 확인사항으로 남긴다
+EXTEND_2YEAR_NOTE = ("시행령 제155조⑱ 본문은 사유가 다른 주택을 취득한 날부터 3년이 되는 날 현재 있어야 한다고 적는다. "
+                     "처분기한이 2년인 경우에 이 연장을 적용하는지는 확인되지 않았다. 세무 전문가 확인이 필요하다")
 # 시행령 제154조①1호(공공임대 5년 거주), 2호 가목(수용), 3호(부득이한 사유 1년 거주). 2호 나목·다목(해외 출국)은 빠진다.
 # 이 셋은 제155조① 후단이 「종전 주택 취득 1년 뒤 신규 주택 취득」 요건을 적용하지 않는다고 정한다
 GAP_EXEMPT_REASONS = {"공공임대5년", "수용", "부득이1년"}
@@ -174,6 +178,19 @@ def _excluded_self(a, me, on, rs, reg):
     return False
 
 
+def _new_house_cause(aid, other):
+    """신규 주택의 취득 원인(T02). 재개발·재건축 조합원으로 받은 집은 입주권 특례(시행령 제156조의2·제156조의3)가 걸려
+    일시적 2주택 처분기한과 주택 수를 이 엔진이 정하지 못하므로 계산하지 않는다. 글자가 아닌 값은 T02 를 되묻는다."""
+    cause = other.get("취득원인")
+    if cause is None:
+        return
+    if not isinstance(cause, str):
+        q = next(x for x in F.load_questions()["문항"] if x["id"] == "T02")
+        raise F.Missing("T02", aid, F.FORM_MSG % ("세대.주택목록[신규].취득원인", F.form_problem(q, cause)))
+    if cause == "조합원":
+        raise F.OutOfScope(aid, "신규 주택을 재개발·재건축 조합원으로 받았다(시행령 제156조의2·제156조의3, 입주권 특례가 걸려 계산하지 않았다)", "5")
+
+
 def _acq_contract_exception(f, a, st):
     공고일 = to_date(st.get("공고일"))
     if not 공고일:
@@ -205,6 +222,8 @@ def _temporary(f, a, other, 취득, 양도, rs, reg, v):
             v["근거"] += rs.cite("판정.처분기한연장", 양도)
             v["확인사항"].append("처분기한(%s)이 지났지만 %s 사유로 기한 안 양도로 보았다(시행령 제155조⑱%s). 증빙을 확인하라"
                               % (v["처분기한"], 연장, EXTEND_ITEMS[연장]))
+            if years < rs.value("일시적2주택.처분기한.일반", 양도):
+                v["확인사항"].append(EXTEND_2YEAR_NOTE)
     if 면제 and not 채움:
         v["확인사항"].append("종전 주택 양도가 시행령 제154조① 예외 사유(%s)에 해당해 종전 주택 취득 1년 뒤 신규 주택을 취득해야 한다는 요건을 "
                           "적용하지 않았다(시행령 제155조① 후단). 증빙을 확인하라" % 사유)
@@ -252,6 +271,10 @@ def _exemption(f, a, rs, v, 취득, 양도):
     보유 = dates.full_years(보유시작, 양도)
     요건거주 = rs.value("비과세.조정취득거주", 양도)
     거주필요 = bool(v["조정_취득일"]["지정"])
+    if 거주필요 and a.get("거주_일부미거주") is True:   # 모를때처리(H08): 사실 판단이라 확인사항으로 낸다. 거주기간은 입력한 구간 그대로 센다
+        v["확인사항"].append(F.NOT_REFLECTED % (
+            "거주 기간 중 세대원 일부가 학교·직장·질병 치료로 따로 산 적이 있다고 답했다. 거주기간(H07)은 입력한 구간 그대로 셌다. "
+            "따로 산 기간을 거주기간으로 볼 수 있는지는 사실을 확인하라(소득세법 시행규칙 제71조③, 시행령 제154조①1호 괄호)"))
     if 거주필요 and v["거주년"] < 요건거주 and _acq_contract_exception(f, a, v["조정_취득일"]):
         거주필요 = False
         v["공고전계약_취득"] = True
@@ -352,6 +375,7 @@ def _house(f, a, prep, rs, reg, v, 취득, 양도):
         if not other.get("취득일"):
             raise F.Missing("H04", aid, "주택 목록 %s 의 취득일이 필요합니다" % other.get("id"))
         if 취득 < to_date(other["취득일"]):
+            _new_house_cause(aid, other)
             v["일시적2주택"] = True
             cand = _temporary(f, a, other, 취득, 양도, rs, reg, v)
     if not 일세대:
@@ -391,7 +415,14 @@ def judge_asset(f, a, prep, rs, reg):
             v["확인사항"].append("등기하지 않은 사유(%s)가 시행령 제168조① 제외 사유라 미등기양도자산으로 보지 않았다. 증빙을 확인하라" % 사유)
             v["근거"] += rs.cite("판정.미등기제외", 양도)
     if a["종류"] == "주택" and not v["미등기"]:
-        _house(f, a, prep, rs, reg, v, 취득, 양도)
+        try:
+            _house(f, a, prep, rs, reg, v, 취득, 양도)
+        except F.Missing as m:
+            # 판정이 지구 답(A02)을 요구하는데 모른다고 답했으면 다시 묻지 않고 다루지않음으로 돌린다. 질문지는 이미 답한 문항을 내지 않아
+            # 되물으면 대화가 끝나지 않는다. 지구 답이 필요 없는 주소(엔진값 지구확인필요 거짓)와 미등기 미이행 주택은 이 길을 지나지 않는다
+            if m.문항 == "A02" and F.district_unknown(f, a):
+                raise F.OutOfScope(aid, F.DISTRICT_UNKNOWN, "없음") from None
+            raise
         if v["전액비과세"]:
             return v
     grp = "주택" if a["종류"] == "주택" else "일반"

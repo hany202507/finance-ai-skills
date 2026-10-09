@@ -29,23 +29,19 @@ EXPENSE_GROUPS = (("취득부대", "M08"), ("자본적지출", "M09"), ("기타"
 RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간으로 적습니다"
 FORM_MSG = "%s 의 값 형식이 맞지 않습니다. 받는 형식: %s"
 FORM_KINDS = ("예아니오", "선택", "복수선택", "목록")
+NOT_REFLECTED = "이 답은 이번 계산에 반영하지 않았다: %s"   # 모를때처리가 확인사항을 약속한 문항(H08, M20, M24, H03)의 답이 있을 때 붙이는 말머리
 CHOICE_DICT_KEYS = {"자산[].지분"}  # 선택 문항인데 {구분: 공동, 분자, 분모} 묶음으로도 답하는 키
 LAND_NAMES = ("대지면적", "정착면적", "용도지역")
 LAND_MSG = "부수토지는 대지면적·정착면적(제곱미터)·용도지역을 이름으로 한 dict 로 적습니다"
-SAME_DAY_NO = (False, "", "없음", "아니오", "해당없음")  # 같은날양도순서(P07)에 이런 답이면 같은 날 양도가 없다는 뜻이다
 
 # 질문지(범위 계획1)가 묻지만 엔진이 읽지 않는 키. 문항.json 의 키 그대로 적고 읽지 않는 이유를 한 줄로 적는다.
 # 여기 든 키는 prepare 의 자료형 검사도 받지 않는다(answer() 는 받는다). 엔진이 읽기 시작하면 이 표에서 지운다.
 # tests/test_scope_contract.py 가 표에 든 키를 yangdo 가 읽으면 시험이 깨지게 해서 낡은 항목이 남지 않게 한다.
+# 문항의 모를때처리가 다루지않음이나 확인사항을 약속한 키(T02, H08, M20, M24, H03)는 여기 두지 않는다. 엔진이 읽어 약속한 것을 낸다.
 COLLECT_ONLY = {
     "연간.기신고": "같은 해 다른 양도는 확인사항(연간.다른양도)으로만 안내한다. 기신고 금액은 합산하지 않는다",
     "자산[].주택유형": "질문지 보이는조건(A05, A06, L01)에만 쓴다. 판정은 주거사용개시일을 직접 읽는다",
     "자산[].면적": "서식 기재용이다. 판정과 계산에 쓰지 않는다",
-    "세대.세대원": "1세대 판정은 배우자(H01)와 1세대요건(H02)으로 한다. 세대원 목록은 읽지 않는다",
-    "자산[].거주_일부미거주": "거주요건은 거주기간 구간(H07)으로만 판정한다. 일부 미거주 표시는 읽지 않는다",
-    "세대.주택목록[신규].취득원인": "신규 주택의 취득일은 주택 목록(H04)의 취득일을 쓴다. 취득 원인은 읽지 않는다",
-    "자산[].취득.상대방유형": "환산 전에 실제 금액을 찾아보라는 안내용이다. 계산에 쓰지 않는다",
-    "자산[].토지등급": "취득 당시 토지 기준시가 환산은 하지 않는다. 입력한 기준시가를 그대로 쓴다",
     "자산[].토지거래허가": "허가 신청일과 허가일은 한시배제 나·다목 판정(계획 5)에 쓴다. 지금은 토지거래허가대상(X05) 답만 확인사항으로 안내한다",
 }
 
@@ -111,6 +107,16 @@ def check_personal(f):
         raise FactsError("소재지는 시도·시군구·읍면동으로 나눠 적습니다. 주소 문자열은 넣지 않습니다")
     if any(RRN.search(v) for v in _walk_values(f)):
         raise FactsError("주민등록번호로 보이는 값은 사실관계에 넣지 않습니다")
+
+
+DISTRICT_UNKNOWN = ("지구 안인지 확인되지 않음(A02 모름). 조정대상지역 해당을 정하지 못해 계산하지 않았다. "
+                    "토지이용계획확인서 등으로 확인해 A02 를 예 또는 아니오로 답하면 계산한다")
+
+
+def district_unknown(f, a):
+    """지구 안인지(A02)를 모른다고 답했는지. 손으로 쓴 지구해당 「모름」이나 모름 목록의 「A02:<자산 id>」 표시다.
+    이 답이 계산을 막는지는 판정(judge)이 정한다. 지구 답이 있어야 조정대상지역을 정하는 주소일 때만 막는다."""
+    return a.get("지구해당") == "모름" or "A02:%s" % a.get("id") in (f.get("모름") or [])
 
 
 def get(obj, path, default=None):
@@ -453,11 +459,12 @@ def _route_price(a, aid, out):
 def _route_same_day(f, out):
     """같은 날 주택을 여러 채 양도하면 거주자가 고른 순서대로 양도한 것으로 본다(시행령 제154조⑨). 순서를 반영하지 않으므로 계산하지 않는다.
 
-    사실관계에 같은 날 양도한 주택 자산이 둘 이상이거나, 같은날양도순서(P07)에 없다는 뜻이 아닌 답이 있으면 그 날의 주택 자산을 돌려보낸다.
-    P07 은 다른 양도를 따로 돌린 사실관계에서도 같은 날 양도를 알려 준다.
+    사실관계에 같은 날 양도한 주택 자산이 둘 이상이거나, 같은날양도순서(P07, 예아니오)가 참이면 그 날의 주택 자산을 돌려보낸다.
+    P07 은 다른 양도를 따로 돌린 사실관계에서도 같은 날 양도를 알려 준다. 참이 아닌 값은 같은 날 양도가 없다는 뜻이다.
+    예아니오가 아닌 값(글자 「아니요」 등)은 prepare 의 자료형 검사(form_rules)가 P07 을 되묻는다.
+    자산으로 넣지 않고 세대 주택목록에만 적은 집도 양도일(`양도일`)이 있으면 같은 날 양도한 집으로 센다(houses_at 이 그 날짜로 보유 여부를 정한다).
     """
-    답 = get(f, "연간.같은날양도순서")
-    선언 = 답 is not None and 답 not in SAME_DAY_NO
+    선언 = get(f, "연간.같은날양도순서") is True
     이미 = {x["자산"] for x in out["다루지않음"]}
     by_day = {}
     for a in f.get("자산") or []:
@@ -465,10 +472,38 @@ def _route_same_day(f, out):
         t = out["시기"].get(aid)
         if t and a.get("종류") == "주택" and aid not in 이미:
             by_day.setdefault(t["양도일"], []).append(aid)
-    for ids in by_day.values():
-        if len(ids) >= 2 or 선언:
+    listed = _listed_sale_days(f, out)
+    for day, ids in by_day.items():
+        if len(ids) >= 2 or 선언 or day in listed:
             for aid in ids:
                 out["다루지않음"].append(OutOfScope(aid, "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "5").to_dict())
+
+
+def _note_household_members(f, bad, out):
+    """세대원 목록(H03)은 읽지 않는다. 모를때처리가 약속한 확인사항을 판 집이 있는 사실관계에서 한 번 낸다."""
+    members = get(f, "세대.세대원")
+    house_sale = any(isinstance(a, dict) and a.get("종류") == "주택" for a in f.get("자산") or [])
+    if house_sale and "H03" not in bad and isinstance(members, list) and members:
+        out["확인사항"].append(NOT_REFLECTED % (
+            "세대원 목록(H03)은 읽지 않았다. 1세대 판정은 배우자(H01)와 1세대요건(H02)으로, 세대가 가진 집은 주택 목록(H04)에 적은 집으로만 "
+            "셌다. 주소가 다른 자녀가 집을 가졌는데 독립 생계인지 애매하면 그 집을 세대에 넣은 경우와 뺀 경우를 나눠 확인하라"))
+
+
+def _listed_sale_days(f, out):
+    """판 날(양도일)이 적힌 주택목록 집의 양도일 모음. 시기를 정한 자산과 이어진 집(자산id)은 그 자산이 이미 세므로 뺀다.
+    날짜 형식이 틀린 집은 여기서 건너뛴다. houses_at 이 H04 로 되묻는다."""
+    houses = get(f, "세대.주택목록")
+    days = set()
+    for h in houses if isinstance(houses, list) else []:
+        if not isinstance(h, dict) or h.get("자산id") in out["시기"]:
+            continue
+        try:
+            day = dates.to_date(h.get("양도일"))
+        except ValueError:
+            continue
+        if day is not None:
+            days.add(day.isoformat())
+    return days
 
 
 def _prepare_asset(f, a, out, bad):
@@ -520,12 +555,6 @@ def _prepare_asset(f, a, out, bad):
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
     _check_asset_forms(a, aid)
-    # 지구 안인지 모르면(A02 모름) 조정대상지역 해당을 정하지 못한다. 판정이 A02 를 다시 묻게 두면 질문지는 이미 답한 문항이라
-    # 내지 않아 대화가 끝나지 않는다. 등기하지 않은 미이행 주택은 판정이 조정대상지역을 보지 않는다
-    미등기_미이행 = a.get("등기") is False and a.get("미등기사유") == "미이행"
-    if 종류 == "주택" and not 미등기_미이행 and (a.get("지구해당") == "모름" or "A02:%s" % aid in (f.get("모름") or [])):
-        raise OutOfScope(aid, "지구 안인지 확인되지 않음(A02 모름). 조정대상지역 해당을 정하지 못해 계산하지 않았다. "
-                         "토지이용계획확인서 등으로 확인해 A02 를 예 또는 아니오로 답하면 계산한다", "없음")
     if 종류 == "주택":
         if "H05" not in bad and [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
             raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")
@@ -562,6 +591,7 @@ def prepare(f):
     _check_house_prices(f, out)
     _check_house_forms(f, out)
     _route_same_day(f, out)
+    _note_household_members(f, bad, out)
     if "P05" not in bad and get(f, "연간.다른양도"):
         out["확인사항"].append("같은 해 다른 양도는 이 계산에 들어가지 않았다. 기본공제와 합산 비교(소득세법 제104조⑤)를 다시 확인하라")
     return out

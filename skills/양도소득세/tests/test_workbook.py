@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 
+from yangdo import calc as engine_calc
 from yangdo import workbook as W
 
 TABLE = [[0, 0, "0.06"], [14000000, 840000, "0.15"], [50000000, 6240000, "0.24"], [88000000, 15360000, "0.35"],
@@ -147,6 +148,35 @@ def test_group_row_takes_rates_from_earliest_transfer(tmp_path, order):
     src = int(ws["E%d" % group_row].value.lstrip("=E"))
     assert ws["A%d" % src].value == "Y"
     assert ws["V%d" % group_row].value == "=V%d" % src
+
+
+def test_workbook_picks_group_anchor_with_the_engine_rule(monkeypatch):
+    """묶음 대표의 정의는 calc.group_anchor 하나다. 워크북이 따로 구현하면 두 정의가 갈라질 수 있다(m-6)."""
+    asked = []
+    real = engine_calc.group_anchor
+
+    def spy(members):
+        asked.append(sorted(m["id"] for m in members))
+        return real(members)
+
+    monkeypatch.setattr(engine_calc, "group_anchor", spy)
+    for order in ("XY", "YX"):
+        asked.clear()
+        rows = _group_result(order)["자산"]
+        groups = W._groups(rows)
+        assert asked == [["X", "Y"]]
+        assert {k: rows[i]["id"] for k, i in groups.items()} == {"중과2": "Y"}   # 양도일이 이른 Y
+    assert not hasattr(W, "_earliest")
+
+
+def test_workbook_group_anchor_breaks_a_tie_by_id_like_the_engine():
+    x = _group_result("XY")["자산"][0]
+    y = _group_result("XY")["자산"][1]
+    x["판정"]["양도일"] = y["판정"]["양도일"] = "2026-10-15"   # 양도일이 같으면 id 가 앞선 자산이 대표다
+    for rows in ([x, y], [y, x]):
+        groups = W._groups(rows)
+        assert rows[groups["중과2"]]["id"] == "X"
+        assert rows[groups["중과2"]] is engine_calc.group_anchor(rows)
 
 
 def test_recalc_does_not_print_progress_bar(tmp_path, capsys):
