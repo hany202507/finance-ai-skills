@@ -76,3 +76,13 @@ def test_no_local_paths():
     with open(QUESTIONS_PATH, encoding="utf-8") as f:
         text = f.read()
     assert "C:\\" not in text and "Users" not in text and os.sep + "work" + os.sep not in text
+
+
+def test_no_old_plan_number_left_and_legend_matches():
+    out = load_out()
+    text = json.dumps(out, ensure_ascii=False)
+    assert "계획3" not in text and "계획 3" not in text
+    legend = set(out["범위표기"])
+    for q in out["문항"]:
+        if q["id"] != "X05":  # X05 의 범위는 원본부터 범례에 없는 자유 문구다
+            assert q["범위"] in legend, q["id"]

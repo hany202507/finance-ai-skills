@@ -102,6 +102,8 @@ def convert(src):
             maps[q["id"]] = dict(zip(q["선택지"], codes))
     out = {k: v for k, v in src.items() if k not in ("문항", "계획3목록")}
     out["계획5목록"] = src.get("계획3목록", [])
+    out["범위"] = _plan5(src.get("범위"))
+    out["범위표기"] = {_plan5(k): _plan5(v) for k, v in src.get("범위표기", {}).items()}
     out["코드"] = CODE_MAP
     qs = []
     for q in src["문항"]:
@@ -112,6 +114,7 @@ def convert(src):
         q2["보이는조건"] = _cond(q.get("보이는조건"), maps, kinds)
         q2["범위"] = _plan5(q.get("범위"))
         q2["모를때처리"] = _plan5(q.get("모를때처리"))
+        q2["비고"] = _plan5(q.get("비고"))
         qs.append(q2)
     out["문항"] = qs
     return out
