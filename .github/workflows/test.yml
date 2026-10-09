@@ -35,7 +35,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.13"]
-        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보]
+        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령조회]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -83,7 +83,9 @@ jobs:
         with:
           node-version: "20"
       - run: npm ci
-      - run: node --check index.js && node --check selftest.mjs
+      - run: node --check index.js && node --check tools.mjs && node --check lib.mjs && node --check selftest.mjs
+      - name: 단위 시험(네트워크 없음)
+        run: npm test
       - name: OC 없이 띄우면 바로 종료해야 한다
         run: |
           if node index.js; then echo "LAW_OC 없이 떴다"; exit 1; fi
