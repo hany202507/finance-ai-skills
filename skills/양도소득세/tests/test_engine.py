@@ -208,7 +208,8 @@ def test_run_malformed_values_exit_2(tmp_path, capsys):
     f = copy.deepcopy(CASES["A"])
     f["자산"][0]["전체양도가액"] = "1억"
     code, out = go(tmp_path, f)
-    assert code == 2 and "사실관계의 값을 처리하지 못했다" in capsys.readouterr().out
+    assert code == 2 and "질문 1개" in capsys.readouterr().out
+    assert "[M01]" in (out / "질문.md").read_text(encoding="utf-8")
 
 
 # 출력 쓰기 실패는 종료코드 4. 1 은 검산 실패 전용이다.
