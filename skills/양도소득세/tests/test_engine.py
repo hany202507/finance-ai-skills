@@ -390,3 +390,67 @@ def test_engine_notes_and_warnings_come_from_judge_once():
     assert len(set(r["확인사항"])) == len(r["확인사항"]) and len(set(r["경고"])) == len(r["경고"])
     assert any(m.startswith("D: ") and "제167조의10①10호" in m for m in r["확인사항"])
     assert [w for w in r["경고"] if w.startswith("D: ")] and any("계류" in w for w in r["경고"])
+
+
+# ---- 최종 검토 반영: 모양이 틀린 사실관계는 역추적 없이 FactsError, 종료코드 2 -------------------
+BAD_HOUSE_LISTS = [{"H1": 1}, ["H1"], "H1", [1], [[]]]
+
+
+@pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
+def test_malformed_house_list_is_facts_error(bad):
+    f = copy.deepcopy(CASES["A"])
+    f["세대"]["주택목록"] = bad
+    with pytest.raises(F.FactsError) as e:
+        engine.calculate(f, today="2026-10-09")
+    assert "사실관계의 값을 처리하지 못했다" in str(e.value)
+
+
+@pytest.mark.parametrize("bad", BAD_HOUSE_LISTS)
+def test_run_malformed_house_list_exit_2(tmp_path, capsys, bad):
+    f = copy.deepcopy(CASES["A"])
+    f["세대"]["주택목록"] = bad
+    code, out = go(tmp_path, f)
+    cap = capsys.readouterr()
+    assert code == 2 and "Traceback" not in cap.err and "사실관계의 값을 처리하지 못했다" in cap.out
+
+
+def test_engine_wraps_attribute_and_index_errors(monkeypatch):
+    """prepare 안에서 AttributeError 나 IndexError 가 나도 FactsError 로 바꾼다."""
+    for exc in (AttributeError("'str' object has no attribute 'get'"), IndexError("list index out of range")):
+        def boom(f, exc=exc):
+            raise exc
+        monkeypatch.setattr(F, "prepare", boom)
+        with pytest.raises(F.FactsError) as e:
+            engine.calculate(copy.deepcopy(CASES["A"]), today="2026-10-09")
+        assert type(exc).__name__ in str(e.value)
+
+
+@pytest.mark.parametrize("bad", ["20261009", "2026-W41-5", "내일", "2026-10-9"])
+def test_engine_today_must_be_iso(bad):
+    """오늘 날짜도 YYYY-MM-DD 글자만 받는다. 파이썬 3.11 이상에서만 통하던 형식을 막는다."""
+    with pytest.raises(F.FactsError):
+        engine.calculate(copy.deepcopy(CASES["A"]), today=bad)
+
+
+@pytest.mark.parametrize("path", ["양도", "취득"])
+def test_compact_dates_in_facts_are_asked_not_calculated(path):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0][path]["잔금일"] = "20261115" if path == "양도" else "20141101"
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and r["계산"] is None
+    assert any("YYYY-MM-DD" in q["내용"] for q in r["질문"])
+
+
+def test_compact_residence_dates_are_asked_not_calculated():
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["거주기간"] = [["20141101", "20261115"]]
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and [q["문항"] for q in r["질문"]] == ["H07"]
+
+
+def test_run_stderr_has_no_progress_bar(tmp_path, capsys):
+    """검산용 재계산 라이브러리(formulas)의 진행 막대가 표준오류에 찍히지 않는다."""
+    code, _ = go(tmp_path, CASES["A"])
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "it/s" not in err and "%|" not in err and "\r" not in err and err.strip() == ""

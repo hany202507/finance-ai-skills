@@ -2,7 +2,7 @@
 """사실관계 JSON 하나로 판정·계산·검산까지. run.py 와 mcp_server.py 가 이 함수를 부른다."""
 import datetime as dt
 
-from yangdo import calc, codes, judge, regions, ruleset, verify, workbook
+from yangdo import calc, codes, dates, judge, regions, ruleset, verify, workbook
 from yangdo import facts as F
 
 STALE_DAYS = 7
@@ -39,7 +39,10 @@ def calculate(f, rules_dir=None, today=None, workbook_path=None):
     """판정·계산·검산. 인적사항이 있거나 값의 형식이 틀리면 facts.FactsError, 기준정보가 깨졌으면 ruleset.RuleError."""
     rs, reg, cd = _load_rules(rules_dir)
     today = today or today_seoul()
-    stale = (dt.date.fromisoformat(today) - dt.date.fromisoformat(rs.확인일)).days > STALE_DAYS
+    try:
+        stale = (dates.to_date(today) - dates.to_date(rs.확인일)).days > STALE_DAYS
+    except ValueError:
+        raise F.FactsError("오늘 날짜는 YYYY-MM-DD 로 적어야 한다: %r" % (today,))
     out = {"상태": "질문", "기준정보": {"판": rs.판id, "확인일": rs.확인일, "오늘": today, "낡음": stale},
            "질문": [], "다루지않음": [], "확인사항": [], "경고": [], "계산": None, "검산": []}
     if stale:
@@ -68,7 +71,8 @@ def calculate(f, rules_dir=None, today=None, workbook_path=None):
         except calc.Unsupported as u:
             out["다루지않음"].append({"자산": None, "내용": str(u), "계획": u.계획})
             return out
-    except (ValueError, TypeError, KeyError) as e:  # 날짜 형식이나 자료형이 틀린 값. 기준정보 오류와 구분한다
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
+        # 날짜 형식이나 자료형, 목록·객체 모양이 틀린 값(주택목록이 객체이거나 글자 원소를 가진 경우 등). 기준정보 오류와 구분한다
         raise _malformed(e) from e
     fails = verify.check(res, f, rs)
     if workbook_path:
