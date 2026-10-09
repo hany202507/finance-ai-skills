@@ -15,6 +15,7 @@ OK_LAND_USE = ("사업용", "주택부수토지")
 의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 계획 5
 WHOLE_MSG = "금액은 원 단위 정수로 적습니다"
 NONNEG_MSG = "금액은 0 이상이어야 합니다"
+EMPTY_MSG = "금액이 비어 있습니다"
 SHAPE_PRICE_MSG = "기준시가는 취득과 양도 칸마다 토지·건물·주택 금액을 적습니다"
 EXPENSE_GROUPS = (("취득부대", "M08"), ("자본적지출", "M09"), ("기타", "M10"), ("양도비", "M11"))
 RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간으로 적습니다"
@@ -133,6 +134,7 @@ def share(a):
 
 def _money(v, 문항, 자산id):
     """금액 한 칸을 검사한다. None 은 아직 없는 값이라 넘기고(없으면 need 가 묻는다), 정수만 받는다.
+    목록 안의 칸은 묻는 need 가 없으므로 _listed_money 를 쓴다.
     소수가 없는 실수는 정수로 본다. 글자와 bool 은 받지 않는다(엔진이 int() 와 크기 비교를 섞어 쓴다)."""
     if v is None:
         return
@@ -140,6 +142,13 @@ def _money(v, 문항, 자산id):
         raise Missing(문항, 자산id, WHOLE_MSG)
     if v < 0:
         raise Missing(문항, 자산id, NONNEG_MSG)
+
+
+def _listed_money(v, 문항, 자산id):
+    """목록 안의 금액 칸(감정가액 원소, 지출 항목의 금액). 이 칸은 따로 묻는 need 가 없어 비어 있어도 여기서 묻는다."""
+    if v is None:
+        raise Missing(문항, 자산id, EMPTY_MSG)
+    _money(v, 문항, 자산id)
 
 
 def _check_money(a):
@@ -162,7 +171,7 @@ def _check_money(a):
         for it in items:
             if not isinstance(it, dict):
                 raise Missing(문항, aid, "%s 는 지출마다 내용·지급일·금액·증빙종류·상대방을 적은 목록입니다" % group)
-            _money(it.get("금액"), 문항, aid)
+            _listed_money(it.get("금액"), 문항, aid)
     _money(a.get("감가상각비"), "M12", aid)
     _money(a.get("매매사례가액"), "M21", aid)
     appraisals = a.get("감정가액")
@@ -170,7 +179,7 @@ def _check_money(a):
         if not isinstance(appraisals, list):
             raise Missing("M21", aid, "감정가액은 감정평가마다 금액 하나씩 적은 목록입니다")
         for x in appraisals:
-            _money(x, "M21", aid)
+            _listed_money(x, "M21", aid)
     bs = a.get("기준시가")
     if bs is not None:
         if not isinstance(bs, dict):
@@ -212,6 +221,8 @@ def _check_asset_ids(f):
         aid = a.get("id") if isinstance(a, dict) else None
         if aid is None or (isinstance(aid, str) and not aid.strip()) or isinstance(aid, (list, dict)):
             raise FactsError("자산마다 비어 있지 않은 id 가 필요합니다")
+        if not isinstance(aid, str) or aid != aid.strip():
+            raise FactsError("자산 id 는 앞뒤 공백이 없는 글자여야 합니다. 세대 주택목록의 자산id 와 글자로 맞춥니다")
         if aid in seen:
             raise FactsError("자산 id 가 겹칩니다: %s" % aid)
         seen.add(aid)

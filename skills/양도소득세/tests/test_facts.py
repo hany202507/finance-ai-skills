@@ -275,6 +275,78 @@ def test_negative_money_asks(mutate, 문항):
     assert q["내용"] == NONNEG_MSG
 
 
+EMPTY_MSG = "금액이 비어 있습니다"
+
+
+def _expense_raw(group, item):
+    def m(f):
+        f["자산"][0]["필요경비"][group] = [item]
+    return m
+
+
+def _item(**kw):
+    base = {"내용": "공사", "지급일": "2020-03-02", "금액": 10_000_000, "증빙종류": "세금계산서", "상대방": "합성업체"}
+    base.update(kw)
+    return base
+
+
+def _item_without_amount():
+    it = _item()
+    del it["금액"]
+    return it
+
+
+@pytest.mark.parametrize("mutate,문항", [
+    (_set(("감정가액",), [500000000, None]), "M21"),
+    (_set(("감정가액",), [None]), "M21"),
+    (_expense_item("취득부대", None), "M08"),
+    (_expense_item("자본적지출", None), "M09"),
+    (_expense_item("기타", None), "M10"),
+    (_expense_item("양도비", None), "M11"),
+    (_expense_raw("취득부대", _item_without_amount()), "M08"),
+    (_expense_raw("자본적지출", _item_without_amount()), "M09"),
+    (_expense_raw("기타", _item_without_amount()), "M10"),
+    (_expense_raw("양도비", _item_without_amount()), "M11"),
+])
+def test_empty_amount_inside_list_asks(mutate, 문항):
+    q = _only(prep("B", mutate), 문항)
+    assert q["자산"] == "B" and q["내용"] == EMPTY_MSG
+
+
+def test_zero_amount_inside_list_passes():
+    p = prep("B", lambda f: (_expense_item("양도비", 0)(f), _set(("감정가액",), [0, 500000000])(f)))
+    assert p["질문"] == [] and p["다루지않음"] == []
+
+
+@pytest.mark.parametrize("mutate,문항", [
+    (_set(("필요경비",), "없음"), "M07"),
+    (_set(("필요경비",), []), "M07"),
+    (_set(("필요경비", "취득부대"), {"금액": 1}), "M08"),
+    (_set(("필요경비", "자본적지출"), "공사"), "M09"),
+    (_set(("필요경비", "기타"), 5), "M10"),
+    (_set(("필요경비", "양도비"), "중개료"), "M11"),
+    (_expense_raw("취득부대", "중개료"), "M08"),
+    (_expense_raw("자본적지출", 10_000_000), "M09"),
+    (_expense_raw("기타", ["공사"]), "M10"),
+    (_expense_raw("양도비", None), "M11"),
+    (_set(("감정가액",), "500000000"), "M21"),
+    (_set(("감정가액",), {"금액": 500000000}), "M21"),
+    (_set(("기준시가",), 400000000), "M22"),
+    (_set(("기준시가",), []), "M22"),
+    (_set(("기준시가",), {"취득": 400000000, "양도": {"주택": 650000000}}), "M22"),
+    (_set(("기준시가",), {"취득": {"주택": 400000000}, "양도": [650000000]}), "M22"),
+])
+def test_wrong_shape_asks_instead_of_crashing(mutate, 문항):
+    q = _only(prep("B", mutate), 문항)
+    assert q["자산"] == "B" and q["내용"]
+
+
+def test_wrong_shape_messages_name_the_expected_form():
+    assert "목록" in _only(prep("B", _set(("필요경비", "자본적지출"), "공사")), "M09")["내용"]
+    assert "목록" in _only(prep("B", _set(("감정가액",), "5억")), "M21")["내용"]
+    assert _only(prep("B", _set(("기준시가",), 4)), "M22")["내용"] == F.SHAPE_PRICE_MSG
+
+
 def test_duplicate_asset_id_rejected():
     f = copy.deepcopy(CASES["BC"])
     f["자산"][1]["id"] = "B"
@@ -292,6 +364,20 @@ def test_missing_or_empty_asset_id_rejected(bad):
         f["자산"][0]["id"] = bad
     with pytest.raises(F.FactsError):
         F.prepare(f)
+
+
+@pytest.mark.parametrize("bad", [1, 1.5, True, " B", "B ", "B" + chr(10), ["B"], {"id": "B"}])
+def test_non_string_or_padded_asset_id_rejected(bad):
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["id"] = bad
+    with pytest.raises(F.FactsError):
+        F.prepare(f)
+
+
+def test_asset_id_string_passes():
+    f = copy.deepcopy(CASES["A"])
+    f["자산"][0]["id"] = "A-1 아파트"
+    assert F.prepare(f)["시기"].keys() == {"A-1 아파트"}
 
 
 @pytest.mark.parametrize("bad", [
@@ -317,8 +403,10 @@ def test_residence_period_valid_forms_pass():
 
 
 def test_acquisition_after_transfer_asks():
-    q = _only(prep("A", _set(("취득", "잔금일"), "2027-01-01")), "A17")
+    p = prep("A", _set(("취득", "잔금일"), "2027-01-01"))
+    q = _only(p, "A17")
     assert q["자산"] == "A" and q["내용"] == "취득일이 양도일보다 늦습니다"
+    assert "A" not in p["시기"]
 
 
 def test_new_build_acquisition_after_transfer_asks_a18():
