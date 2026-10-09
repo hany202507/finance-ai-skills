@@ -182,6 +182,23 @@ def _s(x):
     return None if x is None else str(x)
 
 
+def group_anchor(members):
+    """합산 묶음의 대표 구성원. 양도일이 가장 이른 자산이고, 같은 날이면 id 가 앞선 자산이다. 입력 순서와 상관없다."""
+    return min(members, key=lambda m: (m["판정"]["양도일"], m["id"]))
+
+
+def _check_group_rates(members, rs):
+    """묶음 구성원이 각자 양도일의 세율로 계산해도 같은 세율이어야 한다. 묶음 세액은 가장 이른 양도일의 세율로 한 번에 구한다.
+    같은 묶음 안에서 세율이 양도일에 따라 달라지면(계류 중인 개정이 들어온 경우 등) 어느 세율로 합산할지 정할 수 없어 계산하지 않는다."""
+    def seen(m):
+        v, on = m["판정"], to_date(m["판정"]["양도일"])
+        return (rates(v, rs, on), rates(v, rs, on, True), rs.value("기본세율", on), rs.value("지방.기본세율", on))
+    first = seen(members[0])
+    if any(seen(m) != first for m in members[1:]):
+        ids = ", ".join(m["id"] for m in members)
+        raise Unsupported("합산 묶음(%s) 안에서 양도일에 따라 세율이 달라 묶음 세액을 정하지 않았다" % ids)
+
+
 def _table(t):
     return [[int(a), int(b), str(c)] for a, b, c in t]
 
@@ -200,7 +217,7 @@ def annual(f, verdicts, rs, cd):
         c.update(taxable(g, v, rs))
         rows.append({"id": v["id"], "판정": v, "계산": c})
     남은 = rs.value("기본공제", on0)
-    for i in sorted(range(len(rows)), key=lambda i: (rows[i]["판정"]["양도일"], i)):
+    for i in sorted(range(len(rows)), key=lambda i: (rows[i]["판정"]["양도일"], rows[i]["id"])):
         c, v = rows[i]["계산"], rows[i]["판정"]
         if v["미등기"] or v["전액비과세"] or c["양도소득금액"] <= 0:
             c["기본공제"] = 0
@@ -235,19 +252,22 @@ def annual(f, verdicts, rs, cd):
     호별 = 지방호별 = 0
     세율별 = {}
     for members in 묶음.values():
-        v0 = members[0]["판정"]
-        on_g = to_date(v0["양도일"])
+        anchor = group_anchor(members)
+        v0 = anchor["판정"]
+        on_g = to_date(v0["양도일"])  # 묶음 세율의 기준일은 구성원 가운데 가장 이른 양도일이다
+        if len(members) >= 2:
+            _check_group_rates(members, rs)
         s = sum(m["계산"]["과세표준"] for m in members)
         t, w = rate_tax(v0, s, rs, on_g)
         lt = rate_tax(v0, s, rs, on_g, local=True)[0]
         호별 += t
         지방호별 += lt
-        if len(members) >= 2:  # 묶음이 세율구분을 정한다
-            grp, kind = rate_group(v0, w)
+        if len(members) >= 2:  # 묶음의 이긴 쪽(단일·누진)이 구성원의 세율종류와 세율구분을 정한다. 세율그룹은 구성원 각자의 것을 둔다
             for m in members:
+                grp, kind = rate_group(m["판정"], w)
                 m["계산"]["세율그룹"], m["계산"]["세율종류"] = grp, kind
                 m["계산"]["코드"]["세율구분"] = cd.rate_code(grp, kind)
-        k = (members[0]["계산"]["코드"]["국내외분"], members[0]["계산"]["코드"]["세율구분"])
+        k = (anchor["계산"]["코드"]["국내외분"], anchor["계산"]["코드"]["세율구분"])
         x = 세율별.setdefault(k, {"국내외분": k[0], "세율구분": k[1], "과세표준": 0, "산출세액": 0})
         x["과세표준"] += s
         x["산출세액"] += t
@@ -262,6 +282,6 @@ def annual(f, verdicts, rs, cd):
     합계 = {"과세표준": sum(r["계산"]["과세표준"] for r in rows), "자산별세액": 자산별, "호별합산세액": 호별,
             "합산비교세액": 합산, "산출세액": max(호별, 합산), "지방_자산별": 지방자산별, "지방_호별합산": 지방호별,
             "지방_합산비교": 지방합산, "지방소득세": max(지방호별, 지방합산)}
-    return {"자산": rows, "합계": 합계, "세율별": list(세율별.values()),
+    return {"자산": rows, "합계": 합계, "세율별": [세율별[k] for k in sorted(세율별)],
             "세율표": {"국세": _table(rs.value("기본세율", on0)), "지방": _table(rs.value("지방.기본세율", on0))},
             "근거": 근거, "확인사항": 확인}

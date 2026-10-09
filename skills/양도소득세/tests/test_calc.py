@@ -189,3 +189,95 @@ def test_short_term_crossover_boundary():
     on = C.to_date("2026-10-01")
     assert C.rate_tax(v, 1_318_800_000, RS, on)[1] == "단일"
     assert C.rate_tax(v, 1_318_800_001, RS, on)[1] == "누진"
+
+
+# ---- 최종 검토 반영: 합산 묶음은 입력 순서와 상관없이 같은 값을 낸다 -----------------------------
+def _normalized(r):
+    import json
+    return ({row["id"]: row for row in r["자산"]}, r["합계"], sorted(r["세율별"], key=lambda x: (x["국내외분"], x["세율구분"])),
+            sorted(r["확인사항"]), sorted(json.dumps(x, ensure_ascii=False, sort_keys=True) for x in r["근거"]))
+
+
+def _bcf():
+    f = cases.facts([cases.B자산, cases.C자산, cases.F자산],
+                    [cases.house("H1", cases.해운대_우, "2019-11-10", 자산id="B"),
+                     cases.house("H2", cases.해운대_중, "2026-01-10", 자산id="C"), cases.춘천집])
+    return f, [VERDICTS["B"], VERDICTS["C"], VERDICTS["F"]]
+
+
+def test_group_result_is_independent_of_input_order_bcf():
+    f, vs = _bcf()
+    want = _normalized(C.annual(f, vs, RS, CD))
+    for order in ([2, 1, 0], [1, 0, 2], [2, 0, 1], [0, 2, 1]):
+        got = _normalized(C.annual(f, [vs[i] for i in order], RS, CD))
+        assert got == want, order
+
+
+def test_group_members_keep_their_own_rate_group_label():
+    """기본세율 묶음 안의 주택 B 와 토지 F 는 각자 주택·일반 표시를 유지한다(입력 순서로 덮어쓰지 않는다)."""
+    f, vs = _bcf()
+    for order in ([0, 1, 2], [2, 1, 0]):
+        by = {row["id"]: row["계산"] for row in C.annual(f, [vs[i] for i in order], RS, CD)["자산"]}
+        assert (by["B"]["세율그룹"], by["B"]["세율종류"]) == ("주택", "기본")
+        assert (by["F"]["세율그룹"], by["F"]["세율종류"]) == ("일반", "기본")
+        assert by["B"]["코드"]["세율구분"] == by["F"]["코드"]["세율구분"] == "10"
+
+
+def _heavy_pair(same_day=False):
+    from cases import D자산
+    k2 = copy.deepcopy(CASES["K2"]["자산"][0])
+    d = copy.deepcopy(D자산)
+    vk, vd = dict(VERDICTS["K2"]), dict(VERDICTS["D"])
+    if same_day:
+        k2 = copy.deepcopy(D자산)
+        k2["id"], vk = "D2", dict(VERDICTS["D"], id="D2")
+    return cases.facts([d, k2]), [vd, vk]
+
+
+@pytest.mark.parametrize("same_day", [False, True])
+def test_two_member_heavy_group_is_independent_of_input_order(same_day):
+    f, vs = _heavy_pair(same_day)
+    a = C.annual(f, vs, RS, CD)
+    b = C.annual(f, list(reversed(vs)), RS, CD)
+    assert _normalized(a) == _normalized(b)
+    assert {row["계산"]["합산묶음"] for row in a["자산"]} == {"중과2"}
+    # 두 자산이 한 묶음이라 호별 합산세액은 합친 과세표준에 한 번 적용한 값이다
+    s = sum(row["계산"]["과세표준"] for row in a["자산"])
+    assert a["합계"]["호별합산세액"] == C.rate_tax(vs[0], s, RS, C.to_date("2026-10-15"))[0]
+
+
+def test_same_day_basic_deduction_goes_by_id_not_input_order():
+    f, vs = _heavy_pair(same_day=True)
+    a = {r["id"]: r["계산"]["기본공제"] for r in C.annual(f, vs, RS, CD)["자산"]}
+    b = {r["id"]: r["계산"]["기본공제"] for r in C.annual(f, list(reversed(vs)), RS, CD)["자산"]}
+    assert a == b == {"D": 2_500_000, "D2": 0}   # 양도일이 같으면 id 순서로 기본공제를 쓴다
+
+
+class _ShiftedRules:
+    """2026-09-01 이후 양도분의 중과 가산세율이 달라지는 가짜 규칙세트. 나머지는 진짜 규칙세트를 따른다."""
+
+    def __init__(self, base, key="중과.2주택", 값=Decimal("0.25")):
+        self.base, self.key, self.값 = base, key, 값
+
+    def value(self, key, on):
+        if key == self.key and C.to_date(on) >= C.to_date("2026-09-01"):
+            return self.값
+        return self.base.value(key, on)
+
+    def __getattr__(self, name):
+        return getattr(self.base, name)
+
+
+def test_group_with_rates_that_differ_by_transfer_date_is_out_of_scope():
+    """같은 묶음 안에서 양도일에 따라 세율이 달라지면(계류 중인 개정이 들어온 뒤) 입력 순서로 세액이 갈리므로 계산하지 않는다."""
+    f, vs = _heavy_pair()
+    for order in (vs, list(reversed(vs))):
+        with pytest.raises(C.Unsupported) as e:
+            C.annual(f, order, _ShiftedRules(RS), CD)
+        assert "양도일" in str(e.value) and e.value.계획 == "5"
+
+
+def test_group_with_unchanged_rates_ignores_shifted_rule_for_other_keys():
+    f, vs = _heavy_pair()
+    r = C.annual(f, vs, _ShiftedRules(RS, key="중과.3주택"), CD)   # 쓰이지 않는 키가 바뀌어도 영향 없다
+    assert r["합계"]["산출세액"] == C.annual(f, vs, RS, CD)["합계"]["산출세액"]
