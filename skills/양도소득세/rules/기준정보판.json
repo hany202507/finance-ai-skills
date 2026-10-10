@@ -1,6 +1,8 @@
 {
- "id": "ca9fb7c67b9595e8",
+ "id": "c0de4c5cba761a39",
  "파일": {
+  "../efile/규격판.json": "9e871bd2ccfce1c583bd9e9923a3bd6dbb713129305cbc7cef29e621402045f6",
+  "../forms/서식판.json": "29ce837c5c0697423a3431a56739265901b1226a24808cdad93239e8a74a10ee",
   "ruleset.json": "96e1a3f217978ba6528d2776d976a740ef7cee93a5162f2eaf398c4960ea163b",
   "고시/조정대상지역.json": "bfca44562d5457182976b27363c0062e474054a9462d7da6fc71e269eca80cff",
   "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
