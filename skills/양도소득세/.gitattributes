@@ -1,0 +1,3 @@
+# 생성물과 그 틀은 줄끝을 LF 로 고정한다. 윈도에서 CRLF 로 받으면 「생성물이 최신인지」 시험이 바이트 단위로 어긋난다
+질문지/양도소득세_질문지.html text eol=lf
+scripts/questionnaire_template/* text eol=lf
