@@ -115,7 +115,9 @@ def test_user_text_never_becomes_a_formula(tmp_path, bad_id):
     result["자산"][0]["id"] = bad_id
     p = W.write(result, str(tmp_path / "w.xlsx"))
     cell = _sheet(p)["A2"]
-    assert cell.value == bad_id and cell.data_type == "s"
+    # lxml 이 없으면 openpyxl 은 \r 을 이스케이프하지 않고 쓰고, XML 파서는 읽을 때 날것의 \r 을 \n 으로 바꾼다(XML 1.0 줄끝 처리).
+    # 이 시험이 지키는 것은 글자로 남는다는 점이라 그 경우의 \n 도 받는다
+    assert cell.value in (bad_id, bad_id.replace("\r", "\n")) and cell.data_type == "s"
     assert W.compare(p, result) == []   # 수식으로 쓴 칸과 대조는 그대로 맞는다
 
 
