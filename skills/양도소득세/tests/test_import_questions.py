@@ -49,7 +49,7 @@ def load_out():
 def test_committed_definition_is_consistent():
     out = load_out()
     qs = out["문항"]
-    assert len(qs) == 73
+    assert len(qs) == 76
     ids = {q["id"] for q in qs}
     roots = ("신고인.", "연간.", "세대.", "자산[].")
 
@@ -86,3 +86,17 @@ def test_no_old_plan_number_left_and_legend_matches():
     for q in out["문항"]:
         if q["id"] != "X05":  # X05 의 범위는 원본부터 범례에 없는 자유 문구다
             assert q["범위"] in legend, q["id"]
+
+
+def test_form_stage_questions_f01_to_f06():
+    out = load_out()
+    qs = {q["id"]: q for q in out["문항"]}
+    for qid in ("F01", "F02", "F03", "F04", "F05", "F06"):
+        q = qs[qid]
+        assert q["범위"] == "서식단계" and q["키"] == [] and q["선택지"] is None and q["facts키"].startswith("(서식 전용)"), qid
+        assert q["보이는조건"] == "항상" and not q["질문"].rstrip().endswith("?"), qid
+    assert "관계코드" in qs["F02"]["질문"] and "양수인[].관계코드" in qs["F02"]["facts키"]
+    assert "등기원인" in qs["F04"]["질문"] and "자산[].등기원인.취득" in qs["F04"]["facts키"]
+    assert "0336" in qs["F04"]["도움말"] and "0021" in qs["F04"]["도움말"]
+    assert "신고.홈택스ID" in qs["F06"]["facts키"] and "신고.분납신청" in qs["F03"]["facts키"]
+    assert [q["id"] for q in out["문항"]][-6:] == ["F01", "F02", "F03", "F04", "F05", "F06"]
