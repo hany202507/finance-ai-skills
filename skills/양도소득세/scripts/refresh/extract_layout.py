@@ -15,6 +15,8 @@
 2 가 어긋나면 FIXUPS 에 그 레코드의 길이 고침이 있고 그 값이 필드 합과 같을 때만 통과한다.
 하나라도 어긋나면 종료코드 1, 아무 파일도 쓰지 않는다(부가세 extract_vat_layout.py 와 같은 규칙).
 표 셀을 고쳐 읽은 곳과 뺀 행도 FIXUPS 에 근거와 함께 적는다. 고친 셀은 원문 값이 FIXUPS 에 적은 것과 같을 때만 고친다.
+분류 칸의 값 목록을 점검내용으로 읽은 곳(종류 분류칸)과 값 목록 검사에 쓸 허용 목록(종류 허용)도 FIXUPS 에 둔다.
+FIXUPS 에 없는 분류 칸 값, 적용할 필드가 없는 FIXUPS 는 오류다.
 --초안 을 주면 레코드별 필드 수·길이를 그 초안과 대조해 다른 곳을 표준오류에 찍는다(종료코드에는 영향 없음).
 """
 import argparse
@@ -62,8 +64,16 @@ FIXUPS = [
      "근거": "p29 표에서 번호가 17(거주지국명) 다음 18(도로명_도로명코드)로 이어지고, 18번 누적 219 = 207 + 12 다. "
              "넣으면 필드 합이 410 이 되어 길이 표 400 과 어긋난다",
      "확인": "원문 대조"},
+    {"레코드": "05", "종류": "분류칸", "no": 4, "name": "과세구분", "원문": "01,05",
+     "내용": "분류 칸의 값 목록 「01,05」 를 점검내용으로 읽는다(점검내용 칸은 비어 있다)",
+     "근거": "p45 표 4번 행: 점검내용 칸 공란, 분류 칸 「01,05」. 01,05 는 분류 이름이 아니라 값 목록이다",
+     "확인": "원문 대조"},
+    {"레코드": "05", "종류": "허용", "no": 4, "name": "과세구분", "값": ["01", "05", "ZZ"],
+     "내용": "점검내용은 01,05 그대로 두고, 필드에 허용 목록 01·05·ZZ 를 둔다. 값 목록으로 검사하는 쪽은 허용 을 쓴다",
+     "근거": "p45 필드 표 값 목록은 「01,05」, p47 4번 설명은 「'01'비과세, '05'과세제외 'ZZ'해당없음」. 과세 자산은 ZZ 다(codes 과세구분.해당없음)",
+     "확인": "홈택스 형식검증"},
     {"레코드": "05", "종류": "셀", "no": 5, "name": "국내외분(소재지)", "칸": "check", "원문": "1, 1,2", "값": "1,2",
-     "내용": "점검내용을 1,2 로 읽는다",
+     "내용": "점검내용을 1,2 로 읽는다(분류 칸의 값 목록 「1,2」 를 점검내용으로 옮긴 것도 이 고침에 든다)",
      "근거": "p45 표 5번 행은 점검내용 칸 「1」, 분류 칸 「1,2」 다. 같은 표 4번(과세구분)도 값 목록 「01,05」 가 분류 칸에 있다. "
              "p47 세율구분 표는 국내 1·국외 2, 같은 쪽 5번 설명은 국내 1·국외 9 라 국외 코드는 정하지 못했다(국외는 다루지 않음)",
      "확인": "원문 대조"},
@@ -157,8 +167,11 @@ def parse_row(row, rec, tno):
     lm = re.fullmatch(r"(\d+)(?:,(\d+))?", re.sub(r"\s+", "", ln))
     if not lm or not re.fullmatch(r"\d+", acc):
         raise LayoutError("%s %s: 길이 %r 누적 %r 를 못 읽는다" % (rec, name, ln, acc))
+    # 마지막 칸(분류)에 분류 이름이 아닌 값이 있으면 위에서 점검내용으로 옮겼다. FIXUPS 에 있어야 받는다
+    last = c[-1]
+    moved = last if last and last not in CLASS_KNOWN and last not in CLASS_DATE else ""
     return {"삭제": numcell == "삭제", "원문명": name, "type": t, "len": int(lm.group(1)), "dec": int(lm.group(2) or 0),
-            "누적": int(acc), "비고": note, "서식항목": item, "check": ", ".join(chk), "class": cls}
+            "누적": int(acc), "비고": note, "서식항목": item, "check": ", ".join(chk), "class": cls, "분류칸값": moved}
 
 
 def field_tables(tables):
@@ -206,6 +219,9 @@ def default_of(note):
 
 def build_record(rec, tno, rows, lengths, pages, errors):
     fix_cells = {(x["no"], x["칸"]): x for x in FIXUPS if x["레코드"] == rec and x["종류"] == "셀"}
+    fix_moved = {x["no"]: x for x in FIXUPS if x["레코드"] == rec and x["종류"] == "분류칸"}
+    fix_allow = {x["no"]: x for x in FIXUPS if x["레코드"] == rec and x["종류"] == "허용"}
+    cell_nos = {no for no, _ in fix_cells}
     dropped_names = {normalize_name(x["name"]) for x in FIXUPS if x["레코드"] == rec and x["종류"] == "삭제행"}
     fields, dropped, pos = [], [], 0
     for row in rows:
@@ -232,7 +248,19 @@ def build_record(rec, tno, rows, lengths, pages, errors):
             if fx["name"] != name or check not in (fx["원문"], fx["값"]):
                 errors.append("%s %d: FIXUPS 셀 고침의 원문(%s %r)이 지금 표(%s %r)와 다르다" % (rec, no, fx["name"], fx["원문"], name, check))
             check = fx["값"]
+        if raw["분류칸값"]:
+            mv = fix_moved.pop(no, None)
+            if mv:
+                if mv["name"] != name or mv["원문"] != raw["분류칸값"]:
+                    errors.append("%s %d: FIXUPS 분류칸 원문(%s %r)이 지금 표(%s %r)와 다르다" % (rec, no, mv["name"], mv["원문"], name, raw["분류칸값"]))
+            elif no not in cell_nos:
+                errors.append("%s %d %s: 분류 칸 값 %r 를 점검내용으로 읽었다(FIXUPS 에 없음)" % (rec, no, name, raw["분류칸값"]))
         f["check"] = check
+        al = fix_allow.pop(no, None)
+        if al:
+            if al["name"] != name:
+                errors.append("%s %d: FIXUPS 허용의 필드(%s)가 지금 표(%s)와 다르다" % (rec, no, al["name"], name))
+            f["허용"] = list(al["값"])
         cls = raw["class"]
         f["class"] = "DATE" if cls in CLASS_DATE else cls
         f["start"], f["end"] = start, pos
@@ -247,6 +275,8 @@ def build_record(rec, tno, rows, lengths, pages, errors):
         fields.append(f)
     for (no, _), fx in fix_cells.items():
         errors.append("%s %d %s: FIXUPS 셀 고침을 적용할 필드가 없다" % (rec, no, fx["name"]))
+    for no, fx in list(fix_moved.items()) + list(fix_allow.items()):
+        errors.append("%s %d %s: FIXUPS %s 을 적용할 필드가 없다" % (rec, no, fx["name"], fx["종류"]))
     for n in sorted(dropped_names - {d["name"] for d in dropped}):
         errors.append("%s: FIXUPS 삭제행 %s 가 표에 없다" % (rec, n))
     total = sum(f["len"] for f in fields)
@@ -345,6 +375,7 @@ FIELD_KEYS = {
     "notnull": "원문 비고가 Not Null 이면 true",
     "default": "원문 비고의 default 값(있을 때만)",
     "check": "원문 점검내용(FIX 면 고정값)",
+    "허용": "값 목록 검사에 쓸 목록(있을 때만). check 와 설명이 다른 칸에 FIXUPS 근거로 둔다. 있으면 check 대신 이것으로 검사한다",
     "class": "원문 분류. YYYYMM·YYYYMMDD 는 DATE 로 모으고 분류원문 에 원문",
     "start": "1 부터 센 시작 바이트", "end": "끝 바이트",
     "page": "항목 설명이 있는 규격서 쪽(설명이 없으면 레이아웃 쪽)",
