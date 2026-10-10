@@ -11,7 +11,7 @@
 
   // ---- 저장소 -------------------------------------------------------------
   function fresh() {
-    return { v: 1, sig: defs.sig, nextAsset: 2, nextHouse: 1, showPending: false,
+    return { v: 1, sig: defs.sig, nextAsset: 2, nextHouse: 1, hidePending: false,
              glob: { ans: {}, mo: {} }, assets: [{ id: '자산1', ans: {}, mo: {} }], houses: [] };
   }
   function loadStore() {
@@ -308,7 +308,7 @@
     }
     var why = whyBox(q);
     if (why) node.appendChild(why);
-    node.appendChild(el('p', { class: 'pnote', text: '이 질문이 필요한지는 앞 답을 보고 회계사가 정합니다. 아시면 미리 적어 주세요.' }));
+    node.appendChild(el('p', { class: 'pnote', text: '이 질문이 필요한지는 회계사가 확인합니다. 해당하면 답해 주세요.' }));
     var err = el('div', { class: 'err', role: 'alert' });
     err.hidden = true;
     node.appendChild(err);
@@ -350,7 +350,7 @@
       obj.appendChild(wrap);
     });
     row.appendChild(obj);
-    var sub = el('div', { class: 'sub' }, [el('p', { class: 'info', text: '회계사가 확인한 뒤 필요하면 묻는 항목입니다. 아시면 미리 적어 주세요.' })]);
+    var sub = el('div', { class: 'sub' }, [el('p', { class: 'info', text: '이 항목이 필요한지는 회계사가 확인합니다. 해당하면 답해 주세요.' })]);
     var lastQ = null;
     var subObj = el('div', { class: 'obj' });
     spec.extra.forEach(function (fd) {
@@ -364,7 +364,7 @@
       subObj.appendChild(cell);
     });
     sub.appendChild(subObj);
-    sub.hidden = !store.showPending;
+    sub.hidden = !!store.hidePending;
     subBoxes.push(sub);
     row.appendChild(sub);
     return row;
@@ -477,7 +477,7 @@
     var total = 0, done = 0, open = [];
     recs.forEach(function (r) {
       var s = (c.st[r.q.id] && c.st[r.q.id][r.unit]) || 'U';
-      var visible = s === 'T' || (s === 'E' && store.showPending);
+      var visible = s === 'T' || (s === 'E' && !store.hidePending);
       r.visible = visible;
       r.el.hidden = !visible;
       r.el.classList.toggle('pending', s === 'E');
@@ -492,14 +492,14 @@
     recs.forEach(function (r) { if (r.visible && zoneShown.hasOwnProperty(r.q.zone)) zoneShown[r.q.zone] = true; });
     document.getElementById('sec-top').hidden = !zoneShown.top;
     document.getElementById('sec-house').hidden = !zoneShown.house;
-    subBoxes.forEach(function (b) { b.hidden = !store.showPending; });
+    subBoxes.forEach(function (b) { b.hidden = !!store.hidePending; });
     var pend = 0;
     core.Q.forEach(function (q) {
       Object.keys(c.st[q.id]).forEach(function (u) { if (c.st[q.id][u] === 'E') pend += 1; });
     });
     document.getElementById('progress').textContent = '답한 문항 ' + done + ' / 해당 문항 ' + total;
-    document.getElementById('pending-label').textContent = '회계사가 확인하는 항목도 함께 보기 (' + pend + '개)';
-    document.getElementById('show-pending').checked = !!store.showPending;
+    document.getElementById('pending-label').textContent = '회계사가 확인하는 항목 숨기기 (' + pend + '개)';
+    document.getElementById('hide-pending').checked = !!store.hidePending;
     // 마무리
     var errBox = document.getElementById('done-errors'), openBox = document.getElementById('done-open');
     errBox.textContent = ''; openBox.textContent = '';
@@ -545,7 +545,7 @@
     store.assets.push({ id: '자산' + store.nextAsset++, ans: {}, mo: {} });
     buildAll(); touch();
   });
-  document.getElementById('show-pending').addEventListener('change', function (e) { store.showPending = e.target.checked; touch(); });
+  document.getElementById('hide-pending').addEventListener('change', function (e) { store.hidePending = e.target.checked; touch(); });
   document.getElementById('download').addEventListener('click', download);
   document.getElementById('download-top').addEventListener('click', download);
   document.getElementById('reset').addEventListener('click', function () {

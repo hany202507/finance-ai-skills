@@ -264,7 +264,6 @@ function makeCore(defs, conds) {
     };
     if (h.asset) {
       o['자산id'] = h.asset;
-      o['소유자'] = simple('소유자') || '본인';
       if (assetOut) {
         if (assetOut['소재지']) o['소재지'] = assetOut['소재지'];
         if (assetOut['주택유형']) o['유형'] = assetOut['주택유형'];
@@ -274,15 +273,15 @@ function makeCore(defs, conds) {
         if (취득['원인']) o['취득원인'] = 취득['원인'];
         if (assetOut['지분'] !== undefined) o['지분'] = assetOut['지분'];
       }
-      var rent = simple('등록임대');
-      o['등록임대'] = rent === true;
+      ['소유자', '등록임대'].forEach(function (n) {
+        var x = simple(n);
+        if (x !== undefined) o[n] = x;
+      });
     } else {
       ['소유자', '소재지', '유형', '취득일', '취득원인', '지분', '등록임대'].forEach(function (n) {
         var x = simple(n);
         if (x !== undefined) o[n] = x;
       });
-      if (!o['소유자']) o['소유자'] = '본인';
-      if (o['등록임대'] === undefined) o['등록임대'] = false;
       if (!o['소재지']) err('집의 주소(시·도, 시·군·구)를 적어 주세요');
       if (!o['취득일']) err('집을 산 날을 적어 주세요');
     }

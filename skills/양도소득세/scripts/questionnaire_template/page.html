@@ -18,15 +18,16 @@
     <li>이 파일은 인터넷에 연결하지 않고 이 브라우저 안에서만 동작합니다. 입력한 내용은 어디로도 전송되지 않습니다.</li>
     <li>이름, 주민등록번호, 전화번호, 계좌번호는 묻지 않습니다. 신고서를 만들 때 따로 받습니다.</li>
     <li>아는 만큼만 답하셔도 됩니다. 모르는 문항은 「모르겠어요」를 고르시면 회계사가 확인합니다.</li>
-    <li>앞 답을 계산해 봐야 필요한지 알 수 있는 질문(금액, 거주 기간 등)은 처음에는 숨겨 둡니다.</li>
-    <li>미리 적어 두려면 아래 「회계사가 확인하는 항목도 함께 보기」를 켜 주세요.</li>
+    <li>앞 답을 계산해 봐야 필요한지 알 수 있는 질문(금액, 거주 기간 등)에는 「회계사가 확인합니다」 표시가 붙습니다.</li>
+    <li>해당하면 답해 주세요. 보기 번거로우면 위의 「회계사가 확인하는 항목 숨기기」를 눌러도 됩니다.</li>
+    <li>숨긴 항목은 회계사가 나중에 묻습니다.</li>
     <li>다 쓰셨으면 아래 「답변 내려받기」로 파일을 저장해 회계사에게 보내 주세요.</li>
     <li>입력한 내용은 이 브라우저에 임시로 저장됩니다. 공용 컴퓨터에서는 마친 뒤 「모두 지우고 다시 시작」을 눌러 주세요.</li>
   </ul>
 </header>
 <div class="bar" id="bar">
   <span id="progress" class="progress" aria-live="polite"></span>
-  <label class="toggle"><input type="checkbox" id="show-pending"><span id="pending-label">회계사가 확인하는 항목도 함께 보기</span></label>
+  <label class="toggle"><input type="checkbox" id="hide-pending"><span id="pending-label">회계사가 확인하는 항목 숨기기</span></label>
   <button type="button" id="download-top" class="primary">답변 내려받기</button>
 </div>
 <main id="main">

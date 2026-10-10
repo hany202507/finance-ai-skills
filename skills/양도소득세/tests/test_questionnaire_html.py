@@ -226,7 +226,7 @@ def _to_ui(spec, v, pick_none=False):
 def _store_from_facts(f, defs, pick_none=False):
     """pick_none: 복수선택의 빈 목록을 화면에서는 「해당 없음」 류를 골라 나타낸다(빈 채로 두면 답하지 않은 것이다)."""
     qs = defs["questions"]
-    store = {"v": 1, "nextAsset": 99, "nextHouse": 99, "showPending": True, "glob": {"ans": {}, "mo": {}}, "assets": [], "houses": []}
+    store = {"v": 1, "nextAsset": 99, "nextHouse": 99, "hidePending": False, "glob": {"ans": {}, "mo": {}}, "assets": [], "houses": []}
     for q in qs:
         if q["unit"] == "전역" and q["spec"]["t"] != "houses":
             v = _value_of(q, f)
@@ -436,3 +436,76 @@ def test_html_facts_give_the_same_tax_as_the_cases():
         assert got["상태"] == "완료", (n, got["질문"], got["다루지않음"])
         assert got["계산"]["합계"]["산출세액"] == want["계산"]["합계"]["산출세액"], n
         assert got["계산"]["합계"]["지방소득세"] == want["계산"]["합계"]["지방소득세"], n
+
+
+def test_default_screen_shows_engine_condition_questions():
+    """엔진 값이 있어야 필요 여부가 정해지는 문항(필요경비, 거주 기간 등)도 기본 화면에 보인다. 끄는 선택만 남겼다."""
+    s = open(HTML, encoding="utf-8").read()
+    assert "hidePending: false" in s and "showPending" not in s
+    assert 'id="hide-pending"' in s and "회계사가 확인하는 항목 숨기기" in s
+    assert "이 질문이 필요한지는 회계사가 확인합니다. 해당하면 답해 주세요." in s
+    assert "!store.hidePending" in s       # 엔진 조건 문항(상태 E)은 숨기기를 켜지 않는 한 보인다
+
+
+@needs_node
+def test_s1_filled_on_default_screen_gives_38349466(tmp_path):
+    """기본 화면에서 S1 을 끝까지 넣어 받은 JSON 으로 run.py 가 38,349,466원을 낸다. 필요경비와 거주 기간은 엔진 조건 문항이다."""
+    defs, conds = mq.build(_doc())
+    store = _store_from_facts(CASES["S1"], defs, pick_none=True)
+    res = _node({"mode": "facts", "defs": defs, "conds": conds, "stores": [store]})["results"][0]
+    assert res["errors"] == []
+    sid = store["assets"][0]["id"]
+    for qid in ("M05", "M06", "M07", "M08", "M09", "M11", "H07"):
+        assert res["states"][qid][sid] in ("T", "E"), qid          # 화면이 이 문항을 묻는다(상태 E 는 기본으로 보인다)
+    assert any(res["states"][q][sid] == "E" for q in ("M06", "M08", "H07"))
+    path = tmp_path / "양도소득세_답변.json"
+    path.write_text(json.dumps(res["facts"], ensure_ascii=False, indent=2), encoding="utf-8")
+    p = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "run.py"), "--사실관계", str(path), "--출력", str(tmp_path / "out"),
+                        "--오늘", "2026-10-11"], capture_output=True, encoding="utf-8")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "38,349,466" in p.stdout
+
+
+@needs_node
+def test_unanswered_engine_condition_questions_stay_out_of_the_json():
+    """답하지 않은 문항은 빈 값으로 사실관계에 들어가지 않는다. 엔진 조건 문항도 같다."""
+    defs, conds = mq.build(_doc())
+    # 판 집(주택) 하나만 고르고 아무것도 답하지 않은 화면
+    empty = {"v": 1, "nextAsset": 2, "nextHouse": 2, "hidePending": False, "glob": {"ans": {}, "mo": {}},
+             "assets": [{"id": "자산1", "ans": {"P02": "주택"}, "mo": {}}], "houses": [{"id": "H1", "asset": "자산1", "f": {}}]}
+    # 합성 사례에서 엔진 조건 문항의 답만 지운 화면
+    names = sorted(CASES)
+    full = [_store_from_facts(CASES[n], defs, pick_none=True) for n in names]
+    stores = [empty]
+    for st in full:
+        base = _node({"mode": "facts", "defs": defs, "conds": conds, "stores": [st]})["results"][0]["states"]
+        cut = copy.deepcopy(st)
+        for q in defs["questions"]:
+            if q["zone"] == "row":
+                continue
+            for unit, state in base[q["id"]].items():
+                if state == "E":
+                    holder = next(a for a in cut["assets"] if a["id"] == unit) if q["unit"] == "자산" else cut["glob"]
+                    holder["ans"].pop(q["id"], None)
+        for row in cut["houses"]:
+            for fd in defs["houseRow"]["extra"]:
+                row["f"].pop(fd["n"], None)
+        stores.append(cut)
+    results = _node({"mode": "facts", "defs": defs, "conds": conds, "stores": stores})["results"]
+    assert results[0]["facts"] == {"세대": {"주택목록": [{"id": "H1", "자산id": "자산1"}]}, "자산": [{"id": "자산1", "종류": "주택"}]}
+    assert "모름" not in results[0]["facts"]
+    for n, st, res in zip(["빈 화면"] + names, stores, results):
+        out = res["facts"]
+        for q in defs["questions"]:
+            if q["zone"] == "row" or q["spec"]["t"] == "houses":
+                continue
+            for unit, state in res["states"][q["id"]].items():
+                if state != "E":
+                    continue
+                a = next((x for x in out["자산"] if x["id"] == unit), None)
+                assert _value_of(q, out, asset=a) is None, (n, q["id"], unit, "답하지 않은 엔진 조건 문항이 JSON 에 있다")
+        for row in out.get("세대", {}).get("주택목록", []):
+            for fd in defs["houseRow"]["extra"]:
+                assert fd["n"] not in row, (n, row["id"], fd["n"])
+        assert not [m for m in out.get("모름", []) if m.split(":")[0] in {q["id"] for q in defs["questions"] if q["zone"] != "row"} and
+                    res["states"][m.split(":")[0]].get(m.split(":", 1)[1]) == "E"]

@@ -278,7 +278,7 @@ def house_row(by_all, houseqs):
         return [[o["코드"], o["표시"]] for o in by_all[qid]["선택지"]]
 
     main = [
-        fld("소유자", "누구 명의인가요(고르지 않으면 본인)", choice([("본인", "본인"), ("배우자", "배우자"), ("세대원", "다른 세대원")])),
+        fld("소유자", "누구 명의인가요", choice([("본인", "본인"), ("배우자", "배우자"), ("세대원", "다른 세대원")])),
         fld("소재지", "주소(시·도, 시·군·구, 읍·면·동)", {"t": "addr"}, sold=False),
         fld("유형", "주택 형태", choice(opts_of("A04")), sold=False),
         fld("취득일", "산 날(잔금일)", DATE, sold=False),
