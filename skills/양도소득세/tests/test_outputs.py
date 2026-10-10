@@ -99,11 +99,13 @@ def test_regulated_area_row_says_not_applicable_when_missing():
 def test_review_has_no_forbidden_style():
     for name in ("A", "S1", "BC", "BF"):
         md = outputs.review_md(calc_result(name))
-        assert "—" not in md
+        assert chr(0x2014) not in md
         assert all(not ln.rstrip().endswith("?") for ln in md.splitlines())
 
 
-# ---- 호별 합산 독립 재계산 ----
+# ---- 호별 합산 독립 재계산 (V11) ----
+# V10 도 합계의 「호별」 문장을 낸다. 아래 시험은 V10 이 비는 변조만 쓰고 검산 번호 집합이 정확히 {"V11"} 인지 본다.
+# 그래야 group_totals 가 비어도 통과하는 시험이 생기지 않는다.
 
 def failures(name, mutate):
     r = calc_result(name)
@@ -111,36 +113,101 @@ def failures(name, mutate):
     return verify.check(r["계산"], CASES[name], RS)
 
 
+def codes(msgs):
+    return {m.split(":")[0].split(" ")[0] for m in msgs}
+
+
+def only_v11(msgs):
+    assert codes(msgs) == {"V11"}, msgs
+    assert all("호별" in m for m in msgs), msgs
+
+
 def test_clean_cases_have_no_group_failure():
     for name in ("A", "BC", "BF", "C", "D", "E", "J", "K", "S1"):
         r = calc_result(name)
-        assert not any("호별" in m for m in r["검산"]), (name, r["검산"])
+        assert not any(m.startswith("V11") for m in r["검산"]), (name, r["검산"])
 
 
-def test_group_check_detects_local_group_total():
-    msgs = failures("BC", lambda c: c["합계"].__setitem__("지방_호별합산", c["합계"]["지방_호별합산"] + 10))
-    assert any("호별" in m and "지방" in m for m in msgs)
+def test_group_check_alone_catches_national_total():
+    """BF 는 호별 합산 세액과 합산 비교 세액이 같아서, 호별 쪽을 1원 낮춰도 산출세액 = max(...) 이 맞아 V10 이 비어 있다."""
+    r = calc_result("BF")
+    t = r["계산"]["합계"]
+    assert t["호별합산세액"] == t["합산비교세액"]
+    t["호별합산세액"] -= 1
+    only_v11(verify.check(r["계산"], CASES["BF"], RS))
+
+
+def test_group_check_alone_catches_local_total():
+    r = calc_result("BF")
+    t = r["계산"]["합계"]
+    assert t["지방_호별합산"] == t["지방_합산비교"]
+    t["지방_호별합산"] -= 1
+    msgs = verify.check(r["계산"], CASES["BF"], RS)
+    only_v11(msgs)
+    assert any("지방" in m for m in msgs)
 
 
 def test_group_check_detects_wrong_rate_table():
     def bad_table(c):
         for row in c["세율표"]["국세"]:
             row[2] = "0.99"
-    assert any("호별" in m for m in failures("BC", bad_table))
+    only_v11(failures("BC", bad_table))
+
+
+def test_group_check_detects_wrong_local_rate_table():
+    def bad_table(c):
+        for row in c["세율표"]["지방"]:
+            row[2] = "0.099"
+    msgs = failures("BC", bad_table)
+    only_v11(msgs)
+    assert all("지방" in m for m in msgs)
+
+
+def test_group_check_detects_wrong_anchor_rate():
+    """묶음 세율은 결과의 적용세율에서 읽는다. 단기 단일세율을 바꾸면 묶음 세액이 달라져 V11 만 걸린다."""
+    def bad_rate(c):
+        c["자산"][0]["계산"]["적용세율"]["단일"] = "0.50"
+    only_v11(failures("C", bad_rate))
+
+
+def test_group_check_detects_wrong_group_base():
+    """두 구성원의 과세표준 합이 묶음 과세표준이다. 한 구성원의 과세표준과 합계 과세표준만 같이 고치면 V11 만 걸린다."""
+    def bad_base(c):
+        c["자산"][1]["계산"]["과세표준"] += 1_000_000
+        c["합계"]["과세표준"] += 1_000_000
+        c["자산"][1]["계산"]["양도소득금액"] += 1_000_000   # V4 가 비게 한다
+    msgs = failures("BF", bad_base)
+    assert "V11" in codes(msgs), msgs
+
+
+SINGLE_AND_HEAVY = ("C", "E", "J", "D", "K")   # 단기 단일, 미등기 단일, 단기+중과, 중과2, 중과3
+
+
+@pytest.mark.parametrize("name", SINGLE_AND_HEAVY)
+def test_group_check_alone_catches_single_rate_and_heavy_groups(name):
+    """합산 비교 세액이 0 인 단일 자산은 산출세액을 같이 올려 V10 을 비우고 호별 합산 세액만 어긋나게 한다."""
+    def bump(c):
+        c["합계"]["호별합산세액"] += 1
+        c["합계"]["산출세액"] += 1
+    only_v11(failures(name, bump))
+
+
+@pytest.mark.parametrize("name", SINGLE_AND_HEAVY)
+def test_group_check_alone_catches_local_single_rate_and_heavy_groups(name):
+    def bump(c):
+        c["합계"]["지방_호별합산"] += 1
+        c["합계"]["지방소득세"] += 1
+    msgs = failures(name, bump)
+    only_v11(msgs)
+    assert any("지방" in m for m in msgs)
 
 
 def test_group_check_runs_on_a_two_member_group():
     r = calc_result("BF")   # B, F 가 기본세율 한 묶음
     assert {a["계산"]["합산묶음"] for a in r["계산"]["자산"]} == {"기본"}
+    assert len(r["계산"]["자산"]) == 2
     r["계산"]["합계"]["호별합산세액"] -= 1
-    assert any("호별" in m for m in verify.check(r["계산"], CASES["BF"], RS))
-
-
-def test_group_check_covers_single_rate_and_heavy_groups():
-    for name in ("C", "E", "J", "D", "K"):   # 단기 단일, 미등기 단일, 단기+중과, 중과2, 중과3
-        r = calc_result(name)
-        r["계산"]["합계"]["호별합산세액"] += 1
-        assert any("호별" in m for m in verify.check(r["계산"], CASES[name], RS)), name
+    only_v11(verify.check(r["계산"], CASES["BF"], RS))
 
 
 def test_group_check_ignores_fully_exempt_assets():
