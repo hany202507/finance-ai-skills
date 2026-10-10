@@ -49,7 +49,7 @@ def load_out():
 def test_committed_definition_is_consistent():
     out = load_out()
     qs = out["문항"]
-    assert len(qs) == 73
+    assert len(qs) == 76
     ids = {q["id"] for q in qs}
     roots = ("신고인.", "연간.", "세대.", "자산[].")
 
