@@ -142,6 +142,8 @@ def test_codes_follow_runtime_decisions():
     for cause in ("분양", "공공매입"):
         assert C["취득등기목적"][cause]["코드"] == "A1ZZCZ" and C["취득등기목적"][cause]["확인"]
         assert C["취득등기원인"][cause]["코드"] == "0055" and C["취득등기원인"][cause]["확인"]
+        assert C["취득등기목적"][cause]["확인"].startswith("등기사항증명서와 다르면 신고인 JSON 자산[id].등기목적.취득(6자리)으로 고친다")
+        assert C["취득등기원인"][cause]["확인"].startswith("등기사항증명서와 다르면 신고인 JSON 자산[id].등기원인.취득(4자리)으로 고친다")
     assert C["취득등기원인"]["경매"]["코드"] is None and C["양도등기원인"]["경매"]["코드"] is None
     assert all(C["양수인관계"][k]["코드"] is None for k in ("배우자", "직계", "친족", "법인", "기타특수관계"))
     assert C["양수인관계"]["타인"]["코드"] == "ZA"
