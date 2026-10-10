@@ -21,9 +21,15 @@ from yangdo import questions as Qs  # noqa: E402
 from yangdo.calc import OK_EVIDENCE  # noqa: E402
 
 
+def _env():
+    """자식 프로세스의 표준 입출력과 파일을 UTF-8 로 고정한다(윈도 기본 cp949 에 기대지 않는다)."""
+    return dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+
+
 def test_generated_html_is_up_to_date(tmp_path):
     out = tmp_path / "q.html"
-    subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "make_questionnaire_html.py"), "--출력", str(out)], check=True)
+    subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "make_questionnaire_html.py"), "--출력", str(out)], check=True,
+                   env=_env())
     assert out.read_bytes() == open(HTML, "rb").read()
 
 
@@ -83,7 +89,7 @@ def _doc():
 
 
 def _node(payload):
-    p = subprocess.run([NODE, HARNESS], input=json.dumps(payload).encode("utf-8"), capture_output=True, check=True)
+    p = subprocess.run([NODE, HARNESS], input=json.dumps(payload).encode("utf-8"), capture_output=True, check=True, env=_env())
     return json.loads(p.stdout.decode("utf-8"))
 
 
@@ -461,7 +467,7 @@ def test_s1_filled_on_default_screen_gives_38349466(tmp_path):
     path = tmp_path / "양도소득세_답변.json"
     path.write_text(json.dumps(res["facts"], ensure_ascii=False, indent=2), encoding="utf-8")
     p = subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "run.py"), "--사실관계", str(path), "--출력", str(tmp_path / "out"),
-                        "--오늘", "2026-10-11"], capture_output=True, encoding="utf-8")
+                        "--오늘", "2026-10-11"], capture_output=True, encoding="utf-8", env=_env())
     assert p.returncode == 0, p.stdout + p.stderr
     assert "38,349,466" in p.stdout
 
