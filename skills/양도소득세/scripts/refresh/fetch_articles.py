@@ -3,7 +3,7 @@
 
   python scripts/refresh/fetch_articles.py [--rules rules] [--오늘 YYYY-MM-DD]
 
-2025-01-01 에 시행 중이던 판부터 시행예정 판까지 받는다. 이미 받은 판 파일은 다시 받지 않는다.
+2025-01-01 에 시행 중이던 판부터 시행예정 판까지 받는다. 이미 받은 판 파일은 다시 받지 않는다(감시 조문이 빠진 판 파일과 시행예정 판은 다시 받는다).
 OC 는 환경변수 LAW_OC 또는 `claude mcp get korean-law` 에서 읽고 출력하지 않는다.
 종료코드: 0 정상, 1 수집 실패 또는 TaxDoctor 불일치.
 한 법령이라도 수집에 실패하면 판목록.json 과 확인기록.json 은 덮어쓰지 않는다. 모든 파일은 임시 파일을 거쳐 바꿔 넣는다.
@@ -160,6 +160,16 @@ def _label(조):
     return "제%s조" % 조
 
 
+def _has_articles(path, arts):
+    """받아 둔 판 파일에 감시 조문이 모두 있는지. 감시 조문을 더하면 옛 판 파일에는 그 조문이 없어 다시 받아야 한다."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            have = json.load(f).get("조문", {})
+    except (OSError, ValueError):
+        return False
+    return all(a in have for a in arts)
+
+
 def _search_all(api, name):
     rows = []
     for page in range(1, 11):
@@ -194,7 +204,7 @@ def fetch(rules_dir, api, td, today):
                 rel = "%s/%s@%s.json" % (law, v["MST"], v["시행일"])
                 path = os.path.join(base, rel)
                 v["파일"] = rel
-                if os.path.exists(path) and v["상태"] != "시행예정":
+                if os.path.exists(path) and v["상태"] != "시행예정" and _has_articles(path, arts):
                     continue
                 j = api("lawService.do", {"target": "eflaw", "MST": v["MST"], "efYd": v["시행일"].replace("-", "")})
                 got = str(((j.get("법령") or {}).get("기본정보") or {}).get("시행일자", ""))
@@ -274,7 +284,7 @@ def main(argv=None):
         print("수집 준비 실패: %s" % e)
         return 1
     rep = fetch(a.rules, api, td, a.오늘)
-    print("새 판 %d개, 시행예정 판 갱신 %d개, TaxDoctor 불일치 %d건" % (rep["새판"], rep["갱신"], rep["불일치"]))
+    print("새 판 %d개, 다시 받아 바뀐 판 %d개, TaxDoctor 불일치 %d건" % (rep["새판"], rep["갱신"], rep["불일치"]))
     for e in rep["오류"]:
         print("오류: %s" % mask(e))
     if not rep["색인쓰기"]:
