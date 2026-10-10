@@ -205,7 +205,7 @@ def test_output_write_failure_names_the_file(tmp_path, monkeypatch):
     def locked(*a, **k):
         raise PermissionError(13, "Permission denied", target)
 
-    monkeypatch.setattr(M.RUN, "write_outputs", locked)
+    monkeypatch.setattr(M.outputs, "write_outputs", locked)
     t = err("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(tmp_path / "out")})
     assert target in t and "닫고" in t
 

@@ -16,12 +16,10 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
-for p in (SKILL, HERE):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+if SKILL not in sys.path:
+    sys.path.insert(0, SKILL)
 
-import run as RUN  # noqa: E402
-from yangdo import engine, questions, regions, ruleset  # noqa: E402
+from yangdo import engine, outputs, questions, regions, ruleset  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
@@ -228,10 +226,10 @@ def _calculate(args):
         out_dir = os.path.expanduser(out_dir)
         try:
             os.makedirs(out_dir, exist_ok=True)
-            RUN.clear_previous(out_dir)  # 이전 완료 결과가 이번 질문 결과 옆에 남지 않게 한다
+            outputs.clear_previous(out_dir)  # 이전 완료 결과가 이번 질문 결과 옆에 남지 않게 한다
         except OSError as e:
             raise _write_error(e, out_dir) from e
-        wb = os.path.join(out_dir, RUN.WORKBOOK)
+        wb = os.path.join(out_dir, outputs.WORKBOOK)
     try:
         res = engine.calculate(f, today=today, workbook_path=wb)
     except OSError as e:
@@ -242,7 +240,7 @@ def _calculate(args):
         raise _malformed(e) from e
     s = {k: res[k] for k in ("상태", "기준정보", "질문", "다루지않음", "확인사항", "경고", "검산")}
     try:
-        s["파일"] = RUN.write_outputs(res, out_dir) if out_dir else []
+        s["파일"] = outputs.write_outputs(res, out_dir) if out_dir else []
     except OSError as e:
         raise _write_error(e, out_dir) from e
     cal = res["계산"]
