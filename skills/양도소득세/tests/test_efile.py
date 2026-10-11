@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import shutil
+import subprocess
 
 import pytest
 
@@ -185,8 +186,10 @@ def test_buyer_and_asset_and_expense_fields():
 def test_refund_account_only_when_refund():
     rv = _rv("S1")
     rv["환급계좌"] = {"은행코드": "004", "계좌번호": "1234567890"}
-    h = efile.build_records(rv)[0]
+    recs, notes = efile.build(rv)
+    h = recs[0]
     assert _cut(h, "은행코드(국세환급금)") == "" and _cut(h, "계좌번호(국세환급금)") == ""      # 납부할 세액이 있으면 적지 않는다
+    assert notes == []                                    # 환급이 없으면 환급계좌를 읽지 않는다(C7)
     for row in rv["전자신고"]["세율별"]:
         row["자진납부할세액"] = -1000
     h = efile.build_records(rv)[0]
@@ -316,12 +319,19 @@ def test_write_passes_rrn_warning(tmp_path):
     assert efile.write(_rv("S1"), str(tmp_path))["경고"] == []
 
 
-def test_write_reports_checker_that_cannot_run(tmp_path):
+def test_write_reports_checker_that_cannot_run(tmp_path, monkeypatch):
     out = efile.write(_rv("S1"), str(tmp_path), python=os.path.join(str(tmp_path), "없는파이썬"))
-    assert out["경로"] is None and out["검증"] and os.listdir(tmp_path) == []
+    assert out["경로"] is None and os.listdir(tmp_path) == []
+    assert len(out["검증"]) == 1 and "FileNotFoundError" in out["검증"][0]      # 원인이 문장에 드러난다
+
+    def slow(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="python", timeout=1)
+    monkeypatch.setattr(efile.subprocess, "run", slow)
+    out = efile.write(_rv("S1"), str(tmp_path))
+    assert out["경로"] is None and "TimeoutExpired" in out["검증"][0] and os.listdir(tmp_path) == []
 
 
-def test_lock_file(tmp_path):
+def test_lock_file(tmp_path, monkeypatch):
     assert efile._spec_locked() is False
     d = tmp_path / "efile"
     d.mkdir()
@@ -333,9 +343,10 @@ def test_lock_file(tmp_path):
     (d / "규격판.json").write_text(json.dumps(dict(spec, 잠금=True), ensure_ascii=False), encoding="utf-8")
     assert efile._spec_locked(str(d)) is True
     out = tmp_path / "out"
+    monkeypatch.setattr(efile, "EFILE_DIR", str(d))
     with pytest.raises(efile.Locked, match="잠"):
-        efile.write(_rv("S1"), str(out), efile_dir=str(d))
-    assert not out.exists() or os.listdir(out) == []
+        efile.write(_rv("S1"), str(out))
+    assert not out.exists()                                # 잠금이면 출력 폴더를 건드리지 않는다
     (d / "규격판.json").write_text(json.dumps(dict(spec, 판="V5.18"), ensure_ascii=False), encoding="utf-8")
     assert efile._spec_locked(str(d)) is True              # 규격판과 레이아웃의 판이 다르면 만들지 않는다
     os.remove(str(d / "규격판.json"))
@@ -349,3 +360,180 @@ def test_does_not_import_checker():
             {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names} | \
             {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
     assert not any("efile_check" in n for n in names)
+
+
+# ---------------------------------------------------------------- 검토 1차 반영
+
+def _walk(root):
+    return [os.path.join(d, n) for d, _, names in os.walk(str(root)) for n in names]
+
+
+def _submission_named(paths):
+    return [p for p in paths if efile_check.FILE_NAME.match(os.path.basename(str(p)))]
+
+
+def _bad_rv():
+    rv = _rv("S1")
+    rv["전자신고"]["세율별"][0]["과세표준"] += 1
+    return rv
+
+
+def _refuse(*a, **k):
+    raise PermissionError("흉내 낸 삭제 실패")
+
+
+def test_failed_check_leaves_no_submission_named_file_when_folder_cannot_be_removed(tmp_path, monkeypatch):
+    # 임시 폴더 삭제가 막혀도(백신·색인기가 잡은 경우) 검증에 실패한 파일이 제출용 이름으로 남으면 안 된다
+    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    out = efile.write(_bad_rv(), str(tmp_path))
+    monkeypatch.undo()
+    assert out["경로"] is None
+    assert _submission_named(_walk(tmp_path)) == []
+    left = [n for n in os.listdir(tmp_path) if n.startswith(".efile-")]
+    assert len(left) == 1                                  # 폴더는 남았고
+    assert any("임시 폴더" in m and left[0] in m for m in out["검증"])      # 남았다는 것을 알린다
+    out = efile.write(_rv("S1"), str(tmp_path))            # 다음 실행이 남은 폴더를 쓸어 낸다
+    assert out["검증"] == [] and out["경고"] == [] and os.listdir(tmp_path) == ["20261215C116300.01"]
+
+
+def test_blocked_temp_file_is_renamed_away_from_submission_name(tmp_path, monkeypatch):
+    real_remove = os.remove
+
+    def remove(path, *a, **k):
+        if ".efile-" in str(path) and _submission_named([path]):
+            raise PermissionError("흉내 낸 삭제 실패")
+        return real_remove(path, *a, **k)
+    monkeypatch.setattr(efile.os, "remove", remove)
+    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    out = efile.write(_bad_rv(), str(tmp_path))
+    monkeypatch.undo()
+    assert out["경로"] is None
+    files = _walk(tmp_path)
+    assert files and _submission_named(files) == []        # 지우지 못한 파일은 제출용이 아닌 이름으로 바뀌었다
+    assert any("임시 폴더" in m for m in out["검증"])
+
+
+def test_stuck_submission_named_file_is_reported(tmp_path, monkeypatch):
+    real_remove, real_replace = os.remove, os.replace
+
+    def stuck(path):
+        return ".efile-" in str(path) and _submission_named([path])
+
+    def remove(path, *a, **k):
+        if stuck(path):
+            raise PermissionError("흉내 낸 삭제 실패")
+        return real_remove(path, *a, **k)
+
+    def replace(src, dst, *a, **k):
+        if stuck(src):
+            raise PermissionError("흉내 낸 이름 바꾸기 실패")
+        return real_replace(src, dst, *a, **k)
+    monkeypatch.setattr(efile.os, "remove", remove)
+    monkeypatch.setattr(efile.os, "replace", replace)
+    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    out = efile.write(_bad_rv(), str(tmp_path))
+    monkeypatch.undo()
+    assert out["경로"] is None
+    assert any("제출하지" in m and "20261215C116300.01" in m for m in out["검증"])
+
+
+def test_leftover_folder_after_success_is_warned(tmp_path, monkeypatch):
+    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    out = efile.write(_rv("S1"), str(tmp_path))
+    monkeypatch.undo()
+    assert out["검증"] == [] and os.path.isfile(out["경로"])
+    assert any("임시 폴더" in m for m in out["경고"])       # 신고값 임시 JSON 이 남았을 수 있다
+    assert _submission_named(_walk(tmp_path)) == [out["경로"]]
+
+
+def test_write_sweeps_folders_left_by_killed_run(tmp_path):
+    old = tmp_path / ".efile-killed"
+    old.mkdir()
+    (old / "20261215C116300.01").write_bytes(b"unchecked")
+    (old / "신고값.json").write_text("{}", encoding="utf-8")
+    keep = tmp_path / "다른파일.txt"
+    keep.write_text("x", encoding="utf-8")
+    out = efile.write(_bad_rv(), str(tmp_path))            # 실패하는 실행이어도 쓸어 낸다
+    assert out["경로"] is None and os.listdir(tmp_path) == ["다른파일.txt"]
+
+
+def test_codes_are_read_from_code_table(tmp_path):
+    with open(os.path.join(EFILE, "codes_c116300.json"), encoding="utf-8") as f:
+        codes = json.load(f)
+    assert codes["납세자구분"]["1"]["코드"] == "01" and codes["납세자구분"]["9"]["코드"] == "09"
+    assert codes["세무프로그램코드"]["기타"]["코드"] == "9000"
+    for table in ("납세자구분", "세무프로그램코드"):
+        assert table in codes["메타"]["필드"]
+        assert all(isinstance(v["쪽"], int) and v["이름"] for v in codes[table].values())
+    assert "형식검증" in codes["납세자구분"]["9"]["메모"]
+    assert not hasattr(efile, "TAXPAYER_KIND") and not hasattr(efile, "PROGRAM_CODE")
+    d = tmp_path / "efile"
+    d.mkdir()
+    shutil.copy(os.path.join(EFILE, "layout_c116300.json"), str(d / "layout_c116300.json"))
+    codes["세무프로그램코드"]["기타"]["코드"] = "1001"
+    codes["납세자구분"]["1"]["코드"] = "07"
+    (d / "codes_c116300.json").write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    h = efile.build_records(_rv("S1"), efile_dir=str(d))[0]
+    assert _cut(h, "세무프로그램코드") == "1001" and _cut(h, "납세자구분") == "07"
+    codes["납세자구분"]["1"]["코드"] = None
+    (d / "codes_c116300.json").write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="규격서에 없는 코드"):
+        efile.build_records(_rv("S1"), efile_dir=str(d))
+
+
+def _foreign_rv():
+    rv = _rv("S1")
+    rv["신고인"].update({"내외국인": "9", "국적": "US"})
+    rv["신고인"]["코드"].update({"내외국인여부": "N", "국적": "US"})
+    return rv
+
+
+def test_foreign_filer_code_is_warned(tmp_path):
+    rv = _foreign_rv()
+    recs, notes = efile.build(rv)
+    assert _cut(recs[0], "납세자구분") == "09"
+    assert len(notes) == 1 and "01-4 납세자구분" in notes[0] and "형식검증" in notes[0]
+    assert rv["신고인"]["주민등록번호"] not in notes[0] and rv["신고인"]["성명"] not in notes[0]
+    out = efile.write(rv, str(tmp_path))
+    assert out["검증"] == [] and out["경고"] == notes
+    assert efile.build(_rv("S1"))[1] == []
+
+
+def test_write_refuses_other_efile_dir(tmp_path):
+    d = tmp_path / "efile"
+    shutil.copytree(EFILE, str(d), ignore=shutil.ignore_patterns("법정동코드.json"))
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="efile_dir"):
+        efile.write(_rv("S1"), str(out), efile_dir=str(d))
+    assert not out.exists()
+    assert efile.write(_rv("S1"), str(out), efile_dir=EFILE)["검증"] == []        # 기본 폴더를 적어 주는 것은 된다
+    assert len(efile.build_records(_rv("S1"), efile_dir=str(d))) == 13              # build_records 의 인자는 그대로
+
+
+def test_dropped_refund_account_is_warned():
+    def notes(acct, due):
+        rv = _rv("S1")
+        rv["환급계좌"] = acct
+        for row in rv["전자신고"]["세율별"]:
+            row["자진납부할세액"] = due
+        recs, out = efile.build(rv)
+        assert _cut(recs[0], "은행코드(국세환급금)") == "" and _cut(recs[0], "계좌번호(국세환급금)") == ""
+        return out
+    assert notes({"은행코드": "004", "계좌번호": "1234567890"}, 1000) == []
+    assert notes(None, -1000) == [] and notes("", -1000) == []
+    for acct, due in (({"은행코드": "004", "계좌번호": ""}, -1000), ({"은행코드": None, "계좌번호": "1234567890"}, -1000),
+                      ({"은행코드": "004", "계좌번호": "1234567890"}, -5000000), ("004-1234567890", -1000)):
+        out = notes(acct, due)
+        assert len(out) == 1 and "환급계좌" in out[0] and "1234567890" not in out[0], (acct, due)
+
+
+def test_missing_numeric_value_is_refused():
+    for key, name in (("지분분자", "양수인_지분.분자"), ("지분분모", "양수인_지분.분모")):
+        rv = _rv("S1")
+        rv["양수인"][0][key] = None
+        with pytest.raises(ValueError, match=name):
+            efile.build_records(rv)
+    rv = _rv("S1")
+    rv["전자신고"]["계산명세"][0]["거래금액_양도가액"] = None
+    with pytest.raises(ValueError, match="거래금액_양도가액"):
+        efile.build_records(rv)
