@@ -12,6 +12,7 @@
 """
 import json
 import os
+import re
 
 from yangdo import SKILL_DIR
 from yangdo import codes as rate_codes
@@ -40,6 +41,11 @@ EVIDENCE_NOTE = {"10": "기타(계좌이체 등 금융거래 증빙)"}
 ACQ_EXPENSE_CODE = "111"          # 부표3 매입가액
 DEPRECIATION_CODE = "141"         # 부표3 감가상각비(취득가액에서 뺀다)
 ACQ_TAX_ELECTRONIC = "11201"      # 부표3 취득세
+
+# 신고값 확인사항 가운데 전자신고 파일 전용 문장을 가르는 표지. 레코드 칸 번호(05-46, 03-31), 「0n 레코드」, 법정동코드, 등기목적·등기원인.
+# 「레코드」 라는 글자만으로 거르지 않는다: 「필요경비에서 뺀 지출이라 부표3·07 레코드에 넣지 않았다」는 화면 입력에도 알려야 하는 문장이다
+FILE_ONLY = re.compile(r"\b0[1-7]-\d+|\b0[1-7] 레코드|법정동코드|등기목적|등기원인")
+KEEP_NOTE = ("필요경비에서 뺀",)
 
 _cache = {}
 
@@ -89,14 +95,6 @@ def _area(land, bldg):
     return "토지 %s㎡ · 건물 %s㎡" % (land, bldg)
 
 
-def _asset_kind(code):
-    """부표1 자산종류(앞 0 을 뗀 글자) → 이름."""
-    for v in _codes()["자산종류"].values():
-        if str(v["코드"]).lstrip("0") == str(code).lstrip("0"):
-            return v["이름"]
-    return str(code)
-
-
 def _code_name(group, code):
     for v in _codes()[group].values():
         if v.get("코드") == code:
@@ -128,10 +126,12 @@ def _sheet3(rv):
     return {s["자산"]: s for s in rv.get("부표3") or []}
 
 
-def _head(title, kind_note=None):
-    out = ["# " + title, "",
-           "- 이 파일에는 신고 내용이 들어 있다. 공유에 주의한다.",
-           "- 주민등록번호와 전화번호는 이 파일에 적지 않는다. 신고인 JSON 에 있는 「신고인 본인 정보」를 보고 화면에 입력한다."]
+def _head(title, kind_note=None, enter=True):
+    """머리글. enter 가 참이면 주민등록번호·전화번호를 화면에 입력하는 안내를 붙인다(입력 안내서만)."""
+    secret = "주민등록번호와 전화번호는 이 파일에 적지 않는다."
+    if enter:
+        secret += " 신고인 JSON 에 있는 「신고인 본인 정보」를 보고 화면에 입력한다."
+    out = ["# " + title, "", "- 이 파일에는 신고 내용이 들어 있다. 공유에 주의한다.", "- " + secret]
     if kind_note:
         out += kind_note
     return out
@@ -165,7 +165,7 @@ def _sec_basic(rv):
         ["귀속연도", s.get("귀속연도") or str(s["양도일자"])[:4]],
         ["양도일", _date(s["양도일자"]) + (" (양도일이 여럿이면 마지막 날)" if len(rv["부표1"]) > 1 else "")],
         ["작성일", _date(s["작성일"]) + " (이 날 신고하는 것으로 세액을 계산했다)"],
-        ["신고인 본인 정보", "성명, 주민등록번호, 주소, 전화번호는 홈택스 로그인 정보로 화면에 나온다. 다르거나 비어 있으면 "
+        ["신고인 본인 정보", "성명, 주민등록번호, 주소, 전화번호가 로그인 정보로 화면에 나오는지는 (확인 필요)이다. 나오지 않거나 다르면 "
                         "신고인 JSON 의 신고인 절을 보고 직접 입력한다. 이 안내서에는 적지 않는다"],
         ["거주구분", (cd["거주구분"].get(p.get("거주구분")) or {}).get("이름") or p.get("거주구분")],
         ["내외국인", (cd["내외국인"].get(p.get("내외국인")) or {}).get("이름") or p.get("내외국인")],
@@ -202,7 +202,7 @@ def _sec_assets(rv):
         tax_class = _code_name("과세구분", detail[a["자산"]]["과세구분"])
         rows = [
             ["과세구분", tax_class],
-            ["자산종류", _asset_kind(a["자산종류"])],
+            ["자산종류", _code_name("자산종류", detail[a["자산"]]["자산의종류"])],
             ["소재지", a.get("소재지")],
             ["총면적", _area(a["총면적_토지"], a["총면적_건물"])],
             ["지분", "%s/%s" % (a.get("지분분자", 1), a.get("지분분모", 1))],
@@ -250,9 +250,6 @@ def _sec_acquisition(rv):
                            ["취득 당시", _won(b["취득_건물"]), _won(b["취득_토지"]), _won(b["취득_합계"])]]) + [""]
         elif a["취득가액종류"] in ("매매사례가액", "감정가액"):
             out += ["%s 근거 자료는 부속서류 목록에서 확인한다." % a["취득가액종류"], ""]
-    if any(NEED_VALUE in line for line in out if line.startswith("|")):
-        out += ["「%s」는 신고값에 값이 없는 항목이다. 계약서 등을 보고 화면에 직접 입력하거나, 신고인 JSON 과 사실관계에 값을 채운 뒤 "
-                "신고값을 다시 만든다." % NEED_VALUE, ""]
     return out
 
 
@@ -336,8 +333,8 @@ def _sec_tax(rv):
     out += ["### 세액계산 결과", ""] + _table(head, body) + [""]
     note = ["감면세액, 외국납부세액공제, 원천징수세액, 가산세는 0원이라 입력하지 않는다."]
     if s["구분"] == "예정":
-        note.append("전자신고세액공제 %s은 홈택스가 자동으로 적용한다. 화면 값이 같은지 본다. 직접 넣는 란이 있으면 이 금액을 넣는다."
-                    % _won(cols["합계"].get("전자신고공제")))
+        note.append("전자신고세액공제 %s을 넣었다. 홈택스가 자동으로 적용하는지는 (확인 필요)이다. 화면 값이 이 금액과 같은지 본다. "
+                    "직접 넣는 란이 있으면 이 금액을 넣는다." % _won(cols["합계"].get("전자신고공제")))
     else:
         note.append("확정신고에는 전자신고세액공제가 없다.")
     return out + [" ".join(note), ""]
@@ -378,24 +375,32 @@ def _sec_payment(rv):
             "(2020년 화면 기준, 지금 화면의 버튼 이름은 확인이 필요하다). 신고기한은 위택스 화면에서 확인한다.", ""]
     out += _pairs([["과세표준", _won(loc.get("과세표준"))], ["세율", loc.get("세율") or "-"], ["산출세액", _won(loc.get("산출세액"))],
                    ["납부할 세액(지방소득세)", _won(loc.get("납부할세액"))]]) + [""]
-    out += ["위택스가 자동으로 채운 값이 위 금액과 다르면 위택스 값을 확인한다. 지방소득세 전자신고세액공제는 0원으로 계산했다.", ""]
+    out += ["위택스 화면에 채워진 값이 위 금액과 다르면 위택스 값을 확인한다. 지방소득세 전자신고세액공제는 %s으로 계산했다."
+            % _won(loc.get("전자신고공제")), ""]
     return out
 
 
 def _sec_notes(rv):
-    notes = [x for x in rv.get("확인사항") or [] if "레코드" not in x]
+    notes = [x for x in rv.get("확인사항") or [] if any(k in x for k in KEEP_NOTE) or not FILE_ONLY.search(x)]
     if not notes:
         return []
     out = ["## 확인사항", ""] + ["- " + x for x in notes]
-    return out + ["", "전자신고 파일 레코드에 관한 확인사항은 신고값의 확인사항에 있다. 이 안내서에는 싣지 않는다.", ""]
+    return out + ["", "전자신고 파일에만 쓰는 확인사항은 신고값의 확인사항에 있다. 이 안내서에는 싣지 않는다.", ""]
 
 
 def hometax_input(rv):
     """홈택스 「양도소득세 정기신고(일반)」 화면 순서대로 넣을 값. 마크다운."""
-    out = _head("양도소득세 홈택스 입력 안내서", [
+    body = []
+    for sec in (_sec_basic, _sec_buyers, _sec_assets, _sec_acquisition, _sec_expenses, _sec_tax, _sec_payment, _sec_notes):
+        body += sec(rv)
+    notes = [
         "- 전자신고 파일 형식검증이 통과하면 이 안내서는 필요 없다. 형식검증이 막힐 때 홈택스 화면에 직접 입력하는 용도다.",
         "- 홈택스가 자동으로 채우거나 계산한 값이 아래 값과 다르면 제출하지 않는다. 입력한 항목을 다시 확인하고, 그래도 다르면 "
-        "신고서 작성을 멈추고 알린다.", "", "## 화면 순서", ""])
+        "신고서 작성을 멈추고 알린다."]
+    if any(NEED_VALUE in line for line in body if line.startswith("|")):
+        notes.append("- 표의 「%s」는 신고값에 값이 없는 항목이다. 계약서 등을 보고 화면에 직접 입력하거나, 신고인 JSON 과 사실관계에 "
+                     "값을 채운 뒤 신고값을 다시 만든다." % NEED_VALUE)
+    out = _head("양도소득세 홈택스 입력 안내서", notes + ["", "## 화면 순서", ""])
     out += _table(["순서", "이 안내서의 절", "홈택스 화면"], [[i, name, screen] for i, (name, screen) in enumerate(SCREENS, 1)]) + [""]
     t = rv["본지"]["열"]["합계"]
     loc = rv["지방"]["열"]["합계"]
@@ -403,36 +408,17 @@ def hometax_input(rv):
             "- 신고: %s, 양도 자산 %d건" % (KIND_LABEL.get(rv["신고"]["구분"], rv["신고"]["구분"]), len(rv["부표1"])),
             "- 국세: 산출세액 %s, 납부할 세액 %s" % (_won(t.get("산출세액")), _won(t.get("납부할세액"))),
             "- 지방소득세: 산출세액 %s (위택스에서 따로 신고)" % _won(loc.get("산출세액")), ""]
-    for sec in (_sec_basic, _sec_buyers, _sec_assets, _sec_acquisition, _sec_expenses, _sec_tax, _sec_payment, _sec_notes):
-        out += sec(rv)
-    return "\n".join(out).rstrip() + "\n"
+    return "\n".join(out + body).rstrip() + "\n"
 
 
 # ------------------------------------------------------------ 부속서류 목록
 
-def _new_houses(rv, facts, sheet):
-    """일시적 2주택으로 비과세를 받는 종전 주택(양도 자산)이면 신규 주택 목록.
-
-    조건 셋: 양도 자산이 주택이고, 비과세양도차익이 있고, 세대 주택 목록에 양도하지 않은 주택이 더 있는데 그 취득일이 이 자산보다 늦다.
-    엔진의 판정(judge 「일시적2주택」)을 신고값이 싣지 않아 사실관계에서 같은 조건으로 읽는다."""
-    if not int(sheet.get("비과세양도차익") or 0):
-        return []
-    asset = next((a for a in (facts or {}).get("자산") or [] if a.get("id") == sheet["자산"]), None)
-    if not asset or asset.get("종류") != "주택":
-        return []
-    sold = {x["자산"] for x in rv["부표1"]}
-    out = []
-    for h in ((facts or {}).get("세대") or {}).get("주택목록") or []:
-        if h.get("자산id") in sold or not h.get("취득일"):
-            continue
-        if str(h["취득일"]) > sheet["취득일"]:
-            out.append(h)
-    return out
-
-
-def _house_place(h):
-    loc = h.get("소재지") or {}
-    return " ".join(loc[k] for k in ("시도", "시군구", "읍면동") if loc.get(k))
+def _temporary_two_house(result, aid):
+    """엔진 판정이 일시적 2주택이면 그 판정 행을 돌려준다. 아니면 None. 판정은 엔진이 하고 여기서는 읽기만 한다."""
+    for row in ((result or {}).get("계산") or {}).get("자산") or []:
+        if row.get("id") == aid and (row.get("판정") or {}).get("일시적2주택"):
+            return row["판정"]
+    return None
 
 
 def _evidence_groups(rows):
@@ -456,10 +442,13 @@ def _expense_line(r, lead=""):
     return "- [ ] %s %s%s" % (r["구분"], _won(r["금액"]), (" (" + ", ".join(extra) + ")") if extra else "")
 
 
-def attachments(rv, facts):
+def attachments(rv, facts, result):
     """신고 부속·증빙서류 목록. 자산마다 매매계약서 사본, 필요경비 증빙(증빙종류별 묶음), 환산이면 기준시가 자료,
-    일시적 2주택이면 신규 주택 취득 계약서. 마크다운."""
-    out = _head("양도소득세 신고 부속·증빙서류 목록")
+    일시적 2주택이면 신규 주택 취득 계약서. 마크다운.
+
+    일시적 2주택은 엔진 결과 result["계산"]["자산"][i]["판정"]["일시적2주택"] 만 읽는다. 엔진 결과에는 신규 주택 id 가 없어
+    신규 주택은 일반 문구로 적는다. facts 는 계약(C9)에 따라 받지만 이 함수는 판정에 쓰지 않는다."""
+    out = _head("양도소득세 신고 부속·증빙서류 목록", enter=False)
     out += ["", "## 올리는 방법", "",
             "- 홈택스 「신고 부속·증빙서류 제출」 메뉴에서 PDF 나 이미지 파일로 올린다.",
             "- 신고서를 제출한 뒤 신고내역 조회에서 「증빙서류 제출여부」 가 N 이면 눌러 같은 첨부 화면으로 갈 수 있다"
@@ -505,13 +494,11 @@ def attachments(rv, facts):
             out += ["**취득세 납부 서류**"] + [_expense_line(dict(r, 상호=""), "납부영수증이나 납부확인서") for r in tax_rows] + [""]
         out += ["법정 증빙이 없는 지출(간이영수증만 있는 경우 포함)은 필요경비에서 뺐으므로 올리지 않는다.", ""]
         # 일시적 2주택
-        houses = _new_houses(rv, facts, a)
-        if houses:
+        temp = _temporary_two_house(result, aid)
+        if temp:
             out += title("신규 주택 취득 계약서 (일시적 2주택)")
-            for h in houses:
-                day = ", 계약일 %s" % h["계약일"] if h.get("계약일") else ""
-                out.append("- [ ] 신규 주택 취득 계약서 사본 (%s, 취득일 %s%s)" % (_house_place(h), h["취득일"], day))
-            out.append("")
+            limit = " (엔진이 정한 처분기한 %s)" % temp["처분기한"] if temp.get("처분기한") else ""
+            out += ["- [ ] 신규 주택(일시적 2주택의 다른 집) 취득 계약서 사본" + limit, ""]
         # 환산이면 기준시가
         if method == "환산취득가액":
             b = a["기준시가"]

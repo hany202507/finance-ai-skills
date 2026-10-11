@@ -19,6 +19,10 @@ def _rv(name, **over):
     return return_values.build(r, CASES[name], filing.load(f))
 
 
+def _res(name):
+    return engine.calculate(CASES[name], today="2026-10-11")
+
+
 def test_input_guide_lists_screens_in_order_with_amounts():
     md = guide.hometax_input(_rv("S1"))
     order = ["기본정보", "양수인", "양도자산", "취득가액", "필요경비", "세액계산", "납부"]
@@ -33,7 +37,7 @@ def test_input_guide_has_no_rrn():
 
 
 def test_attachment_list():
-    md = guide.attachments(_rv("S1"), CASES["S1"])
+    md = guide.attachments(_rv("S1"), CASES["S1"], _res("S1"))
     for s in ("매매계약서", "취득", "양도", "필요경비 증빙", "세금계산서", "현금영수증"):
         assert s in md
 
@@ -134,10 +138,10 @@ def test_input_guide_style():
 
 
 def test_attachment_list_sections_for_s1():
-    md = guide.attachments(_rv("S1"), CASES["S1"])
+    md = guide.attachments(_rv("S1"), CASES["S1"], _res("S1"))
     assert "신고 부속·증빙서류 제출" in md
     assert "양도 매매계약서" in md and "취득 매매계약서" in md
-    assert "신규 주택" in md and "2025-06-02" in md           # 일시적 2주택이면 신규 주택 취득 계약서
+    assert "신규 주택" in md and "2028-06-02" in md           # 일시적 2주택이면 신규 주택 취득 계약서(엔진의 처분기한)
     assert "기준시가" not in md                               # 실지거래가액이면 기준시가 자료는 없다
     i = md.index("필요경비 증빙")
     for s in ("세금계산서", "현금영수증", "합성법무사", "합성인테리어", "9,000,000", "12,000,000"):
@@ -146,7 +150,7 @@ def test_attachment_list_sections_for_s1():
 
 
 def test_attachment_list_groups_by_evidence_kind():
-    md = guide.attachments(_rv("S1"), CASES["S1"])
+    md = guide.attachments(_rv("S1"), CASES["S1"], _res("S1"))
     i = md.index("필요경비 증빙")
     j = md.index("현금영수증", i)
     k = md.index("세금계산서", i)
@@ -156,7 +160,7 @@ def test_attachment_list_groups_by_evidence_kind():
 
 def test_attachment_list_converted_acquisition_needs_standard_price_papers():
     rv = _rv("BF")
-    md = guide.attachments(rv, CASES["BF"])
+    md = guide.attachments(rv, CASES["BF"], _res("BF"))
     assert "기준시가" in md
     assert "200,000,000" in md and "500,000,000" in md        # 환산 자산 F 의 취득·양도 기준시가
     assert "신규 주택" not in md                              # BF 는 일시적 2주택이 아니다
@@ -165,7 +169,7 @@ def test_attachment_list_converted_acquisition_needs_standard_price_papers():
 def test_attachment_list_has_no_personal_numbers():
     for name in ("S1", "BF"):
         rv = _rv(name)
-        md = guide.attachments(rv, CASES[name])
+        md = guide.attachments(rv, CASES[name], _res(name))
         for s in [rv["신고인"]["주민등록번호"], rv["신고인"]["전화"]] + [b["번호"] for b in rv["양수인"]]:
             assert s not in md
         assert "—" not in md
@@ -174,7 +178,7 @@ def test_attachment_list_has_no_personal_numbers():
 
 def test_attachment_list_for_plain_asset_has_contracts_only():
     rv = _rv("A")
-    md = guide.attachments(rv, CASES["A"])
+    md = guide.attachments(rv, CASES["A"], _res("A"))
     assert "양도 매매계약서" in md and "취득 매매계약서" in md
     assert "신규 주택" not in md and "기준시가 확인" not in md
 
@@ -189,22 +193,27 @@ def _rv_facts(facts, kind="예정", made="2026-12-20"):
     for aid in f["자산"]:
         f["자산"][aid]["법정동코드"] = "1120011400"
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
-    return return_values.build(r, facts, filing.load(f))
+    return return_values.build(r, facts, filing.load(f)), r
+
+
+def _attach_args(facts, kind="예정", made="2026-12-20"):
+    rv, res = _rv_facts(facts, kind, made)
+    return rv, facts, res
 
 
 def test_all_exempt_asset_has_no_blank_markers():
     facts = CASES["G"]
-    rv = _rv_facts(facts)
+    rv, res = _rv_facts(facts)
     md = guide.hometax_input(rv)
     assert "전액 비과세" in md and "입력 필요" not in md
     assert "과세되는 자산이 없다" in md
-    att = guide.attachments(rv, facts)
+    att = guide.attachments(rv, facts, res)
     assert "전액 비과세" in att and "근거 자료" not in att
 
 
 def test_two_rate_columns():
     facts = CASES["BC"]
-    rv = _rv_facts(facts, "확정", "2027-05-20")
+    rv, _ = _rv_facts(facts, "확정", "2027-05-20")
     md = guide.hometax_input(rv)
     cols = [x["표기"] for x in rv["본지"]["세율구분"]]
     assert len(cols) == 2
@@ -216,11 +225,11 @@ def test_two_rate_columns():
 def test_comparable_sale_and_appraisal_attachments():
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["매매사례가액"] = 450_000_000
-    att = guide.attachments(_rv_facts(f), f)
+    att = guide.attachments(*_attach_args(f))
     assert "매매사례가액 근거 자료" in att and "기준시가 확인" not in att
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["감정가액"] = [500_000_000, 520_000_000]
-    att = guide.attachments(_rv_facts(f), f)
+    att = guide.attachments(*_attach_args(f))
     assert "감정평가서" in att and "기준시가 확인" not in att
 
 
@@ -228,8 +237,114 @@ def test_converted_price_with_actual_costs_exception():
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["필요경비"]["자본적지출"] = [{"내용": "기타가치증가", "지급일": "2010-01-01", "금액": 500_000_000,
                                          "증빙종류": "세금계산서", "상대방": "합성", "사업자번호": "2118104565"}]
-    rv = _rv_facts(f)
+    rv, res = _rv_facts(f)
     md = guide.hometax_input(rv)
     assert "제97조②2호 단서" in md and "500,000,000" in md
-    att = guide.attachments(rv, f)
+    att = guide.attachments(rv, f, res)
     assert "기준시가 확인" in att and "**세금계산서**" in att and "합성" in att
+
+
+# ---- fix round 1: 일시적 2주택은 엔진 판정만 읽는다 ----
+
+NEW_HOUSE = "신규 주택(일시적 2주택의 다른 집) 취득 계약서"
+
+
+def test_new_house_contract_listed_when_engine_flags_temporary_two_house():
+    res = _res("S1")
+    assert res["계산"]["자산"][0]["판정"]["일시적2주택"] is True
+    att = guide.attachments(_rv("S1"), CASES["S1"], res)
+    assert NEW_HOUSE in att
+    assert res["계산"]["자산"][0]["판정"]["처분기한"] in att       # 엔진이 정한 값을 그대로 적는다
+
+
+def test_new_house_decision_ignores_facts():
+    res = _res("S1")
+    rv = _rv("S1")
+    assert guide.attachments(rv, None, res) == guide.attachments(rv, CASES["S1"], res)
+    # 사실관계를 엔진 결과와 어긋나게 바꿔도 목록은 엔진 결과만 따른다
+    other = copy.deepcopy(CASES["S1"])
+    other["세대"]["주택목록"] = other["세대"]["주택목록"][:1]
+    assert NEW_HOUSE in guide.attachments(rv, other, res)
+
+
+def test_no_new_house_when_second_house_acquired_after_sale():
+    f = copy.deepcopy(CASES["S1"])
+    h2 = next(h for h in f["세대"]["주택목록"] if h["id"] == "H2")
+    h2["취득일"], h2["계약일"], h2["계약금지급일"] = "2026-12-01", "2026-12-01", "2026-12-01"
+    rv, res = _rv_facts(f, made="2026-12-20")
+    assert res["계산"]["자산"][0]["판정"]["일시적2주택"] is False
+    assert NEW_HOUSE not in guide.attachments(rv, f, res)
+
+
+def test_no_new_house_when_second_house_already_sold():
+    f = copy.deepcopy(CASES["S1"])
+    h2 = next(h for h in f["세대"]["주택목록"] if h["id"] == "H2")
+    h2["양도일"] = "2026-05-01"
+    rv, res = _rv_facts(f)
+    v = res["계산"]["자산"][0]["판정"]
+    assert v["일시적2주택"] is False and v["주택수"] == 1
+    assert NEW_HOUSE not in guide.attachments(rv, f, res)
+
+
+def test_no_new_house_for_ordinary_asset():
+    assert NEW_HOUSE not in guide.attachments(_rv("A"), CASES["A"], _res("A"))
+
+
+# ---- fix round 1: 문구와 표시 ----
+
+def test_attachment_list_head_does_not_tell_to_type_on_screen():
+    head = guide.attachments(_rv("S1"), CASES["S1"], _res("S1")).split("## ", 1)[0]
+    assert "화면에 입력한다" not in head and "주민등록번호와 전화번호는 이 파일에 적지 않는다" in head
+
+
+def test_blank_marker_is_explained_once_in_head():
+    for name in ("S1", "BF"):
+        md = guide.hometax_input(_rv(name))
+        assert "입력 필요" in md
+        assert md.count("신고값에 값이 없는 항목이다") == 1
+        assert md.index("신고값에 값이 없는 항목이다") < md.index("## 화면 순서")
+    md = guide.hometax_input(_rv_facts(CASES["G"])[0])
+    assert "신고값에 값이 없는 항목이다" not in md
+
+
+def test_unverified_screen_behaviour_is_marked_for_checking():
+    md = guide.hometax_input(_rv("S1"))
+    assert "홈택스가 자동으로 적용한다" not in md and "로그인 정보로 화면에 나온다" not in md
+    assert md.count("(확인 필요)") >= 2
+
+
+def test_local_income_tax_credit_is_read_from_the_values():
+    rv = _rv("S1")
+    rv["지방"]["열"]["합계"]["전자신고공제"] = 1234
+    assert "전자신고세액공제는 1,234원으로 계산했다" in guide.hometax_input(rv)
+    rv["지방"]["열"]["합계"]["전자신고공제"] = 0
+    assert "전자신고세액공제는 0원으로 계산했다" in guide.hometax_input(rv)
+
+
+def test_asset_kind_comes_from_the_calculation_record_code():
+    rv = _rv("S1")
+    rv["전자신고"]["계산명세"][0]["자산의종류"] = "03"          # 부표1 의 자산종류 글자가 아니라 05 레코드 코드를 읽는다
+    assert "| 자산종류 | 일반주택 |" in guide.hometax_input(rv)
+
+
+def test_file_only_notes_are_left_out_and_screen_notes_are_kept():
+    rv = _rv("S1")
+    file_only = [
+        "S1: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 시군구 이름으로 적었다",
+        "전자신고 03 레코드에 국내 소계 행을 넣었다(규격서 p32). 03-31 주민세_세율은 합계 행만 10.00 이다",
+        "S1: 소재지의 법정동코드를 정하지 못했다. 신고인 JSON 에 10자리로 적는다(질문 F04)",
+        "S1: 양도 원인 경매의 등기목적 코드를 정하지 못했다. 6자리로 적는다",
+        "S1: 양도 당시 건물 기준시가를 일반건물 칸(05-46)에 넣었다",
+    ]
+    kept = [
+        "S1: 필요경비에서 뺀 지출이라 부표3·07 레코드에 넣지 않았다. 간이영수증만 있다",
+        "토지거래허가대상 자산이 있다. 신고유형 1 로 두었으니 확인한다(규격서 p26)",
+        "합산 비교 세액이 커서 합계 산출세액이 세율구분 열의 합과 다르다",
+    ]
+    rv["확인사항"] = file_only + kept
+    md = guide.hometax_input(rv)
+    for x in file_only:
+        assert x not in md, x
+    for x in kept:
+        assert x in md, x
+    assert "전자신고 파일에만 쓰는 확인사항은 신고값의 확인사항에 있다" in md
