@@ -409,8 +409,8 @@ def _f01(p, late, on):
     return [_q("F01", None, " ".join(out))] if out else []
 
 
-def _f02(f, assets):
-    buyers = f.get("양수인") or []
+def _f02(f, assets, skip=()):
+    buyers = [b for b in f.get("양수인") or [] if b.get("자산") not in skip]      # 신고서에 넣지 않는 자산의 양수인은 보지 않는다
     out = []
     asset_ids = list(assets)
     for aid in asset_ids + [a for a in dict.fromkeys(b.get("자산") for b in buyers) if a not in assets]:
@@ -441,11 +441,13 @@ def _f03(f):
     return []
 
 
-def _f04(f, facts, late, on):
+def _f04(f, facts, late, on, skip=()):
     lots = f.get("자산") or {}
     out = []
     for a in (facts or {}).get("자산") or []:
         aid = a.get("id")
+        if aid in skip:
+            continue
         lot = lots.get(aid)
         why = []
         if lot is None:
@@ -565,9 +567,20 @@ def questions(filer, facts, result=None, bjd=None):
     F07 은 필수 구분코드 필요경비에 지급금액이 있는데 사실관계의 사업자번호(10자리, 검증번호)가 없거나 틀린 자산을, F08 은
     매입가액 행이 생기는데 자산[id].취득상대방이 없거나 쓸 수 없는 자산을 묻는다. 두 문항이 보는 07 행의 규칙은
     return_values.expense_lines 가 정한다.
+    계산이 끝난 결과가 전액 비과세로 판정한 자산은 신고서에 넣지 않으므로 그 자산의 양수인(F02)과 지번(F04)을 묻지 않는다.
+    신고인 파일에 그 자산의 양수인이나 지번이 있어도 알리지 않는다. 결과가 없으면 어느 자산이 빠질지 몰라 모든 자산을 묻는다.
     """
     late = _Late(bjd)
     on = ((filer.get("신고") or {}).get("작성일")) or None
-    assets = {a.get("id"): a for a in (facts or {}).get("자산") or []}
-    return (_f01(filer.get("신고인"), late, on) + _f02(filer, assets) + _f03(filer)
-            + _f04(filer, facts, late, on) + _f05(filer) + _f06(filer) + _f07_f08(filer, facts, result))
+    skip = _left_out(result)
+    assets = {a.get("id"): a for a in (facts or {}).get("자산") or [] if a.get("id") not in skip}
+    return (_f01(filer.get("신고인"), late, on) + _f02(filer, assets, skip) + _f03(filer)
+            + _f04(filer, facts, late, on, skip) + _f05(filer) + _f06(filer) + _f07_f08(filer, facts, result))
+
+
+def _left_out(result):
+    """계산이 끝난 결과가 전액 비과세로 판정한 자산 id. 결과가 없거나 끝나지 않았으면 빈 목록."""
+    if not isinstance(result, dict) or result.get("상태") != "완료":
+        return []
+    from yangdo import return_values      # return_values 가 이 모듈을 읽으므로 늦게 읽는다
+    return return_values.exempt_ids(result)

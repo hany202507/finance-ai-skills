@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from yangdo import SKILL_DIR, engine, filing, forms_check, return_values, ruleset
-from cases import CASES
+from cases import CASES, F자산
 import filers
 
 _MEMO = {}
@@ -99,16 +99,15 @@ def _joint_half():
 
 
 @_memo
-def _exempt():
-    # S1 을 12억원 이하로 양도하면 1세대1주택 비과세가 되어 전액비과세 자산이 된다
-    facts = copy.deepcopy(CASES["S1"])
-    facts["자산"][0]["전체양도가액"] = 1100000000
-    facts["자산"][0]["전체취득가액"] = 600000000
+def _mixed():
+    # 전액 비과세 주택 G 와 과세 토지 F 를 같은 달에 양도했다. 신고서에는 F 만 들어간다(전액 비과세 자산은 넣지 않는다)
+    facts = copy.deepcopy(CASES["G"])
+    facts["자산"].append(copy.deepcopy(F자산))
     r = engine.calculate(facts, today="2026-10-11")
-    assert r["계산"]["자산"][0]["판정"]["전액비과세"]
+    assert [(x["id"], x["판정"]["전액비과세"]) for x in r["계산"]["자산"]] == [("G", True), ("F", False)]
     _FACTS[id(r)] = facts
-    f = filers.get("S1")
-    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    f = filers.filer("예정", "2026-12-20", {i: dict(filers.lot("100"), 법정동코드="1120011400") for i in ("G", "F")},
+                     [filers.buyer("G"), filers.buyer("F", "박합성", "45678")])
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
     return r, return_values.build(r, facts, filing.load(f))
 
@@ -174,7 +173,7 @@ def test_clean_variants_pass():
         "BF 두 열, 합산 비교세액이 짐": _bf_two_columns(),
         "S1 분납": _pair("S1", 분납신청=True),
         "BF 예정(두 열, 공제 있음)": _pair("BF", 구분="예정", 작성일="2026-12-20"),
-        "전액비과세 한 건": _exempt(),
+        "전액 비과세 자산과 과세 자산": _mixed(),
         "S1 공동 1/2 지분": _joint_half(),
     }.items():
         assert _fc(rv, r) == [], label
@@ -525,12 +524,14 @@ def test_engine_column_and_total_amounts():
 
 
 def test_exempt_asset_rows():
-    r, rv = _exempt()
-    assert rv["부표1"][0]["양도차익"] is None and rv["본지"]["열"]["합계"]["산출세액"] == 0
+    """전액 비과세 자산은 부표1 에 없다. 본지 합계는 과세 자산 F 의 값이다(산출세액 139,380,000). 부표1 에 넣으면 걸린다."""
+    r, rv = _mixed()
+    assert [x["자산"] for x in rv["부표1"]] == ["F"] and rv["본지"]["열"]["합계"]["산출세액"] == 139380000
     assert _fc(rv, r) == []
     bad = copy.deepcopy(rv)
-    bad["부표1"][0]["양도소득금액"] = 1
-    assert _fc(bad, r)
+    bad["부표1"].insert(0, dict(copy.deepcopy(rv["부표1"][0]), 자산="G", 과세양도차익=0, 장특공=0, 양도소득금액=0))
+    _hit(bad, r, "부표1", "전액 비과세 자산 G")
+    _hit(bad, r, "부표1 자산 [G, F]", "엔진 자산 [F]")
 
 
 def test_form_codes_match_engine():
@@ -670,18 +671,25 @@ def _synthetic(name, kind="확정"):
     _FACTS[id(r)] = facts
     if r["상태"] != "완료":
         return r, None
-    return r, return_values.build(r, facts, filing.load(f))
+    try:
+        return r, return_values.build(r, facts, filing.load(f))
+    except return_values.NoTaxableAsset:               # 전액 비과세 자산뿐인 사례는 신고값을 만들지 않는다
+        return r, None
 
 
 def test_every_finished_case_passes():
-    done = 0
+    done, no_taxable = 0, []
     for name in CASES:
         r, rv = _synthetic(name)
         if rv is None:
+            if r["상태"] == "완료":
+                no_taxable.append(name)
+                assert any("과세 자산이 없다" in m for m in forms_check.check({}, r, facts=CASES[name])), name
             continue
         assert _fc(rv, r) == [], name
         done += 1
-    assert done >= 15                                    # 전액비과세·단기·중과·미등기·두 열 사례를 포함한다
+    assert no_taxable == ["G", "G3", "I"]                # 전액 비과세 자산뿐인 사례
+    assert done >= 15                                    # 단기·중과·미등기·두 열 사례를 포함한다
 
 
 # ---- 문장 모양 ----
@@ -827,14 +835,13 @@ def test_efile_section_asset_rows_are_reconciled_with_schedule1():
     _hit(bad, r, "전자신고", "계산명세 자산", "부표1 자산")
 
 
-def test_efile_section_fully_exempt_asset_has_zero_amounts():
-    """전액 비과세 자산은 부표1 의 취득가액, 기타 필요경비, 양도차익이 비어 있다. 계산명세의 같은 칸은 0 이어야 한다."""
-    r, rv = _exempt()
-    assert rv["부표1"][0]["취득가액"] is None and rv["전자신고"]["계산명세"][0]["거래금액_취득가액"] == 0
-    assert _fc(rv, r) == []
+def test_efile_section_has_no_row_for_the_exempt_asset():
+    """전액 비과세 자산은 계산명세(05)에 행이 없다. 행을 넣으면 걸린다."""
+    r, rv = _mixed()
+    assert [x["자산"] for x in rv["전자신고"]["계산명세"]] == ["F"]
     bad = copy.deepcopy(rv)
-    bad["전자신고"]["계산명세"][0]["거래금액_취득가액"] = 600000000
-    _hit(bad, r, "전자신고", "계산명세 S1", "거래금액_취득가액")
+    bad["전자신고"]["계산명세"].insert(0, dict(copy.deepcopy(rv["전자신고"]["계산명세"][0]), 자산="G"))
+    _hit(bad, r, "전자신고 계산명세", "전액 비과세 자산 G")
 
 
 def test_efile_section_missing_is_reported_not_raised():
@@ -1155,15 +1162,69 @@ def _bump_local(rv, col, key, by):
 
 def test_local_penalty_cells_are_recalculated():
     r, rv = _pair("BF")
-    assert rv["지방"]["열"]["합계"]["가산세"] == 2289641 and _fc(rv, r) == []
+    # BF 지방: 무신고 20,627,400 × 20% = 4,125,480(감면 없음), 납부지연 226,901, 계 4,352,381
+    assert rv["지방"]["열"]["합계"]["가산세"] == 4352381 and _fc(rv, r) == []
     for col, shown in (("합계", "지방 합계"), ("국내소계", "지방 국내소계"), ("1-10", "지방 1-10 열")):
-        for key, name, want in (("가산세_신고", "무(과소)신고", "2,062,740"), ("가산세_납부", "납부지연", "226,901")):
+        for key, name, want in (("가산세_신고", "무(과소)신고", "4,125,480"), ("가산세_납부", "납부지연", "226,901")):
             msgs = _fc(_bump_local(rv, col, key, 1), r)
             assert any(shown in m and "⑬" in m and name in m and "다시 계산" in m and want in m for m in msgs), (col, key, msgs)
     _hit(_bump_local(rv, "합계", "가산세_기타", 500), r, "지방 합계", "⑬", "기타")
     bad = copy.deepcopy(rv)
-    bad["가산세"]["지방"].update(납부지연=226900, 계=2289640)
+    bad["가산세"]["지방"].update(납부지연=226900, 계=4352380)
     _hit(bad, r, "가산세 절", "지방", "226,901")
+
+
+def test_local_penalty_with_relief_is_caught():
+    """지방 무신고가산세에 감면 50% 를 넣은 값(2,062,740)은 다시 계산한 값 4,125,480 과 달라 걸린다. 국세와 같이 감면을 넣지 않는다."""
+    r, rv = _pair("BF")
+    bad = copy.deepcopy(rv)
+    for col in ("합계", "국내소계", "1-10"):
+        c = bad["지방"]["열"][col]
+        c.update(가산세_신고=2062740, 가산세=2289641)
+        for k in ("납부할세액", "신고기한내납부"):
+            if c.get(k) is not None:
+                c[k] = 22917041
+    bad["가산세"]["지방"].update(무신고=2062740, 계=2289641)
+    msgs = _fc(bad, r)
+    assert any("지방 합계" in m and "⑬" in m and "무(과소)신고" in m and "2,062,740 ≠ 다시 계산한 값 4,125,480" in m for m in msgs), msgs
+    assert any("가산세 절 지방" in m and "4,125,480" in m for m in msgs), msgs
+
+
+def test_penalty_recalculation_does_not_read_the_relief_wording(tmp_path):
+    """검산의 가산세 다시 계산도 감면 조문 발췌의 글자를 보지 않는다. 발췌를 옛 문구로 바꾼 규칙세트로도 BF 신고값(무신고 41,254,800,
+    지방 4,125,480)이 통과하고, 감면을 넣은 국세 값 20,627,400 은 걸린다."""
+    import json
+    import shutil
+    from yangdo import RULES_DIR
+    d = str(tmp_path / "rules")
+    os.makedirs(os.path.join(d, "고시"))
+    for name in ruleset.EDITION_FILES:
+        shutil.copy(os.path.join(RULES_DIR, name), os.path.join(d, name))
+    path = os.path.join(d, "ruleset.json")
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    for key in ("가산세.무신고.확정신고감면율", "지방.가산세.무신고.확정신고감면율"):
+        for e in data["규칙"][key]["이력"]:
+            for g in e["근거"]:
+                g["발췌"] = [x.replace("제45조의3에 따른 기한 후 신고를 한 경우", "과세표준신고를 한 경우") for x in g["발췌"]]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False)
+    ruleset.write_edition(d, data["확인일"])
+    r = engine.calculate(CASES["BF"], today="2026-10-11", rules_dir=d)
+    f = filers.get("BF")
+    for aid in f["자산"]:
+        f["자산"][aid]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, CASES["BF"], filing.load(f), rules_dir=d)
+    t = rv["본지"]["열"]["합계"]
+    assert (t["가산세_신고"], rv["지방"]["열"]["합계"]["가산세_신고"]) == (41254800, 4125480)
+    assert forms_check.check(rv, r, rules_dir=d, facts=CASES["BF"]) == []
+    bad = copy.deepcopy(rv)
+    for col in ("합계", "국내소계", "1-10"):
+        c = bad["본지"]["열"][col]
+        c.update(가산세_신고=20627400, 가산세=20627400 + c["가산세_납부"])
+    msgs = forms_check.check(bad, r, rules_dir=d, facts=CASES["BF"])
+    assert any("본지 합계" in m and "⑯" in m and "20,627,400 ≠ 다시 계산한 값 41,254,800" in m for m in msgs), msgs
+    assert not hasattr(forms_check, "PENALTY_LATE_RETURN_WORDING")
 
 
 def test_local_penalty_left_at_zero_is_caught():
@@ -1178,23 +1239,55 @@ def test_local_penalty_left_at_zero_is_caught():
                 c[k] = 20627400
     bad["가산세"]["지방"].update(무신고=0, 납부지연=0, 계=0)
     msgs = _fc(bad, r)
-    assert any("지방 합계" in m and "⑬" in m and "무(과소)신고" in m and "0 ≠ 다시 계산한 값 2,062,740" in m for m in msgs), msgs
+    assert any("지방 합계" in m and "⑬" in m and "무(과소)신고" in m and "0 ≠ 다시 계산한 값 4,125,480" in m for m in msgs), msgs
 
 
 def test_local_penalty_two_columns_from_answer_key():
-    """09-8: 1-10 열 73,355 · 19,204, 1-20 열 6,031 · 1,194(tests/answer_keys.py 현행지방가산세)."""
+    """09-8: 1-10 열 146,711 · 19,204, 1-20 열 12,062 · 1,194(tests/answer_keys.py 현행지방가산세)."""
     from answer_keys import KEYS
     k = KEYS["09-8"]
     r = engine.calculate(copy.deepcopy(k["facts"]), today="2026-10-11")
     _FACTS[id(r)] = k["facts"]
     rv = return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
     assert _fc(rv, r) == []
-    for col, key, name, want in (("1-10", "가산세_신고", "무(과소)신고", "73,355"), ("1-10", "가산세_납부", "납부지연", "19,204"),
-                                 ("1-20", "가산세_신고", "무(과소)신고", "6,031"), ("1-20", "가산세_납부", "납부지연", "1,194"),
+    for col, key, name, want in (("1-10", "가산세_신고", "무(과소)신고", "146,711"), ("1-10", "가산세_납부", "납부지연", "19,204"),
+                                 ("1-20", "가산세_신고", "무(과소)신고", "12,062"), ("1-20", "가산세_납부", "납부지연", "1,194"),
                                  ("합계", "가산세_납부", "납부지연", "20,398")):
         msgs = _fc(_bump_local(rv, col, key, 1), r)
         shown = "지방 %s" % (col if col == "합계" else col + " 열")
         assert any(shown in m and "⑬" in m and name in m and want in m for m in msgs), (col, key, msgs)
+
+
+def test_final_return_filed_before_the_2026_wording_change_has_no_relief():
+    """2025년 양도를 2025-12-20 에 확정신고(감면 조문이 「과세표준신고를 한 경우」이던 구간): 이 구간에도 감면을 넣지 않는다.
+    F 를 2025-08-01 양도로 옮김. 세액 139,380,000, 무신고 139,380,000 × 20% = 27,876,000, 납부지연 1,533,180(50일, 납부일까지).
+    감면을 넣은 13,938,000 은 검산에 걸린다."""
+    facts = copy.deepcopy(CASES["F"])
+    facts["자산"][0]["양도"]["잔금일"] = "2025-08-01"
+    r = engine.calculate(facts, today="2025-12-20")
+    _FACTS[id(r)] = facts
+    _KEEP.append(r)
+    f = filers.filer("확정", "2025-12-20", {"F": dict(filers.lot("300"), 아파트명="", 아파트동="", 아파트호="")},
+                     [filers.buyer("F", "박합성", "45678")])
+    f["자산"]["F"]["법정동코드"] = "1120011400"
+    f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    rv = return_values.build(r, facts, filing.load(f))
+    t = rv["본지"]["열"]["합계"]
+    assert (t["가산세_신고"], t["가산세_납부"], t["가산세"]) == (27876000, 1533180, 29409180)
+    assert rv["가산세"]["감면적용"] is False and rv["가산세"]["무신고_감면적용"] == 13938000
+    assert _fc(rv, r) == []
+    bad = copy.deepcopy(rv)
+    for col in ("합계", "국내소계", "1-10"):
+        c = bad["본지"]["열"][col]
+        c.update(가산세_신고=13938000, 가산세=13938000 + 1533180)
+        for k in ("납부할세액", "신고기한내납부"):
+            if c.get(k) is not None:
+                c[k] -= 13938000
+    bad["가산세"].update(무신고=13938000, 계=13938000 + 1533180)
+    for x in bad["전자신고"]["세율별"]:
+        x.update({"가산세-신고불성실": 13938000, "가산세-계": 13938000 + 1533180, "자진납부할세액": x["자진납부할세액"] - 13938000})
+    msgs = _fc(bad, r)
+    assert any("본지 합계" in m and "⑯" in m and "13,938,000 ≠ 다시 계산한 값 27,876,000" in m for m in msgs), msgs
 
 
 def test_local_penalty_on_preliminary_return_must_be_zero():
@@ -1237,9 +1330,11 @@ def test_national_merged_comparison_wins_but_local_does_not():
       지방: 세율별 합 23,143,210 = 합산 비교 17,406,000 + 136,600,250 × 4.2% = 23,143,210.5 → 23,143,210
       국세 가산세: 무신고 231,432,100 × 20% = 46,286,420. 납부지연 189,280,100 × 139 × 22/100,000 = 5,788,185.458 → 5,788,180,
         42,152,000 × 107 × 22/100,000 = 992,258.08 → 992,250. 계 53,066,850. ⑱ = 231,432,105 + 53,066,850 = 284,498,955
-      지방 가산세: 무신고 23,143,210 × 20% × 50% = 2,314,321 (F 1,892,801, B 421,520)
+      지방 가산세: 무신고 23,143,210 × 20% = 4,628,642 (F 18,928,010 × 20% = 3,785,602, B 4,215,200 × 20% = 843,040). 감면 없음
         납부지연 18,928,010 × 79 × 22/100,000 = 328,968.81 → 328,968, 4,215,200 × 50 × 22/100,000 = 46,367.2 → 46,367
-        1-15 열 ⑬ 2,221,769 · ⑮ 21,149,779, 1-10 열 ⑬ 467,887 · ⑮ 4,683,087, 합계 ⑬ 2,689,656 · ⑮ 25,832,866"""
+        1-15 열 ⑬ 3,785,602 + 328,968 = 4,114,570 · ⑮ 18,928,010 + 4,114,570 = 23,042,580,
+        1-10 열 ⑬ 843,040 + 46,367 = 889,407 · ⑮ 4,215,200 + 889,407 = 5,104,607,
+        합계 ⑬ 4,628,642 + 375,335 = 5,003,977 · ⑮ 23,143,210 + 5,003,977 = 28,147,187"""
     r, rv = _two_months(802833750, 700000000)
     t = r["계산"]["합계"]
     assert (t["합산비교세액"], t["호별합산세액"]) == (231432105, 231432100)
@@ -1249,11 +1344,11 @@ def test_national_merged_comparison_wins_but_local_does_not():
     assert nat["합계"]["납부할세액"] == 284498955
     for name in ("국내소계", "1-10", "1-15"):
         assert nat[name]["가산세"] is None and nat[name]["납부할세액"] is None, name
-    assert (loc["1-15"]["가산세_신고"], loc["1-15"]["가산세_납부"], loc["1-15"]["납부할세액"]) == (1892801, 328968, 21149779)
-    assert (loc["1-10"]["가산세_신고"], loc["1-10"]["가산세_납부"], loc["1-10"]["납부할세액"]) == (421520, 46367, 4683087)
+    assert (loc["1-15"]["가산세_신고"], loc["1-15"]["가산세_납부"], loc["1-15"]["납부할세액"]) == (3785602, 328968, 23042580)
+    assert (loc["1-10"]["가산세_신고"], loc["1-10"]["가산세_납부"], loc["1-10"]["납부할세액"]) == (843040, 46367, 5104607)
     for name in ("합계", "국내소계"):
-        assert (loc[name]["가산세_신고"], loc[name]["가산세_납부"], loc[name]["가산세"]) == (2314321, 375335, 2689656), name
-        assert loc[name]["납부할세액"] == 25832866, name
+        assert (loc[name]["가산세_신고"], loc[name]["가산세_납부"], loc[name]["가산세"]) == (4628642, 375335, 5003977), name
+        assert loc[name]["납부할세액"] == 28147187, name
     assert _fc(rv, r) == []
     # 지방 열의 가산세와 납부할 총세액을 비워 두면(본지 판정을 지방 서식에 그대로 쓴 값) 검산이 알린다
     bad = copy.deepcopy(rv)
@@ -1277,8 +1372,8 @@ def test_local_merged_comparison_wins_but_national_does_not():
         모자라는 1원을 F 건에 두어 37,856,000. 납부지연 189,279,999 × 139 × 22/100,000 = 5,788,182.37 → 5,788,180,
         42,152,001 × 107 × 22/100,000 = 992,258.10 → 992,250. 계 53,066,830
         1-15 열 ⑱ 189,279,999 + 43,644,180 = 232,924,179, 1-10 열 ⑱ 42,152,001 + 9,422,650 = 51,574,651, 합계 284,498,830
-      지방 가산세: 무신고 23,143,199 × 20% × 50% = 2,314,319.9 → 2,314,319 (F 1,892,799, B 421,520)
-        납부지연 18,927,999 × 79 × 22/100,000 = 328,968.62 → 328,968, 46,367. 계 2,689,654. ⑮ = 23,143,200 + 2,689,654 = 25,832,854"""
+      지방 가산세: 무신고 23,143,199 × 20% = 4,628,639.8 → 4,628,639 (F 18,927,999 × 20% = 3,785,599.8 → 3,785,599, B 843,040). 감면 없음
+        납부지연 18,927,999 × 79 × 22/100,000 = 328,968.62 → 328,968, 46,367. 계 5,003,974. ⑮ = 23,143,200 + 5,003,974 = 28,147,174"""
     r, rv = _two_months(802833330, 700000003)
     t = r["계산"]["합계"]
     assert (t["합산비교세액"], t["호별합산세액"]) == (231432000, 231432000)
@@ -1289,8 +1384,8 @@ def test_local_merged_comparison_wins_but_national_does_not():
     assert (nat["합계"]["가산세"], nat["합계"]["납부할세액"], nat["국내소계"]["납부할세액"]) == (53066830, 284498830, 284498830)
     for name in ("국내소계", "1-10", "1-15"):
         assert loc[name]["가산세"] is None and loc[name]["가산세_신고"] is None and loc[name]["납부할세액"] is None, name
-    assert (loc["합계"]["가산세_신고"], loc["합계"]["가산세_납부"], loc["합계"]["가산세"]) == (2314319, 375335, 2689654)
-    assert loc["합계"]["납부할세액"] == loc["합계"]["신고기한내납부"] == 25832854
+    assert (loc["합계"]["가산세_신고"], loc["합계"]["가산세_납부"], loc["합계"]["가산세"]) == (4628639, 375335, 5003974)
+    assert loc["합계"]["납부할세액"] == loc["합계"]["신고기한내납부"] == 28147174
     assert any("지방소득세 합산 비교 세액이 큰 신고서라" in m and "합계 열에만 적었다" in m for m in rv["확인사항"])
     assert _fc(rv, r) == []
-    _hit(_bump_local(rv, "합계", "가산세_신고", 1), r, "지방 합계", "⑬", "2,314,319")
+    _hit(_bump_local(rv, "합계", "가산세_신고", 1), r, "지방 합계", "⑬", "4,628,639")
