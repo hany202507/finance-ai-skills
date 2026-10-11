@@ -763,6 +763,18 @@ def _lock(monkeypatch, *names):
     monkeypatch.setattr(os, "remove", remove)
 
 
+def test_locked_old_pdf_is_told_once_as_the_previous_runs_file(tmp_path, monkeypatch):
+    """지우지 못한 옛 신고서 PDF 는 「이전 실행의 것」으로 알렸으니 「쓰다 만 파일」 알림에서는 뺀다."""
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    _lock(monkeypatch, forms.OUT_NATIONAL)
+    code, out = _main(tmp_path, "S1", s1_filer())
+    text = _confirm(out)
+    assert code == 4
+    assert text.count(forms.OUT_NATIONAL) >= 1 and "지우지 못해 남은 파일: %s" % forms.OUT_NATIONAL in text
+    assert "쓰다 만" not in text or forms.OUT_NATIONAL not in [ln for ln in text.splitlines() if "쓰다 만" in ln][0]
+
+
 def test_rerun_with_locked_workbook_leaves_no_submittable_file(tmp_path, monkeypatch, capsys):
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 0 and _efiles(out) == [S1_FILE]
@@ -996,7 +1008,7 @@ def test_final_return_summary_carries_penalty_and_payable_amounts(tmp_path, caps
     guide = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
     assert "- 국세: 산출세액 206,274,000원, 가산세 46,110,480원, 납부할 세액 252,384,480원" in guide
     assert "납부기한 다음 날부터 납부일(작성일 2027-05-20) 전날까지 셌다" in guide and "지방소득세 납부기한 다음 날부터 납부일(작성일 2027-05-20)까지 셌다" in guide
-    assert "납부일(2027-05-20) 전날까지 107일이라" in _confirm(out)
+    assert "일수 107일(납부기한 다음 날부터 납부일 2027-05-20 전날까지), 무신고가산세 41,254,800원" in _confirm(out)
     assert "- 지방소득세: 산출세액 20,627,400원, 가산세 4,352,381원, 납부할 세액 24,979,781원 (위택스에서 따로 신고)" in guide
     rep = MR.make(CASES["BF"], filers.get("BF"), str(tmp_path / "again"), today=TODAY2027)
     assert rep["합계"] == {"산출세액": 206274000, "지방소득세": 20627400, "가산세": 46110480, "납부할세액": 252384480,
@@ -1072,6 +1084,28 @@ def test_unknown_filer_keys_are_told_in_the_notice_once(tmp_path):
     assert text.count("양식에 없는 이름이라 반영하지 않았다") == 1 and text.count("읽지") == text.count("읽지 않는 키") == 0
     with open(out / "신고값.json", encoding="utf-8") as fh:
         assert not any("양식에 없는 이름" in x for x in json.load(fh)["확인사항"])
+
+
+def test_final_return_before_its_period_stops_for_a_permit_asset_without_permit_date_too(tmp_path):
+    """허가일을 모르는 허가 대상 자산도 양도일 기준 확정신고 기간 시작 전이면 같은 문장으로 멈추고 신고값과 안내서를 만들지 않는다."""
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0].update(토지거래허가대상="예", 토지거래허가=None)
+    filer = filers.filer("확정", "2026-12-31", {"F": dict(filers.lot("300"), 아파트명="", 아파트동="", 아파트호="")},
+                         [filers.buyer("F", "박합성", "45678")])
+    rep = MR.make(f, filer, str(tmp_path / "o"), today="2026-12-31")
+    assert rep["종료코드"] == 2 and rep["상태"] == "입력오류"
+    assert any("확정신고 기간 2027-05-01부터 2027-05-31까지보다 앞선다" in x for x in rep["알림"])
+    names = set(os.listdir(tmp_path / "o"))
+    assert not ({"신고값.json", "홈택스_입력안내.md", "부속서류.md"} | PDFS) & names and _efiles(tmp_path / "o") == []
+
+
+def test_preliminary_return_guide_summary_lines_are_fixed(tmp_path):
+    """가산세가 없는 예정신고의 입력 안내서 요약. 지방소득세 줄은 산출세액과 전자신고세액공제를 뺀 납부할 세액을 적는다."""
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    md = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
+    assert "- 지방소득세: 산출세액 3,834,946원, 납부할 세액 3,832,946원 (위택스에서 따로 신고)" in md.splitlines()
+    assert "- 국세: 산출세액 38,349,466원, 납부할 세액 38,329,466원" in md.splitlines()
 
 
 def test_installment_split_in_the_human_todo_matches_the_return_values(tmp_path):
@@ -1156,7 +1190,58 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert DASH not in _confirm(out) and not [ln for ln in _confirm(out).splitlines() if ln.rstrip().endswith("?")]
 
 
-# (확정신고 기간이 5월 1일부터라 작성일은 늘 지방 예정신고기한 뒤다. 「지방 기한 이전」 한 줄은 test_penalty.py 가 penalty 모듈에서 본다)
+# 확정신고 기간이 5월 1일부터라 작성일이 지방 예정신고기한 이전이 되려면 지방 예정신고기한이 5월로 넘어가야 한다. 12월 양도의 지방
+# 예정신고기한 4월 30일이 토요일이나 일요일이면 그렇게 된다(2027-12-10 양도는 2028-04-30 일요일, 노동절 05-01 을 건너 05-02).
+# 아래 시험이 그 경우를 make_return 에서 본다. 기한 이전이면 지방소득세 가산세가 없다는 한 줄만 나오고 05-03 부터는 붙는다.
+
+
+def _local_penalty_run(tmp_path, made):
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2027-12-10"
+    filer = filers.filer("확정", made, {"F": dict(filers.lot("300"), 아파트명="", 아파트동="", 아파트호="")},
+                         [filers.buyer("F", "박합성", "45678")])
+    filer["자산"]["F"]["법정동코드"] = "1120011400"
+    filer["신고인"]["주소"]["법정동코드"] = "1144010200"
+    out = tmp_path / ("o" + made)
+    rep = MR.make(f, filer, str(out), today=made)
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    return rep, out, rv["지방"]["열"]["합계"]
+
+
+@pytest.mark.parametrize("made", ["2028-05-01", "2028-05-02"])
+def test_final_return_on_or_before_the_local_deadline_has_no_local_penalty_and_says_it_in_one_line(tmp_path, made):
+    """F 를 2027-12-10 양도로 옮긴 확정신고. 지방 예정신고기한은 2028-05-02 라 05-01, 05-02 의 작성일은 기한 이전이다. 지방소득세 가산세 0,
+    확인사항은 한 줄이고 위택스 줄에 가정 문장이, 알림에 지방 감면 문장이 없다. 2028년은 공휴일 표에 없는 해라 그 확인사항이 붙는다."""
+    rep, out, loc = _local_penalty_run(tmp_path, made)
+    assert rep["종료코드"] == 0, rep["알림"]
+    assert (loc["가산세_신고"], loc["가산세_납부"], loc["가산세"], loc["납부할세액"]) == (0, 0, 0, 13938000)
+    text = _confirm(out)
+    line = "지방소득세는 지방 예정신고기한 2028-05-02 이전에 신고·납부하므로 가산세가 없다"
+    notes = text.split("## 확인사항", 1)[1].split("\n## ", 1)[0]
+    assert [ln for ln in notes.splitlines() if "지방소득세" in ln and "가산세" in ln and "무신고가산세 " not in ln] == ["- " + line]
+    assert "공휴일 표에 없" in notes
+    todo = _section(text, "## 사람이 할 일")
+    local = [ln for ln in todo.splitlines() if "위택스" in ln and "지방소득세" in ln][0]
+    assert "가정" not in local and "위택스 값을 따른다" not in local
+    assert rep["가산세"]["지방계"] == 0 and not any("지방소득세 무신고가산세는 감면 없이" in x for x in rep["알림"])
+    md = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
+    for doc in (text, md):
+        assert "0원과 납부지연가산세 0원" not in doc and "두 가지를 가정" not in doc
+        assert "지방소득세 무신고가산세는 감면 없이" not in doc
+
+
+def test_final_return_one_day_after_the_local_deadline_has_a_local_penalty(tmp_path):
+    """같은 사례를 05-03 에 내면 지방소득세 가산세가 붙는다. 무신고 13,938,000 × 20% = 2,787,600, 납부지연은 지방 납부기한 05-02 다음 날
+    05-03 이 납부일이고 지방 규칙은 납부일까지라 1일, 13,938,000 × 1 × 22/100,000 = 3,066.36 → 3,066. 합 2,790,666."""
+    rep, out, loc = _local_penalty_run(tmp_path, "2028-05-03")
+    assert rep["종료코드"] == 0
+    assert (loc["가산세_신고"], loc["가산세_납부"], loc["가산세"]) == (2787600, 3066, 2790666) and loc["납부할세액"] == 13938000 + 2790666
+    assert rep["가산세"]["지방계"] == 2790666 and any("지방소득세 무신고가산세는 감면 없이" in x for x in rep["알림"])
+    todo = _section(_confirm(out), "## 사람이 할 일")
+    assert "가정" in [ln for ln in todo.splitlines() if "위택스" in ln and "지방소득세" in ln][0]
+
+
 
 def test_final_return_whose_penalty_cannot_be_determined_makes_no_forms(tmp_path, capsys):
     """penalty.Unsupported 면 그 사유로 신고서와 전자신고 파일을 만들지 않고 종료코드 2 로 끝낸다(참고용 값은 낸다)."""

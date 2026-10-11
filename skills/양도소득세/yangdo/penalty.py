@@ -448,9 +448,10 @@ def final_return(result, facts, paid_on, rules_dir=None):
                          "무신고": nonfiling, "무신고_감면적용": reduced, "무신고_감면없음": nonfiling, "납부지연": delay})
         if n is not None:       # 건마다 한 줄. 안내서 「가산세 계산」 표의 예정신고 세액, 납부기한, 일수, 금액과 같은 값이다
             # 일수의 끝 날은 규칙(가산세.납부지연.납부일산입)이 정한다. 2026-07-01 부터는 납부일 전날까지다
-            notes.append("자산 %s: 예정신고 세액 %s원, 납부기한 %s, 납부일(%s)%s까지 %d일이라 무신고가산세 %s원, 납부지연가산세 %s원이다"
-                         % (", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"].isoformat(), paid.isoformat(),
-                            "" if paid_day else " 전날", n, _won(nonfiling), _won(delay)))
+            notes.append("자산 %s: 예정신고 세액 %s원, 납부기한 %s, 일수 %d일(납부기한 다음 날부터 납부일 %s%s까지), 무신고가산세 %s원, "
+                         "납부지연가산세 %s원이다"
+                         % (", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"].isoformat(), n, paid.isoformat(),
+                            " 전날" if not paid_day else "", _won(nonfiling), _won(delay)))
         if c["양도일별"] is None or len(c["양도일별"]) >= 2:
             notes.append(_same_month_note(c, n, nonfiling, delay, rate, daily))
         if n is None:

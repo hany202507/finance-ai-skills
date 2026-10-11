@@ -186,7 +186,9 @@ def _left_submittable(out):
 
 def _tell_left_files(rep, out):
     """종료코드 4 에서 신고서 PDF 나 전자신고 파일이 남았으면 그 이름과 쓰지 말라는 말을 알림에 적는다(종료코드 1·3 과 같은 말을 한다)."""
-    left = _left_submittable(out)
+    head, tail = outputs.STALE_NOTE.split("%s")        # 이전 실행의 것으로 이미 알린 이름은 쓰다 만 파일로 다시 알리지 않는다
+    told = {n for x in rep["알림"] if x.startswith(head) for n in x[len(head):].split(tail[:2])[0].split(", ")}
+    left = [n for n in _left_submittable(out) if n not in told]
     if left:
         rep["알림"].append("출력 폴더에 쓰다 만 신고서 PDF 나 전자신고 파일이 남아 있다: %s. 이번 실행이 끝까지 가지 못했으니 "
                          "다시 실행하기 전에는 쓰지 않는다" % ", ".join(left))

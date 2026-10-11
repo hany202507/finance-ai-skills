@@ -1034,12 +1034,13 @@ def test_unknown_keys_are_warned_by_name_only_and_underscore_keys_are_not():
     f["신고인"]["주소"]["동네"] = "ZZ비밀값ZZ"
     f["양수인"][0]["지분율"] = 1
     f["최상위"] = {"x": 1}
+    f["자산"]["B"]["시도"] = "ZZ비밀값ZZ"
     f["_설명"] = {"쓰는법": "설명용 키는 경고하지 않는다"}
     f["신고"]["_메모"] = "ZZ비밀값ZZ"
     warns = filing.load(f)["_경고"]
     w = [x for x in warns if x.startswith(filing.UNKNOWN_KEYS_HEAD)]
     assert len(w) == 1 and "ZZ비밀값ZZ" not in w[0]
-    for name in ("신고.분납 신청", "자산.B.취득 상대방", "신고인.주소.동네", "양수인[1].지분율", "최상위"):
+    for name in ("신고.분납 신청", "자산.B.취득 상대방", "신고인.주소.동네", "양수인[1].지분율", "최상위", "자산.B.시도"):
         assert name in w[0], name
     assert "_설명" not in w[0] and "_메모" not in w[0]
 

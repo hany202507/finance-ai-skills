@@ -216,10 +216,10 @@ def test_bc_two_cases_in_two_rate_columns():
 def test_every_case_past_due_gets_its_own_line_with_the_values_of_the_guide_table():
     """국세 가산세도 지방소득세처럼 건마다 한 줄이다(예정신고 세액, 납부기한, 일수, 금액). 기한을 옮긴 건의 까닭 문장은 그 건에만 붙는다."""
     out = penalty.final_return(_calc(CASES["BC"]), CASES["BC"], "2027-05-20")
-    lines = [x for x in out["확인사항"] if "납부기한 " in x and "일이라 무신고가산세" in x]
+    lines = [x for x in out["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
     assert lines == [
-        "자산 C: 예정신고 세액 33,250,000원, 납부기한 2026-12-31, 납부일(2027-05-20) 전날까지 139일이라 무신고가산세 6,650,000원, 납부지연가산세 1,016,780원이다",
-        "자산 B: 예정신고 세액 42,152,000원, 납부기한 2027-02-01, 납부일(2027-05-20) 전날까지 107일이라 무신고가산세 8,430,400원, 납부지연가산세 992,250원이다"]
+        "자산 C: 예정신고 세액 33,250,000원, 납부기한 2026-12-31, 일수 139일(납부기한 다음 날부터 납부일 2027-05-20 전날까지), 무신고가산세 6,650,000원, 납부지연가산세 1,016,780원이다",
+        "자산 B: 예정신고 세액 42,152,000원, 납부기한 2027-02-01, 일수 107일(납부기한 다음 날부터 납부일 2027-05-20 전날까지), 무신고가산세 8,430,400원, 납부지연가산세 992,250원이다"]
     for c in out["건"]:
         assert any(("예정신고 세액 %s원" % format(c["예정신고세액"], ",")) in x and ("%d일" % c["일수"]) in x for x in lines)
     moved = [x for x in out["확인사항"] if "건너뛴 날은" in x and "예정신고 기한 말일은" in x]
@@ -231,15 +231,15 @@ def test_per_case_line_and_guide_table_name_the_day_the_count_really_ends():
     건별 줄과 안내서 「가산세 계산」 표의 문장이 센 대로 말하고, 지방소득세는 지방 규칙대로 납부일까지다."""
     late = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
     assert late["납부일산입"] is False and late["지방"]["납부일산입"] is True
-    line = [x for x in late["확인사항"] if "일이라 무신고가산세" in x]
-    assert len(line) == 1 and "납부일(2027-05-20) 전날까지 107일이라" in line[0]
+    line = [x for x in late["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
+    assert len(line) == 1 and "일수 107일(납부기한 다음 날부터 납부일 2027-05-20 전날까지)" in line[0]
     assert any("납부기한 다음 날부터 납부일 전날까지 일수를 셌다" in x for x in late["확인사항"])
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["양도"]["잔금일"] = "2025-08-01"
     old = penalty.final_return(_calc(f), f, "2026-05-20")
     assert old["납부일산입"] is True
-    line = [x for x in old["확인사항"] if "일이라 무신고가산세" in x]
-    assert len(line) == 1 and "납부일(2026-05-20)까지 201일이라" in line[0] and "전날" not in line[0]
+    line = [x for x in old["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
+    assert len(line) == 1 and "일수 201일(납부기한 다음 날부터 납부일 2026-05-20까지)" in line[0] and "전날" not in line[0]
 
 
 def _two_lots():

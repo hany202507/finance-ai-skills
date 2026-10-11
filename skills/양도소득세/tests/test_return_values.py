@@ -910,7 +910,7 @@ def test_final_return_of_a_permit_asset_whose_permit_year_differs_is_out_of_scop
             _late("S1", made, _permit("2027-01-15"), 구분="확정")
         msg = str(e.value)
         assert e.value.계획 == "미정" and "2028-05-01부터 2028-05-31까지" in msg and "허가일 2027-01-15" in msg
-        assert "이 스킬은 이 경우의 확정신고서를 만들지 않는다" in msg and msg.count("해가") == 0 and "2028-05-01부터 2028-05-31까지" in msg and "2026-11-20" in msg
+        assert "이 스킬은 이 자산의 확정신고서를 만들지 않는다" in msg and msg.count("해가") == 0 and "2028-05-01부터 2028-05-31까지" in msg and "2026-11-20" in msg
     assert _late("S1", "2027-03-01", _permit("2026-12-10"))["신고"]["구분"] == "예정"
     assert _late("S1", "2027-03-01", _permit("2027-01-15"))["신고"]["구분"] == "예정"
 

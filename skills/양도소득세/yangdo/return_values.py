@@ -408,7 +408,7 @@ class _Builder:
         if base.year != sold.year:
             raise Unsupported(
                 "자산 %s: 토지거래허가 전에 대금을 청산했고 허가일 %s 이 양도일 %s 과 다른 해에 속한다. 이 자산의 확정신고 기간은 허가일이 "
-                "속하는 과세기간의 다음 연도인 %s부터 %s까지다(소득세법 제110조① 괄호). 이 스킬은 이 경우의 확정신고서를 만들지 않는다. "
+                "속하는 과세기간의 다음 연도인 %s부터 %s까지다(소득세법 제110조① 괄호). 이 스킬은 이 자산의 확정신고서를 만들지 않는다. "
                 "허가일과 확정신고 기간을 세무 전문가와 확인한다"
                 % (row["id"], base.isoformat(), sold.isoformat(), start.isoformat(), deadline[0].isoformat()), "미정")
         if made < start:
@@ -435,7 +435,10 @@ class _Builder:
                 if kind == "확정":
                     self.check_final_period(r, base, deadline, made)
                 continue
-            by_sale = dates.filing_deadline(kind, to_date(r["판정"]["양도일"]), self.rs)[1]
+            sold_day = to_date(r["판정"]["양도일"])
+            if kind == "확정":      # 허가일을 몰라도 허가일 기준 기간은 양도일 기준 기간 시작보다 늦거나 같아 시작 전이면 어느 쪽이든 기간 전이다
+                self.check_final_period(r, sold_day, dates.filing_deadline(kind, sold_day, self.rs), made)
+            by_sale = dates.filing_deadline(kind, sold_day, self.rs)[1]
             if made > by_sale:
                 raise Unsupported(
                     "자산 %s: 토지거래허가 대상 자산인데 허가일 값%s 신고기한을 정할 수 없다. 작성일 %s 이 양도일 기준 신고기한 %s 을 "
