@@ -17,7 +17,6 @@
 사본이 남아 있을 수 있어 그것도 표준오류로 알린다.
 """
 import argparse
-import json
 import os
 import sys
 
@@ -25,7 +24,7 @@ SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL not in sys.path:
     sys.path.insert(0, SKILL)
 
-from yangdo import dates, ruleset  # noqa: E402
+from yangdo import ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 # 출력 함수는 yangdo/outputs.py 에 있다(mcp_server.py, make_return.py 와 함께 쓴다). 이름을 그대로 다시 내보내 run.review_md 처럼 불러도 된다
 from yangdo import outputs  # noqa: E402
@@ -33,32 +32,9 @@ from yangdo.outputs import (OUTPUT_NAMES, QUESTIONS, RESULT, REVIEW, TAIL, WORKB
                             clear_previous, questions_md, review_md, won, write_outputs)
 
 
-def iso_date(s):
-    """--오늘 의 값. 다른 날짜 입력과 같은 dates.to_date 로 읽어 YYYY-MM-DD 글자만 받는다(파이썬 3.10 과 3.11 이상이 같다).
-
-    make_return.py 도 이 함수를 쓴다."""
-    try:
-        d = dates.to_date(s)
-    except ValueError:
-        d = None
-    if d is None:
-        raise argparse.ArgumentTypeError("날짜는 YYYY-MM-DD 로 적습니다: %s" % s)
-    return d.isoformat()
-
-
-_iso_date = iso_date
-
-
-def read_facts(path):
-    """사실관계 파일을 읽는다. (사실관계, None) 또는 (None, 읽지 못한 까닭). make_return.py 도 이 함수를 쓴다."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            facts = json.load(f)
-    except (OSError, ValueError) as e:
-        return None, "사실관계 파일을 읽지 못했다: %s" % e
-    if not isinstance(facts, dict):
-        return None, "사실관계 파일의 맨 위는 JSON 객체여야 한다"
-    return facts, None
+# 명령줄 날짜 읽기와 사실관계 파일 읽기는 yangdo/outputs.py 에 있다(make_return.py 도 그것을 쓴다). 옛 이름으로도 부를 수 있다
+iso_date = _iso_date = outputs.iso_date
+read_facts = outputs.read_facts
 
 
 def _tell_tmp_left(out):

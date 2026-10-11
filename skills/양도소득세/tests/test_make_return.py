@@ -380,6 +380,13 @@ def test_efile_check_failure_leaves_no_file(tmp_path, monkeypatch):
     text = _confirm(out)
     assert "03 레코드 2번째 줄: 산출세액 합이 합계 행과 다르다" in text
     assert "임시 폴더 .efile-x 를 지우지 못했다. 직접 지운다" in text
+    # 신고서 PDF 가 제출용 이름으로 남는다. 전자신고 파일이 없다는 것, PDF 는 서식 검산을 통과한 것이라는 것,
+    # 그래도 까닭을 확인하기 전에는 쓰지 않는다는 것을 확인 문서와 안내서 머리가 말한다
+    notes = _section(text, "## 알림")
+    assert "전자신고 파일은 없다" in notes and "서식 검산을 통과" in notes and "양도소득세_신고서.pdf" in notes
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert "전자신고 파일은 없다" in head and "서식 검산을 통과" in head and "신고하지 않는다" in head
 
 
 def test_real_efile_check_failure_is_code_1(tmp_path, monkeypatch):
@@ -419,8 +426,13 @@ def test_locked_spec_is_code_3_and_drops_old_file(tmp_path, monkeypatch):
     assert PDFS | GUIDES | {"신고값.json"} <= names         # 서식 검산은 통과했으니 신고서와 안내서는 있다
     text = _confirm(out)
     assert "규격판이 잠겨" in text and "운영자" in text
-    with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
-        assert fh.readline().startswith("# ")               # 값은 쓸 수 있으니 「신고하지 않는다」 줄이 붙지 않는다
+    # 전자신고 파일이 없다는 것과 남은 신고서 PDF 가 서식 검산을 통과한 것이라는 말이 확인 문서와 안내서 머리에 있다
+    notes = _section(text, "## 알림")
+    assert "전자신고 파일은 없다" in notes and "서식 검산을 통과" in notes and "양도소득세_신고서.pdf" in notes
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert head.startswith("> ") and "전자신고 파일은 없다" in head and "서식 검산을 통과" in head
+        assert "신고하지 않는다" not in head                 # 값은 쓸 수 있으니 「신고하지 않는다」 줄은 붙지 않는다
 
 
 def test_unreadable_skill_file_is_code_3(tmp_path, monkeypatch):
@@ -479,6 +491,19 @@ def _relative_run(tmp_path, monkeypatch, capsys):
 
 def test_relative_output_folder_runs_to_the_end(tmp_path, monkeypatch, capsys):
     _relative_run(tmp_path, monkeypatch, capsys)
+
+
+def test_report_paths_follow_the_output_folder_as_given(tmp_path, monkeypatch):
+    """보고의 파일 경로는 모두 받은 출력 폴더 기준이다. 상대 경로로 받았으면 전자신고 파일도 상대 경로로 적는다."""
+    monkeypatch.chdir(tmp_path)
+    rep = MR.make(CASES["S1"], s1_filer(), "out", today=TODAY)
+    assert rep["종료코드"] == 0
+    assert {os.path.basename(p) for p in rep["파일"]} >= PDFS | GUIDES | {S1_FILE, "신고값.json", "신고_확인.md"}
+    for p in rep["파일"]:
+        assert p == os.path.join("out", os.path.basename(p)) and not os.path.isabs(p), p
+    out = str(tmp_path / "o2")
+    rep = MR.make(CASES["S1"], s1_filer(), out, today=TODAY)       # 절대 경로로 받으면 모두 절대 경로다
+    assert all(p == os.path.join(out, os.path.basename(p)) for p in rep["파일"])
 
 
 def test_relative_output_folder_runs_to_the_end_on_old_python(tmp_path, monkeypatch, capsys):
@@ -1102,3 +1127,140 @@ def test_question_run_keeps_its_instruction_and_has_no_reference_values_sentence
     text = _confirm(out)
     assert "참고용" not in text
     assert "위 질문에 답을 채운 뒤 다시 실행한다" in _todo_part(text)
+
+
+# ---------------------------------------------------------------- 계획 2b G7: 미뤄 둔 지적
+
+def _section(text, head):
+    """확인 문서에서 head 절의 본문. 절이 없으면 빈 글자(IndexError 를 내지 않는다)."""
+    parts = text.split(head, 1)
+    return parts[1].split("\n## ")[0] if len(parts) == 2 else ""
+
+
+def test_prior_return_note_says_the_plan_once(tmp_path):
+    """신고값 모듈의 문장이 이미 「계획 5 에서 다룬다」로 끝나면 같은 말을 한 번 더 붙이지 않는다."""
+    rep, out = _a_with(tmp_path, 다른양도=True, 기신고=50000000)
+    assert rep["종료코드"] == 2
+    notes = [x for x in rep["알림"] if "기신고" in x]
+    assert notes and all(x.count("계획 5 에서 다룬다") == 1 for x in notes), notes
+    assert _confirm(out).count("계획 5 에서 다룬다") == 1
+
+
+def test_scope_stop_without_plan_still_says_who_handles_it(tmp_path, monkeypatch):
+    def out_of_scope(*a, **k):
+        raise return_values.Unsupported("국외 자산 신고는 다루지 않는다", "없음")
+
+    monkeypatch.setattr(MR.return_values, "build", out_of_scope)
+    rep = MR.make(CASES["S1"], s1_filer(), str(tmp_path / "o"), today=TODAY)
+    assert any(x == "국외 자산 신고는 다루지 않는다. 이 스킬이 다루지 않는다" for x in rep["알림"])
+
+
+def test_withheld_todo_does_not_repeat_the_word_reason(tmp_path):
+    """사람이 할 일의 보류 문장은 「사유는 …이다. 사유를 …」처럼 같은 말을 잇지 않는다."""
+    rep = MR.make(CASES["G"], g_filer(), str(tmp_path / "o"), today=TODAY)
+    assert rep["종료코드"] == 2 and rep["보류사유"]
+    first = rep["사람이할일"][0]
+    assert "전액 비과세 자산" in first and "세무 전문가" in first and first.count("사유") == 1, first
+    monkeypatch_free = MR.make(dict(CASES["A"], 연간=dict(CASES["A"]["연간"], 다른양도=True, 기신고=1)), filers.get("A"),
+                               str(tmp_path / "p"), today=TODAY)
+    assert monkeypatch_free["사람이할일"][0].count("사유") == 1
+
+
+def test_question_counts_use_one_wording(tmp_path):
+    """계산 질문으로 끝난 실행의 요약, 단계 칸, 확인 문서가 같은 말(계산 질문 n개, 이 도구가 다루지 않는 경우 m개)을 쓴다."""
+    from yangdo import outputs
+    rep = MR.make(CASES["L"], filers.get("A"), str(tmp_path / "o"), today=TODAY)
+    assert rep["종료코드"] == 2
+    words = outputs.QUESTION_COUNTS % (len(rep["질문"]), len(rep["다루지않음"]))
+    assert rep["요약"].startswith(words) and rep["단계"]["계산"] == words
+    assert _confirm(tmp_path / "o").count(words) >= 3              # 요약 줄, 단계 표, 계산 질문 절
+
+
+def test_return_date_before_sale_date_is_an_input_error(tmp_path):
+    """작성일이 양도일보다 앞서면 신고인 파일을 고칠 일이다. 신고값 실패(종료코드 1)가 아니라 입력 오류(종료코드 2)로 끝낸다."""
+    f = s1_filer()
+    f["신고"]["작성일"] = "2026-11-01"                          # S1 양도일은 2026-11-20
+    rep = MR.make(CASES["S1"], f, str(tmp_path / "o"), today=TODAY)
+    assert rep["종료코드"] == 2 and rep["상태"] == "입력오류", rep["알림"]
+    assert any("2026-11-01" in x and "2026-11-20" in x and "양도일" in x for x in rep["알림"])
+    assert rep["단계"]["신고값"].startswith("만들지 않음")
+    names = set(os.listdir(tmp_path / "o"))
+    assert not (PDFS | GUIDES | {"신고값.json"}) & names
+    assert "입력 파일을 고친 뒤 다시 실행한다" in _todo_part(_confirm(tmp_path / "o"))
+
+
+def test_unexpected_error_after_first_guide_marks_the_guide(tmp_path, monkeypatch):
+    """입력 안내서를 쓴 뒤 부속서류에서 예상하지 못한 오류가 나면, 남은 안내서 맨 위에 쓰지 말라는 줄을 붙인다."""
+    def boom(rv, facts, res):
+        raise RuntimeError("김합성 비밀")
+
+    monkeypatch.setattr(MR.guide, "attachments", boom)
+    rep = MR.make(CASES["S1"], s1_filer(), str(tmp_path / "o"), today=TODAY)
+    out = tmp_path / "o"
+    assert rep["종료코드"] == 1 and rep["상태"] == "오류"
+    names = set(os.listdir(out))
+    assert "홈택스_입력안내.md" in names and "부속서류.md" not in names and not PDFS & names and not _efiles(out)
+    head = _first_line(out, "홈택스_입력안내.md")
+    assert head.startswith("> ") and "예상하지 못한 오류" in head and "신고하지 않는다" in head
+    assert rep["단계"]["입력 안내서·부속서류"] == "만듦(신고에 쓰지 않는다)"
+    assert rep["단계"]["신고서 PDF"].startswith("지움") and rep["단계"]["전자신고 파일"].startswith("지움")
+    assert "김합성" not in _confirm(out)
+
+
+def test_unexpected_error_does_not_say_removed_when_a_pdf_is_stuck(tmp_path, monkeypatch):
+    """예상하지 못한 오류 뒤에 신고서 PDF 를 지우지 못했으면 단계 표와 알림이 지웠다고 적지 않는다."""
+    def boom(rv):
+        raise RuntimeError("터짐")
+
+    monkeypatch.setattr(MR.guide, "hometax_input", boom)
+    fp, gp, out = _write(tmp_path, "S1", s1_filer())
+    real = os.remove
+
+    def remove(path, *a, **k):
+        # 이전 결과를 지우는 처음에는 없던 파일이다. 이번 실행이 만든 국세 신고서만 지워지지 않게 한다
+        if os.path.basename(os.fspath(path)) == "양도소득세_신고서.pdf":
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(os, "remove", remove)
+    rep = MR.make(str(fp), str(gp), str(out), today=TODAY)
+    monkeypatch.undo()
+    assert rep["종료코드"] == 1 and rep["상태"] == "오류"
+    assert "양도소득세_신고서.pdf" in os.listdir(out) and _efiles(out) == []
+    assert rep["단계"]["신고서 PDF"].startswith("지우지 못함") and rep["단계"]["전자신고 파일"].startswith("지움")
+    text = _confirm(out)
+    assert "지우지 못한 파일: 양도소득세_신고서.pdf" in text
+    assert not any("전자신고 파일은 지웠다" in x and "신고서 PDF 와" in x for x in rep["알림"])
+    assert any("일부가 남았다" in x for x in rep["알림"])
+
+
+def test_unconfirmed_cells_come_from_the_layout_file(tmp_path, monkeypatch):
+    """확인 문서의 「규격서 미확인 칸」 문장은 코드 상수가 아니라 레이아웃 파일의 FIXUPS 에서 읽는다."""
+    assert not hasattr(MR, "UNCONFIRMED")
+    with open(os.path.join(efile.EFILE_DIR, efile.LAYOUT_FILE), encoding="utf-8") as fh:
+        layout = json.load(fh)
+    marked = [x for x in layout["FIXUPS"] if "형식검증" in x.get("확인", "")]
+    lines = MR._unconfirmed()
+    assert len(lines) == len(marked) >= 5
+    for word in ("01-23 세무프로그램코드", "01-18~22·26·27 세무대리인 칸", "03-31 주민세_세율", "01 레코드", "05 레코드 과세구분"):
+        assert any(x.startswith(word) for x in lines), word
+    # 레이아웃 파일의 문장을 바꾸면 확인 문서의 문장이 따라 바뀐다
+    for x in layout["FIXUPS"]:
+        if x.get("자리") == "01-23 세무프로그램코드":
+            x["내용"] = "시험용으로 바꾼 문장"
+    d = tmp_path / "efile"
+    d.mkdir()
+    (d / efile.LAYOUT_FILE).write_text(json.dumps(layout, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(efile, "EFILE_DIR", str(d))
+    assert "01-23 세무프로그램코드: 시험용으로 바꾼 문장" in MR._unconfirmed()
+
+
+def test_make_return_does_not_import_the_run_script():
+    """실행 진입점끼리 가져다 쓰지 않는다. 함께 쓰는 도우미는 yangdo/outputs.py 에 있다."""
+    import run
+    from yangdo import outputs
+    code = ("import sys; sys.path[:0] = [%r, %r]; import make_return; print('run' in sys.modules)"
+            % (SKILL, os.path.join(SKILL, "scripts")))
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0 and p.stdout.strip() == "False", p.stdout + p.stderr
+    assert run.iso_date is outputs.iso_date and run.read_facts is outputs.read_facts and run._iso_date is outputs.iso_date

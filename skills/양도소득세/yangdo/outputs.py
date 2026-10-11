@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """결과 JSON, 검토 문서, 질문 문서를 쓰는 출력 함수. scripts/run.py, scripts/mcp_server.py, scripts/make_return.py 가 함께 쓴다.
+진입점이 함께 쓰는 작은 도우미(명령줄 날짜 읽기 iso_date, 사실관계 파일 읽기 read_facts, 오류 기록 log_call_sites)도 여기 둔다.
+진입점 스크립트끼리는 서로 가져다 쓰지 않는다.
 
 이 모듈이 쓰는 파일 이름은 RESULT, QUESTIONS, REVIEW, WORKBOOK 넷이다(OUTPUT_NAMES). 통합 문서(WORKBOOK)는 engine 이 쓰고
 이 모듈은 있으면 경로만 돌려준다. 출력 폴더에 계산 결과를 내는 차례(이전 결과 지움 → 계산 → 파일 쓰기)는 calculate_to 하나에 있다.
@@ -8,13 +10,14 @@
 (scripts/make_return.py)가 쓰는 이름(RETURN_NAMES), 양도소득세 전자신고 파일 이름 꼴(EFILE_NAME), 이 도구가 만든 전자신고
 임시 폴더(yangdo/efile_tmp.py 가 가린다)다. 계산만 다시 돌려도 옛 신고서 PDF, 전자신고 파일, 신고값, 안내서, 확인 문서가 새 계산 결과 옆에 남지 않는다.
 """
+import argparse
 import json
 import os
 import re
 import sys
 import traceback
 
-from yangdo import QUESTIONS_PATH, efile_tmp, engine
+from yangdo import QUESTIONS_PATH, dates, efile_tmp, engine
 
 TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
 
@@ -141,6 +144,31 @@ def review_md(res):
 def why(e):
     """OSError 를 한 줄 까닭으로. 운영체제 문장이 있으면 그것만 쓴다."""
     return " ".join(str(getattr(e, "strerror", None) or e).split())
+
+
+def iso_date(s):
+    """명령줄 --오늘 의 값. 다른 날짜 입력과 같은 dates.to_date 로 읽어 YYYY-MM-DD 글자만 받는다(파이썬 3.10 과 3.11 이상이 같다).
+
+    run.py 와 make_return.py 가 함께 쓴다."""
+    try:
+        d = dates.to_date(s)
+    except ValueError:
+        d = None
+    if d is None:
+        raise argparse.ArgumentTypeError("날짜는 YYYY-MM-DD 로 적습니다: %s" % s)
+    return d.isoformat()
+
+
+def read_facts(path):
+    """사실관계 파일을 읽는다. (사실관계, None) 또는 (None, 읽지 못한 까닭). run.py 와 make_return.py 가 함께 쓴다."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            facts = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, "사실관계 파일을 읽지 못했다: %s" % e
+    if not isinstance(facts, dict):
+        return None, "사실관계 파일의 맨 위는 JSON 객체여야 한다"
+    return facts, None
 
 
 def log_call_sites(e, head, stream=None):
