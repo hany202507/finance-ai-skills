@@ -167,6 +167,37 @@ def test_expense_business_number_and_counterparty_names():
     assert not any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
 
 
+def test_missing_payment_date_is_a_check_item():
+    facts = copy.deepcopy(CASES["S1"])
+    facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = None
+    r = engine.calculate(facts, today="2026-10-11")
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, facts, filing.load(f))
+    assert rv["전자신고"]["필요경비명세"][-1]["지급일자"] == ""
+    assert any("29001" in x and "지급일자가 필수" in x for x in rv["확인사항"])
+
+
+def test_filing_codes_come_from_codes_table(tmp_path):
+    import json as _json
+    import os
+    import shutil
+    from yangdo import SKILL_DIR
+    for name in os.listdir(os.path.join(SKILL_DIR, "efile")):
+        shutil.copy(os.path.join(SKILL_DIR, "efile", name), tmp_path / name)
+    path = tmp_path / "codes_c116300.json"
+    codes = _json.loads(path.read_text(encoding="utf-8"))
+    codes["서식종류"]["예정"]["코드"] = "X03"
+    codes["세율별특수행"]["합계"]["국내외분"] = "Y"
+    path.write_text(_json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    r = engine.calculate(CASES["S1"], today="2026-10-11")
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, CASES["S1"], filing.load(f), efile_dir=str(tmp_path))
+    assert rv["신고"]["서식종류"] == "X03"
+    assert rv["전자신고"]["세율별"][-1]["국내외분"] == "Y"
+
+
 def test_missing_business_number_is_a_check_item():
     facts = copy.deepcopy(CASES["S1"])
     del facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"]
@@ -202,10 +233,23 @@ def test_s1_payment_rows_in_efile():
     assert sub["분납할세액"] == rate["분납할세액"] == 0 and sub["자진납부세액"] == rate["자진납부세액"] == 0
     assert z["전자신고세액공제"] == rate["전자신고세액공제"] == 20000
     assert all(x[k] == 0 for x in rows.values() for k in ("주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"))
-    assert all(x["주민세_세율"] == "10.00" for x in rows.values())        # 레이아웃 점검값 01000(결정 2026-10-11)
+    # 03-31 주민세_세율: 합계 행만 점검값 01000, 나머지 행 0(규격서 p43 31번, 결정 2026-10-11)
+    assert (z["주민세_세율"], sub["주민세_세율"], rate["주민세_세율"]) == ("10.00", "0.00", "0.00")
+    assert any("03-31" in x and "형식검증" in x for x in rv["확인사항"])
 
 
-def test_merged_comparison_tax_is_split_by_tax_base():
+def test_single_column_payment_rows():
+    r, rv = _rv("S1", 분납신청=True)
+    for name in ("1-10", "국내소계"):
+        c = rv["본지"]["열"][name]
+        assert (c["기신고세액"], c["납부할세액"], c["분납"], c["신고기한내납부"]) == (0, 38329466, None, None), name
+    t = rv["본지"]["열"]["합계"]
+    assert (t["납부할세액"], t["분납"], t["신고기한내납부"]) == (38329466, 19164733, 19164733)
+    assert rv["지방"]["열"]["1-10"]["납부할세액"] == 3834946 and rv["지방"]["열"]["1-10"]["신고기한내납부"] is None
+    assert rv["지방"]["열"]["합계"]["신고기한내납부"] == 3834946
+
+
+def _bf_merged():
     # BF 의 평택 토지를 2025-06-01 취득으로 바꾸면 1년 이상 2년 미만 단기세율(40%, 1-15)이 이기고,
     # 합산 비교세액(기본세율로 합계 과세표준) 281,118,000원이 세율별 합 278,752,000원보다 크다
     facts = copy.deepcopy(CASES["BF"])
@@ -215,19 +259,36 @@ def test_merged_comparison_tax_is_split_by_tax_base():
     f = filers.get("BF")
     for aid in f["자산"]:
         f["자산"][aid]["법정동코드"] = "1120011400"
-    rv = return_values.build(r, facts, filing.load(f))
+    return r, return_values.build(r, facts, filing.load(f))
+
+
+def test_merged_comparison_form_columns_keep_engine_rate_rows():
+    """국세청 확정신고 작성 사례 09: 세율구분 열은 열의 세율·세액, 국내분 소계는 열 합, 합계는 비교세액, 합계·소계 ⑨ 공란."""
+    r, rv = _bf_merged()
     cols = rv["본지"]["열"]
     assert [x["표기"] for x in rv["본지"]["세율구분"]] == ["1-10", "1-15"]
-    assert cols["1-10"]["산출세액"] + cols["1-15"]["산출세액"] == cols["합계"]["산출세액"] == 281118000
-    assert cols["1-10"]["산출세액"] == 281118000 * 163400000 // 754900000
-    assert cols["1-10"]["세율"] == cols["1-15"]["세율"] == cols["합계"]["세율"] == "42%"
+    assert [(cols[k]["산출세액"], cols[k]["세율"]) for k in ("1-10", "1-15")] == [(42152000, "38%"), (236600000, "40%")]
+    assert cols["국내소계"]["산출세액"] == 42152000 + 236600000 and cols["국내소계"]["과세표준"] == 754900000
+    assert cols["합계"]["산출세액"] == 281118000 and cols["합계"]["세율"] == cols["국내소계"]["세율"] == ""
+    assert all(cols[k][x] is None for k in ("1-10", "1-15", "국내소계") for x in ("기신고세액", "납부할세액", "분납", "신고기한내납부"))
+    assert cols["합계"]["납부할세액"] == 281118000
     loc = rv["지방"]["열"]
-    assert loc["1-10"]["산출세액"] + loc["1-15"]["산출세액"] == loc["합계"]["산출세액"] == 28111800
+    assert [(loc[k]["산출세액"], loc[k]["세율"]) for k in ("1-10", "1-15")] == [(4215200, "3.8%"), (23660000, "4%")]
+    assert loc["국내소계"]["산출세액"] == 27875200 and loc["합계"]["산출세액"] == 28111800 and loc["합계"]["세율"] == ""
+    assert loc["1-10"]["납부할세액"] is None and loc["합계"]["납부할세액"] == 28111800
+    assert any("합산 비교 세액이 커서" in x and "제104조⑤" in x for x in rv["확인사항"])
+
+
+def test_merged_comparison_efile_rows_are_split_by_tax_base():
+    r, rv = _bf_merged()
     rows = rv["전자신고"]["세율별"]
     assert [(x["국내외분"], x["세율구분"]) for x in rows] == [("1", "00"), ("1", "10"), ("1", "15"), ("Z", "00")]
+    assert rows[1]["산출세액"] == 281118000 * 163400000 // 754900000
+    assert (rows[1]["세율"], rows[2]["세율"]) == ("38.00", "40.00")      # 행의 적용 세율(규격서 p37 9번)
     z = rows[-1]
     for k in ("산출세액", "자진납부할세액", "과세표준", "양도소득금액"):
         assert z[k] == rows[0][k] == rows[1][k] + rows[2][k], k
+    assert z["산출세액"] == z["자진납부할세액"] == 281118000
     assert any("과세표준 비율로 나눠" in x for x in rv["확인사항"])
 
 
@@ -255,10 +316,12 @@ def test_k_heavy_tax_has_exclusion_code():
     assert t["산출세액"] == 322310000 and t["세율"] == "70%"            # 40% 구간 + 30%
 
 
-def test_a_long_holding_label_and_blank_residence_code():
+def test_a_long_holding_label_and_residence_without_requirement():
+    # 거주 코드 Z1(2017-08-02 이전 취득, 거주요건 없음)이어도 거주한 구간이 있으면 ⑩ 을 채운다(국세청 작성 사례 03)
     r, rv = _rv("A")
     a = rv["부표1"][0]
-    assert (a["보유기간"], a["거주기간"], a["장특공거주기간"]) == ("10년 이상", "", "12년 이상 13년 미만")
+    assert rv["전자신고"]["계산명세"][0]["1세대1주택_비과세_거주기간"] == "Z1"
+    assert (a["보유기간"], a["거주기간"], a["장특공거주기간"]) == ("10년 이상", "10년 이상", "10년 이상")
     assert rv["본지"]["열"]["합계"]["산출세액"] == 2565000 and rv["지방"]["열"]["합계"]["산출세액"] == 256500
 
 
