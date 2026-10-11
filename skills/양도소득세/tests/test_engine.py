@@ -75,12 +75,14 @@ def test_exchange_other_and_expropriation_transfer_not_calculated(원인, 문구
     f["자산"][0]["양도"]["원인"] = 원인
     r = engine.calculate(f, today="2026-10-09")
     assert r["상태"] == "질문" and r["계산"] is None
-    assert r["다루지않음"] == [{"자산": "A", "내용": 문구, "계획": "5"}]
+    assert r["다루지않음"] == [{"자산": "A", "내용": 문구, "계획": "미정"}]
 
 
-def test_unsupported_plan_defaults_to_5_and_mixed_years_has_none():
-    from yangdo import calc
-    assert calc.Unsupported("x").계획 == "5" and calc.Unsupported("x", 계획="없음").계획 == "없음"
+def test_unsupported_plan_defaults_to_undecided_and_mixed_years_has_none():
+    """계획을 주지 않은 Unsupported 는 「미정」이다(어느 계획에 든 항목인지 밝히지 않으면 계획 5 라고 답하지 않는다)."""
+    from yangdo import calc, return_values
+    assert calc.Unsupported("x").계획 == "미정" and calc.Unsupported("x", 계획="없음").계획 == "없음"
+    assert return_values.Unsupported("x").계획 == "미정" and return_values.Unsupported("x", "5").계획 == "5"
     f = copy.deepcopy(CASES["BC"])
     f["자산"][0]["양도"]["잔금일"] = "2025-12-01"
     r = engine.calculate(f, today="2026-10-09")

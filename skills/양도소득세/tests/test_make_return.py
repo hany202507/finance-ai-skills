@@ -264,12 +264,13 @@ def test_unreadable_inputs_are_code_2(tmp_path):
 
 def test_unsupported_scope_is_code_2(tmp_path, monkeypatch):
     def out_of_scope(*a, **k):
-        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 아직 다루지 않는다", "미정")
 
     monkeypatch.setattr(MR.return_values, "build", out_of_scope)
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 2
-    assert "기신고" in _confirm(out) and "계획 5" in _confirm(out)
+    assert "기신고" in _confirm(out) and "다룰 계획이 정해지지 않았다" in _confirm(out)
+    assert "계획 미정" not in _confirm(out) and "계획 5" not in _confirm(out)
     assert not (PDFS | GUIDES | {"신고값.json"}) & set(os.listdir(out))
 
 
@@ -289,8 +290,9 @@ def test_preliminary_return_with_prior_return_is_code_2(tmp_path):
     assert CALC | {"신고_확인.md"} <= names
     assert not (PDFS | GUIDES | {"신고값.json"}) & names and _efiles(out) == []
     text = _confirm(out)
-    assert "기신고" in text and "계획 5" in text and "| 신고값 | 다루지않음 |" in text
-    assert any(x["계획"] == "5" and "기신고" in x["내용"] for x in rep["다루지않음"])
+    assert "기신고" in text and "다룰 계획이 정해지지 않았다" in text and "| 신고값 | 다루지않음 |" in text
+    assert "계획 5" not in text and "계획 미정" not in text
+    assert any(x["계획"] == "미정" and "기신고" in x["내용"] for x in rep["다루지않음"])
 
 
 def test_other_sale_answer_is_raised_in_notes_and_todo(tmp_path):
@@ -1140,7 +1142,7 @@ def test_full_run_confirm_document_keeps_its_file_sentences(tmp_path):
 
 def test_unsupported_run_has_no_reference_values_sentence(tmp_path, monkeypatch):
     def out_of_scope(*a, **k):
-        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 아직 다루지 않는다", "미정")
 
     monkeypatch.setattr(MR.return_values, "build", out_of_scope)
     code, out = _main(tmp_path, "S1", s1_filer())
@@ -1181,12 +1183,37 @@ def test_question_run_keeps_its_instruction_and_has_no_reference_values_sentence
 # ---------------------------------------------------------------- 계획 2b G7: 미뤄 둔 지적
 
 def test_prior_return_note_says_the_plan_once(tmp_path):
-    """신고값 모듈의 문장이 이미 「계획 5 에서 다룬다」로 끝나면 같은 말을 한 번 더 붙이지 않는다."""
+    """어느 계획에서 다루는지는 한 번만 말한다. 기신고 합산은 어느 계획에도 없어 「다룰 계획이 정해지지 않았다」가 한 번 나온다.
+    신고값 모듈의 문장이 이미 그 말을 담고 있으면 같은 말을 한 번 더 붙이지 않는다."""
     rep, out = _a_with(tmp_path, 다른양도=True, 기신고=50000000)
     assert rep["종료코드"] == 2
     notes = [x for x in rep["알림"] if "기신고" in x]
-    assert notes and all(x.count("계획 5 에서 다룬다") == 1 for x in notes), notes
-    assert _confirm(out).count("계획 5 에서 다룬다") == 1
+    assert notes and all(x.count("다룰 계획이 정해지지 않았다") == 1 for x in notes), notes
+    assert _confirm(out).count("다룰 계획이 정해지지 않았다") == 1
+    assert "계획 5 에서 다룬다" not in _confirm(out)
+
+
+def test_plan_sentence_for_each_kind_of_plan_value(tmp_path, monkeypatch):
+    """다루지않음을 사람에게 말할 때: 계획 번호면 「계획 n 에서 다룬다」, 「미정」이면 「다룰 계획이 정해지지 않았다」,
+    「없음」이면 「이 스킬이 다루지 않는다」. 「계획 미정 에서 다룬다」 같은 문장을 만들지 않는다."""
+    from yangdo import outputs
+    assert outputs.plan_text("5") == "계획 5 에서 다룬다" and outputs.plan_text("4") == "계획 4 에서 다룬다"
+    assert outputs.plan_text("미정") == "다룰 계획이 정해지지 않았다" and outputs.plan_text("없음") == "이 스킬이 다루지 않는다"
+    res = {"질문": [], "다루지않음": [{"자산": "B", "내용": "교환으로 양도한 자산", "계획": "미정"},
+                                 {"자산": "B", "내용": "분양권 양도", "계획": "5"},
+                                 {"자산": None, "내용": "과세연도가 다른 양도", "계획": "없음"}]}
+    md = outputs.questions_md(res)
+    assert "교환으로 양도한 자산. 다룰 계획이 정해지지 않았다" in md and "분양권 양도. 계획 5 에서 다룬다" in md
+    assert "과세연도가 다른 양도. 이 스킬이 다루지 않는다" in md and "계획 미정" not in md
+
+    for plan, want in (("5", "계획 5 에서 다룬다"), ("미정", "다룰 계획이 정해지지 않았다"), ("없음", "이 스킬이 다루지 않는다")):
+        def out_of_scope(*a, _plan=plan, **k):
+            raise return_values.Unsupported("합성 범위 밖 사유", _plan)
+        monkeypatch.setattr(MR.return_values, "build", out_of_scope)
+        folder = tmp_path / plan
+        folder.mkdir()
+        code, out = _main(folder, "S1", s1_filer())
+        assert code == 2 and "합성 범위 밖 사유. %s" % want in _confirm(out), plan
 
 
 def test_scope_stop_without_plan_still_says_who_handles_it(tmp_path, monkeypatch):

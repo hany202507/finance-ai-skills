@@ -18,7 +18,7 @@ BUYER_LABELS = {"분양": "건설사·조합(분양)", "공공기관": "국가·
 class Unsupported(Exception):
     """계산하지 않는 경우. 계획은 그 범위를 다룰 계획 번호이고 「없음」은 계획이 없다는 뜻이다."""
 
-    def __init__(self, message, 계획="5"):
+    def __init__(self, message, 계획="미정"):
         super().__init__(message)
         self.계획 = 계획
 
@@ -147,7 +147,7 @@ def taxable(g, v, rs):
     if v["전액비과세"]:
         return {"비과세양도차익": None, "과세양도차익": 0, "장특공률": "0", "장특공": 0, "양도소득금액": 0, "고가주택기준": 기준}
     if g["양도차익"] < 0:
-        raise Unsupported("%s: 양도차손 %s원. 양도차손 통산은 계획 5 범위라 계산하지 않았다" % (v["id"], g["양도차익"]))
+        raise Unsupported("%s: 양도차손 %s원. 양도차손 통산은 계획 5 범위라 계산하지 않았다" % (v["id"], g["양도차익"]), 계획="5")
     if v["고가주택"]:
         전체 = g["전체양도가액"]
         과세 = floor(Fraction(g["양도차익"]) * (전체 - 기준) / 전체)

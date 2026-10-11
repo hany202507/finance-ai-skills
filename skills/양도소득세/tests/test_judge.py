@@ -425,7 +425,7 @@ def test_converted_building_with_table2_is_out_of_scope():
     """근생 건물을 2023-06-01 에 주거로 바꾸고 20억에 팔면 표2 가 걸린다. 건물 기간은 표1 이라 표2 를 전 기간에 줄 수 없다."""
     r = run(_converted())
     assert r["자산"] == [] and r["질문"] == []
-    assert r["다루지않음"] == [{"자산": "W", "내용": "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "계획": "5"}]
+    assert r["다루지않음"] == [{"자산": "W", "내용": "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "계획": "미정"}]
 
 
 def test_converted_building_fully_exempt_is_unaffected():
@@ -450,7 +450,7 @@ def test_converted_building_reaches_engine_as_out_of_scope():
     from yangdo import engine
     r = engine.calculate(_converted(), today="2026-10-09")
     assert r["상태"] == "질문" and r["계산"] is None
-    assert r["다루지않음"][0]["계획"] == "5" and "제95조⑤" in r["다루지않음"][0]["내용"]
+    assert r["다루지않음"][0]["계획"] == "미정" and "제95조⑤" in r["다루지않음"][0]["내용"]
 
 
 # ---- 최종 검토 반영: 일반주택 10호 확인사항 ----------------------------------------------------

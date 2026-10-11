@@ -409,7 +409,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
         raise ValueError("납부일(작성일)이 없어 가산세를 계산할 수 없다")
     if (facts.get("연간") or {}).get("기신고"):
         raise Unsupported("같은 해에 예정신고한 양도(기신고)가 있는 확정신고의 가산세는 계산하지 않는다. 예정신고를 한 번도 하지 않은 "
-                          "확정신고만 다룬다", "5")
+                          "확정신고만 다룬다", "미정")
     rs = ruleset.load(rules_dir)
     rows = result["계산"]["자산"]
     names = ["%s-%s" % (x["국내외분"], x["세율구분"]) for x in result["계산"].get("세율별") or []]

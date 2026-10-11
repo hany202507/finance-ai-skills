@@ -552,8 +552,9 @@ def test_partly_filed_year_is_unsupported():
     f = copy.deepcopy(CASES["BF"])
     r = _calc(f)
     f["연간"]["기신고"] = [{"양도소득금액": 40_000_000, "결정세액": 4_545_000}]
-    with pytest.raises(penalty.Unsupported, match="기신고"):
+    with pytest.raises(penalty.Unsupported, match="기신고") as e:
         penalty.final_return(r, f, "2027-05-20")
+    assert e.value.계획 == "미정"                          # 기신고 합산은 어느 계획에도 들어 있지 않다
 
 
 def test_after_final_return_deadline_is_unsupported():

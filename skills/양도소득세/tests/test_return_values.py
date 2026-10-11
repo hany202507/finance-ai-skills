@@ -104,7 +104,8 @@ def test_prior_return_blocks_preliminary_return_too():
     facts = dict(CASES["A"], 연간=dict(CASES["A"]["연간"], 다른양도=True, 기신고=50000000))
     with pytest.raises(return_values.Unsupported, match="기신고") as e:
         return_values.build(r, facts, filing.load(f))
-    assert e.value.계획 == "5" and "예정신고" in str(e.value)
+    assert e.value.계획 == "미정" and "예정신고" in str(e.value)       # 기신고 합산은 어느 계획에도 들어 있지 않다
+    assert "계획 5" not in str(e.value) and "아직 다루지 않는다" in str(e.value)
     assert "제1" not in str(e.value)                      # 조문 번호는 적지 않는다
 
 

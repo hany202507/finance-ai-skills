@@ -384,7 +384,7 @@ def _values(rep, res, facts, f, rules_dir):
         _taxable(rep, res)
         raise
     except return_values.Unsupported as u:
-        plan = "계획 %s 에서 다룬다" % u.계획 if u.계획 != "없음" else "이 스킬이 다루지 않는다"
+        plan = outputs.plan_text(u.계획)
         text = str(u).rstrip(". ")
         rep["다루지않음"] = rep["다루지않음"] + [{"자산": None, "내용": str(u), "계획": u.계획}]
         # 신고값 모듈의 문장이 이미 어느 계획에서 다루는지 말했으면 같은 말을 한 번 더 붙이지 않는다
