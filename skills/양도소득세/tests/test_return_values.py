@@ -147,6 +147,51 @@ def test_s1_schedule3_and_efile_expense_rows_carry_both_codes():
     assert (calc_row["거래금액_취득가액"], calc_row["기타필요경비"]) == (609800000, 21000000)
 
 
+def test_expense_business_number_and_counterparty_names():
+    r, rv = _rv("S1")
+    rows = rv["부표3"][0]["행"]
+    ex = rv["전자신고"]["필요경비명세"]
+    # 사실관계 필요경비 항목의 사업자번호(계약 보강 2026-10-11). 07 은 필수 구분코드 행에만 쓴다(규격서 p60 7번)
+    assert [x["사업자번호"] for x in rows] == ["", "", "2118104565", "1018101238", "3149007897", "1018101238"]
+    assert [x["사업자번호"] for x in ex] == ["", "", "2118104565", "1018101238", "3149007897", "1018101238"]
+    assert all("사업자등록번호" not in x for x in ex)
+    # 07-6 상호(Not Null): 취득세 행은 취득세 납세지(부동산 소재지) 시군구, 매입가액 행은 신고인 JSON 취득상대방
+    assert ex[1]["상호"] == rows[1]["상호"] == "서울특별시 성동구"
+    assert ex[0]["상호"] == "" and any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
+    assert not any("사업자번호가 필수" in x for x in rv["확인사항"])
+    r, rv = _rv("S1")
+    f = filers.get("S1")
+    f["자산"]["S1"].update(법정동코드="1120011400", 취득상대방="합성건설")
+    rv = return_values.build(r, CASES["S1"], filing.load(f))
+    assert rv["전자신고"]["필요경비명세"][0]["상호"] == rv["부표3"][0]["행"][0]["상호"] == "합성건설"
+    assert not any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
+
+
+def test_missing_business_number_is_a_check_item():
+    facts = copy.deepcopy(CASES["S1"])
+    del facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"]
+    r = engine.calculate(facts, today="2026-10-11")
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, facts, filing.load(f))
+    assert rv["전자신고"]["필요경비명세"][-1]["사업자번호"] == ""
+    assert any("29001" in x and "사업자번호가 필수" in x for x in rv["확인사항"])
+
+
+def test_efile_rows_carry_every_layout_field():
+    import os
+    from yangdo import SKILL_DIR
+    with open(os.path.join(SKILL_DIR, "efile", "layout_c116300.json"), encoding="utf-8") as fh:
+        layout = json.load(fh)["레코드"]
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    for no, key in (("03", "세율별"), ("05", "계산명세")):
+        names = [x["name"] for x in layout[no]["필드"] if x["name"] not in ("자료구분", "서식코드", "공란")]
+        for row in rv["전자신고"][key]:
+            assert [k for k in row if k != "자산"] == names
+            assert all(isinstance(row[x["name"]], int) for x in layout[no]["필드"] if x["type"] == "N" and x["class"] != "RATE"
+                       and x["name"] in names and "면적" not in x["name"] and "지분" not in x["name"])
+
+
 def test_s1_payment_rows_in_efile():
     r, rv = _rv("S1", 분납신청=True)
     rows = {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
@@ -157,6 +202,33 @@ def test_s1_payment_rows_in_efile():
     assert sub["분납할세액"] == rate["분납할세액"] == 0 and sub["자진납부세액"] == rate["자진납부세액"] == 0
     assert z["전자신고세액공제"] == rate["전자신고세액공제"] == 20000
     assert all(x[k] == 0 for x in rows.values() for k in ("주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"))
+    assert all(x["주민세_세율"] == "10.00" for x in rows.values())        # 레이아웃 점검값 01000(결정 2026-10-11)
+
+
+def test_merged_comparison_tax_is_split_by_tax_base():
+    # BF 의 평택 토지를 2025-06-01 취득으로 바꾸면 1년 이상 2년 미만 단기세율(40%, 1-15)이 이기고,
+    # 합산 비교세액(기본세율로 합계 과세표준) 281,118,000원이 세율별 합 278,752,000원보다 크다
+    facts = copy.deepcopy(CASES["BF"])
+    facts["자산"][1]["취득"]["잔금일"] = "2025-06-01"
+    r = engine.calculate(facts, today="2026-10-11")
+    assert r["계산"]["합계"]["산출세액"] == r["계산"]["합계"]["합산비교세액"] == 281118000
+    f = filers.get("BF")
+    for aid in f["자산"]:
+        f["자산"][aid]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, facts, filing.load(f))
+    cols = rv["본지"]["열"]
+    assert [x["표기"] for x in rv["본지"]["세율구분"]] == ["1-10", "1-15"]
+    assert cols["1-10"]["산출세액"] + cols["1-15"]["산출세액"] == cols["합계"]["산출세액"] == 281118000
+    assert cols["1-10"]["산출세액"] == 281118000 * 163400000 // 754900000
+    assert cols["1-10"]["세율"] == cols["1-15"]["세율"] == cols["합계"]["세율"] == "42%"
+    loc = rv["지방"]["열"]
+    assert loc["1-10"]["산출세액"] + loc["1-15"]["산출세액"] == loc["합계"]["산출세액"] == 28111800
+    rows = rv["전자신고"]["세율별"]
+    assert [(x["국내외분"], x["세율구분"]) for x in rows] == [("1", "00"), ("1", "10"), ("1", "15"), ("Z", "00")]
+    z = rows[-1]
+    for k in ("산출세액", "자진납부할세액", "과세표준", "양도소득금액"):
+        assert z[k] == rows[0][k] == rows[1][k] + rows[2][k], k
+    assert any("과세표준 비율로 나눠" in x for x in rv["확인사항"])
 
 
 def test_bf_final_return_has_no_credit_and_two_assets():

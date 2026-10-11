@@ -2,21 +2,26 @@
 """신고값. 계획 1 결과(C4)·사실관계(C1)·신고인(C7, filing.load 통과본)으로 서식 란별 값과 전자신고 레코드 집계(C8)를 만든다.
 
 서식 PDF(forms), 서식 검산(forms_check), 전자신고 생성기(efile), 입력 안내서(guide)가 이 결과를 읽는다.
-세액은 엔진 결과를 옮기고 다시 계산하지 않는다. 예외는 셋이다.
+세액은 엔진 결과를 옮기고 다시 계산하지 않는다. 예외는 넷이다.
   지방소득세 세율구분 열의 산출세액: 엔진은 합계만 내므로 합산 묶음마다 calc.rate_tax 로 구해 열에 나누고 합계와 대사한다.
+  합산 비교세액이 이길 때: 합계 산출세액을 세율구분 열에 과세표준 비율로 나눈다(규격서 p37 10번 합계 = 행 합, p40 안분).
   서식 ⑨ 세율 표기: 열 과세표준이 속한 구간 세율(forms/서식판.json 「본지_세율표기」).
   전자신고세액공제·분납: 규칙세트 값(T4).
-인적사항(성명, 주민등록번호, 주소, 전화, 양수인)은 신고인·양수인·신고 절에만 둔다. 확인사항에는 값을 싣지 않는다.
+인적사항(성명, 주민등록번호, 주소, 전화, 양수인)은 신고인·양수인·신고 절에만 둔다. 예외는 서식과 07 레코드가 거래상대방
+상호를 요구하는 매입가액 행(신고인 JSON 자산[id].취득상대방)뿐이고, 신고값 파일은 통째로 인적사항 파일로 다룬다(C8).
+확인사항에는 값을 싣지 않는다.
 
 전자신고 행의 키는 efile/layout_c116300.json 필드 name 그대로다(자료구분·서식코드·공란 제외). 다른 점은 아래뿐이다.
   05 계산명세: 「자산」(자산 id)을 더 싣는다.
-  07 필요경비명세: 07-3 은 「일련번호」, 07-4(5자리) 는 「전자코드」 키에 둔다. 「구분코드」는 부표3 과 같은 서식 3자리 코드다.
+  07 필요경비명세: 07-3 은 「일련번호」, 07-4(5자리) 는 「전자코드」, 07-7 은 「사업자번호」 키에 둔다.
+     「구분코드」는 부표3 과 같은 서식 3자리 코드다. 「자산」(자산 id)을 더 싣는다.
 일련번호는 정수, 비율(RATE) 칸은 소수 자리를 맞춘 백분율 문자열("38.00"), 금액은 원 단위 정수다.
 """
 import copy
 import hashlib
 import json
 import os
+import re
 from decimal import ROUND_DOWN, Decimal
 
 from yangdo import SKILL_DIR, calc, filing, questions, ruleset
@@ -40,7 +45,7 @@ Q_PRIOR = "P06"                    # 연간.기신고
 
 # 필요경비 항목 → codes_c116300.json["필요경비구분"] 의 키. 계획 1 M09 선택지는 코드로, 자유 글은 낱말로 고른다.
 # 묶음을 서식 부표3 의 칸 이름에 맞췄다: 발코니·샷시는 「용도변경·개량·이용편의」, 보일러·냉난방은 「엘리베이터·냉난방 설치」,
-# 그 밖의 가치 증가 공사는 「자산가치 증가 등 수선비」.
+# M09 「그 밖의 가치 증가 공사」(기타가치증가)는 「자산가치 증가 등 수선비」.
 CAPEX_CODE = {
     "발코니확장": "자본적지출_용도변경개량", "샷시": "자본적지출_용도변경개량", "용도변경개조": "자본적지출_용도변경개량",
     "보일러": "자본적지출_엘리베이터냉난방", "승강기냉난방": "자본적지출_엘리베이터냉난방",
@@ -59,7 +64,8 @@ WORD_CODE = {
     "양도비": [("채권", "채권매각차손등")],
 }
 FALLBACK_CODE = {"취득부대": "기타부대비용", "자본적지출": "자본적지출_기타", "기타": "기타비용_기타", "양도비": "양도중개수수료등"}
-EXPENSE_GROUPS = ("취득부대", "자본적지출", "기타", "양도비")
+# 07 행에서 레이아웃 name 과 다르게 쓰는 키(레이아웃 name → 신고값 키)
+EXPENSE_RENAMES = {"필요경비신고자료일련번호": "일련번호", "구분코드": "전자코드", "사업자등록번호": "사업자번호"}
 
 
 class Unsupported(Exception):
@@ -103,6 +109,19 @@ def _rate_field(rate, dec=2):
     """세율 Decimal → 전자신고 RATE 칸 백분율 문자열(소수 dec 자리). None 이면 0."""
     q = Decimal(1).scaleb(-dec)
     return str((Decimal(rate or 0) * 100).quantize(q))
+
+
+def _allocate(total, bases):
+    """총액을 과세표준 비율로 나눈다. 원 미만은 버리고, 남는 원은 과세표준이 가장 큰 칸(같으면 앞 칸)에 더한다."""
+    if not bases:
+        return []
+    whole = sum(bases)
+    if not whole:
+        return [total] + [0] * (len(bases) - 1)
+    parts = [total * b // whole for b in bases]
+    top = max(range(len(bases)), key=lambda j: (bases[j], -j))
+    parts[top] += total - sum(parts)
+    return parts
 
 
 def _area(v):
@@ -307,11 +326,37 @@ class _Builder:
                 return key
         return FALLBACK_CODE[group]
 
-    def schedule3_row(self, key, amount, date="", partner="", evidence=None):
+    def schedule3_row(self, key, amount, date="", partner="", evidence=None, biz=""):
         e = self.codes["필요경비구분"][key]
         ev = (self.codes["증빙종류"].get(evidence) or {}).get("코드") if evidence else None
-        return {"구분코드": e["코드"], "전자코드": e["전자코드"], "구분": e["이름"], "상호": partner or "", "사업자번호": "",
+        return {"구분코드": e["코드"], "전자코드": e["전자코드"], "구분": e["이름"], "상호": partner or "", "사업자번호": biz or "",
                 "지급일": date or "", "금액": amount, "증빙코드": ev or "", "_필수": e["필수"]}
+
+    def biz_no(self, aid, it):
+        """필요경비 항목의 사업자번호(사실관계 선택 키, 10자리 숫자). 모양이 틀리면 빈 글자와 확인사항."""
+        v = it.get("사업자번호")
+        if v in (None, ""):
+            return ""
+        if not (isinstance(v, str) and re.fullmatch(r"[0-9]{10}", v)):
+            self.note("%s: 필요경비 %s 의 사업자번호가 숫자 10자리가 아니라 비웠다" % (aid, it.get("내용")))
+            return ""
+        if not filing.biz_ok(v):
+            self.note("%s: 필요경비 %s 의 사업자번호 검증번호가 맞지 않는다. 다시 확인한다" % (aid, it.get("내용")))
+        return v
+
+    def seller(self, aid, lot):
+        """매입가액(111·11101) 행의 거래상대방. 신고인 JSON 자산[id].취득상대방(성명 또는 상호). 없으면 빈 글자."""
+        v = (lot or {}).get("취득상대방")
+        if v in (None, ""):
+            return ""
+        if not isinstance(v, str) or not filing.ksx1001_ok(v) or len(v.encode("cp949")) > 60:
+            raise filing.FilingError("자산.%s.취득상대방: 전자신고 파일(KS X 1001 완성형)로 쓸 수 있는 60바이트 이내 글자로 적는다" % aid)
+        return v
+
+    def tax_office(self, a):
+        """취득세(112·11201) 행의 거래상대방. 취득세 납세지는 부동산 소재지다(지방세법 제8조①1호). 취득 당시 소재지가 있으면 그것."""
+        loc = a.get("취득당시소재지") or a.get("소재지") or {}
+        return " ".join(loc.get(k) for k in ("시도", "시군구") if loc.get(k))
 
     def expense_rows(self, aid, a, v, c):
         """(부표3 행, 부표1 취득가액, 부표1 기타필요경비). 부표3 은 실지거래가액 자산과, 환산취득가액 대신 자본적지출·양도비를
@@ -325,14 +370,16 @@ class _Builder:
 
         def items(groups):
             return [self.schedule3_row(self.expense_code(g, it), _int(it.get("금액")), it.get("지급일"), it.get("상대방"),
-                                       it.get("증빙종류")) for g in groups for it in kept(g)]
+                                       it.get("증빙종류"), self.biz_no(aid, it)) for g in groups for it in kept(g)]
 
         method = c["취득가액방법"]
         if method == "실지거래가액":
             dep = _int(a.get("감가상각비"))
-            rows = [self.schedule3_row("매입가액", c["취득가액"] + dep, v["취득일"])]
+            rows = [self.schedule3_row("매입가액", c["취득가액"] + dep, v["취득일"], self.seller(aid, self.lots.get(aid)))]
             if _int(ex.get("취득세")):
-                rows.append(self.schedule3_row("취득세", _int(ex.get("취득세"))))
+                rows.append(self.schedule3_row("취득세", _int(ex.get("취득세")), partner=self.tax_office(a)))
+                self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지 시군구 이름으로 적었다"
+                          "(지방세법 제8조①1호, 규격서 p60 「거래상대방의 상호」)" % aid)
             rows += items(("취득부대",))
             if dep:
                 rows.append(self.schedule3_row("감가상각비", dep))
@@ -443,20 +490,22 @@ class _Builder:
                       "취득가액계": acq, "기타필요경비계": other}
             missing_name = [x["전자코드"] for x in rows if not x["상호"]]
             if missing_name:
-                self.note("%s: 07 레코드 상호는 Not Null 인데(규격서 p59~60) %s 행의 거래상대방 상호가 없어 비웠다"
+                self.note("%s: 07 레코드 상호는 Not Null 인데(규격서 p59~60) %s 행의 거래상대방 상호가 없어 비웠다. "
+                          "매입가액 행은 신고인 JSON 자산[id].취득상대방(매도인 성명 또는 상호), 나머지 행은 사실관계 필요경비 상대방에 적는다"
                           % (aid, ", ".join(missing_name)))
-            need_biz = [x["전자코드"] for x in rows if x["_필수"] and x["금액"]]
+            need_biz = [x["전자코드"] for x in rows if x["_필수"] and x["금액"] and not x["사업자번호"]]
             if need_biz:
-                self.note("%s: 07 레코드 %s 행은 사업자등록번호가 필수인데(규격서 p60) 받는 칸이 없어 비웠다"
-                          % (aid, ", ".join(need_biz)))
+                self.note("%s: 07 레코드 %s 행은 지급금액이 있으면 사업자번호가 필수인데(규격서 p60) 없어 비웠다. "
+                          "사실관계 필요경비 항목의 사업자번호(10자리)에 적는다" % (aid, ", ".join(need_biz)))
             for k, x in enumerate(rows, 1):
                 must = x["_필수"]
                 exp_rows.append(self.record("07", {
-                    "일련번호": n, "전자코드": x["전자코드"], "상세일련번호": k, "상호": x["상호"], "사업자등록번호": "",
+                    "일련번호": n, "전자코드": x["전자코드"], "상세일련번호": k, "상호": x["상호"],
+                    "사업자번호": x["사업자번호"] if must else "",
                     "지급일자": _ymd(x["지급일"]) if must else "", "지급금액": x["금액"],
                     "증빙종류코드": (x["증빙코드"] if must else self.codes["메타"]["증빙_필수아닌행"]["코드"]),
                     "구분코드": x["구분코드"], "자산": aid,
-                }, renames={"필요경비신고자료일련번호": "일련번호", "구분코드": "전자코드"}, extra=("구분코드", "자산")))
+                }, renames=EXPENSE_RENAMES, extra=("구분코드", "자산")))
         lot = lot or {}
         calc05 = self.record("05", {
             "일련번호": n, "과세구분": code["과세구분"], "국내외분(소재지)": code["국내외분"], "세율구분": code["세율구분"],
@@ -532,18 +581,49 @@ class _Builder:
         taxed = [r for r in self.calc["자산"] if not r["판정"]["전액비과세"]]
         rate_rows = self.calc["세율별"]
         cols = [(x["국내외분"], x["세율구분"]) for x in rate_rows]
+        bases = [x["과세표준"] for x in rate_rows]
         members = {k: [r for r in taxed if self.col_key(r) == k] for k in cols}
         labels = [{"국내외분": d, "세율구분": s, "표기": "%s-%s" % (d, s)} for d, s in cols]
-        for k, m in members.items():
-            if len({r["계산"]["합산묶음"] for r in m}) > 1:
-                self.note("세율구분 %s-%s 열에 합산 묶음이 둘 이상이라 세율 칸을 비웠다" % k)
+        on0 = min(r["판정"]["양도일"] for r in self.calc["자산"])
+        local_tax = self.local_by_column(taxed)
 
-        # 전자신고세액공제(예정신고만, 기준일 신고일 = 작성일) → 세율구분 열에 앞에서부터 산출세액만큼 나눈다
+        # 세율구분 열의 산출세액과 세율. 합산 비교세액이 이기면(본지 작성방법 8, 별지40의11 작성방법 7) 합계 산출세액을
+        # 과세표준 비율로 열에 나누고(규격서 p40) 세율은 합계 과세표준의 기본세율 구간 세율로 적는다
+        merged_win = total["합산비교세액"] > total["호별합산세액"]
+        local_win = total["지방_합산비교"] > total["지방_호별합산"]
+        if merged_win:
+            nat_tax = dict(zip(cols, _allocate(total["산출세액"], bases)))
+            nat_rate = _pct(_bracket(total["과세표준"], self.rs.value("기본세율", on0)))
+            nat_rates = {k: nat_rate for k in cols}
+            nat_efile_rate = {k: _bracket(total["과세표준"], self.rs.value("기본세율", on0)) for k in cols}
+            self.note("합산 비교세액 %s원이 세율구분별 세액 합 %s원보다 크다(본지 작성방법 8, 소득세법 제104조⑤). "
+                      "세율구분 열 산출세액은 합계를 과세표준 비율로 나눠 적었다(규격서 p40). 원 미만은 버리고 남는 원은 "
+                      "과세표준이 가장 큰 열에 더했다" % (total["산출세액"], total["호별합산세액"]))
+        else:
+            nat_tax = {(x["국내외분"], x["세율구분"]): x["산출세액"] for x in rate_rows}
+            nat_efile_rate = {k: self.applied_rate(members[k], x["과세표준"], False) for k, x in zip(cols, rate_rows)}
+            nat_rates = {k: _pct(r) for k, r in nat_efile_rate.items()}
+            nat_rate = nat_rates[cols[0]] if len(cols) == 1 else ""
+            for k, m in members.items():
+                if len({r["계산"]["합산묶음"] for r in m}) > 1:
+                    self.note("세율구분 %s-%s 열에 합산 묶음이 둘 이상이라 세율 칸을 비웠다" % k)
+        if local_win:
+            loc_tax = dict(zip(cols, _allocate(total["지방소득세"], bases)))
+            loc_rate = _pct(_bracket(total["과세표준"], self.rs.value("지방.기본세율", on0)))
+            loc_rates = {k: loc_rate for k in cols}
+            self.note("지방소득세 합산 비교세액 %s원이 세율구분별 세액 합 %s원보다 크다(별지40의11 작성방법 7). "
+                      "세율구분 열 산출세액은 합계를 과세표준 비율로 나눠 적었다" % (total["지방소득세"], total["지방_호별합산"]))
+        else:
+            loc_tax = local_tax
+            loc_rates = {k: _pct(self.applied_rate(members[k], x["과세표준"], True)) for k, x in zip(cols, rate_rows)}
+            loc_rate = loc_rates[cols[0]] if len(cols) == 1 else ""
+
+        # 전자신고세액공제(예정신고만, 기준일 신고일 = 작성일) → 세율구분 열에 앞에서부터 산출세액만큼 나눈다(규격서 p43 36)
         rule = self.rs.value("전자신고세액공제.예정", self.made) if self.kind == "예정" else 0
         credit = min(rule, max(0, total["산출세액"]))
         left, col_credit = credit, {}
-        for x in rate_rows:
-            col_credit[(x["국내외분"], x["세율구분"])] = give = min(left, max(0, x["산출세액"]))
+        for k in cols:
+            col_credit[k] = give = min(left, max(0, nat_tax[k]))
             left -= give
         due = total["산출세액"] - credit
         inst = 0
@@ -559,34 +639,16 @@ class _Builder:
                     inst = calc.floor(Decimal(due) * self.rs.value("분납.상한율", self.last_sold))
 
         nat_cols, loc_cols = {}, {}
-        local_tax = self.local_by_column(taxed)
         for x in rate_rows:
             k = (x["국내외분"], x["세율구분"])
             m = members[k]
             nat_cols[k] = self.nat_column(sum(r["계산"]["양도소득금액"] for r in m), sum(r["계산"]["기본공제"] for r in m),
-                                          x["과세표준"], _pct(self.applied_rate(m, x["과세표준"], False)), x["산출세액"],
-                                          col_credit[k])
-            loc_cols[k] = self.local_column(x["과세표준"], _pct(self.applied_rate(m, x["과세표준"], True)), local_tax[k])
-        merged_win = total["합산비교세액"] > total["호별합산세액"]
-        local_win = total["지방_합산비교"] > total["지방_호별합산"]
-        on0 = min(r["판정"]["양도일"] for r in self.calc["자산"])
-        if merged_win:
-            nat_rate = _pct(_bracket(total["과세표준"], self.rs.value("기본세율", on0)))
-            self.note("합계 열 산출세액 %s원은 합산 비교세액이다(본지 작성방법 8, 소득세법 제104조⑤). 세율구분 열 산출세액의 합 %s원과 다르다. "
-                      "규격서 p40 은 이때 세율구분별 산출세액을 과세표준으로 안분하는 예를 드니 03 레코드는 홈택스 검증으로 확인한다"
-                      % (total["산출세액"], sum(x["산출세액"] for x in rate_rows)))
-        else:
-            nat_rate = nat_cols[cols[0]]["세율"] if len(cols) == 1 else ""
-        if local_win:
-            loc_rate = _pct(_bracket(total["과세표준"], self.rs.value("지방.기본세율", on0)))
-            self.note("지방소득세 합계 열 산출세액 %s원은 합산 비교세액이다(별지40의11 작성방법 7). 세율구분 열의 합 %s원과 다르다"
-                      % (total["지방소득세"], sum(local_tax.values())))
-        else:
-            loc_rate = loc_cols[cols[0]]["세율"] if len(cols) == 1 else ""
+                                          x["과세표준"], nat_rates[k], nat_tax[k], col_credit[k])
+            loc_cols[k] = self.local_column(x["과세표준"], loc_rates[k], loc_tax[k])
         sum_nat = self.nat_column(sum(r["계산"]["양도소득금액"] for r in taxed), sum(r["계산"]["기본공제"] for r in taxed),
                                   total["과세표준"], nat_rate, total["산출세액"], credit, inst)
         sum_loc = self.local_column(total["과세표준"], loc_rate, total["지방소득세"])
-        if len(cols) == 1 and not merged_win:          # 세율구분 열이 하나면 분납·납부세액도 합계와 같이 적는다(국세청 작성 사례 01)
+        if len(cols) == 1:                             # 세율구분 열이 하나면 분납·납부세액도 합계와 같이 적는다(국세청 작성 사례 01)
             only = nat_cols[cols[0]]
             only["분납"], only["신고기한내납부"] = inst, only["납부할세액"] - inst
         zero_nat = self.nat_column(0, 0, 0, "", 0, 0)
@@ -601,23 +663,27 @@ class _Builder:
         if total["지방소득세"]:
             self.note("지방소득세 전자신고세액공제(지방세특례제한법 제167조의3, 별지40의11 작성방법 11)는 규칙세트에 값이 없어 0 으로 두었다")
 
+        # 03 레코드: 국내 소계(1/00), 세율구분 행, 합계(Z/00). 정렬은 국내외분·세율구분(규격서 p104)
+        fields = {f["name"]: f for f in self.layout["레코드"]["03"]["필드"]}
+        dec = fields["세율"]["dec"]
+        resident = fields["주민세_세율"]                 # 점검값 01000(10.00%) 을 따른다(결정 2026-10-11)
+        q = Decimal(1).scaleb(-resident["dec"])
+        resident_rate = str(Decimal(resident["check"]).scaleb(-resident["dec"]).quantize(q))
         efile_rates = []
-        dec = {f["name"]: f["dec"] for f in self.layout["레코드"]["03"]["필드"]}
         for d, s, col, rate in ([("1", "00", sum_nat, None)]
-                                + [(k[0], k[1], nat_cols[k], self.applied_rate(members[k], nat_cols[k]["과세표준"], False))
-                                   for k in cols]
+                                + [(k[0], k[1], nat_cols[k], nat_efile_rate[k]) for k in cols]
                                 + [("Z", "00", sum_nat, None)]):
             last = (d, s) == ("Z", "00")
             efile_rates.append(self.record("03", {
                 "국내외분": d, "세율구분": s, "양도소득금액": col["양도소득금액"], "양도소득기본공제": col["기본공제"],
-                "과세표준": col["과세표준"], "세율": _rate_field(rate, dec["세율"]), "산출세액": col["산출세액"],
+                "과세표준": col["과세표준"], "세율": _rate_field(rate, dec), "산출세액": col["산출세액"],
                 "자진납부할세액": col["납부할세액"], "분납할세액": col["분납"] if last else 0,
                 "자진납부세액": col["신고기한내납부"] if last else 0, "전자신고세액공제": col["전자신고공제"],
+                "주민세_세율": resident_rate,
             }))
         efile_rates.sort(key=lambda x: (x["국내외분"], x["세율구분"]))
-        self.note("전자신고 03 레코드에 국내 소계 행(국내외분 1, 세율구분 00)을 넣었다(규격서 p32). 주민세 칸(03-30~33)은 "
-                  "2020 이후 0(규격서 p32)이라 03-31 주민세_세율도 0 이다(점검내용 01000). 농어촌특별세가 없어 03-23 세율도 "
-                  "0 으로 두었다(p42 은 세율 행에 20%). 셋 다 홈택스 형식검증으로 확인한다")
+        self.note("전자신고 03 레코드에 국내 소계 행(국내외분 1, 세율구분 00)을 넣었다(규격서 p32). 농어촌특별세가 없어 "
+                  "03-23 세율은 0 으로 두었다(p42 은 세율 행에 20%). 둘 다 홈택스 형식검증으로 확인한다")
         return main, local, efile_rates
 
     # ------------------------------------------------------------ 묶기
