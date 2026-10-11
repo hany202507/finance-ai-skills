@@ -31,8 +31,9 @@ def _load_rules(rules_dir):
 
 
 def _malformed(e):
-    return F.FactsError("사실관계의 값을 처리하지 못했다(%s: %s). 날짜는 YYYY-MM-DD, 금액은 원 단위 정수, 목록 모양은 질문지 문항.json 의 facts키 대로인지 확인하라"
-                        % (type(e).__name__, e))
+    """형식이 틀린 사실관계 값. 예외 문장에는 사실관계 값이 들어 있을 수 있어 형 이름만 싣는다."""
+    return F.FactsError("사실관계의 값을 처리하지 못했다(%s). 날짜는 YYYY-MM-DD, 금액은 원 단위 정수, 목록 모양은 질문지 문항.json 의 facts키 대로인지 확인하라"
+                        % type(e).__name__)
 
 
 def calculate(f, rules_dir=None, today=None, workbook_path=None):

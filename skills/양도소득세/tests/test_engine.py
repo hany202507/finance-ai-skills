@@ -75,12 +75,14 @@ def test_exchange_other_and_expropriation_transfer_not_calculated(원인, 문구
     f["자산"][0]["양도"]["원인"] = 원인
     r = engine.calculate(f, today="2026-10-09")
     assert r["상태"] == "질문" and r["계산"] is None
-    assert r["다루지않음"] == [{"자산": "A", "내용": 문구, "계획": "5"}]
+    assert r["다루지않음"] == [{"자산": "A", "내용": 문구, "계획": "미정"}]
 
 
-def test_unsupported_plan_defaults_to_5_and_mixed_years_has_none():
-    from yangdo import calc
-    assert calc.Unsupported("x").계획 == "5" and calc.Unsupported("x", 계획="없음").계획 == "없음"
+def test_unsupported_plan_defaults_to_undecided_and_mixed_years_has_none():
+    """계획을 주지 않은 Unsupported 는 「미정」이다(어느 계획에 든 항목인지 밝히지 않으면 계획 5 라고 답하지 않는다)."""
+    from yangdo import calc, return_values
+    assert calc.Unsupported("x").계획 == "미정" and calc.Unsupported("x", 계획="없음").계획 == "없음"
+    assert return_values.Unsupported("x").계획 == "미정" and return_values.Unsupported("x", "5").계획 == "5"
     f = copy.deepcopy(CASES["BC"])
     f["자산"][0]["양도"]["잔금일"] = "2025-12-01"
     r = engine.calculate(f, today="2026-10-09")
@@ -337,7 +339,9 @@ def test_run_cannot_remove_previous_workbook_exit_4(tmp_path, capsys, monkeypatc
     monkeypatch.setattr(run.os, "remove", remove)
     code, _ = go(tmp_path, CASES["A"])
     lines = _err_lines(capsys)
-    assert code == 4 and len(lines) == 1 and old in lines[0]
+    assert code == 4 and len(lines) == 2 and old in lines[0]
+    # 둘째 줄은 남은 계산 결과가 이전 실행의 것이라고 알린다(사용자 파일은 적지 않는다)
+    assert "이전 실행" in lines[1] and "양도소득세_계산근거.xlsx" in lines[1] and "내메모.txt" not in lines[1]
     assert _snapshot(out) == before   # 이전 결과 파일이 하나도 지워지지 않았고 새로 쓴 것도 없다
 
 
@@ -493,3 +497,36 @@ def test_overlapping_residence_periods_use_the_union():
     overlapped = _case_a_with_residence([["2014-11-01", "2026-11-15"], ["2016-01-01", "2020-01-01"], ["2014-11-01", "2026-11-15"]])
     assert overlapped["계산"]["합계"] == full["계산"]["합계"]
     assert overlapped["계산"]["자산"][0]["판정"]["거주년"] == 12 == full["계산"]["자산"][0]["판정"]["거주년"]
+
+
+SECRET = "ZZ비밀값ZZ"
+
+
+@pytest.mark.parametrize("name", ["K", "S1", "BF", "G"])
+@pytest.mark.parametrize("path,qid", [(("주거사용개시일",), "A05"), (("양도", "계약일"), "A09"), (("양도", "계약금수령일"), "A10")])
+def test_optional_date_keys_with_a_bad_format_are_asked_again_and_the_value_stays_out_of_the_text(name, path, qid):
+    """주거사용개시일, 양도.계약일, 양도.계약금수령일 의 형식이 틀리면 예외 문장 대신 그 문항 질문으로 돌린다. 값은 어디에도 싣지 않는다."""
+    f = copy.deepcopy(CASES[name])
+    d = f["자산"][0]
+    for k in path[:-1]:
+        d = d.setdefault(k, {})
+    d[path[-1]] = SECRET
+    r = engine.calculate(f, today="2026-10-09")
+    assert r["상태"] == "질문" and [q["문항"] for q in r["질문"]] == [qid] and SECRET not in json.dumps(r, ensure_ascii=False)
+
+
+def test_malformed_facts_message_names_only_the_exception_type():
+    """엔진이 형식 오류를 알리는 문장에 예외 문장(사실관계 값이 들어 있을 수 있다)을 싣지 않는다."""
+    e = engine._malformed(ValueError("날짜는 YYYY-MM-DD 글자로 적어야 합니다: '%s'" % SECRET))
+    assert isinstance(e, F.FactsError) and SECRET not in str(e) and "ValueError" in str(e)
+
+
+def test_value_error_raised_while_judging_does_not_reach_the_message(monkeypatch):
+    from yangdo import judge
+
+    def boom(*a, **k):
+        raise ValueError("값 %s" % SECRET)
+    monkeypatch.setattr(judge, "judge", boom)
+    with pytest.raises(F.FactsError) as e:
+        engine.calculate(copy.deepcopy(CASES["S1"]), today="2026-10-09")
+    assert SECRET not in str(e.value) and "ValueError" in str(e.value)

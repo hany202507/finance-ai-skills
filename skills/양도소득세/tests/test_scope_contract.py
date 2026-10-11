@@ -2,7 +2,7 @@
 """질문지가 묻는 사실을 엔진이 반영하는지 보는 계약 시험(최종 검토 I1, C1).
 
 질문지가 사용자에게 묻는 사실(범위가 계획1인 문항의 키)은 세 가지 중 하나여야 한다.
-  1. yangdo 가 읽어 계산하거나, 계산하지 않고 다루지않음(계획 5)이나 확인사항으로 돌린다.
+  1. yangdo 가 읽어 계산하거나, 계산하지 않고 다루지않음이나 확인사항으로 돌린다.
   2. facts.COLLECT_ONLY 에 읽지 않는 이유와 함께 적혀 있다.
 답했는데 결과에 아무 흔적이 없는 키가 다시 생기지 않게 한다.
 """
@@ -24,8 +24,9 @@ TODAY = "2026-10-09"
 # 판정·계산 모듈. 서식·전자신고 모듈(return_values, filing, bjd, forms*, efile*, guide, outputs)은 신고서에 옮겨 적을 뿐
 # 판정·계산에 쓰지 않으니 훑지 않는다(global.md 「범위 계약 시험」, 2026-10-11). questions 는 묻고 검사만 하는 곳이라 뺀다.
 ENGINE_MODULES = ("facts", "judge", "calc", "verify", "engine", "regions", "codes", "dates", "ruleset", "workbook")
-# 훑지 않는 모듈(서식·전자신고, 묻기, 규칙 키 목록). 새 모듈이 생기면 둘 중 어디에 드는지 정해야 test_every_module_is_classified 가 통과한다
-NOT_SCANNED = ("__init__", "questions", "keys", "return_values", "filing", "bjd", "outputs", "guide")
+# 훑지 않는 모듈(서식·전자신고, 묻기, 규칙 키 목록). 새 모듈이 생기면 둘 중 어디에 드는지 정해야 test_every_module_is_classified 가 통과한다.
+# penalty(확정신고 가산세)는 engine.calculate 가 부르지 않고 신고 단계에서 엔진 결과를 받아 계산하므로 return_values 와 같은 쪽이다
+NOT_SCANNED = ("__init__", "questions", "keys", "return_values", "filing", "bjd", "outputs", "guide", "penalty")
 FORM_PREFIXES = ("forms", "efile")
 
 
@@ -160,7 +161,7 @@ def test_engine_asks_instead_of_calculating_on_wrong_type(name, mutate, 문항):
     assert 문항 in [x["문항"] for x in r["질문"]]
 
 
-# ---- 답했는데 반영되지 않던 키를 다루지않음(계획 5)이나 확인사항으로 돌린다 ----
+# ---- 답했는데 반영되지 않던 키를 다루지않음이나 확인사항으로 돌린다 ----
 def _mut(name, fn):
     f = copy.deepcopy(CASES[name])
     fn(f)
@@ -177,7 +178,7 @@ def test_same_day_houses_are_out_of_scope():
     f = copy.deepcopy(CASES["BC"])
     f["자산"][1]["양도"]["잔금일"] = f["자산"][0]["양도"]["잔금일"]
     p = F.prepare(f)
-    assert sorted((x["자산"], x["계획"]) for x in p["다루지않음"]) == [("B", "5"), ("C", "5")]
+    assert sorted((x["자산"], x["계획"]) for x in p["다루지않음"]) == [("B", "미정"), ("C", "미정")]
     assert all(x["내용"] == "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)" for x in p["다루지않음"])
     assert len(_out(f)) == 2
 
@@ -221,7 +222,7 @@ def test_same_day_answer_false_calculates_and_true_is_out_of_scope():
     assert r["상태"] == "완료" and r["계산"]["합계"]["산출세액"] == EXPECT_TOTAL["BC"]["산출세액"] == 75_402_000
     r = engine.calculate(_bc_same_day(True), today=TODAY)
     assert r["상태"] == "질문" and r["계산"] is None and r["질문"] == []
-    assert sorted((x["자산"], x["계획"]) for x in r["다루지않음"]) == [("B", "5"), ("C", "5")]
+    assert sorted((x["자산"], x["계획"]) for x in r["다루지않음"]) == [("B", "미정"), ("C", "미정")]
     assert all("제154조⑨" in x["내용"] for x in r["다루지않음"])
 
 
@@ -247,7 +248,7 @@ def test_house_sold_on_the_same_day_in_the_house_list_is_out_of_scope():
     """자산으로 넣지 않고 주택 목록에만 적은 집이 판 집과 같은 날 팔렸으면 같은 날 여러 채 양도다(m-1)."""
     f = _with_sold_listed_house("B", "2026-11-20")   # B 의 양도일과 같은 날
     p = F.prepare(f)
-    assert p["다루지않음"] == [{"자산": "B", "내용": "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "계획": "5"}]
+    assert p["다루지않음"] == [{"자산": "B", "내용": "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "계획": "미정"}]
     assert len(_out(f)) == 1
     g = _with_sold_listed_house("C", "2026-10-30")   # 반대로 C 쪽(순서가 다른 집)에서도 같다
     assert [x["자산"] for x in F.prepare(g)["다루지않음"]] == ["C"]
@@ -286,7 +287,7 @@ def test_multi_unit_house_sold_by_room_is_out_of_scope(answer, out):
     f = _mut("A", lambda f: f["자산"][0].update(주택유형="다가구주택", 다가구일괄양도=answer))
     if out:
         o = _out(f)
-        assert o == [{"자산": "A", "내용": "다가구주택을 호실별로 나눠 양도(시행령 제155조⑮, 호실마다 한 채로 본다)", "계획": "5"}]
+        assert o == [{"자산": "A", "내용": "다가구주택을 호실별로 나눠 양도(시행령 제155조⑮, 호실마다 한 채로 본다)", "계획": "미정"}]
     else:
         assert engine.calculate(f, today=TODAY)["계산"]["합계"]["산출세액"] == EXPECT["A"]["산출세액"]
 
@@ -300,7 +301,7 @@ def test_unknown_multi_unit_code_asks_a06():
 def test_buyer_paid_tax_is_out_of_scope(amount, out):
     f = _mut("B", lambda f: f["자산"][0]["양도"].update(매수인부담세액=amount))
     if out:
-        assert _out(f) == [{"자산": "B", "내용": "매수인이 부담한 양도소득세가 있는 양도", "계획": "5"}]
+        assert _out(f) == [{"자산": "B", "내용": "매수인이 부담한 양도소득세가 있는 양도", "계획": "미정"}]
     else:
         assert engine.calculate(f, today=TODAY)["계산"]["합계"]["산출세액"] == EXPECT["B"]["산출세액"]
 
@@ -320,7 +321,7 @@ RELATED_NOTE = "B: 특수관계인 거래는 시가와 비교해 부당행위계
 @pytest.mark.parametrize("관계", ["배우자", "직계", "친족", "법인", "기타특수관계"])
 def test_related_party_sold_below_market_is_out_of_scope(관계):
     f = _related(관계, 900_000_000)   # 양도가액 7억원이 시가 9억원보다 낮다
-    assert _out(f) == [{"자산": "B", "내용": "특수관계인에게 시가보다 낮게 양도(부당행위계산 부인 검토 대상)", "계획": "5"}]
+    assert _out(f) == [{"자산": "B", "내용": "특수관계인에게 시가보다 낮게 양도(부당행위계산 부인 검토 대상)", "계획": "미정"}]
 
 
 @pytest.mark.parametrize("시가", [None, 700_000_000, 600_000_000])
@@ -390,13 +391,13 @@ def test_house_land_answer_check_is_shared_with_the_questionnaire():
 @pytest.mark.parametrize("key,reason", [("비거주자전환", "시행령 제154조⑧2호"), ("재건축통산", "시행령 제154조⑧1호")])
 def test_carryover_answers_are_out_of_scope(key, reason):
     o = _out(_mut("A", lambda f: f["자산"][0].update({key: True})))
-    assert o[0]["계획"] == "5" and reason in o[0]["내용"]
+    assert o[0]["계획"] == "미정" and reason in o[0]["내용"]
     assert engine.calculate(_mut("A", lambda f: f["자산"][0].update({key: False})), today=TODAY)["상태"] == "완료"
 
 
 def test_change_of_use_clause_is_out_of_scope():
     o = _out(_mut("A", lambda f: f["자산"][0]["양도"].update(용도변경특약=True)))
-    assert o[0]["계획"] == "5" and "제154조① 괄호" in o[0]["내용"]
+    assert o[0]["계획"] == "미정" and "제154조① 괄호" in o[0]["내용"]
     assert engine.calculate(_mut("A", lambda f: f["자산"][0]["양도"].update(용도변경특약=False)), today=TODAY)["상태"] == "완료"
 
 

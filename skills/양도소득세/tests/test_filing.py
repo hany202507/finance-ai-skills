@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import copy
 import json
+import os
 
 import pytest
 
@@ -627,6 +628,15 @@ def test_dong_code():
     assert seen == ["2026-12-20"]
 
 
+def test_dong_code_of_old_gwangju_jeonnam_names_with_real_table():
+    """광주광역시·전라남도로 적은 주소도 작성일이 통합(2026-07-01) 이후면 전남광주통합특별시의 코드를 찾는다. 질문 F04 로 넘어가지 않는다."""
+    for sido in ("광주광역시", "전남광주통합특별시"):
+        assert filing.dong_code({"시도": sido, "시군구": "서구", "읍면동": "치평동"}, on="2026-10-11") == "1224012000"
+    for sido in ("전라남도", "전남광주통합특별시"):
+        assert filing.dong_code({"시도": sido, "시군구": "강진군", "읍면동": "강진읍"}, on="2026-10-11") == "1278025000"
+    assert filing.dong_code({"시도": "전라남도", "시군구": "서구", "읍면동": "치평동"}, on="2026-10-11") is None
+
+
 def test_bjd_is_not_read_when_nothing_needs_a_code_check():
     qs = filing.questions(filing.load({"세무대리인": None}), {"자산": []}, None)       # bjd 모듈이 없어도 돈다
     assert ids(qs) == [("F01", None), ("F03", None), ("F05", None), ("F06", None)]
@@ -834,3 +844,219 @@ def test_wrong_seller_name_is_asked_again_when_questions_get_an_unloaded_filer()
     f["자산"]["S1"]["취득상대방"] = "똠방각하"
     qs = filing.questions(f, CASES["S1"], done("S1"), bjd=FakeBjd())
     assert ids(qs) == [("F08", "S1")] and "쓸 수 없는 글자" in qs[0]["내용"] and "똠방각하" not in qs[0]["내용"]
+
+
+# ---- 전자신고 검증에서만 걸리던 입력을 질문 단계에서 잡는다(계획 2b G6) ----
+# 번지 00, 시도·시군구 단계의 법정동코드, 필수 구분 지출의 지급일 없음은 신고서 PDF 를 만든 뒤 파일 검증에서야 걸렸다.
+
+@pytest.mark.parametrize("lot", ["00", "000", "0000"])
+def test_lot_made_of_zeros_is_treated_as_zero(lot):
+    f = ready()
+    f["자산"]["A"]["번지"] = lot
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "번지가 0 이면 특수지가 9(무번지)여야 합니다" in qs[0]["내용"]
+    f["자산"]["A"]["특수지"] = "9"                         # 무번지도 0 한 글자로 적는다
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "0 한 글자" in qs[0]["내용"]
+    f = ready()
+    f["신고인"]["주소"]["번지"] = lot
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "번지가 0 이면 특수지가 9(무번지)여야 합니다" in qs[0]["내용"]
+    f["신고인"]["주소"]["특수지"] = "9"
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "0 한 글자" in qs[0]["내용"]
+
+
+def test_lot_with_leading_zero_is_asked_again():
+    f = ready()
+    f["자산"]["A"]["번지"] = "0123"
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "앞에 0 을 붙이지 않고" in qs[0]["내용"] and "0123" not in qs[0]["내용"]
+    f["자산"]["A"]["번지"] = "1230"                        # 끝의 0 은 번지의 일부다
+    assert ask(f) == []
+    f["신고인"]["주소"]["번지"] = "01"
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "앞에 0 을 붙이지 않고" in qs[0]["내용"]
+
+
+@pytest.mark.parametrize("code,stage", [("1100000000", "시도"), ("1171000000", "시군구"), ("4111000000", "시군구"),
+                                        ("3611000000", "시도")])
+def test_given_code_above_dong_level_is_asked_again(code, stage):
+    """법정동코드는 시도 2 + 시군구 3 + 읍면동 3 + 리 2 자리다. 읍면동 자리가 000 이면 시도나 시군구 행이라 05-8·02-3 에 쓸 수 없다."""
+    f = ready(A=code)
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")]
+    assert "시도나 시군구 단계" in qs[0]["내용"] and "읍면동" in qs[0]["내용"] and code not in qs[0]["내용"]
+    f = ready()
+    f["신고인"]["주소"]["법정동코드"] = code
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "시도나 시군구 단계" in qs[0]["내용"]
+    assert filing.dong_code({"법정동코드": code}, FakeBjd()) is None
+
+
+def test_given_code_at_dong_or_ri_level_passes_with_real_table():
+    """진짜 법정동코드 표로: 읍면동 단계(공덕동)와 리 단계(강진읍 아래 리)는 받고, 시군구 단계(마포구)는 되묻는다."""
+    from yangdo import bjd
+    table = bjd.load()
+    ri = next(c for c in sorted(table._names) if c.startswith("12780250") and c[8:] != "00")
+    for code in ("1144010200", ri):
+        assert filing.dong_code({"법정동코드": code}, table) == code
+    assert table.exists("1144000000") and filing.dong_code({"법정동코드": "1144000000"}, table) is None
+    f = ready(A="1144000000")
+    assert ids(filing.questions(filing.load(f), CASES["A"], None, bjd=table)) == [("F04", "A")]
+
+
+def test_f07_asks_for_a_missing_payment_date_of_a_required_code():
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["취득부대"][1]["지급일"] = None          # 법무사비용(11401)은 필수 구분코드다
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    text = qs[0]["내용"]
+    assert "지급일이 없거나 읽을 수 없는 지출: 취득부대의 2번째 지출(법무사비용, 지급일 없음)." in text
+    assert "지급일에 YYYY-MM-DD 로 적어 주세요" in text and "규격서 p60" in text
+    assert "사업자번호가 비어 있는 지출" not in text and "숫자 10자리" not in text      # 사업자번호는 다 맞다
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "2018.03.15", "20180315", "2018-02-30", 20180315])
+def test_f07_asks_when_the_payment_date_is_blank_or_unreadable(bad):
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = bad
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")] and "지급일이 없거나 읽을 수 없는 지출: 양도비의 1번째 지출(중개수수료" in qs[0]["내용"]
+
+
+def test_f07_lists_numbers_and_dates_separately():
+    facts = s1_facts(취득부대=[0])                       # 중개수수료: 사업자번호 빠짐
+    facts["자산"][0]["필요경비"]["자본적지출"][0]["지급일"] = ""     # 발코니확장: 지급일 빠짐
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    text = qs[0]["내용"]
+    assert "사업자번호가 비어 있는 지출: 취득부대의 1번째 지출(중개수수료, 2018-03-15)." in text
+    assert "지급일이 없거나 읽을 수 없는 지출: 자본적지출의 1번째 지출(발코니확장, 지급일 없음)." in text
+    assert text.index("사업자번호가 비어 있는") < text.index("지급일이 없거나") < text.index("숫자 10자리") < text.index("YYYY-MM-DD")
+
+
+def test_f07_does_not_ask_for_the_date_of_codes_that_do_not_need_it():
+    """필수가 아닌 구분(기타부대비용 11601, 개발부담금 26101)과 지급금액이 없는 지출, 엔진이 뺀 지출은 지급일을 묻지 않는다."""
+    facts = s1_facts()
+    ex = facts["자산"][0]["필요경비"]
+    ex["취득부대"].append({"내용": "인지세", "지급일": None, "금액": 150_000, "증빙종류": "계좌이체", "상대방": "합성은행"})
+    ex["기타"] = [{"내용": "개발부담금", "지급일": "", "금액": 1_000_000, "증빙종류": "계좌이체", "상대방": "합성시청"}]
+    assert ask_done(ready("S1"), facts=facts) == []
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["취득부대"][0].update(금액=0, 지급일=None)
+    facts["자산"][0]["필요경비"]["양도비"][0].update(증빙종류="간이영수증", 지급일=None)
+    assert ask_done(ready("S1"), facts=facts) == []
+
+
+def test_auction_cause_candidates_all_carry_their_names():
+    """F04 가 보여 주는 경매 등기원인 후보는 코드마다 코드표(규격서 p109~110)의 이름을 함께 적는다."""
+    import os
+    from yangdo import SKILL_DIR
+    with open(os.path.join(SKILL_DIR, "efile", "codes_c116300.json"), encoding="utf-8") as fh:
+        names = json.load(fh)["등기원인목록"]["A1ZZCZ"]
+    listed = dict(x.strip().split(" ", 1) for x in filing.경매원인후보.split(","))
+    assert sorted(listed) == ["0015", "0021", "0302", "0303", "0336", "0337"]
+    for code, name in listed.items():
+        assert name == names[code]["이름"].replace(chr(0xA0), " "), code
+    facts = facts_with(취득__원인="경매")
+    qs = ask_facts(ready(), facts)
+    assert "0302 임의경매로 인한 낙찰" in qs[0]["내용"] and "0303 강제경매로 인한 낙찰" in qs[0]["내용"]
+
+
+def test_questions_read_the_code_table_of_the_given_efile_dir(tmp_path):
+    """F07 이 보는 필수 구분코드 표는 신고값을 만들 때와 같은 efile 폴더의 것이어야 한다."""
+    import os
+    import shutil
+    from yangdo import SKILL_DIR
+    efile_dir = tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL_DIR, "efile"), str(efile_dir))
+    path = efile_dir / "codes_c116300.json"
+    codes = json.loads(path.read_text(encoding="utf-8"))
+    codes["필요경비구분"]["취득중개수수료"]["필수"] = False
+    path.write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    facts = s1_facts(취득부대=[0])
+    loaded, res = filing.load(ready("S1")), done("S1", facts)
+    assert ids(filing.questions(loaded, facts, res, bjd=FakeBjd())) == [("F07", "S1")]
+    assert filing.questions(loaded, facts, res, bjd=FakeBjd(), efile_dir=str(efile_dir)) == []
+
+
+# ---- 신고인_양식.json: 사용자가 복사해 채우는 파일이라 코드가 읽는 모양과 어긋나면 안 된다 ----
+FORM_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "신고인_양식.json")
+
+
+def _form():
+    with open(FORM_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_filer_form_loads_and_its_blanks_become_questions():
+    """빈 양식은 오류로 멈추지 않고 읽힌다. 빈 값은 질문이 된다(신고인 F01, 양수인 F02, 분납 F03 과 주소·서류 문항)."""
+    f = filing.load(FORM_PATH)
+    assert f["_경고"] == [] and f["세무대리인"] is None and f["환급계좌"] is None
+    assert f["신고인"]["주소"]["특수지"] == "0" and f["자산"]["A"]["특수지"] == "0"
+    qs = filing.questions(f, {"자산": [{"id": "A"}]}, None, bjd=FakeBjd())
+    assert {"F01", "F02", "F03"} <= {q["문항"] for q in qs}
+    for name in filing.FIELD_NAMES:
+        assert name in qs[0]["내용"]
+
+
+def test_filer_form_has_the_same_keys_as_a_valid_filer():
+    """양식의 구역과 칸 이름은 시험이 쓰는 합성 신고인(코드가 받아들이는 모양)과 같다. 합성 신고인에 없는 칸은 선택 칸이다."""
+    form, ok = _form(), filers.get("S1")
+    assert set(form) - {"_설명"} == set(ok)
+    for sec in ("신고", "신고인"):
+        assert set(form[sec]) == set(ok[sec]), sec
+    assert set(form["신고인"]) - {"주소", "전자메일"} == set(filing.FIELD_NAMES)      # 전자메일은 선택 칸이라 필수 목록에 없다
+    assert set(form["신고인"]["주소"]) == set(ok["신고인"]["주소"])
+    assert set(form["양수인"][0]) - set(ok["양수인"][0]) == {"관계코드"} and set(ok["양수인"][0]) <= set(form["양수인"][0])
+    lot, mine = next(iter(ok["자산"].values())), form["자산"]["A"]
+    assert set(lot) <= set(mine) and set(mine) - set(lot) <= {"등기원인", "등기목적"}
+
+
+def test_filer_form_filled_with_valid_values_loads_without_questions():
+    """양식의 칸에 합성 값을 채우면 읽히고 질문이 없다(양식이 코드가 요구하는 칸을 빠뜨리지 않았다)."""
+    ok, form = filers.get("A"), _form()
+    ok["자산"]["A"]["법정동코드"] = "1171010100"
+    for sec in ("신고", "신고인"):
+        for k in form[sec]:
+            form[sec][k] = ok[sec][k]
+    form["양수인"] = ok["양수인"]
+    form["자산"] = {"A": {**form["자산"]["A"], **ok["자산"]["A"]}}
+    f = filing.load(form)
+    assert filing.questions(f, CASES["A"], None, bjd=FakeBjd()) == []
+
+
+def test_unknown_keys_are_warned_by_name_only_and_underscore_keys_are_not():
+    f = filers.get("BF")
+    f["신고"]["분납 신청"] = "ZZ비밀값ZZ"
+    f["자산"]["B"]["취득 상대방"] = "ZZ비밀값ZZ"
+    f["신고인"]["주소"]["동네"] = "ZZ비밀값ZZ"
+    f["양수인"][0]["지분율"] = 1
+    f["최상위"] = {"x": 1}
+    f["자산"]["B"]["시도"] = "ZZ비밀값ZZ"
+    f["_설명"] = {"쓰는법": "설명용 키는 경고하지 않는다"}
+    f["신고"]["_메모"] = "ZZ비밀값ZZ"
+    warns = filing.load(f)["_경고"]
+    w = [x for x in warns if x.startswith(filing.UNKNOWN_KEYS_HEAD)]
+    assert len(w) == 1 and "ZZ비밀값ZZ" not in w[0]
+    for name in ("신고.분납 신청", "자산.B.취득 상대방", "신고인.주소.동네", "양수인[1].지분율", "최상위", "자산.B.시도"):
+        assert name in w[0], name
+    assert "_설명" not in w[0] and "_메모" not in w[0]
+
+
+@pytest.mark.parametrize("name", ["A", "S1", "BF", "K"])
+def test_known_filers_have_no_unknown_key_warning(name):
+    assert filing.load(filers.get(name))["_경고"] == []
+
+
+def test_filer_form_describes_every_section():
+    """_설명에 구역마다 풀이가 있다. 줄표와 물음표로 끝나는 문장은 없다."""
+    form = _form()
+    text = form["_설명"]
+    for sec in ("신고", "신고인"):
+        for k in form[sec]:
+            assert "%s.%s" % (sec, k) in text, (sec, k)
+    for sec in ("양수인", "자산", "환급계좌", "세무대리인"):
+        assert sec in text
+    assert chr(0x2014) not in json.dumps(form, ensure_ascii=False)

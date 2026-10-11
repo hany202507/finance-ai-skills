@@ -4,7 +4,7 @@
 자료형은 질문지/문항.json 의 답형식 하나로 검사한다. form_problem 이 그 표이고, 질문지 answer() 와 prepare() 가 같이 쓴다.
 엔진이 읽는 예아니오·선택·복수선택 키에 다른 자료형이 들어오면(문자열 「false」, 「해당없음」 글자 하나 등) 그 문항을 되묻는다.
 질문지가 묻는데 엔진이 읽지 않는 키는 COLLECT_ONLY 에 이유와 함께 적는다. 읽는 키는 계산하거나, 계산하지 않고
-다루지않음(계획 5)이나 확인사항으로 돌린다. tests/test_scope_contract.py 가 이 약속을 지키는지 본다.
+다루지않음이나 확인사항으로 돌린다. tests/test_scope_contract.py 가 이 약속을 지키는지 본다.
 """
 import json
 import re
@@ -20,7 +20,7 @@ RRN = re.compile(r"(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)")
 ADDRESS_KEYS = {"소재지", "취득당시소재지"}
 SHARE_MSG = "지분은 단독 또는 {구분: 공동, 분자, 분모} 로 적습니다"
 OK_LAND_USE = ("사업용", "주택부수토지")
-의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 계획 5
+의제취득기준 = date(1985, 1, 1)  # 국세청 작성요령 의제취득일. 이 전 취득은 다루지 않는다(다룰 계획 미정)
 WHOLE_MSG = "금액은 원 단위 정수로 적습니다"
 NONNEG_MSG = "금액은 0 이상이어야 합니다"
 EMPTY_MSG = "금액이 비어 있습니다"
@@ -57,6 +57,17 @@ class Missing(Exception):
 
     def to_dict(self):
         return {"문항": self.문항, "자산": self.자산, "내용": self.내용}
+
+
+# 다루지않음에 붙이는 「계획」 값. references/적용한계.md 의 표와 같다.
+#   "5"     계획 5 범위에 든 항목: 상속·증여로 취득한 자산과 이월과세, 부담부증여, 겸용주택, 입주권·분양권, 비사업용 토지,
+#           상속주택·동거봉양·혼인 특례, 한시배제 나목·다목, 양도차손 통산, 특례신고서
+#   UNDECIDED  다루려고 하지만 어느 계획에도 들어 있지 않은 항목
+#   NO_PLAN    다룰 계획이 없는 항목
+UNDECIDED = "미정"
+NO_PLAN = "없음"
+# 세대의 주택 특례(H05) 가운데 계획 5 범위에 든 것. 임대·농어촌 주택 특례는 어느 계획에도 없다
+PLAN5_HOUSEHOLD = ("상속주택", "혼인합가", "동거봉양")
 
 
 class OutOfScope(Exception):
@@ -423,16 +434,33 @@ def _check_asset_forms(a, aid):
                 raise m
 
 
+# 엔진이 날짜로 읽지만 형식을 따로 검사하지 않던 선택 날짜 키(키, 문항, 이름). 틀리면 그 문항을 다시 묻는다
+OPTIONAL_DATES = (("주거사용개시일", "A05", "주거사용개시일"), ("양도.계약일", "A09", "양도 매매계약일"), ("양도.계약금수령일", "A10", "계약금 수령일"))
+
+
+def _check_asset_dates(a, aid):
+    """선택 날짜 키(OPTIONAL_DATES)가 YYYY-MM-DD 가 아니면 Missing. 문장에 값을 싣지 않는다(오류 문장으로 사실관계 값이 새지 않게)."""
+    for path, qid, name in OPTIONAL_DATES:
+        v = get(a, path)
+        if v is None:
+            continue
+        try:
+            dates.to_date(v)
+        except (ValueError, TypeError):
+            raise Missing(qid, aid, "%s 날짜 형식이 YYYY-MM-DD 가 아닙니다" % name) from None
+
+
 def _route_house(a, aid):
-    """엔진이 계산하지 않는 주택 사실. 답이 있으면 계산하지 않고 다루지않음(계획 5)으로 돌린다."""
+    """엔진이 계산하지 않는 주택 사실. 답이 있으면 계산하지 않고 다루지않음으로 돌린다. 부수토지 배율 초과만 계획 5
+    (비사업용 토지) 범위이고 나머지는 어느 계획에도 들어 있지 않다."""
     if a.get("다가구일괄양도") not in (None, "일괄"):
-        raise OutOfScope(aid, "다가구주택을 호실별로 나눠 양도(시행령 제155조⑮, 호실마다 한 채로 본다)", "5")
+        raise OutOfScope(aid, "다가구주택을 호실별로 나눠 양도(시행령 제155조⑮, 호실마다 한 채로 본다)", UNDECIDED)
     if get(a, "양도.용도변경특약") is True:
-        raise OutOfScope(aid, "매매계약 뒤 주택 외 용도로 바꿔 양도(시행령 제154조① 괄호, 1주택 판정일이 매매계약일)", "5")
+        raise OutOfScope(aid, "매매계약 뒤 주택 외 용도로 바꿔 양도(시행령 제154조① 괄호, 1주택 판정일이 매매계약일)", UNDECIDED)
     if a.get("비거주자전환") is True:
-        raise OutOfScope(aid, "비거주자일 때부터 보유한 주택을 거주자로 전환한 뒤 양도(보유·거주기간 통산, 시행령 제154조⑧2호)", "5")
+        raise OutOfScope(aid, "비거주자일 때부터 보유한 주택을 거주자로 전환한 뒤 양도(보유·거주기간 통산, 시행령 제154조⑧2호)", UNDECIDED)
     if a.get("재건축통산") is True:
-        raise OutOfScope(aid, "멸실 뒤 재건축한 주택(보유·거주기간 통산, 시행령 제154조⑧1호)", "5")
+        raise OutOfScope(aid, "멸실 뒤 재건축한 주택(보유·거주기간 통산, 시행령 제154조⑧1호)", UNDECIDED)
     land = a.get("부수토지")
     if land is not None:
         problem = land_problem(land)
@@ -448,11 +476,11 @@ def _route_house(a, aid):
 def _route_price(a, aid, out):
     """양도가액에 영향을 주는 사실. 금액 형식 검사 뒤에 부른다."""
     if (get(a, "양도.매수인부담세액") or 0) > 0:
-        raise OutOfScope(aid, "매수인이 부담한 양도소득세가 있는 양도", "5")
+        raise OutOfScope(aid, "매수인이 부담한 양도소득세가 있는 양도", UNDECIDED)
     if a.get("매수인관계") not in (None, "타인"):
         시가, 가액 = a.get("시가참고"), a.get("전체양도가액")
         if 시가 is not None and 가액 is not None and 가액 < 시가:
-            raise OutOfScope(aid, "특수관계인에게 시가보다 낮게 양도(부당행위계산 부인 검토 대상)", "5")
+            raise OutOfScope(aid, "특수관계인에게 시가보다 낮게 양도(부당행위계산 부인 검토 대상)", UNDECIDED)
         out["확인사항"].append("%s: 특수관계인 거래는 시가와 비교해 부당행위계산 부인 대상인지 확인한다(소득세법 제101조)" % aid)
 
 
@@ -476,7 +504,7 @@ def _route_same_day(f, out):
     for day, ids in by_day.items():
         if len(ids) >= 2 or 선언 or day in listed:
             for aid in ids:
-                out["다루지않음"].append(OutOfScope(aid, "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", "5").to_dict())
+                out["다루지않음"].append(OutOfScope(aid, "같은 날 주택 여러 채 양도(시행령 제154조⑨ 선택 순서)", UNDECIDED).to_dict())
 
 
 def _note_household_members(f, bad, out):
@@ -512,23 +540,23 @@ def _prepare_asset(f, a, out, bad):
     if 종류 in ("겸용주택", "입주권", "분양권"):
         raise OutOfScope(aid, "%s 양도" % 종류, "5")
     if 종류 == "기타자산":
-        raise OutOfScope(aid, "주식·회원권 등 그 밖의 자산", "없음")
+        raise OutOfScope(aid, "주식·회원권 등 그 밖의 자산", NO_PLAN)
     if 종류 not in ("주택", "토지", "건물"):
         raise Missing("P02", aid, "종류 코드 %s 를 알 수 없습니다" % 종류)
     원인 = need(a, "양도.원인", "P03", aid)
     if 원인 == "부담부증여":
         raise OutOfScope(aid, "부담부증여", "5")
-    if 원인 in ("교환", "기타"):  # 교환은 받은 자산의 시가가 양도가액이라 이 계획이 다루지 않는다
-        raise OutOfScope(aid, "%s 양도한 자산" % _cause(원인), "5")
+    if 원인 in ("교환", "기타"):  # 교환은 받은 자산의 시가가 양도가액이라 계산하지 않는다. 어느 계획에도 들어 있지 않다
+        raise OutOfScope(aid, "%s 양도한 자산" % _cause(원인), UNDECIDED)
     if 원인 == "수용":  # 수용의 양도시기는 대금 청산일, 수용 개시일, 소유권이전등기접수일 중 빠른 날이다(시행령 제162조①7호)
-        raise OutOfScope(aid, "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", "5")
+        raise OutOfScope(aid, "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", UNDECIDED)
     if 원인 not in ("매매", "경매"):
         raise Missing("P03", aid, "양도 원인 코드 %s 를 알 수 없습니다" % 원인)
     취득원인 = need(a, "취득.원인", "A15", aid)
     if 취득원인 in ("상속", "증여", "부담부증여", "조합원"):
         raise OutOfScope(aid, "%s 취득한 자산" % _cause(취득원인), "5")
     if 취득원인 == "기타":  # 점유취득(시행령 제162조①6호), 환지(9호)는 취득시기가 매매와 다르다
-        raise OutOfScope(aid, "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", "5")
+        raise OutOfScope(aid, "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", UNDECIDED)
     if 취득원인 not in ("매매", "분양", "신축", "경매", "공공매입"):
         raise Missing("A15", aid, "취득 원인 코드 %s 를 알 수 없습니다" % 취득원인)
     try:
@@ -548,16 +576,20 @@ def _prepare_asset(f, a, out, bad):
             raise Missing("A18", aid, "사용승인일이나 사실상 사용일이 필요합니다")
         raise Missing("A17", aid, "취득 잔금일이나 등기접수일이 필요합니다")
     if 취득 < 의제취득기준:
-        raise OutOfScope(aid, "1985-01-01 전 취득(의제취득일 적용)", "5")
+        raise OutOfScope(aid, "1985-01-01 전 취득(의제취득일 적용)", UNDECIDED)
     if 취득 > 양도:
         raise Missing("A18" if 취득원인 == "신축" else "A17", aid, "취득일이 양도일보다 늦습니다")
     # 시기를 먼저 적는다. 질문지가 세대·거주 문항을 금액 문항보다 먼저 물을 수 있도록 엔진값이 시기만으로 돌아간다
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
     _check_asset_forms(a, aid)
+    _check_asset_dates(a, aid)
     if 종류 == "주택":
-        if "H05" not in bad and [x for x in get(f, "세대.특례주택") or [] if x != "없음"]:
-            raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", "5")
+        special = [x for x in get(f, "세대.특례주택") or [] if x != "없음"]
+        if "H05" not in bad and special:
+            # 상속주택·혼인·동거봉양 특례만 걸렸으면 계획 5, 임대·농어촌 주택 특례가 하나라도 있으면 어느 계획에도 없다
+            plan = "5" if all(x in PLAN5_HOUSEHOLD for x in special) else UNDECIDED
+            raise OutOfScope(aid, "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대", plan)
         if "H06" not in bad and get(f, "세대.입주권분양권"):
             raise OutOfScope(aid, "세대가 조합원입주권·분양권을 가진 경우", "5")
         _route_house(a, aid)

@@ -48,8 +48,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      # 양도소득세 질문지의 화면 논리 시험은 node 로 돈다. CI 에서는 node 가 없으면 건너뛰지 않고 실패한다
+      - if: matrix.skill == '양도소득세'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - run: pip install -r requirements.txt
       - run: python -m pytest -q tests
+      # 양도소득세: 합성 사례 A 로 신고서 PDF 와 전자신고 파일까지 만들고(SKILL.md 「시험해 보기」와 같은 입력) 파일을 따로 검증한다.
+      # 셸마다 중간 명령의 실패를 다루는 법이 달라 명령 하나에 단계 하나를 둔다
+      - name: 양도소득세 합성 입력 만들기
+        if: matrix.skill == '양도소득세'
+        run: python tests/sample_inputs.py A ci_sample
+      - name: 양도소득세 합성 사례로 신고서와 전자신고 파일 만들기
+        if: matrix.skill == '양도소득세'
+        run: python scripts/make_return.py --사실관계 ci_sample/a.json --신고인 ci_sample/a_신고인.json --출력 ci_out --오늘 2026-12-20
+      - name: 양도소득세 전자신고 파일을 독립 검증기로 다시 검증
+        if: matrix.skill == '양도소득세'
+        run: python -m yangdo.efile_check ci_out/20261220C116300.01 --신고값 ci_out/신고값.json
 
   close:
     strategy:

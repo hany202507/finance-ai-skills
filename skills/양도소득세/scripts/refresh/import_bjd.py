@@ -95,12 +95,19 @@ def main(argv=None):
                   "파일명": os.path.basename(a.입력), "sha256": out["sha256"], "해시기준": "줄끝을 CRLF 로 맞춘 바이트",
                   "받은날": a.받은날, "인코딩": a.인코딩, "자료행": out["자료행"], "존재행": out["존재행"]},
            "코드": out["코드"]}
-    os.makedirs(os.path.dirname(os.path.abspath(a.출력)), exist_ok=True)
     tmp = a.출력 + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=1)
-        f.write("\n")
-    os.replace(tmp, a.출력)
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(a.출력)), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=1)
+            f.write("\n")
+        os.replace(tmp, a.출력)
+    except OSError as e:
+        print("실패: 출력 파일을 쓰지 못했습니다(%s)" % type(e).__name__, file=sys.stderr)
+        return 1
+    finally:
+        if os.path.exists(tmp):         # 쓰다가 실패하면 임시 파일을 남기지 않는다. 먼저 있던 출력 파일은 그대로다
+            os.remove(tmp)
     print("법정동코드 %d행(자료 %d행) → %s" % (out["존재행"], out["자료행"], a.출력))
     return 0
 

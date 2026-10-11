@@ -43,6 +43,44 @@ def test_exact_name_wins_over_numbered_variants():
     assert len(B.candidates("서울특별시", "성동구", "성수동")) == 2
 
 
+def test_numbered_ri_rows_are_gathered_for_the_base_name():
+    """숫자가 붙은 리(창선1리·창선2리)는 숫자를 뺀 이름(창선리)으로 적으면 후보로 모은다. 하나로 정하지는 않는다."""
+    assert B.candidates("충청남도", "서천군", "장항읍 창선리") == ["4477025021", "4477025022"]
+    assert B.lookup("충청남도", "서천군", "장항읍 창선리") is None
+    assert B.lookup("충청남도", "서천군", "장항읍 창선1리") == "4477025021"
+    assert B.lookup("충청남도", "서천군", "장항읍 창선2리") == "4477025022"
+    # 같은 이름의 리가 따로 있으면 그것 하나만 후보다(광령리·어음리 는 광령1리~3리, 어음1리·2리와 다른 법정리다)
+    assert B.candidates("제주특별자치도", "제주시", "애월읍 광령리") == ["5011025321"]
+    assert B.candidates("제주특별자치도", "제주시", "애월읍 어음리") == ["5011025336"]
+    assert B.lookup("제주특별자치도", "제주시", "애월읍 광령2리") == "5011025392"
+    assert B.candidates("충청남도", "서천군", "창선리") == []                 # 읍·면 이름을 빼면 찾지 않는다
+    assert B.candidates("충청남도", "서천군", "장항읍 창리") == []            # 이름의 다른 글자까지 넘겨짚지 않는다
+    assert B.candidates("경기도", "평택시", "고덕면 당현리") == ["4122033021"]
+
+
+def test_single_variant_is_returned_as_the_code():
+    """「충정로」처럼 가가 붙은 이름이 하나뿐이면 후보가 하나라 그 코드를 돌려준다."""
+    assert B.candidates("서울특별시", "중구", "충정로") == ["1114017000"]
+    assert B.lookup("서울특별시", "중구", "충정로") == "1114017000" and B.name("1114017000") == "서울특별시 중구 충정로1가"
+
+
+def test_same_dong_name_in_other_districts_stays_separate():
+    """같은 이름의 동이 여러 시군구에 있어도 적은 시군구의 것만 찾는다."""
+    assert B.lookup("서울특별시", "양천구", "신월동") == "1147010300"
+    assert B.lookup("경상남도", "창원시 성산구", "신월동") == "4812313600"
+    assert B.lookup("경상남도", "창원시 마산합포구", "신월동") == "4812512300"
+    assert B.candidates("경상남도", "창원시 진해구", "신월동") == []
+
+
+def test_names_abolished_by_district_changes_are_not_found():
+    """법정동코드 표에는 「존재」 행만 있다. 시군구가 바뀌어 폐지된 이름은 옛 이름으로 찾지 못하고 지금 이름으로 찾는다.
+    인천광역시 중구는 2026-07-01 폐지되어 중앙동1가는 제물포구 아래에 있고, 창원시 의창구 신월동은 폐지되어 성산구에 있다."""
+    assert B.lookup("인천광역시", "중구", "중앙동1가") is None and B.candidates("인천광역시", "중구", "중앙동1가") == []
+    assert B.lookup("인천광역시", "제물포구", "중앙동1가") == "2812510800"
+    assert B.lookup("경상남도", "창원시 의창구", "신월동") is None
+    assert not B.exists("2811010100") and not B.exists("4812112600")          # 폐지된 옛 코드
+
+
 def test_hanja_suffix_rows_are_ambiguous_without_hanja():
     c = B.candidates("충청북도", "청주시 상당구", "미원면 기암리")
     assert c == ["4311132026", "4311132033"]
@@ -99,12 +137,57 @@ def test_abolished_names_are_not_found():
     assert B.lookup("전남광주통합특별시", "동구", "충장로1가") == "1221012700"
 
 
-def test_old_gwangju_jeonnam_names_return_none_even_with_date():
-    # 행정구역_대응.json 은 이 둘을 ★★☆(해석) 로 두었다. 코드 찾기에서는 바꾸지 않고 질문으로 넘긴다
-    for on in (None, "2026-06-30", "2026-07-01", "2026-12-20"):
-        assert B.lookup("광주광역시", "동구", "충장로1가", on=on) is None
-        assert B.lookup("전라남도", "강진군", "강진읍", on=on) is None
-        assert B.candidates("전라남도", "강진군", "강진읍", on=on) == []
+def test_old_gwangju_jeonnam_names_find_merged_city_codes_from_merger_date():
+    """광주광역시·전라남도는 2026-07-01 전남광주통합특별시가 됐고 시군구·읍면동 이름은 그대로다. 작성일이 그날 이후면 새 코드를 찾는다."""
+    for on in (None, "2026-07-01", "2026-12-20"):
+        assert B.lookup("광주광역시", "동구", "충장로1가", on=on) == "1221012700"
+        assert B.lookup("광주광역시", "서구", "치평동", on=on) == B.lookup("전남광주통합특별시", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("전라남도", "강진군", "강진읍", on=on) == "1278025000"
+        assert B.candidates("전라남도", "강진군", "강진읍", on=on) == ["1278025000"]
+    # 통합 전 날짜에는 옛 이름 그대로 찾는다. 옛 코드(29·46)는 폐지돼 표에 없다
+    assert B.lookup("광주광역시", "동구", "충장로1가", on="2026-06-30") is None
+    assert B.lookup("전라남도", "강진군", "강진읍", on="2026-06-30") is None
+    assert B.candidates("전라남도", "강진군", "강진읍", on="2026-06-30") == []
+
+
+def test_old_sido_name_must_match_its_own_districts():
+    """옛 시도 이름과 시군구가 맞지 않으면 새 이름으로 바꾸지 않는다(전라남도에 서구는 없었다)."""
+    assert B.lookup("전라남도", "서구", "치평동", on="2026-12-20") is None
+    assert B.lookup("광주광역시", "강진군", "강진읍", on="2026-12-20") is None
+    assert B.lookup("전라남도", "서구", "치평동") is None
+
+
+def test_every_merged_city_row_is_reachable_by_an_old_name():
+    """통합특별시의 읍면동·리 행은 모두 옛 시도 이름 하나로 같은 코드에 닿는다. 옛 시도는 행정구역_대응.json 의 통합 표에서 읽는다."""
+    with open(os.path.join(bjd.RULES_DIR, bjd.RENAME_FILE), encoding="utf-8") as f:
+        (merged,) = json.load(f)["통합"]
+    old_of = {gu: g["시도"] for g in merged["옛"] for gu in g["시군구"]}
+    olds = {g["시도"] for g in merged["옛"]}
+    assert olds == {"광주광역시", "전라남도"} and len(old_of) == 27
+    n = 0
+    for code, (sido, gu, dong) in B._parts.items():
+        if sido != merged["시도"] or not dong:
+            continue
+        for old in olds:
+            want = code if old == old_of[gu] else None
+            assert B.lookup(old, gu, dong, on="2026-10-11") == want, (code, old, gu, dong)
+        n += 1
+    assert n == 3176       # 12 로 시작하는 존재 행 3,204 에서 시도 1, 시군구 27 을 뺀 수
+
+
+def test_sido_short_names_are_resolved_like_regions():
+    """시도 약칭은 지역 판정(regions.SIDO_SHORT)과 같은 표로 푼다. 옛 시도의 약칭도 통합 규칙을 그대로 따른다."""
+    assert B.lookup("서울", "종로구", "청운동") == B.lookup("서울시", "종로구", "청운동") == "1111010100"
+    assert B.lookup("강원", "춘천시", "효자동") == "5111011200"
+    for on in (None, "2026-07-01", "2026-12-20"):
+        assert B.lookup("광주특별시", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("광주", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("전남", "강진군", "강진읍", on=on) == "1278025000"
+        assert B.lookup("전남", "서구", "치평동", on=on) is None
+        assert B.lookup("광주", "강진군", "강진읍", on=on) is None
+    assert B.lookup("광주특별시", "서구", "치평동", on="2026-06-30") == "1224012000"     # 새 이름의 약칭은 날짜와 관계없다
+    assert B.lookup("광주", "서구", "치평동", on="2026-06-30") is None
+    assert B.lookup("서울 ", "종로구", "청운동") == "1111010100"
 
 
 def test_confirmed_renames_apply_from_their_start_date():
@@ -249,3 +332,21 @@ def test_main_writes_table_and_checks_sha(tmp_path):
     out.unlink()
     assert import_bjd.main(args[:-1] + ["0" * 64]) == 1
     assert not out.exists()
+
+
+def test_main_leaves_no_tmp_file_when_writing_fails(tmp_path, monkeypatch):
+    """파일을 쓰다 실패하면 .tmp 를 남기지 않고, 먼저 있던 출력 파일은 그대로 둔다."""
+    src = tmp_path / "법정동코드 전체자료.txt"
+    src.write_bytes(_raw(MINI))
+    out = tmp_path / "법정동코드.json"
+    args = ["--입력", str(src), "--출력", str(out), "--받은날", "2026-10-11"]
+    assert import_bjd.main(args) == 0
+    first = out.read_bytes()
+
+    def boom(*a, **k):
+        raise OSError("디스크가 가득 찼다")
+    monkeypatch.setattr(import_bjd.json, "dump", boom)
+    assert import_bjd.main(args) == 1
+    assert out.read_bytes() == first
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["법정동코드 전체자료.txt", "법정동코드.json"]
+

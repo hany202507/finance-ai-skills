@@ -36,8 +36,15 @@ def test_before_2025_is_out_of_scope():
     (("자산", 0, "종류"), "분양권", "5"),
     (("자산", 0, "종류"), "기타자산", "없음"),
     (("자산", 0, "양도", "원인"), "부담부증여", "5"),
-    (("자산", 0, "양도", "원인"), "교환", "5"),
-    (("자산", 0, "양도", "원인"), "기타", "5"),
+    (("자산", 0, "양도", "원인"), "교환", "미정"),
+    (("자산", 0, "양도", "원인"), "기타", "미정"),
+    (("자산", 0, "양도", "원인"), "수용", "미정"),
+    (("자산", 0, "취득", "원인"), "기타", "미정"),
+    (("자산", 0, "취득", "원인"), "증여", "5"),
+    (("자산", 0, "취득", "원인"), "조합원", "5"),
+    (("자산", 0, "종류"), "겸용주택", "5"),
+    (("자산", 0, "종류"), "입주권", "5"),
+    (("자산", 0, "취득", "잔금일"), "1984-12-31", "미정"),
     (("자산", 0, "취득", "원인"), "상속", "5"),
     (("자산", 0, "계약금액일치"), False, "없음"),
 ])
@@ -51,16 +58,30 @@ def test_scope(path, value, plan):
     assert p["다루지않음"] and p["다루지않음"][0]["계획"] == plan
 
 
+def test_plan_values_are_a_plan_number_or_one_of_two_words():
+    """다루지않음의 「계획」은 references/적용한계.md 의 표와 같은 값이다. 계획 5 범위(상속·증여·이월과세, 부담부증여, 겸용주택,
+    입주권·분양권, 비사업용 토지, 상속주택·동거봉양·혼인 특례, 한시배제 나목·다목, 양도차손 통산, 특례신고서)에 든 항목만 「5」,
+    다루려고 하지만 어느 계획에도 없는 항목은 「미정」, 계획이 없는 항목은 「없음」이다."""
+    import re
+    import os
+    from yangdo import SKILL_DIR
+    seen = set()
+    for name in ("facts.py", "judge.py", "calc.py", "return_values.py", "penalty.py"):
+        src = open(os.path.join(SKILL_DIR, "yangdo", name), encoding="utf-8").read()
+        seen |= set(re.findall(r'(?:OutOfScope|Unsupported)\([^\n]*?,\s*(?:계획=)?"([^"]+)"\)', src))
+    assert seen <= {"5", "미정", "없음"} and {"5", "미정", "없음"} <= seen, seen
+
+
 @pytest.mark.parametrize("원인,문구", [("교환", "교환으로 양도한 자산"), ("기타", "기타 원인으로 양도한 자산")])
 def test_exchange_and_other_transfer_name_the_cause(원인, 문구):
     p = prep("B", lambda f: f["자산"][0]["양도"].update(원인=원인))
-    assert p["다루지않음"] == [{"자산": "B", "내용": 문구, "계획": "5"}]
+    assert p["다루지않음"] == [{"자산": "B", "내용": 문구, "계획": "미정"}]
     assert p["시기"] == {}
 
 
 def test_expropriation_transfer_is_out_of_scope_without_the_old_note():
     p = prep("B", lambda f: f["자산"][0]["양도"].update(원인="수용"))
-    assert p["다루지않음"] == [{"자산": "B", "내용": "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", "계획": "5"}]
+    assert p["다루지않음"] == [{"자산": "B", "내용": "수용으로 양도한 자산(양도시기 시행령 제162조①7호, 조특법 감면)", "계획": "미정"}]
     assert p["시기"] == {} and p["확인사항"] == []
 
 
@@ -79,6 +100,15 @@ def test_household_specials_out_of_scope():
     p = prep("B", lambda f: f["세대"].update(특례주택=["상속주택"]))
     assert p["다루지않음"][0]["계획"] == "5"
     assert prep("B", lambda f: f["세대"].update(특례주택=["없음"]))["다루지않음"] == []
+
+
+@pytest.mark.parametrize("kinds,plan", [(["상속주택"], "5"), (["혼인합가"], "5"), (["동거봉양"], "5"), (["상속주택", "혼인합가"], "5"),
+                                        (["임대등록"], "미정"), (["농어촌주택"], "미정"), (["상속주택", "임대등록"], "미정")])
+def test_household_special_plan_follows_the_kind(kinds, plan):
+    """상속주택·혼인·동거봉양 특례는 계획 5 범위다. 임대·농어촌 주택 특례는 어느 계획에도 없어 「미정」이고, 섞여 있으면 「미정」이다."""
+    p = prep("B", lambda f: f["세대"].update(특례주택=kinds))
+    assert [x["계획"] for x in p["다루지않음"]] == [plan]
+    assert p["다루지않음"][0]["내용"] == "상속·임대·혼인·동거봉양·농어촌 주택 특례가 걸린 세대"
 
 
 def test_non_resident():
@@ -630,7 +660,7 @@ def test_district_unknown_on_the_acquisition_address_only_counts_when_that_addre
 # ---- 취득원인·미등기 토지 ----
 def test_other_acquisition_cause_is_out_of_scope():
     p = prep("B", lambda f: f["자산"][0]["취득"].update(원인="기타"))
-    assert p["다루지않음"] == [{"자산": "B", "내용": "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", "계획": "5"}]
+    assert p["다루지않음"] == [{"자산": "B", "내용": "기타 원인으로 취득한 자산(점유취득·환지 등 취득시기 규칙이 다름)", "계획": "미정"}]
     assert p["시기"] == {}
 
 

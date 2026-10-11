@@ -313,6 +313,72 @@ def test_put_overflow_is_its_own_value_error_subclass():
     with pytest.raises(forms_pdf.Overflow) as e:
         forms_pdf.put(page, [10, 10, 40, 24], "합성" * 30)
     assert isinstance(e.value, ValueError)
+    assert "합성" not in str(e.value) and "60자" in str(e.value)      # 글자는 싣지 않고 글자 수만 적는다
+    assert page.get_text().strip() == ""
+
+
+def test_put_field_overflow_names_the_cell_not_the_value():
+    page = pymupdf.open().new_page(width=200, height=100)
+    field = {"id": "X칸", "좌표": {"값_칸_해석": {"a": [10, 10, 40, 24]}}}
+    with pytest.raises(forms_pdf.Overflow) as e:
+        forms_pdf.put_field(page, field, "합성" * 30, col="a")
+    assert "X칸" in str(e.value) and " a" in str(e.value) and "합성" not in str(e.value)
+
+
+def _anchored_page():
+    """가운데에 「-」 가 인쇄된 칸 하나짜리 쪽. (쪽, 칸, 기준점 둘)."""
+    page = pymupdf.open().new_page(width=200, height=100)
+    rect = [10, 10, 110, 30]
+    font = forms_pdf.load_font()
+    forms_pdf._ensure(page, font)
+    page.insert_text((58, 24), "-", fontsize=8, fontname=font[1])
+    slots = [{"패턴": "-", "쓰는곳": "앞", "부분": "앞"}, {"패턴": "-", "쓰는곳": "뒤", "부분": "뒤"}]
+    return page, rect, slots
+
+
+def test_anchored_cell_writes_nothing_when_a_later_part_overflows():
+    """기준점 칸은 모든 부분이 들어가는지 먼저 재고 쓴다. 뒤 부분이 넘치면 앞 부분도 쪽에 남지 않는다."""
+    page, rect, slots = _anchored_page()
+    with pytest.raises(forms_pdf.Overflow):
+        forms_pdf.put_anchored(page, rect, slots, {"앞": "12", "뒤": "합성" * 30})
+    assert page.get_text().split() == ["-"]                         # 인쇄된 글자만 남았다
+    used = forms_pdf.put_anchored(page, rect, slots, {"앞": "12", "뒤": "34"})
+    assert len(used) == 2 and sorted(page.get_text().split()) == ["-", "12", "34"]
+    assert used[0].x1 <= 58 <= used[1].x0                           # 앞 부분은 「-」 왼쪽, 뒤 부분은 오른쪽
+
+
+def test_put_field_refuses_fields_the_filer_does_not_write():
+    """「쓰지않음」 필드(관리번호, 인쇄된 목록 등)는 값을 주어도 쓰지 않고 이유를 댄다."""
+    page = pymupdf.open().new_page(width=200, height=100)
+    field = {"id": "관리번호", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}, "쓰지않음": "세무서가 적는 칸"}
+    with pytest.raises(ValueError) as e:
+        forms_pdf.put_field(page, field, "123", col="a")
+    assert "적지 않는 칸" in str(e.value) and "세무서가 적는 칸" in str(e.value) and not isinstance(e.value, forms_pdf.Overflow)
+    assert page.get_text().strip() == ""
+    # 실제 필드목록의 쓰지않음 필드도 모두 거절한다
+    refused = 0
+    for name, d, _doc in _all_lists():
+        for f in d["fields"]:
+            if f.get("쓰지않음"):
+                with pytest.raises(ValueError, match="적지 않는 칸"):
+                    forms_pdf.put_field(page, f, "1")
+                refused += 1
+    assert refused > 0
+
+
+def test_used_box_covers_the_text_that_was_written():
+    """put 이 돌려주는 상자는 실제로 쓴 글자를 덮는다. 쪽에서 다시 읽은 낱말 상자가 그 안에 있고 칸을 넘지 않는다."""
+    for text, align, lines, rect in (("1,800,000,000", "right", 1, [10, 10, 110, 24]), ("합성아파트", "left", 1, [10, 30, 110, 44]),
+                                     ("서울특별시 성동구 성수동1가 456", "left", 2, [10, 50, 80, 74]), ("V", "center", 1, [120, 10, 132, 22])):
+        page = pymupdf.open().new_page(width=200, height=100)
+        used = forms_pdf.put(page, rect, text, align=align, lines=lines)
+        words = [pymupdf.Rect(w[:4]) for w in page.get_text("words")]
+        assert words and "".join(w[4] for w in page.get_text("words")) == text.replace(" ", "")
+        cell = pymupdf.Rect(rect)
+        for w in words:
+            assert used.x0 - 0.6 <= w.x0 and w.x1 <= used.x1 + 0.6, (text, w, used)      # 낱말 상자의 가로가 쓴 상자 안
+            assert used.y0 - 1.5 <= w.y0 and w.y1 <= used.y1 + 1.5, (text, w, used)
+        assert cell.x0 - 0.01 <= used.x0 and used.x1 <= cell.x1 + 0.01 and cell.y0 - 0.01 <= used.y0 and used.y1 <= cell.y1 + 0.01
 
 
 def test_put_field_non_overflow_errors_are_not_overflow():

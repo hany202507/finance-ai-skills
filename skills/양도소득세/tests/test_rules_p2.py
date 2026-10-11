@@ -47,3 +47,33 @@ def test_no_efile_credit_key_for_final_return(rs):
     assert "전자신고세액공제.확정" not in keys.VALUE_KEYS
     with pytest.raises(ruleset.RuleError):
         rs.value("전자신고세액공제.확정", "2027-05-20")
+
+
+# ---- 계획 2b G1b: 개인지방소득세 전자신고세액공제, 분납 대상 세액 ----
+
+def test_local_efile_credit_preliminary_is_2000(rs):
+    """양도소득에 대한 개인지방소득세 예정신고를 직접 전자신고하면 2천원을 뺀다(지방세특례제한법 제167조의3①, 시행령 제116조의2)."""
+    for on in ("2025-01-01", "2026-12-15", "2027-05-20"):
+        assert rs.value("지방.전자신고세액공제.예정", on) == 2000
+    assert rs.entry("지방.전자신고세액공제.예정", "2026-12-15")["기준일"] == "신고일"
+    cites = rs.cite("지방.전자신고세액공제.예정", "2026-12-15")
+    assert [(c["법령"], c["조항"]) for c in cites] == [("지방세특례제한법", "제167조의3①"), ("지방세특례제한법 시행령", "제116조의2①②")]
+    assert any("예정신고하는 양도소득에 대한 개인지방소득세" in x for x in cites[1]["발췌"])
+    assert "지방.전자신고세액공제.예정" in keys.VALUE_KEYS
+
+
+def test_no_local_efile_credit_key_for_final_return(rs):
+    """시행령 제116조의2①은 양도소득은 예정신고만 정한다. 확정신고 키는 만들지 않는다."""
+    assert "지방.전자신고세액공제.확정" not in keys.VALUE_KEYS
+    with pytest.raises(ruleset.RuleError):
+        rs.value("지방.전자신고세액공제.확정", "2027-05-20")
+
+
+def test_installment_base_citation_excludes_penalty(rs):
+    """분납할 수 있는 세액은 예정신고납부·확정신고납부로 납부할 세액이다. 두 조는 산출세액에서 감면세액과 세액공제액을 뺀 세액을
+    납부하도록 정하고 가산세를 넣지 않는다. 신고값과 서식 검산이 분납 한도를 가산세를 뺀 세액으로 세는 근거다."""
+    assert "판정.분납대상세액" in keys.CITE_KEYS
+    cites = rs.cite("판정.분납대상세액", "2026-11-20")
+    assert [(c["법령"], c["조항"]) for c in cites] == [("소득세법", "제112조"), ("소득세법", "제106조①"), ("소득세법", "제111조①")]
+    assert "제106조 또는 제111조에 따라 납부할 세액이 각각 1천만원을 초과하는 자" in cites[0]["발췌"]
+    assert "양도소득 산출세액에서 감면세액과 세액공제액을 공제한 금액" in cites[2]["발췌"]

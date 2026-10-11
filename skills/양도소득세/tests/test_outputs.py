@@ -3,14 +3,17 @@
 import copy
 import json
 import os
+import subprocess
+import sys
 
 import pytest
 
 import mcp_server
 import run
 from cases import CASES
-from yangdo import calc, engine, outputs, ruleset, verify
+from yangdo import calc, efile_tmp, engine, outputs, ruleset, verify
 
+SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TODAY = "2026-10-11"
 RS = ruleset.load()
 ROW = "| 조정대상지역(취득일 · 양도일) |"
@@ -26,11 +29,13 @@ def test_review_shows_regulated_area_row():
     assert "| 조정대상지역(취득일 · 양도일) | 예 · 예 |" in md
 
 
-def test_verify_recomputes_group_tax_independently():
-    r = engine.calculate(CASES["BC"], today="2026-10-11")
+@pytest.mark.parametrize("name", ["BC", "BF"])
+def test_verify_recomputes_group_tax_independently(name):
+    """BC 는 자산마다 세율이 달라 묶음이 하나씩이고, BF 는 두 자산이 기본세율 한 묶음이다."""
+    r = engine.calculate(CASES[name], today="2026-10-11")
     res = r["계산"]
     res["합계"]["호별합산세액"] += 1
-    assert any("호별" in m for m in verify.check(res, CASES["BC"], ruleset.load()))
+    assert any("호별" in m for m in verify.check(res, CASES[name], ruleset.load()))
 
 
 def test_run_and_mcp_share_outputs(tmp_path):
@@ -46,10 +51,25 @@ def test_run_reexports_every_moved_name():
     assert outputs.OUTPUT_NAMES == (outputs.RESULT, outputs.QUESTIONS, outputs.REVIEW, outputs.WORKBOOK)
 
 
-def test_mcp_server_uses_outputs_not_run_copies():
-    src = open(mcp_server.__file__, encoding="utf-8").read()
-    assert "import run" not in src and "RUN." not in src
+def test_mcp_server_uses_outputs_not_run_copies(tmp_path, monkeypatch):
+    """MCP 계산 도구는 run.py 를 거치지 않고 outputs.calculate_to 를 부른다. 그 함수를 바꾸면 도구의 결과가 따라 바뀐다."""
     assert mcp_server.outputs is outputs
+    seen = []
+    real = outputs.calculate_to
+
+    def spy(facts, out, rules_dir=None, today=None):
+        seen.append((out, today))
+        return real(facts, out, rules_dir=rules_dir, today=today)
+
+    monkeypatch.setattr(outputs, "calculate_to", spy)
+    out = str(tmp_path / "m")
+    res = mcp_server.call_tool("yangdo_calculate", {"facts": CASES["A"], "out_dir": out, "today": TODAY})
+    assert seen == [(out, TODAY)] and res["파일"] == [os.path.join(out, n) for n in (outputs.RESULT, outputs.REVIEW, outputs.WORKBOOK)]
+    # 서버를 읽어 들여도 run 모듈은 올라오지 않는다
+    code = ("import sys; sys.path[:0] = [%r, %r]; import mcp_server; print('run' in sys.modules)"
+            % (SKILL, os.path.join(SKILL, "scripts")))
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0 and p.stdout.strip() == "False", p.stdout + p.stderr
 
 
 def test_write_outputs_question_and_done(tmp_path):
@@ -74,8 +94,8 @@ def _stage_files(folder):
     names = outputs.OUTPUT_NAMES + outputs.RETURN_NAMES + ("20261220C116300.01", "내메모.txt", "20261215A103900.01")
     for n in names:
         (folder / n).write_text("x", encoding="utf-8")
-    (folder / ".efile-old").mkdir()
-    (folder / ".efile-old" / "신고값.json").write_text("{}", encoding="utf-8")
+    (folder / ".efile-old_0001").mkdir()
+    (folder / ".efile-old_0001" / "신고값.json").write_text("{}", encoding="utf-8")
     (folder / "보관").mkdir()
     return names
 
@@ -131,10 +151,96 @@ def test_clear_previous_stops_calculation_files_when_workbook_is_locked(tmp_path
     assert sorted(os.listdir(tmp_path)) == sorted(outputs.OUTPUT_NAMES + ("20261215A103900.01", "내메모.txt", "보관"))
 
 
+STUCK = ".efile-stuck001"
+
+
+def _stuck_tmp(folder, monkeypatch):
+    """지워지지 않는 임시 폴더(백신·색인기가 잡은 경우). 안에 인적사항이 든 신고값 사본이 있다."""
+    (folder / STUCK).mkdir(parents=True)
+    (folder / STUCK / "신고값.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", lambda *a, **k: None)
+
+
 def test_clear_previous_reports_temp_folder_it_could_not_remove(tmp_path, monkeypatch):
-    (tmp_path / ".efile-stuck").mkdir()
-    monkeypatch.setattr(outputs.shutil, "rmtree", lambda *a, **k: None)
-    assert outputs.clear_previous(str(tmp_path)) == [".efile-stuck"]
+    _stuck_tmp(tmp_path, monkeypatch)
+    assert outputs.clear_previous(str(tmp_path)) == [STUCK]
+
+
+def test_clear_previous_keeps_user_folders_with_the_temp_prefix(tmp_path):
+    """이름이 「.efile-」 로 시작해도 이 도구가 만든 폴더가 아니면 지우지 않고, 남았다고 알리지도 않는다."""
+    memo = tmp_path / ".efile-메모"
+    memo.mkdir()
+    (memo / "메모.txt").write_text("사용자 메모", encoding="utf-8")
+    foreign = tmp_path / ".efile-abcd1234"
+    foreign.mkdir()
+    (foreign / "내파일.txt").write_text("x", encoding="utf-8")
+    own = tmp_path / ".efile-abcd1235"
+    own.mkdir()
+    (own / "신고값.json").write_text("{}", encoding="utf-8")
+    assert outputs.clear_previous(str(tmp_path)) == []
+    assert sorted(os.listdir(tmp_path)) == [".efile-abcd1234", ".efile-메모"]
+    assert (memo / "메모.txt").read_text(encoding="utf-8") == "사용자 메모"
+    assert outputs.tmp_left_notes(str(tmp_path)) == []       # 이 도구의 파일이 없는 폴더는 알리지 않는다
+
+
+def _facts_file(tmp_path, name="A"):
+    fp = tmp_path / "f.json"
+    fp.write_text(json.dumps(CASES[name], ensure_ascii=False), encoding="utf-8")
+    return str(fp)
+
+
+def test_run_tells_about_temp_folder_it_could_not_remove(tmp_path, monkeypatch, capsys):
+    """계산만 다시 돌린 run.py 도 지우지 못한 임시 폴더(인적사항이 든 신고값 사본이 있을 수 있다)를 알린다."""
+    out = tmp_path / "o"
+    _stuck_tmp(out, monkeypatch)
+    assert run.main(["--사실관계", _facts_file(tmp_path), "--출력", str(out), "--오늘", TODAY]) == 0
+    shown = capsys.readouterr()
+    assert STUCK in shown.err and "인적사항" in shown.err and "직접 지운다" in shown.err
+    assert "산출세액" in shown.out
+
+
+def test_mcp_calculate_tells_about_temp_folder_it_could_not_remove(tmp_path, monkeypatch):
+    out = tmp_path / "o"
+    _stuck_tmp(out, monkeypatch)
+    res = mcp_server.call_tool("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(out), "today": TODAY})
+    assert res["상태"] == "완료" and any(STUCK in m and "직접 지운다" in m for m in res["알림"])
+    clean = mcp_server.call_tool("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(tmp_path / "c"), "today": TODAY})
+    assert "알림" not in clean                                          # 남은 것이 없으면 키를 싣지 않는다
+
+
+def test_run_question_line_is_a_sentence(tmp_path, capsys):
+    """질문으로 끝난 run.py 의 표준출력은 상태 값 이름(다루지않음)이 아니라 읽는 문장이다."""
+    assert run.main(["--사실관계", _facts_file(tmp_path, "L"), "--출력", str(tmp_path / "o"), "--오늘", TODAY]) == 2
+    line = capsys.readouterr().out.strip()
+    with open(tmp_path / "o" / outputs.RESULT, encoding="utf-8") as f:
+        res = json.load(f)
+    assert res["상태"] == "질문" and "다루지않음" in res                 # 결과의 상태 값과 키는 그대로다
+    assert line == "계산 질문 %d개, 이 스킬이 다루지 않는 경우 %d개. 질문.md 에 적었다" % (
+        len(res["질문"]), len(res["다루지않음"])), line
+
+
+def test_run_with_locked_old_file_says_what_is_left_is_from_the_previous_run(tmp_path, monkeypatch, capsys):
+    """옛 신고서 PDF 가 다른 프로그램에 잡혀 있으면 run.py 는 종료코드 4 로 멈춘다. 확인 문서가 없으므로
+    남은 파일이 이전 실행의 것이라는 말을 표준오류에 적는다."""
+    out = tmp_path / "o"
+    out.mkdir()
+    for n in (outputs.FORM_NATIONAL, outputs.FORM_LOCAL, outputs.REVIEW, outputs.RESULT, "내메모.txt"):
+        (out / n).write_text("x", encoding="utf-8")
+    real = os.remove
+
+    def remove(path, *a, **k):
+        if os.path.basename(os.fspath(path)) == outputs.FORM_NATIONAL:
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(os, "remove", remove)
+    assert run.main(["--사실관계", _facts_file(tmp_path), "--출력", str(out), "--오늘", TODAY]) == 4
+    monkeypatch.undo()
+    shown = capsys.readouterr()
+    assert sorted(os.listdir(out)) == sorted([outputs.FORM_NATIONAL, "내메모.txt"])
+    assert outputs.FORM_NATIONAL in shown.err and "이전 실행" in shown.err and "신고에 쓰지 않는다" in shown.err
+    assert "내메모.txt" not in shown.err                                # 이 도구의 파일만 적는다
+    assert shown.out == ""
 
 
 def test_regulated_area_row_only_for_houses():
@@ -283,8 +389,12 @@ def test_group_check_ignores_fully_exempt_assets():
     assert r["검산"] == []
 
 
-def test_group_check_does_not_call_calc(monkeypatch):
-    r = calc_result("BC")["계산"]
+GROUP_CASES = ("BC", "BF")      # BC 는 구성원이 하나인 묶음 둘, BF 는 구성원이 둘인 묶음 하나
+
+
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_does_not_call_calc(monkeypatch, name):
+    r = calc_result(name)["계산"]
 
     def boom(*a, **k):
         raise AssertionError("calc 를 부르면 안 된다")
@@ -293,15 +403,20 @@ def test_group_check_does_not_call_calc(monkeypatch):
     assert verify.group_totals(r) == []
 
 
-def test_group_check_uses_earliest_member_rate_basis():
-    """묶음 세율의 기준은 가장 이른 양도일 구성원이다(입력 순서와 상관없다)."""
-    r = calc_result("BC")["계산"]
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_uses_earliest_member_rate_basis(name):
+    """묶음 세율의 기준은 가장 이른 양도일 구성원이다(입력 순서와 상관없다). BF 는 두 자산의 양도일이 다른 한 묶음이다."""
+    r = calc_result(name)["계산"]
+    if name == "BF":
+        days = [a["판정"]["양도일"] for a in r["자산"]]
+        assert len(set(days)) == 2 and {a["계산"]["합산묶음"] for a in r["자산"]} == {"기본"}
     r["자산"].reverse()
     assert verify.group_totals(r) == []
 
 
-def test_group_check_does_not_mutate_result():
-    r = calc_result("BC")["계산"]
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_does_not_mutate_result(name):
+    r = calc_result(name)["계산"]
     before = copy.deepcopy(r)
     verify.group_totals(r)
     assert r == before

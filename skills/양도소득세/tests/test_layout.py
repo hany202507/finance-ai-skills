@@ -33,6 +33,16 @@ def test_header_fixup_is_recorded():
     assert any(x["레코드"] == "01" and "350" in x["내용"] for x in L["FIXUPS"])
 
 
+def test_value_chosen_for_05_62_is_listed_as_a_cell_to_check_with_hometax():
+    """05-62 장기보유특별공제적용구분코드는 규격서에 값 설명이 없어 ZZ 를 넣는다. 형식검증으로 확인할 칸에 있고, 스크립트의 FIXUPS 와 같다."""
+    mine = [x for x in L["FIXUPS"] if x.get("칸이름", "").startswith("05-62 ")]
+    assert len(mine) == 1 and mine[0]["종류"] == "정한값" and mine[0]["확인"] == "홈택스 형식검증" and mine[0]["칸번호"] == [62]
+    import extract_layout
+    names = {f["no"]: f["name"] for f in L["레코드"]["05"]["필드"]}
+    assert names[62] == "장기보유특별공제적용구분코드"
+    assert mine[0] in extract_layout.FIXUPS
+
+
 def test_names_unique_within_record():
     for r in L["레코드"].values():
         names = [f["name"] for f in r["필드"]]
@@ -105,6 +115,7 @@ def test_extract_refuses_length_mismatch_without_fixup(tmp_path, capsys):
     assert not out.exists()
     err = errors(capsys)
     assert len(err) == 1 and err[0].startswith("오류: 04") and "160" in err[0] and "150" in err[0], err
+    assert "FIXUPS 에 없음" in err[0]
 
 
 def test_extract_refuses_fixup_length_that_differs_from_fields(tmp_path, capsys, monkeypatch):
@@ -117,6 +128,19 @@ def test_extract_refuses_fixup_length_that_differs_from_fields(tmp_path, capsys,
     assert not out.exists()
     err = errors(capsys)
     assert len(err) == 1 and err[0].startswith("오류: 01") and "350" in err[0] and "300" in err[0], err
+    # FIXUPS 에 길이 고침이 있는데 값이 다른 경우다. 「FIXUPS 에 없음」이라 하지 않고 그 값을 적는다
+    assert "FIXUPS 에 없음" not in err[0] and "FIXUPS 길이 고침 351" in err[0]
+
+
+def test_decided_values_in_fixups_name_existing_cells():
+    """형식검증으로 확정할 「정한값」 고침은 레이아웃에 있는 칸 번호를 가리킨다. 추출 스크립트의 목록과 레이아웃 파일이 같다."""
+    import extract_layout
+    decided = [x for x in L["FIXUPS"] if x["종류"] == "정한값"]
+    assert {x["칸이름"].split(" ")[0] for x in decided} >= {"01-23", "01-18~22·26·27", "03-31"}
+    for x in decided:
+        nos = {f["no"] for f in L["레코드"][x["레코드"]]["필드"]}
+        assert x["칸번호"] and set(x["칸번호"]) <= nos and x["확인"] == "홈택스 형식검증" and x["내용"] and x["근거"]
+    assert L["FIXUPS"] == json.loads(json.dumps(extract_layout.FIXUPS, ensure_ascii=False))
 
 
 def test_extract_refuses_unlisted_class_cell_value(tmp_path, capsys):

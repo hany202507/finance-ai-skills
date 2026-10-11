@@ -163,11 +163,11 @@ def _draw(page, rect, rows, size, align, pad, font):
     return used
 
 
-def put(page, rect, text, align="right", size=7.5, font=None, lines=1, pad=None):
-    """칸(rect) 안에 글자를 쓰고 실제로 쓴 상자를 돌려준다. 빈 글자는 쓰지 않고 None.
+def _fit(rect, text, align, size, font, lines, pad):
+    """글자가 칸에 들어가는 줄 나눔과 크기를 잰다. 쓰지는 않는다. (칸, 줄 목록, 크기, 맞춤, 여백, 글꼴) 또는 빈 글자면 None.
 
-    세로는 칸 가운데. 폭이나 높이가 넘치면 5pt 까지 0.5pt 씩 줄이고, lines 가 2 이상이면 줄을 나눠 본다.
-    그래도 넘치면 Overflow(ValueError). 좌우 여백은 기본 3pt(가운데 맞춤은 1pt)."""
+    폭이나 높이가 넘치면 5pt 까지 0.5pt 씩 줄이고, lines 가 2 이상이면 줄을 나눠 본다. 그래도 넘치면 Overflow.
+    문장에는 글자를 싣지 않는다(성명·주소 같은 인적사항이 오류 문장으로 새지 않게). 글자 수와 칸 크기만 적는다."""
     text = "" if text is None else str(text).strip()
     if not text:
         return None
@@ -185,10 +185,22 @@ def put(page, rect, text, align="right", size=7.5, font=None, lines=1, pad=None)
                 break
             rows = _wrap(f, text, s, avail, n)
             if rows is not None:
-                return _draw(page, rect, rows, s, align, pad, font)
+                return rect, rows, s, align, pad, font
         s = round(s - STEP, 2)
-    raise Overflow("칸에 들어가지 않는다: %r (칸 폭 %.1fpt, 높이 %.1fpt, %.1fpt 까지 줄여도 넘친다)"
-                     % (text, rect.width, rect.height, MIN_SIZE))
+    raise Overflow("글자 %d자가 칸에 들어가지 않는다(칸 폭 %.1fpt, 높이 %.1fpt, %.1fpt 까지 줄여도 넘친다)"
+                   % (len(text), rect.width, rect.height, MIN_SIZE))
+
+
+def put(page, rect, text, align="right", size=7.5, font=None, lines=1, pad=None):
+    """칸(rect) 안에 글자를 쓰고 실제로 쓴 상자를 돌려준다. 빈 글자는 쓰지 않고 None.
+
+    세로는 칸 가운데. 폭이나 높이가 넘치면 5pt 까지 0.5pt 씩 줄이고, lines 가 2 이상이면 줄을 나눠 본다.
+    그래도 넘치면 Overflow(ValueError)이고 쪽에는 아무것도 쓰지 않는다. 좌우 여백은 기본 3pt(가운데 맞춤은 1pt)."""
+    job = _fit(rect, text, align, size, font, lines, pad)
+    if job is None:
+        return None
+    rect, rows, s, align, pad, font = job
+    return _draw(page, rect, rows, s, align, pad, font)
 
 
 def _center_in(rect, r):
@@ -219,19 +231,26 @@ def _same_line(w, a):
     return ov >= 0.5 * min(w.height, a.height)
 
 
-def _box(rect, a, where, words):
-    """기준점 a 옆의 빈 자리. 같은 줄의 다른 인쇄 글자와 칸 끝에서 멈춘다."""
+def _gap(gap, where):
+    """put_anchored 의 gap 인자에서 쓰는 곳(앞·뒤)의 여백. 주지 않으면 GAP."""
+    if gap is None:
+        return GAP
+    return gap.get(where, GAP) if isinstance(gap, dict) else gap
+
+
+def _box(rect, a, where, words, gap=GAP):
+    """기준점 a 옆의 빈 자리. 같은 줄의 다른 인쇄 글자와 칸 끝에서 멈춘다. gap 은 인쇄 글자에서 띄우는 여백이다."""
     line = [w for w in words if _same_line(w, a) and not (w & a).get_area() > 0.5 * a.get_area()]
     cy = (a.y0 + a.y1) / 2
     half = min(cy - rect.y0, rect.y1 - cy)
     if where == "앞":
         left = max((w.x1 for w in line if w.x1 <= a.x0 + 0.1), default=None)
-        x0 = left + GAP if left is not None else rect.x0 + PAD
-        x1 = a.x0 - GAP
+        x0 = left + gap if left is not None else rect.x0 + PAD
+        x1 = a.x0 - gap
     else:
         right = min((w.x0 for w in line if w.x0 >= a.x1 - 0.1), default=None)
-        x0 = a.x1 + GAP
-        x1 = right - GAP if right is not None else rect.x1 - PAD
+        x0 = a.x1 + gap
+        x1 = right - gap if right is not None else rect.x1 - PAD
     return pymupdf.Rect(x0, cy - half, x1, cy + half)
 
 
@@ -254,11 +273,14 @@ def _slot_values(slots, values):
                      % ", ".join(str(s.get("부분")) for s in slots))
 
 
-def put_anchored(page, rect, slots, values, size=7.5, font=None):
+def put_anchored(page, rect, slots, values, size=7.5, font=None, gap=None):
     """칸(rect) 안의 기준점 옆에 값을 쓴다. 쓴 상자 목록(빈 값은 건너뜀).
 
+    gap 은 기준점과 옆 인쇄 글자에서 띄우는 여백(기본 GAP)이다. 숫자 하나는 앞뒤 모두, {"앞": 숫자, "뒤": 숫자} 는 쓰는 곳마다 다르다.
+    음수는 인쇄 글자의 상자(글자 앞뒤 빈 자리 포함)에 조금 걸쳐 쓰는 것을 허용한다. 인쇄된 괄호가 좁은 칸에서 글자를 덜 줄이려고 쓴다.
     values 는 {부분: 글자}, 기준점 순서의 목록, 또는 기준점이 하나일 때 글자 하나다.
-    모든 자리를 먼저 계산한 뒤 쓰므로 앞에서 쓴 값이 뒤 자리 계산에 끼어들지 않는다."""
+    모든 자리를 먼저 계산하고 모든 부분이 제 자리에 들어가는지 잰 뒤에 쓴다. 앞에서 쓴 값이 뒤 자리 계산에 끼어들지 않고,
+    한 부분이라도 넘치면(Overflow) 쪽에는 아무것도 쓰지 않는다(앞 부분만 남은 칸 위에 다음 후보를 겹쳐 쓰지 않게)."""
     rect = pymupdf.Rect(rect)
     slots = _slots(slots)
     vals = _slot_values(slots, values)
@@ -271,8 +293,9 @@ def put_anchored(page, rect, slots, values, size=7.5, font=None):
         a = anchor(page, rect, s["패턴"], nth=s.get("순번", 0))
         if a is None:
             raise ValueError("기준점 %r 을 칸 %s 안에서 찾지 못했다" % (s["패턴"], [round(x, 1) for x in rect]))
-        jobs.append((_box(rect, a, s["쓰는곳"], words), v, _ALIGN[s["쓰는곳"]]))
-    return [put(page, box, v, align=al, size=size, font=font, pad=0) for box, v, al in jobs]
+        jobs.append((_box(rect, a, s["쓰는곳"], words, _gap(gap, s["쓰는곳"])), v, _ALIGN[s["쓰는곳"]]))
+    fitted = [_fit(box, v, al, size, font, 1, 0) for box, v, al in jobs]       # 하나라도 넘치면 여기서 멈춘다
+    return [_draw(page, r, rows, sz, al, pad, fnt) for r, rows, sz, al, pad, fnt in fitted]
 
 
 def _default_align(field, col=None):
@@ -292,12 +315,14 @@ def _default_align(field, col=None):
     return "left"
 
 
-def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1, pad=None):
+def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1, pad=None, gap=None):
     """필드목록의 필드 하나에 값을 쓴다. 쓴 상자 목록.
 
     기준점이 그 열에 걸리면 put_anchored, 아니면 put 으로 쓴다. 음영 칸, 쓰지않음 필드,
     없는 열은 ValueError. 기준점이 없는 칸에 dict·list 값을 주어도 ValueError(묶음 값을 글자로 바꿔 찍지 않는다).
-    pad 는 기준점이 없는 칸의 좌우 여백(put 과 같다). 좁은 칸에서 글자를 덜 줄이려고 줄여 쓴다."""
+    글자가 들어가지 않으면 Overflow 이고 문장에 필드 id 와 열 이름을 적는다(값은 적지 않는다).
+    pad 는 기준점이 없는 칸의 좌우 여백(put 과 같다). 좁은 칸에서 글자를 덜 줄이려고 줄여 쓴다.
+    gap 은 기준점이 있는 칸에서 인쇄 글자에서 띄우는 여백이다(put_anchored)."""
     fid = field.get("id")
     if field.get("쓰지않음"):
         raise ValueError("%s: 적지 않는 칸이다(%s)" % (fid, field["쓰지않음"]))
@@ -318,12 +343,15 @@ def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lin
     if field.get("음영") or col in field.get("음영_열", []):
         raise ValueError("%s %s: 음영 칸이라 적지 않는다" % (fid, col))
     slots = [s for s in _slots(field.get("기준점")) if not s.get("열") or col in s["열"]]
-    if slots:
-        return put_anchored(page, rect, slots, value, size=size, font=font)
-    if isinstance(value, (dict, list, tuple)):
-        raise ValueError("%s %s: 기준점이 없는 칸이라 값 하나만 쓴다(묶음 값을 받았다)" % (fid, col))
-    used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines,
-               pad=pad)
+    try:
+        if slots:
+            return put_anchored(page, rect, slots, value, size=size, font=font, gap=gap)
+        if isinstance(value, (dict, list, tuple)):
+            raise ValueError("%s %s: 기준점이 없는 칸이라 값 하나만 쓴다(묶음 값을 받았다)" % (fid, col))
+        used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines,
+                   pad=pad)
+    except Overflow as e:
+        raise Overflow("%s %s: %s" % (fid, col, e)) from None
     return [used] if used is not None else []
 
 
