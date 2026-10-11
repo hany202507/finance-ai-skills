@@ -175,6 +175,23 @@ def _clear_all(rep, out):
         raise first
 
 
+def _left_submittable(out):
+    """출력 폴더에 남은 신고서 PDF 와 제출용 이름의 전자신고 파일의 이름. 종료코드 4 로 끝날 때 쓰다 만 파일을 알리는 데 쓴다."""
+    try:
+        names = sorted(os.listdir(out))
+    except OSError:
+        return []
+    return [n for n in names if _clear_order(n) in (0, 2) and (n in OWN_NAMES or EFILE_NAME.match(n)) and os.path.isfile(os.path.join(out, n))]
+
+
+def _tell_left_files(rep, out):
+    """종료코드 4 에서 신고서 PDF 나 전자신고 파일이 남았으면 그 이름과 쓰지 말라는 말을 알림에 적는다(종료코드 1·3 과 같은 말을 한다)."""
+    left = _left_submittable(out)
+    if left:
+        rep["알림"].append("출력 폴더에 쓰다 만 신고서 PDF 나 전자신고 파일이 남아 있다: %s. 이번 실행이 끝까지 가지 못했으니 "
+                         "다시 실행하기 전에는 쓰지 않는다" % ", ".join(left))
+
+
 def _drop_submittable(rep, out):
     """예상하지 못한 오류로 끝날 때, 이번 실행이 만든 신고서 PDF 와 제출용 이름의 전자신고 파일, 임시 폴더를 지운다.
 
@@ -359,7 +376,8 @@ def _filer(rep, filer, facts, res):
         f = filing.load(filer)
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일을 읽지 못했거나 형식이 틀렸다", "신고인 정보", "형식 오류", "신고인 정보: %s" % e)
-    rep["경고"] += f.get("_경고") or []
+    for w in f.get("_경고") or []:
+        (rep["알림"] if w.startswith(filing.UNKNOWN_KEYS_HEAD) else rep["경고"]).append(w)    # 모르는 키는 알림으로 알린다
     # filing.questions 의 efile_dir 는 주지 않는다. 이 진입점은 efile 폴더를 따로 받지 않고 신고값 생성, 전자신고 파일, 검증기가
     # 모두 기본 폴더(efile/)를 읽으므로 질문도 같은 코드표와 법정동코드 표를 본다
     qs = _reference(rep, "신고인 정보", lambda: filing.questions(f, facts, res))
@@ -390,6 +408,8 @@ def _values(rep, res, facts, f, rules_dir):
         # 신고값 모듈의 문장이 이미 어느 계획에서 다루는지 말했으면 같은 말을 한 번 더 붙이지 않는다
         _stop(rep, 2, "다루지않음", "신고 범위가 아니라 신고값을 만들지 않았다", "신고값", "다루지않음",
               text if plan in text else "%s. %s" % (text, plan))
+    except return_values.InputError as e:
+        _stop(rep, 2, "입력오류", "사실관계 파일의 값이 틀려 신고값을 만들지 않았다", "신고값", "사실관계 오류", str(e))
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일의 값이 틀려 신고값을 만들지 않았다", "신고값", "신고인 정보 오류", "신고인 정보: %s" % e)
     except ValueError as e:
@@ -403,6 +423,10 @@ def _values(rep, res, facts, f, rules_dir):
                       "지방계": local.get("계") or 0}
         # 무신고가산세를 감면 없이 넣었다. 금액이 절반으로 달라질 수 있는 문장이라 확인사항에만 두지 않고 알림에도 올린다(국세, 지방소득세)
         rep["알림"] += [x for x in (pen.get("감면안내"), local.get("감면안내")) if x]
+        # 요약에도 가산세와 납부할 세액을 싣는다(신고서 본지 ⑱, 지방 서식 ⑮). 값은 신고값의 값을 그대로 읽는다
+        if rep["합계"] is not None:
+            nat, loc = rv["본지"]["열"]["합계"], rv["지방"]["열"]["합계"]
+            rep["합계"].update(가산세=nat["가산세"], 납부할세액=nat["납부할세액"], 지방가산세=loc["가산세"], 지방납부할세액=loc["납부할세액"])
     if rv.get("분납기한"):        # 분납할 세액이 있다. 금액은 신고값의 값이고 새로 세지 않는다
         total = rv["본지"]["열"]["합계"]
         rep["분납"] = dict(rv["분납기한"], 분납액=total["분납"], 작성일내=total["신고기한내납부"],
@@ -624,6 +648,16 @@ def _installment_todo(rep):
     return [first, second]
 
 
+def _totals_line(t):
+    """요약 줄. 가산세를 넣은 확정신고는 국세 납부할 세액(본지 ⑱)과 가산세, 지방소득세 납부할 세액(지방 서식 ⑮)과 가산세를 함께 적는다.
+    예정신고(가산세 없음)의 줄은 그대로다."""
+    won = outputs.won
+    if "납부할세액" in t:
+        return ("산출세액 %s원, 가산세 %s원, 납부할 세액 %s원, 지방소득세 산출세액 %s원, 지방소득세 가산세 %s원, 지방소득세 납부할 세액 %s원"
+                % (won(t["산출세액"]), won(t["가산세"]), won(t["납부할세액"]), won(t["지방소득세"]), won(t["지방가산세"]), won(t["지방납부할세액"])))
+    return "산출세액 %s원, 지방소득세 %s원" % (won(t["산출세액"]), won(t["지방소득세"]))
+
+
 def _bullets(xs):
     return ["- " + x for x in xs]
 
@@ -647,7 +681,7 @@ def confirm_md(rep):
         L += ["기준정보 판 %s, 확인일 %s%s" % (info["판"], info["확인일"],
                                           (", 서식판 %s, 규격서 %s" % (ed.get("서식"), ed.get("규격"))) if ed else ""), ""]
     if rep["합계"]:
-        L += ["산출세액 %s원, 지방소득세 %s원" % (outputs.won(rep["합계"]["산출세액"]), outputs.won(rep["합계"]["지방소득세"])), ""]
+        L += [_totals_line(rep["합계"]), ""]
     L += ["## 단계", "", "| 단계 | 결과 |", "|---|---|"] + ["| %s | %s |" % kv for kv in rep["단계"].items()] + [""]
     if rep["알림"]:
         L += ["## 알림", ""] + _bullets(rep["알림"]) + [""]
@@ -728,6 +762,8 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
             rep["전자신고"]["검증"] = ["예상하지 못한 오류로 멈췄다. 전자신고 파일을 %s" % (
                 "지우지 못했다. 신고에 쓰지 않는다" if stuck["전자신고 파일"] else "지웠다")]
         _mark_guides(rep, out, GUIDE_HEAD["오류"])
+    if rep["종료코드"] == 4:
+        _tell_left_files(rep, out)
     rep["사람이할일"] = _todo(rep)
     try:
         os.makedirs(out, exist_ok=True)
@@ -737,6 +773,7 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
         if rep["종료코드"] != 4:
             rep.update(종료코드=4, 상태="쓰기실패", 요약="출력 파일을 쓰지 못했다")
             rep["알림"].append("출력 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (CONFIRM_FILE, _why(e)))
+            _tell_left_files(rep, out)
     return rep
 
 
@@ -755,7 +792,7 @@ def main(argv=None):
         print(note, file=sys.stderr if code == 4 else sys.stdout)
     if code != 4:
         if rep["합계"]:
-            print("산출세액 %s원, 지방소득세 %s원" % (outputs.won(rep["합계"]["산출세액"]), outputs.won(rep["합계"]["지방소득세"])))
+            print(_totals_line(rep["합계"]))
         print("자세한 내용은 %s 에 적었다" % CONFIRM_FILE)
     return code
 

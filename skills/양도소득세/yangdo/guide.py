@@ -519,7 +519,8 @@ def hometax_input(rv):
             "- 국세: 산출세액 %s, %s납부할 세액 %s" % (_won(t.get("산출세액")),
                                              "가산세 %s, " % _won(t["가산세"]) if t.get("가산세") else "",
                                              _won(t.get("납부할세액"))),
-            "- 지방소득세: 산출세액 %s (위택스에서 따로 신고)" % _won(loc.get("산출세액")), ""]
+            "- 지방소득세: 산출세액 %s, %s납부할 세액 %s (위택스에서 따로 신고)"
+            % (_won(loc.get("산출세액")), "가산세 %s, " % _won(loc["가산세"]) if loc.get("가산세") else "", _won(loc.get("납부할세액"))), ""]
     return "\n".join(out + body).rstrip() + "\n"
 
 

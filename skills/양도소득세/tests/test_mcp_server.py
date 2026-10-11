@@ -77,6 +77,14 @@ def test_questions_answer_and_calculate(tmp_path):
     assert any(x.endswith("양도소득세_검토.md") for x in out["파일"])
 
 
+def test_bad_optional_date_is_a_question_and_the_value_is_not_in_the_response(tmp_path):
+    f = copy.deepcopy(CASES["K"])
+    f["자산"][0]["양도"]["계약일"] = "ZZ비밀값ZZ"
+    out = M.call_tool("yangdo_calculate", {"facts": f, "out_dir": str(tmp_path / "o")})
+    assert out["상태"] == "질문" and [q["문항"] for q in out["질문"]] == ["A09"]
+    assert "ZZ비밀값ZZ" not in json.dumps(out, ensure_ascii=False)
+
+
 def test_personal_data_is_an_error(tmp_path):
     f = dict(CASES["A"], 신고인={"거주자": True, "주민등록번호": "000000-0000000"})
     r = M.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",

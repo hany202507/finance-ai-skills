@@ -434,6 +434,22 @@ def _check_asset_forms(a, aid):
                 raise m
 
 
+# 엔진이 날짜로 읽지만 형식을 따로 검사하지 않던 선택 날짜 키(키, 문항, 이름). 틀리면 그 문항을 다시 묻는다
+OPTIONAL_DATES = (("주거사용개시일", "A05", "주거사용개시일"), ("양도.계약일", "A09", "양도 매매계약일"), ("양도.계약금수령일", "A10", "계약금 수령일"))
+
+
+def _check_asset_dates(a, aid):
+    """선택 날짜 키(OPTIONAL_DATES)가 YYYY-MM-DD 가 아니면 Missing. 문장에 값을 싣지 않는다(오류 문장으로 사실관계 값이 새지 않게)."""
+    for path, qid, name in OPTIONAL_DATES:
+        v = get(a, path)
+        if v is None:
+            continue
+        try:
+            dates.to_date(v)
+        except (ValueError, TypeError):
+            raise Missing(qid, aid, "%s 날짜 형식이 YYYY-MM-DD 가 아닙니다" % name) from None
+
+
 def _route_house(a, aid):
     """엔진이 계산하지 않는 주택 사실. 답이 있으면 계산하지 않고 다루지않음으로 돌린다. 부수토지 배율 초과만 계획 5
     (비사업용 토지) 범위이고 나머지는 어느 계획에도 들어 있지 않다."""
@@ -567,6 +583,7 @@ def _prepare_asset(f, a, out, bad):
     out["시기"][aid] = {"취득일": 취득.isoformat(), "취득근거": 취득근거, "양도일": 양도.isoformat(), "양도근거": 양도근거}
     need(a, "소재지", "A01", aid)
     _check_asset_forms(a, aid)
+    _check_asset_dates(a, aid)
     if 종류 == "주택":
         special = [x for x in get(f, "세대.특례주택") or [] if x != "없음"]
         if "H05" not in bad and special:

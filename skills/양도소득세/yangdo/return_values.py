@@ -39,6 +39,7 @@ import json
 import os
 import re
 from collections import namedtuple
+from datetime import date
 from decimal import ROUND_DOWN, Decimal
 
 from yangdo import SKILL_DIR, calc, dates, filing, penalty, ruleset
@@ -88,6 +89,11 @@ class Unsupported(Exception):
     def __init__(self, message, 계획="미정"):
         super().__init__(message)
         self.계획 = 계획
+
+
+class InputError(Exception):
+    """사실관계의 수집 전용 키(면적, 토지거래허가, 연간)가 신고값으로 옮길 수 없는 모양이다. 엔진이 읽지 않는 키라 계산은 통과한다.
+    문장에는 고칠 키 이름만 적고 값은 싣지 않는다. make_return 이 입력 오류(종료코드 2)로 끝낸다."""
 
 
 class NoTaxableAsset(Unsupported):
@@ -172,6 +178,31 @@ def _allocate(total, bases):
     top = max(range(len(bases)), key=lambda j: (bases[j], -j))
     parts[top] += total - sum(parts)
     return parts
+
+
+def check_collect_only(facts):
+    """신고값이 읽는 수집 전용 키의 모양을 먼저 본다. 틀리면 InputError(고칠 키 이름만). 면적은 신고인 파일의 총면적과 같은 검사
+    (0 이상 1억 미만, 소수 셋째 자리까지의 숫자)를 받는다."""
+    if facts.get("연간") is not None and not isinstance(facts["연간"], dict):
+        raise InputError("사실관계의 연간은 객체로 적는다")
+    for a in facts.get("자산") or []:
+        aid = a.get("id")
+        area = a.get("면적")
+        if area is not None:
+            if not isinstance(area, dict):
+                raise InputError("사실관계 자산 %s 의 면적은 {\"토지\": 숫자, \"건물\": 숫자} 꼴의 객체로 적는다" % aid)
+            for key in ("토지", "건물"):
+                v = area.get(key)
+                where = "사실관계 자산 %s 의 면적.%s" % (aid, key)
+                if v is None:
+                    continue
+                if isinstance(v, bool) or not isinstance(v, (int, float, Decimal)):
+                    raise InputError("%s 는 숫자로 적는다" % where)
+                d = Decimal(str(v))
+                if not d.is_finite() or d < 0 or d >= 10 ** 8 or d.as_tuple().exponent < -3:
+                    raise InputError("%s 는 0 이상 1억 미만, 소수 셋째 자리까지의 숫자로 적는다" % where)
+        if a.get("토지거래허가") is not None and not isinstance(a["토지거래허가"], dict):
+            raise InputError("사실관계 자산 %s 의 토지거래허가는 {\"신청일\": 날짜, \"허가일\": 날짜} 꼴의 객체로 적는다" % aid)
 
 
 def _area(v):
@@ -299,6 +330,7 @@ class _Builder:
     # ------------------------------------------------------------ 신고
 
     def filing_section(self):
+        check_collect_only(self.facts)
         s = self.filer.get("신고") or {}
         kind = s.get("구분")
         cd = self.codes
@@ -355,6 +387,27 @@ class _Builder:
             return permit, None
         return sold, None
 
+    def check_final_period(self, row, base, deadline, made):
+        """확정신고 기간 검사(소득세법 제110조①: 과세기간의 다음 연도 5월 1일부터 5월 31일까지). 기준일은 양도일이고 허가구역
+        단서 자산은 허가일이다(괄호).
+
+        작성일이 기간 시작보다 앞서면 만들지 않는다. 가산세가 작성일(납부일)까지의 일수로 계산되므로 기간 전 날짜로 만든 신고서는
+        기간 안에 내면 가산세가 틀린다. 허가일(해제일)이 속한 해가 양도일이 속한 해와 다른 단서 자산은 기간이 다른 해의 5월이라
+        이 스킬이 확정신고서를 만들지 않는다."""
+        sold = to_date(row["판정"]["양도일"])
+        start = date(deadline[0].year, self.rs.value("신고기한.확정.월", to_date(base)), 1)
+        if base.year != sold.year:
+            raise Unsupported(
+                "자산 %s: 토지거래허가 전에 대금을 청산해 허가일 %s 이 속하는 과세기간의 다음 연도가 확정신고 기간이다(소득세법 제110조① 괄호, "
+                "%s부터 %s까지). 허가일과 양도일 %s 의 해가 달라 이 스킬은 허가일과 양도일의 해가 다른 자산의 확정신고서를 만들지 않는다"
+                % (row["id"], base.isoformat(), start.isoformat(), deadline[0].isoformat(), sold.isoformat()), "미정")
+        if made < start:
+            raise Unsupported(
+                "작성일 %s 이 자산 %s 의 확정신고 기간 %s부터 %s까지보다 앞선다(소득세법 제110조①: 과세기간의 다음 연도 5월 1일부터 "
+                "5월 31일까지). 작성일은 그 기간 안의 신고·납부 예정일로 적는다. 납부지연가산세를 작성일까지의 일수로 세므로 "
+                "기간 전의 날짜로는 신고서를 만들지 않는다"
+                % (made.isoformat(), row["id"], start.isoformat(), deadline[0].isoformat()), "없음")
+
     def check_deadline(self, kind, rows, made):
         """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날로
         옮긴 기한으로 본다(dates.filing_deadline, 소득세법 제105조①, 제110조①, 국세기본법 제5조①). 문장에는 건너뛴 날을
@@ -367,7 +420,10 @@ class _Builder:
         for r in rows:
             base, why = self.deadline_base(r)
             if base is not None:
-                due.append((dates.filing_deadline(kind, base, self.rs), r["id"]))
+                deadline = dates.filing_deadline(kind, base, self.rs)
+                due.append((deadline, r["id"]))
+                if kind == "확정":
+                    self.check_final_period(r, base, deadline, made)
                 continue
             by_sale = dates.filing_deadline(kind, to_date(r["판정"]["양도일"]), self.rs)[1]
             if made > by_sale:
@@ -1033,7 +1089,8 @@ class _Builder:
             raise NoTaxableAsset(self.left_out)
         filing_sec = self.filing_section()
         for w in self.filer.get("_경고") or []:
-            self.note(w)
+            if not w.startswith(filing.UNKNOWN_KEYS_HEAD):      # 모르는 키는 make_return 이 알림으로 알린다
+                self.note(w)
         with open(self.form_reg_path, "rb") as f:
             form_sha = hashlib.sha256(f.read()).hexdigest()[:16]
         out["판"] = {"기준정보": self.result["기준정보"]["판"], "서식": form_sha, "규격": self.layout["규격"]["판"]}

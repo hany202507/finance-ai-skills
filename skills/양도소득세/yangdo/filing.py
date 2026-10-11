@@ -263,6 +263,40 @@ def _check_refund(r):
     _digits(r.get("계좌번호"), "환급계좌.계좌번호", "숫자만 16자리 이내로 적는다(하이픈은 뺀다)", maxn=16)
 
 
+# ---------------------------------------------------------------- 모르는 키
+
+UNKNOWN_KEYS_HEAD = "신고인 파일에 읽지 않는 키가 있다"
+_ADDRESS_KEYS = {"시도", "시군구", "읍면동", "특수지", "번지", "호", "아파트명", "아파트동", "아파트호", "법정동코드"}
+_KNOWN_KEYS = {
+    "": {"신고", "신고인", "양수인", "자산", "환급계좌", "세무대리인"},
+    "신고": {"구분", "작성일", "홈택스ID", "분납신청"},
+    "신고인": set(FIELD_NAMES) | {"주소", "전자메일"},
+    "신고인.주소": _ADDRESS_KEYS,
+    "양수인": {"자산", "구분", "내외국인", "번호", "성명", "전화", "지분", "관계코드"},
+    "자산": _ADDRESS_KEYS | {"총면적", "취득상대방", "등기원인", "등기목적"},
+    "환급계좌": {"은행코드", "계좌번호"},
+}
+
+
+def _unknown_keys(f):
+    """구역마다 받는 키 목록에 없는 키의 경로(키 이름만, 값은 싣지 않는다). `_` 로 시작하는 키는 양식의 설명용 키라 뺀다."""
+    def extra(d, where, known):
+        return ["%s.%s" % (where, k) if where else str(k) for k in d if not str(k).startswith("_") and k not in known]
+    found = extra(f, "", _KNOWN_KEYS[""])
+    for sec in ("신고", "신고인", "환급계좌"):
+        if isinstance(f.get(sec), dict):
+            found += extra(f[sec], sec, _KNOWN_KEYS[sec])
+    if isinstance(f.get("신고인"), dict) and isinstance(f["신고인"].get("주소"), dict):
+        found += extra(f["신고인"]["주소"], "신고인.주소", _KNOWN_KEYS["신고인.주소"])
+    for i, b in enumerate(f.get("양수인") if isinstance(f.get("양수인"), list) else [], 1):
+        if isinstance(b, dict):
+            found += extra(b, "양수인[%d]" % i, _KNOWN_KEYS["양수인"])
+    for aid, lot in (f.get("자산") if isinstance(f.get("자산"), dict) else {}).items():
+        if isinstance(lot, dict):
+            found += extra(lot, "자산.%s" % aid, _KNOWN_KEYS["자산"])
+    return [x[:60] for x in found]
+
+
 # ---------------------------------------------------------------- load
 
 def _read(src):
@@ -310,6 +344,9 @@ def load(src):
     for a in [f["신고인"].get("주소")] + list(f["자산"].values()):
         if isinstance(a, dict) and _blank(a.get("특수지")):
             a["특수지"] = "0"
+    unknown = _unknown_keys(f)
+    if unknown:
+        warns.append("%s: %s. 키 이름이 양식(신고인_양식.json)과 다른지 확인한다. 읽지 않았다" % (UNKNOWN_KEYS_HEAD, ", ".join(unknown)))
     f["_경고"] = warns
     return f
 

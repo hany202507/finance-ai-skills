@@ -22,6 +22,7 @@ from yangdo import efile, efile_tmp, forms, forms_pdf, return_values
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(SKILL, "scripts", "make_return.py")
 TODAY = "2026-10-11"
+TODAY2027 = "2027-05-20"
 DASH = chr(0x2014)  # 문체 규칙으로 금지한 줄표. 소스에 글자를 직접 적지 않는다
 PDFS = {"양도소득세_신고서.pdf", "지방소득세_신고서.pdf"}
 GUIDES = {"홈택스_입력안내.md", "부속서류.md"}
@@ -505,6 +506,33 @@ def test_write_failure_in_the_middle_is_code_4(tmp_path, monkeypatch, capsys):
     assert "쓰지 못했다" in _confirm(out)
 
 
+def test_code_4_after_the_pdfs_were_made_names_the_files_left_behind(tmp_path, monkeypatch, capsys):
+    """신고서 PDF 를 만든 뒤 전자신고 파일을 쓰다 종료코드 4 로 끝나면 남은 파일의 이름과 「다시 실행하기 전에는 쓰지 않는다」를 알림에 적는다."""
+    fp, gp, out = _write(tmp_path, "S1", s1_filer())
+
+    def locked(rv, out_dir, **k):
+        raise PermissionError(13, "Permission denied", os.path.join(out_dir, "20261215C116300.01"))
+
+    monkeypatch.setattr(MR.efile, "write", locked)
+    code = MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", TODAY])
+    err = capsys.readouterr().err
+    assert code == 4
+    for text in (err, _confirm(out)):
+        assert forms.OUT_NATIONAL in text and forms.OUT_LOCAL in text and "다시 실행하기 전에는 쓰지 않는다" in text
+    assert sorted(n for n in os.listdir(out) if n.endswith(".pdf")) == sorted([forms.OUT_NATIONAL, forms.OUT_LOCAL])
+
+
+def test_code_4_without_leftover_files_adds_no_leftover_sentence(tmp_path, monkeypatch, capsys):
+    fp, gp, out = _write(tmp_path, "S1", s1_filer())
+
+    def locked(rv, out_dir, **k):
+        raise PermissionError(13, "Permission denied", os.path.join(out_dir, forms.OUT_NATIONAL))
+
+    monkeypatch.setattr(MR.forms, "render", locked)
+    assert MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", TODAY]) == 4
+    assert "쓰다 만" not in capsys.readouterr().err and "쓰다 만" not in _confirm(out)
+
+
 # ---------------------------------------------------------------- 상대 경로 출력 폴더
 
 def _relative_run(tmp_path, monkeypatch, capsys):
@@ -930,6 +958,117 @@ def test_late_filing_stop_says_it_once_and_points_only_at_files_that_exist(tmp_p
     assert "질문.md" not in todo and "알림에 적힌 사유" in todo and "이 도구" not in todo
 
 
+@pytest.mark.parametrize("tool", ["yangdo_forms", "yangdo_efile"])
+def test_final_return_before_its_period_stops_without_files_in_make_return_and_mcp(tmp_path, tool):
+    """확정신고인데 작성일이 확정신고 기간(다음 연도 5월 1일부터) 전이면 종료코드 2 이고 신고서·전자신고 파일·신고값을 만들지 않는다.
+    MCP 도구도 같은 판정이다. 5월 1일은 만든다."""
+    f = filers.get("BF")
+    f["신고"]["작성일"] = "2027-04-30"
+    out = tmp_path / "o"
+    res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(out), "today": "2027-04-30"})
+    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and res["전자신고"] is None
+    assert any("확정신고 기간 2027-05-01부터 2027-05-31까지" in x for x in res["알림"])
+    assert not [n for n in os.listdir(out) if n.endswith(".pdf") or "C116300" in n or n == "신고값.json"]
+    f["신고"]["작성일"] = "2027-05-01"
+    res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(tmp_path / "p"), "today": "2027-05-01"})
+    assert res["종료코드"] == 0
+
+
+BF_SUMMARY = ("산출세액 206,274,000원, 가산세 46,110,480원, 납부할 세액 252,384,480원, "
+              "지방소득세 산출세액 20,627,400원, 지방소득세 가산세 4,352,381원, 지방소득세 납부할 세액 24,979,781원")
+
+
+def test_final_return_summary_carries_penalty_and_payable_amounts(tmp_path, capsys):
+    """가산세를 넣은 확정신고는 확인 문서 맨 위 줄, 표준출력, 보고의 합계, 입력 안내서 요약에 국세 납부할 세액(본지 ⑱)과 가산세 계,
+    지방소득세 납부할 세액(지방 서식 ⑮)과 가산세 계를 함께 적는다. 값은 신고값의 값이다. 예정신고의 줄은 그대로다."""
+    code, out = _main(tmp_path, "BF", filers.get("BF"))
+    shown = capsys.readouterr().out
+    assert code == 0
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    nat, loc = rv["본지"]["열"]["합계"], rv["지방"]["열"]["합계"]
+    assert (nat["납부할세액"], nat["가산세"], loc["납부할세액"], loc["가산세"]) == (252384480, 46110480, 24979781, 4352381)
+    assert BF_SUMMARY in shown.splitlines()
+    assert _confirm(out).split("\n## ", 1)[0].splitlines().count(BF_SUMMARY) == 1
+    guide = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
+    assert "- 국세: 산출세액 206,274,000원, 가산세 46,110,480원, 납부할 세액 252,384,480원" in guide
+    assert "- 지방소득세: 산출세액 20,627,400원, 가산세 4,352,381원, 납부할 세액 24,979,781원 (위택스에서 따로 신고)" in guide
+    rep = MR.make(CASES["BF"], filers.get("BF"), str(tmp_path / "again"), today=TODAY2027)
+    assert rep["합계"] == {"산출세액": 206274000, "지방소득세": 20627400, "가산세": 46110480, "납부할세액": 252384480,
+                         "지방가산세": 4352381, "지방납부할세액": 24979781}
+    (tmp_path / "s1").mkdir()
+    code, out2 = _main(tmp_path / "s1", "S1", s1_filer())
+    assert code == 0 and "산출세액 38,349,466원, 지방소득세 3,834,946원" in capsys.readouterr().out.splitlines()
+    assert "가산세" not in _confirm(out2).split("\n## ", 1)[0]
+
+
+def test_mcp_return_response_carries_the_penalty_key(tmp_path):
+    f = filers.get("BF")
+    res = mcp_server.call_tool("yangdo_forms", {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(tmp_path / "o"),
+                                                "today": TODAY2027})
+    assert "가산세" in mcp_server.RETURN_KEYS and res["가산세"]["계"] == 46110480 and res["합계"]["납부할세액"] == 252384480
+    assert res["합계"]["지방납부할세액"] == 24979781
+
+
+def _bf_with(tmp_path, name, mutate, upto=None):
+    f = copy.deepcopy(CASES["BF"])
+    mutate(f)
+    out = tmp_path / name
+    kw = {"upto": upto} if upto else {}
+    return MR.make(f, filers.get("BF"), str(out), today="2027-05-20", **kw), out
+
+
+@pytest.mark.parametrize("area,word", [({"토지": -30.0, "건물": 84.0}, "0 이상 1억 미만"), ({"토지": 30.0, "건물": 100000000}, "0 이상 1억 미만"),
+                                        ({"토지": 30.1234, "건물": 84.0}, "소수 셋째 자리까지"), ({"토지": "30", "건물": 84.0}, "숫자로 적는다"),
+                                        ("84㎡", "객체로 적는다"), (84.0, "객체로 적는다")])
+def test_facts_area_is_checked_like_the_filer_total_area(tmp_path, area, word):
+    """사실관계의 면적은 엔진이 읽지 않는 수집 전용 키다. 신고인 파일의 총면적과 같은 검사를 신고값 단계에서 받고, 틀리면 입력 오류(종료코드 2)다.
+    문장에는 키 이름만 적고 값은 싣지 않는다. 신고서 PDF 와 전자신고 파일은 만들지 않는다."""
+    rep, out = _bf_with(tmp_path, "o", lambda f: f["자산"][0].update(면적=area), upto=MR.FORMS)
+    assert rep["종료코드"] == 2 and rep["상태"] == "입력오류" and rep["전자신고"] is None
+    note = " ".join(rep["알림"])
+    assert "사실관계 자산 B 의 면적" in note and word in note and "신고인 정보" not in note
+    for v in ("84㎡", "-30", "30.1234", "100000000"):
+        assert v not in note and v not in " ".join(rep["사람이할일"])
+    assert not [n for n in os.listdir(out) if n.endswith(".pdf") or "C116300" in n or n == "신고값.json"]
+    text = _confirm(out)
+    assert "알림의 문장대로 입력 파일을 고친 뒤 다시 실행한다" in text and "운영자에게 알린다" not in _section(text, "## 사람이 할 일")
+
+
+def test_facts_area_in_range_is_accepted(tmp_path):
+    rep, _ = _bf_with(tmp_path, "o", lambda f: f["자산"][0].update(면적={"토지": 0, "건물": 12345.678}), upto=MR.FORMS)
+    assert rep["종료코드"] == 0
+
+
+@pytest.mark.parametrize("name,mutate", [
+    ("area_text", lambda f: f["자산"][0].update(면적="84㎡")),
+    ("permit_text", lambda f: f["자산"][1].update(토지거래허가대상="예", 토지거래허가="글자")),
+    ("permit_list", lambda f: f["자산"][1].update(토지거래허가대상="예", 토지거래허가=["허가일"])),
+    ("yearly_text", lambda f: f.update(연간="글자"))])
+def test_collect_only_keys_that_are_not_objects_are_input_errors_not_unexpected_errors(tmp_path, name, mutate):
+    """수집 전용 키(면적, 토지거래허가, 연간)의 모양이 틀리면 종료코드 1 의 「예상하지 못한 오류」가 아니라 고칠 키 이름이 나오는 입력 오류(종료코드 2)다."""
+    rep, out = _bf_with(tmp_path, name, mutate)
+    assert rep["종료코드"] == 2 and rep["상태"] == "입력오류"
+    note = " ".join(rep["알림"])
+    assert "사실관계" in note and "객체로 적는다" in note and "예상하지 못한" not in note and "AttributeError" not in note
+    assert "글자" not in note.replace("글자는", "")
+    assert not [n for n in os.listdir(out) if n.endswith(".pdf") or "C116300" in n]
+
+
+def test_unknown_filer_keys_are_told_in_the_notice_once(tmp_path):
+    f = filers.get("BF")
+    f["신고"]["분납 신청"] = True
+    f["자산"]["B"]["취득 상대방"] = "ZZ비밀값ZZ"
+    code, out = _main(tmp_path, "BF", f, today="2027-05-20")
+    text = _confirm(out)
+    assert code == 0
+    notice = _section(text, "## 알림")
+    assert "신고인 파일에 읽지 않는 키가 있다: 신고.분납 신청, 자산.B.취득 상대방" in notice and "ZZ비밀값ZZ" not in text
+    assert text.count("읽지 않는 키가 있다") == 1
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        assert not any("읽지 않는 키" in x for x in json.load(fh)["확인사항"])
+
+
 def test_installment_split_in_the_human_todo_matches_the_return_values(tmp_path):
     """분납을 신청한 실행은 「사람이 할 일」 납부 줄이 둘이다. 작성일에 낼 금액과 분납할 세액·기한이 신고값, 안내서의 값과 같다."""
     f = filers.get("BF")
@@ -1012,35 +1151,7 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert DASH not in _confirm(out) and not [ln for ln in _confirm(out).splitlines() if ln.rstrip().endswith("?")]
 
 
-def test_final_return_before_the_local_deadline_says_no_local_penalty_in_one_line(tmp_path):
-    """BF 를 2027-03-31 에 신고·납부: 국세 예정신고 납부기한 2027-02-01 은 지났고 지방 예정신고기한 2027-03-31 은 지나지 않았다.
-    국세 가산세: 무신고 41,254,800, 납부지연 206,274,000 × 57일(02-02 ~ 03-30) × 22/100,000 = 2,586,675.96 → 2,586,670
-    지방소득세는 가산세가 없다. 0원을 계산했다거나 감면을 적용했다는 문장, 가정해 계산했다는 문장을 내지 않고 한 줄만 적는다."""
-    f = filers.get("BF")
-    f["신고"]["작성일"] = "2027-03-31"
-    code, out = _main(tmp_path, "BF", f)
-    assert code == 0, _confirm(out)
-    with open(out / "신고값.json", encoding="utf-8") as fh:
-        rv = json.load(fh)
-    t, loc = rv["본지"]["열"]["합계"], rv["지방"]["열"]["합계"]
-    assert (t["가산세_신고"], t["가산세_납부"]) == (41254800, 2586670)
-    assert (loc["가산세_신고"], loc["가산세_납부"], loc["가산세"], loc["납부할세액"]) == (0, 0, 0, 20627400)
-    text = _confirm(out)
-    line = "지방소득세는 지방 예정신고기한 2027-03-31 이전에 신고·납부하므로 가산세가 없다"
-    notes = text.split("## 확인사항", 1)[1].split("##")[0]
-    assert [ln for ln in notes.splitlines() if "지방소득세" in ln and "가산세" in ln] == ["- " + line]
-    with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
-        md = fh.read()
-    for doc in (text, md):
-        assert "0원과 납부지연가산세 0원" not in doc and "적용되지 않으면" not in doc and "두 가지를 가정" not in doc
-        assert "지방소득세 무신고가산세는 감면 없이" not in doc
-    todo = text.split("## 사람이 할 일", 1)[1]
-    local = [ln for ln in todo.splitlines() if "위택스" in ln and "지방소득세" in ln][0]
-    assert "값은 지방소득세_신고서.pdf 에 있다" in local and "가정" not in local and "위택스 값을 따른다" not in local
-    assert "국세와 지방소득세는 작성일 2027-03-31 에 납부한다" in todo
-    alerts = text.split("## 알림", 1)[1].split("##")[0]
-    assert "감면 없이" in alerts and "지방소득세 무신고가산세" not in alerts      # 국세 문장만 알림에 오른다
-
+# (확정신고 기간이 5월 1일부터라 작성일은 늘 지방 예정신고기한 뒤다. 「지방 기한 이전」 한 줄은 test_penalty.py 가 penalty 모듈에서 본다)
 
 def test_final_return_whose_penalty_cannot_be_determined_makes_no_forms(tmp_path, capsys):
     """penalty.Unsupported 면 그 사유로 신고서와 전자신고 파일을 만들지 않고 종료코드 2 로 끝낸다(참고용 값은 낸다)."""
