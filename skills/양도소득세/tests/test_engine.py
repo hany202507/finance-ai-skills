@@ -337,7 +337,9 @@ def test_run_cannot_remove_previous_workbook_exit_4(tmp_path, capsys, monkeypatc
     monkeypatch.setattr(run.os, "remove", remove)
     code, _ = go(tmp_path, CASES["A"])
     lines = _err_lines(capsys)
-    assert code == 4 and len(lines) == 1 and old in lines[0]
+    assert code == 4 and len(lines) == 2 and old in lines[0]
+    # 둘째 줄은 남은 계산 결과가 이전 실행의 것이라고 알린다(사용자 파일은 적지 않는다)
+    assert "이전 실행" in lines[1] and "양도소득세_계산근거.xlsx" in lines[1] and "내메모.txt" not in lines[1]
     assert _snapshot(out) == before   # 이전 결과 파일이 하나도 지워지지 않았고 새로 쓴 것도 없다
 
 

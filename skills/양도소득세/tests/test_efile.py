@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from yangdo import efile, efile_check, engine, filing, return_values
+from yangdo import efile, efile_check, efile_tmp, engine, filing, return_values
 from cases import CASES
 import filers
 
@@ -87,9 +87,26 @@ def test_check_failure_leaves_no_file(tmp_path):
 
 
 def test_locked_spec_refuses(tmp_path, monkeypatch):
-    monkeypatch.setattr(efile, "_spec_locked", lambda d=None: True)
+    monkeypatch.setattr(efile, "_lock_reason", lambda d=None: "규격판이 잠겨 있다(시험)")
     with pytest.raises(efile.Locked):
         efile.write(_rv("S1"), str(tmp_path))
+    assert os.listdir(tmp_path) == []
+
+
+def test_locked_spec_file_is_read_once(tmp_path, monkeypatch):
+    """잠겨 있을 때도 규격판 파일은 한 번만 읽고, 그때 얻은 까닭을 그대로 낸다."""
+    seen, real = [], efile._read_json
+
+    def fake(path):
+        name = os.path.basename(path)
+        seen.append(name)
+        data = real(path)
+        return dict(data, 잠금=True) if name == efile.SPEC_FILE else data
+
+    monkeypatch.setattr(efile, "_read_json", fake)
+    with pytest.raises(efile.Locked) as e:
+        efile.write(_rv("S1"), str(tmp_path))
+    assert "잠겨" in str(e.value) and seen.count(efile.SPEC_FILE) == 1
     assert os.listdir(tmp_path) == []
 
 
@@ -99,6 +116,30 @@ def test_non_ksx1001_name_is_refused():
     with pytest.raises(ValueError, match="완성형") as e:
         efile.build_records(rv)
     assert "김똠" not in str(e.value) and "양수인_성명" in str(e.value)
+
+
+def test_generator_and_filer_check_share_one_ksx_function(monkeypatch):
+    """완성형 검사는 efile_text 한 곳에 있다. 그 함수를 바꾸면 생성기와 신고인 검사가 함께 바뀌고 검증기는 그대로다."""
+    from yangdo import efile_text
+    name = "김합성"
+    assert filing.ksx1001_ok(name) and efile._c(name, 10, "칸") == name.encode("cp949") + b"    "
+    monkeypatch.setattr(efile_text, "ksx_bytes_ok", lambda raw, symbols=True: False)
+    assert not filing.ksx1001_ok(name)
+    with pytest.raises(efile.BuildError, match="완성형"):
+        efile._c(name, 10, "칸")
+    assert efile_check._ksx_problem(name.encode("cp949")) is None      # 검증기는 자기 규칙을 따로 갖는다
+
+
+@pytest.mark.parametrize("text", ["김합성", "ABC abc 019 ~", "합성아파트 101동", "가운뎃점·", "김똠", "金합성", "탭	", "", "끝"])
+def test_shared_ksx_function_agrees_with_checker(text):
+    """생성기 쪽 함수(기호 행 포함)와 검증기의 판정이 같다."""
+    from yangdo import efile_text
+    try:
+        raw = text.encode("cp949")
+    except UnicodeEncodeError:
+        raw = None
+    want = raw is not None and efile_check._ksx_problem(raw) is None
+    assert efile_text.ksx1001_ok(text, symbols=True) is want
 
 
 # ---------------------------------------------------------------- 합성 사례 네 건
@@ -384,7 +425,7 @@ def _refuse(*a, **k):
 
 def test_failed_check_leaves_no_submission_named_file_when_folder_cannot_be_removed(tmp_path, monkeypatch):
     # 임시 폴더 삭제가 막혀도(백신·색인기가 잡은 경우) 검증에 실패한 파일이 제출용 이름으로 남으면 안 된다
-    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", _refuse)
     out = efile.write(_bad_rv(), str(tmp_path))
     monkeypatch.undo()
     assert out["경로"] is None
@@ -404,7 +445,7 @@ def test_blocked_temp_file_is_renamed_away_from_submission_name(tmp_path, monkey
             raise PermissionError("흉내 낸 삭제 실패")
         return real_remove(path, *a, **k)
     monkeypatch.setattr(efile.os, "remove", remove)
-    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", _refuse)
     out = efile.write(_bad_rv(), str(tmp_path))
     monkeypatch.undo()
     assert out["경로"] is None
@@ -430,7 +471,7 @@ def test_stuck_submission_named_file_is_reported(tmp_path, monkeypatch):
         return real_replace(src, dst, *a, **k)
     monkeypatch.setattr(efile.os, "remove", remove)
     monkeypatch.setattr(efile.os, "replace", replace)
-    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", _refuse)
     out = efile.write(_bad_rv(), str(tmp_path))
     monkeypatch.undo()
     assert out["경로"] is None
@@ -438,7 +479,7 @@ def test_stuck_submission_named_file_is_reported(tmp_path, monkeypatch):
 
 
 def test_leftover_folder_after_success_is_warned(tmp_path, monkeypatch):
-    monkeypatch.setattr(efile.shutil, "rmtree", _refuse)
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", _refuse)
     out = efile.write(_rv("S1"), str(tmp_path))
     monkeypatch.undo()
     assert out["검증"] == [] and os.path.isfile(out["경로"])
@@ -447,7 +488,7 @@ def test_leftover_folder_after_success_is_warned(tmp_path, monkeypatch):
 
 
 def test_write_sweeps_folders_left_by_killed_run(tmp_path):
-    old = tmp_path / ".efile-killed"
+    old = tmp_path / ".efile-killed01"
     old.mkdir()
     (old / "20261215C116300.01").write_bytes(b"unchecked")
     (old / "신고값.json").write_text("{}", encoding="utf-8")
@@ -455,6 +496,60 @@ def test_write_sweeps_folders_left_by_killed_run(tmp_path):
     keep.write_text("x", encoding="utf-8")
     out = efile.write(_bad_rv(), str(tmp_path))            # 실패하는 실행이어도 쓸어 낸다
     assert out["경로"] is None and os.listdir(tmp_path) == ["다른파일.txt"]
+
+
+def test_write_keeps_folders_it_did_not_make(tmp_path):
+    """「.efile-」 로 시작해도 이 도구가 만든 폴더가 아니면 지우지 않는다(이름 꼴이 다르거나 안에 다른 파일·폴더가 있다)."""
+    memo = tmp_path / ".efile-메모"
+    memo.mkdir()
+    (memo / "신고값.json").write_text("사용자 메모", encoding="utf-8")
+    foreign = tmp_path / ".efile-abcd1234"                 # 이름 꼴은 같지만 이 도구가 쓰지 않는 파일이 있다
+    foreign.mkdir()
+    (foreign / "내파일.txt").write_text("x", encoding="utf-8")
+    nested = tmp_path / ".efile-abcd1235"                  # 안에 폴더가 있다
+    (nested / "하위").mkdir(parents=True)
+    (tmp_path / ".efile-abcd1236").write_text("폴더가 아니라 파일", encoding="utf-8")
+    out = efile.write(_rv("S1"), str(tmp_path))
+    assert out["검증"] == [] and out["경고"] == []
+    assert sorted(os.listdir(tmp_path)) == sorted([".efile-메모", ".efile-abcd1234", ".efile-abcd1235", ".efile-abcd1236",
+                                                   "20261215C116300.01"])
+    assert (memo / "신고값.json").read_text(encoding="utf-8") == "사용자 메모"
+
+
+def test_mixed_temp_folder_is_kept_and_named(tmp_path):
+    """이 도구의 파일에 다른 파일이나 폴더가 섞인 임시 폴더는 지우지 않되 이름을 알린다. 이 도구의 파일이 없는 폴더는 알리지 않는다."""
+    d = str(tmp_path)
+    for name, files, dirs in ((".efile-killed02", ("신고값.json", "20261215C116300.01", ".DS_Store"), ()),
+                              (".efile-killed03", ("신고값.json",), ("sub",)),
+                              (".efile-killed04", ("검증안됨.tmp", "메모.txt"), ()),
+                              (".efile-abcd1234", ("내파일.txt",), ()),
+                              (".efile-메모", ("신고값.json", "메모.txt"), ())):
+        os.makedirs(os.path.join(d, name))
+        for f in files:
+            open(os.path.join(d, name, f), "w").close()
+        for sub in dirs:
+            os.makedirs(os.path.join(d, name, sub))
+    assert efile_tmp.mixed(d) == [".efile-killed02", ".efile-killed03", ".efile-killed04"]
+    assert efile_tmp.left(d) == [] and efile_tmp.sweep(d) == []
+    notes = efile_tmp.left_notes(d)
+    assert notes == efile_tmp.mixed_notes(d) and len(notes) == 3
+    assert all("직접 확인해 지운다" in x and "신고값 사본" in x for x in notes)
+    assert len(os.listdir(d)) == 5                          # 아무것도 지우지 않았다
+    out = efile.write(_rv("S1"), d)
+    assert out["검증"] == [] and out["경고"] == notes
+
+
+def test_temp_folder_made_by_the_tool_is_recognized(tmp_path):
+    """mkdtemp 가 붙이는 이름이 이 도구의 폴더 꼴과 맞는다. 파이썬이 이름 짓는 법을 바꾸면 이 시험이 알린다."""
+    work = efile_tmp.make(str(tmp_path))
+    name = os.path.basename(work)
+    assert efile_tmp.is_own(str(tmp_path), name)                       # 빈 폴더
+    for n in ("20261215C116300.01", efile_tmp.RV_COPY, efile_tmp.REJECTED_NAME):
+        open(os.path.join(work, n), "w").close()
+    assert efile_tmp.is_own(str(tmp_path), name) and efile_tmp.left(str(tmp_path)) == [name]
+    assert efile_tmp.sweep(str(tmp_path)) == [] and os.listdir(tmp_path) == []
+    assert (efile.TMP_PREFIX, efile.REJECTED_NAME, efile.SUBMIT_NAME) == (
+        efile_tmp.PREFIX, efile_tmp.REJECTED_NAME, efile_tmp.SUBMIT_NAME)
 
 
 def test_codes_are_read_from_code_table(tmp_path):
@@ -543,13 +638,13 @@ def test_missing_numeric_value_is_refused():
 
 def _mkdtemp_like_py310(monkeypatch):
     """파이썬 3.10·3.11 의 tempfile.mkdtemp 처럼, dir 가 상대 경로면 상대 경로를 돌려주게 한다(3.12 부터는 절대 경로다)."""
-    real = efile.tempfile.mkdtemp
+    real = efile_tmp.tempfile.mkdtemp
 
     def mkdtemp(suffix=None, prefix=None, dir=None):
         made = real(suffix=suffix, prefix=prefix, dir=dir)
         return os.path.join(dir, os.path.basename(made)) if dir else made
 
-    monkeypatch.setattr(efile.tempfile, "mkdtemp", mkdtemp)
+    monkeypatch.setattr(efile_tmp.tempfile, "mkdtemp", mkdtemp)
 
 
 def test_write_with_relative_out_dir_passes_check_on_old_python(tmp_path, monkeypatch):

@@ -22,6 +22,8 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 
 from yangdo.dates import to_date
+# KS X 1001 완성형 검사는 생성기(efile.py)와 같은 함수를 쓴다. 옛 이름 filing.ksx1001_ok 로도 부를 수 있다
+from yangdo.efile_text import ksx1001_ok
 
 
 class FilingError(Exception):
@@ -83,30 +85,6 @@ def biz_ok(s):
         return False
     total = sum(int(a) * b for a, b in zip(s, BIZ_W)) + int(s[8]) * BIZ_W[8] // 10
     return (10 - total % 10) % 10 == int(s[9])
-
-
-def ksx1001_ok(text, symbols=False):
-    """CP949 로 쓸 때 KS X 1001 완성형 2바이트(첫 바이트 0xB0~0xC8, 둘째 0xA1~0xFE)와 ASCII(0x20~0x7E)만 쓰는지.
-
-    CP949 는 「똠」 같은 확장 영역 글자도 인코딩해 주지만 전자신고 파일에서는 받지 않는다. symbols 가 참이면
-    기호 행(첫 바이트 0xA1~0xAC, 가운뎃점 등)도 받는다.
-    """
-    try:
-        raw = text.encode("cp949")
-    except UnicodeEncodeError:
-        return False
-    i = 0
-    while i < len(raw):
-        b = raw[i]
-        if 0x20 <= b <= 0x7E:
-            i += 1
-            continue
-        if i + 1 >= len(raw) or not 0xA1 <= raw[i + 1] <= 0xFE:
-            return False
-        if not (0xB0 <= b <= 0xC8 or (symbols and 0xA1 <= b <= 0xAC)):
-            return False
-        i += 2
-    return True
 
 
 def _text(v, where, maxbytes, symbols=False):

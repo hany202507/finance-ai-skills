@@ -39,13 +39,11 @@
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 
-from yangdo import SKILL_DIR
+from yangdo import SKILL_DIR, efile_text, efile_tmp
 
 EFILE_DIR = os.path.join(SKILL_DIR, "efile")
 LAYOUT_FILE = "layout_c116300.json"
@@ -56,9 +54,11 @@ CHECK_MODULE = "yangdo.efile_check"
 CHECK_TIMEOUT = 300                       # 초
 WARN_PREFIX = "경고: "                    # 검증기가 표준 오류에 쓰는 경고 줄의 머리
 
-TMP_PREFIX = ".efile-"                    # write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
-REJECTED_NAME = "검증안됨.tmp"            # 지우지 못한 임시 파일에 붙이는 이름(제출용 이름이 아니다)
-SUBMIT_NAME = re.compile(r"^[0-9]{8}[A-Z][0-9]{6}\.[0-9]{2}$")       # 제출용 파일 이름 꼴(p20)
+# 임시 폴더를 만들고 가리고 지우는 코드는 yangdo/efile_tmp.py 한 곳에 있다(outputs.clear_all 과 make_return 도 같이 쓴다).
+# 아래 세 이름은 그 모듈의 것을 그대로 가리킨다
+TMP_PREFIX = efile_tmp.PREFIX             # write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
+REJECTED_NAME = efile_tmp.REJECTED_NAME   # 지우지 못한 임시 파일에 붙이는 이름(제출용 이름이 아니다)
+SUBMIT_NAME = efile_tmp.SUBMIT_NAME       # 제출용 파일 이름 꼴(p20)
 PROGRAM_KEY = "기타"                      # 01-23: 코드표 세무프로그램코드에서 쓰는 항목
 REFUND_ACCOUNT_LIMIT = 5000000            # 01-16: 환급세액이 이 금액 이상이면 계좌를 적지 않는다(p26)
 ACCOUNT_MAX = 16                          # 01-16: 계좌번호 16자리 이내(p26)
@@ -98,20 +98,6 @@ class BuildError(ValueError):
 
 # ---------------------------------------------------------------- 칸 채우기
 
-def _ksx_ok(b):
-    """ASCII(0x20~0x7E)와 KS X 1001 완성형 2바이트(한글 0xB0~0xC8 행, 기호 0xA1~0xAC 행, 둘째 0xA1~0xFE)만인지."""
-    i, n = 0, len(b)
-    while i < n:
-        x = b[i]
-        if 0x20 <= x <= 0x7E:
-            i += 1
-        elif (0xB0 <= x <= 0xC8 or 0xA1 <= x <= 0xAC) and i + 1 < n and 0xA1 <= b[i + 1] <= 0xFE:
-            i += 2
-        else:
-            return False
-    return True
-
-
 def _c(v, n, where=""):
     """문자 칸: 왼쪽부터, 남는 바이트는 공백. KS X 1001 완성형과 ASCII 만. where 는 오류 문장에 쓸 칸 이름."""
     if v is None:
@@ -126,7 +112,7 @@ def _c(v, n, where=""):
         b = s.encode("cp949")
     except UnicodeEncodeError:
         b = None
-    if b is None or not _ksx_ok(b):
+    if b is None or not efile_text.ksx_bytes_ok(b):       # 신고인 검사(filing)와 같은 함수다. 검증기는 따로 갖는다
         raise BuildError("%s: KS X 1001 완성형에 없는 글자가 있다(한글 완성형과 ASCII 만 쓴다, 규격서 p15)" % (where or "문자 칸"))
     if len(b) > n:
         raise BuildError("%s: 칸 길이 %d바이트를 넘는다" % (where or "문자 칸", n))
@@ -368,7 +354,9 @@ class _Builder:
         rows = sorted(self.rv["전자신고"]["계산명세"], key=lambda r: r["일련번호"])
         return [self.record("05", self.from_row("05", r), i) for i, r in enumerate(rows, 1)]
 
-    # 07 취득가액및필요경비계산상세명세: 일련번호·구분코드·상세일련번호 순(p104)
+    # 07 취득가액및필요경비계산상세명세: 일련번호·구분코드·상세일련번호 순(p104).
+    # 상세일련번호는 신고값이 필요경비신고자료일련번호마다 구분코드 순으로 1 부터 센 값이다(p60 5번). p104 는 정렬 키의
+    # 셋째를 「구분코드별_일련번호」라 적어 p60 과 말이 다르다. 칸 설명인 p60 을 따른다(홈택스 형식검증으로 확인할 항목)
     def expenses(self):
         rows = sorted(self.rv["전자신고"]["필요경비명세"], key=lambda r: (r["일련번호"], str(r["전자코드"]), r["상세일련번호"]))
         return [self.record("07", self.from_row("07", r, EXPENSE_RENAMES), i) for i, r in enumerate(rows, 1)]
@@ -427,61 +415,12 @@ def _same_dir(a, b):
     return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
-def _remove_work(work):
-    """임시 폴더를 지운다. 다 지웠으면 None, 남았으면 알릴 문장(폴더·파일 이름만).
-
-    폴더 삭제는 막힐 수 있다(Windows 에서 백신·색인기가 파일을 잡은 경우). 그래서 제출용 이름의 파일을 먼저 지우고,
-    지우지 못하면 제출용이 아닌 이름으로 바꾼다. 검증을 통과하지 않은 파일이 제출용 이름으로 남지 않게 하려는 것이다.
-    """
-    try:
-        names = os.listdir(work)
-    except OSError:
-        names = []
-    for n in names:
-        if not SUBMIT_NAME.match(n):
-            continue
-        path = os.path.join(work, n)
-        try:
-            os.remove(path)
-        except OSError:
-            try:
-                os.replace(path, os.path.join(work, REJECTED_NAME))
-            except OSError:
-                pass
-    try:
-        shutil.rmtree(work)
-    except OSError:
-        pass
-    if not os.path.lexists(work):
-        return None
-    base = os.path.basename(work)
-    try:
-        stuck = sorted(n for n in os.listdir(work) if SUBMIT_NAME.match(n))
-    except OSError:
-        stuck = []
-    if stuck:
-        return ("임시 폴더 %s 에 검증을 통과하지 않은 파일 %s 이 제출용 이름으로 남아 있다. 제출하지 말고 폴더째 직접 지운다"
-                % (base, ", ".join(stuck)))
-    return "임시 폴더 %s 를 지우지 못했다. 신고값 임시 JSON 과 검증 전 임시 파일(인적사항)이 남아 있을 수 있으니 직접 지운다" % base
-
-
-def _sweep(out_dir):
-    """앞선 실행이 강제 종료 등으로 남긴 임시 폴더(.efile-*)를 지운다. 지우지 못한 폴더마다 문장 하나."""
-    left = []
-    for n in sorted(os.listdir(out_dir)):
-        path = os.path.join(out_dir, n)
-        if n.startswith(TMP_PREFIX) and os.path.isdir(path) and not os.path.islink(path):
-            msg = _remove_work(path)
-            if msg:
-                left.append(msg)
-    return left
-
-
 def write(rv, out_dir, efile_dir=None, python=sys.executable):
     """전자신고 파일을 out_dir 에 쓴다. {"경로": 경로 또는 None, "검증": [실패 문장], "파일명": 이름, "경고": [경고 문장]}.
 
-    차례: 잠금 확인(Locked, 이때는 출력 폴더를 건드리지 않는다) → 같은 이름의 옛 파일과 앞선 실행이 남긴 임시 폴더
-    (.efile-*) 지움 → 레코드 조립 → out_dir 아래 임시 폴더에 최종 이름으로 쓰기
+    차례: 잠금 확인(Locked, 이때는 출력 폴더를 건드리지 않는다) → 같은 이름의 옛 파일과 앞선 실행이 남긴 임시 폴더 지움
+    (이 도구가 만든 폴더만 지운다. 이름이 「.efile-」 로 시작해도 사용자가 만든 폴더는 그대로 둔다, efile_tmp.is_own)
+    → 레코드 조립 → out_dir 아래 임시 폴더에 최종 이름으로 쓰기
     → `python -m yangdo.efile_check <파일> --신고값 <임시 JSON>` 별도 프로세스 → 종료코드 0 이면 out_dir 의 최종 이름으로 옮김.
     검증에 실패하거나 레코드를 만들지 못하면(BuildError) 파일을 남기지 않고 문장을 「검증」에 담는다.
     신고값의 작성일·상세코드로 파일명조차 만들 수 없으면 BuildError 를 그대로 낸다.
@@ -495,8 +434,9 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     if efile_dir is not None and not _same_dir(efile_dir, EFILE_DIR):
         raise ValueError("write 의 efile_dir 는 스킬의 efile 폴더만 받는다. 검증기 명령줄에 폴더 인자가 없어 "
                          "다른 폴더의 레이아웃·코드로 만든 파일은 같은 기준으로 검증할 수 없다")
-    if _spec_locked(efile_dir):
-        raise Locked(_lock_reason(efile_dir) or "규격판이 잠겨 있어 전자신고 파일을 만들지 않는다")
+    locked = _lock_reason(efile_dir)          # 규격판과 레이아웃은 여기서 한 번만 읽는다
+    if locked:
+        raise Locked(locked)
     name = file_name(rv, efile_dir)
     # 검증기는 스킬 폴더를 작업 폴더로 돈다. 파이썬 3.10·3.11 의 mkdtemp 는 dir 가 상대 경로면 상대 경로를 돌려주므로
     # 출력 폴더를 먼저 절대 경로로 바꾼다. 돌려주는 「경로」도 절대 경로다
@@ -505,19 +445,20 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     final = os.path.join(out_dir, name)
     if os.path.lexists(final):
         os.remove(final)
-    warns = _sweep(out_dir)
+    # 지우지 못한 폴더와, 다른 파일이 함께 있어 지우지 않은 폴더(신고값 사본이 있을 수 있다)를 경고로 알린다
+    warns = [msg for _, msg in efile_tmp.sweep(out_dir)] + efile_tmp.mixed_notes(out_dir)
     try:
         records, notes = build(rv, efile_dir)
     except BuildError as e:
         return {"경로": None, "검증": ["전자신고 레코드를 만들지 못했다. %s" % e], "파일명": name, "경고": warns}
     warns += notes
-    work = tempfile.mkdtemp(prefix=TMP_PREFIX, dir=out_dir)
+    work = efile_tmp.make(out_dir)
     left = None
     try:
         tmp = os.path.join(work, name)
         with open(tmp, "wb") as f:
             f.write(b"".join(r + CRLF for r in records))
-        rv_path = os.path.join(work, "신고값.json")
+        rv_path = os.path.join(work, efile_tmp.RV_COPY)
         with open(rv_path, "w", encoding="utf-8") as f:
             json.dump(rv, f, ensure_ascii=False)
         fails, checked = _run_check(python, tmp, rv_path)
@@ -525,7 +466,7 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
         if not fails:
             os.replace(tmp, final)
     finally:
-        left = _remove_work(work)
+        left = efile_tmp.remove(work)
     if fails:
         return {"경로": None, "검증": fails + ([left] if left else []), "파일명": name, "경고": warns}
     return {"경로": final, "검증": [], "파일명": name, "경고": warns + ([left] if left else [])}
