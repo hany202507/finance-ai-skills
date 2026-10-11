@@ -9,7 +9,8 @@
   납부 행       전자신고세액공제·납부할 세액·분납·납부세액(원문 2022-03 서식 ⑭·⑰·⑱·⑲, 지금 서식 ⑮·⑱·⑲·⑳)
   전자신고 파일 efile.write 가 검증기를 통과해 경로를 돌려준다
   범위 아님     엔진의 다루지않음이나 신고값의 Unsupported 로 멈춘다(틀린 세액이나 신고서를 내지 않는다)
-아직 고치지 않은 결함은 xfail(strict=True)로 남겼다(파일 끝).
+  가산세        예정신고를 하지 않은 확정신고(사례 09 하위 8)의 본지 ⑯ 과 납부할 세액, 03 레코드 가산세 칸이 현행 기대값과 같다
+아직 고치지 않은 결함은 xfail(strict=True)로 남긴다(파일 끝). 지금은 남은 것이 없다.
 """
 import copy
 import os
@@ -120,7 +121,7 @@ def test_forms_check_passes(name):
     k = KEYS[name]
     r, rv = _run(name)
     assert filing.questions(filing.load(copy.deepcopy(k["filer"])), k["facts"], r) == []
-    assert forms_check.check(rv, r) == []
+    assert forms_check.check(rv, r, facts=KEYS[name]["facts"]) == []
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -235,32 +236,72 @@ def _require(ok):
         raise RuntimeError("xfail 시험의 전제가 맞지 않는다")
 
 
-def test_final_return_without_preliminary_return_mentions_penalty():
-    """예정신고를 하지 않은 확정신고 신고값은 가산세를 계산하지 않는다는 확인사항을 싣는다(가산세 금액은 아래 xfail)."""
+def test_final_return_without_preliminary_return_notes_the_penalty():
+    """예정신고를 하지 않은 확정신고 신고값은 가산세를 넣었다는 것, 감면이 적용되지 않을 때의 금액, 다루지 않는 경우를
+    확인사항에 싣는다."""
     k = KEYS["09-8"]
     r, rv = _run("09-8")
-    _require(k["원문가산세"]["계"] == k["원문가산세"]["무신고"] + k["원문가산세"]["납부지연"] > 0)
+    want = k["현행가산세"]
     _require(rv["신고"]["구분"] == "확정")
-    notes = r["확인사항"] + rv["확인사항"]
-    assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세" in m and "납부지연가산세" in m and "계산하지 않" in m
-               for m in notes)
+    notes = rv["확인사항"]
+    assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세 %d원" % want["무신고"] in m
+               and "납부지연가산세 %d원" % want["납부지연"] in m for m in notes)
+    assert any("본지 ⑯" in m and "%d원" % want["계"] in m for m in notes)
+    assert any("감면이 적용되지 않으면" in m and "%d원" % want["무신고_감면전"] in m and "2026-01-01" in m for m in notes)
+    assert any("부정행위" in m and "다루지 않는다" in m for m in notes)
+    assert not any("계산하지 않아 0 으로 두었으므로" in m for m in notes)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "가산세 계산은 다음 계획. 예정신고를 하지 않은 확정신고에 원문은 무신고·납부지연 가산세를 적는다(확정신고 작성 사례 09 하위 8: "
-    "847,869 + 335,360 = 1,183,229원, 납부할 세액 9,661,921원). 신고값은 가산세를 0 으로 두고 확인사항으로 알린다. "
-    "의심 위치: return_values.nat_column, 계약 문서 「세액 단계」"))
-def test_final_return_without_preliminary_return_penalty_amount_matches_source():
+def test_final_return_without_preliminary_return_penalty_in_form_matches_hand_calculation():
+    """본지 ⑯ 가산세와 ⑱ 납부할 세액(계획 2 에서 xfail 로 남겼던 결함). 원문 서식은 2022년 귀속 세율표와 2023-05-31 납부로
+    847,869 · 335,360 · 1,183,229, 납부할 세액 9,661,921 이다. 현행 기대값은 같은 방식에 규칙세트의 율·세율을 넣어 손계산했다
+    (references/정답지.md 「가산세 대조」): 793,869 · 312,000 · 1,105,869, 납부할 세액 7,938,692 + 1,105,869 = 9,044,561."""
     k = KEYS["09-8"]
     r, rv = _run("09-8")
+    want, src = k["현행가산세"], k["원문가산세"]
     _require(rv["신고"]["구분"] == "확정")
-    t = rv["본지"]["열"]["합계"]
-    assert t["가산세"] == k["원문가산세"]["계"]
+    _require(k["원문"]["산출세액"] + src["계"] == src["납부할세액"])       # 원문 ⑰ = ⑩ + ⑮ (공제와 기신고세액이 없다)
+    _require(k["현행"]["산출세액"] + want["계"] == want["납부할세액"] == 9_044_561)
+    cols = rv["본지"]["열"]
+    # 원문은 합계, 국내분 소계, 세율구분 열에 모두 적었다(행 1859~1862)
+    for name in ("합계", "국내소계"):
+        c = cols[name]
+        assert (c["가산세_신고"], c["가산세_납부"], c["가산세_기장"], c["가산세"]) == \
+            (want["무신고"], want["납부지연"], 0, want["계"]), name
+    for label, x in want["열"].items():
+        c = cols[label]
+        assert (c["가산세_신고"], c["가산세_납부"], c["가산세"]) == (x["무신고"], x["납부지연"], x["무신고"] + x["납부지연"]), label
+    t = cols["합계"]
+    assert t["납부할세액"] == want["납부할세액"]
+    assert (t["전자신고공제"], t["기신고세액"], t["분납"], t["신고기한내납부"]) == (0, 0, 0, want["납부할세액"])
+    assert rv["가산세"]["계산"] is True and rv["가산세"]["무신고_감면전"] == want["무신고_감면전"]
+    assert [{key: c[key] for key in want["건"][0]} for c in rv["가산세"]["건"]] == want["건"]
+
+
+def test_final_return_without_preliminary_return_penalty_in_efile_rows():
+    """전자신고 03 레코드의 가산세 칸. 세율구분 행은 열별 금액, 국내 소계와 합계 행은 합계다(규격서 p41 15~17번).
+    19 자진납부할세액: 1-10 행 7,335,556 + 1,025,656 = 8,361,212, 1-20 행 603,136 + 80,213 = 683,349, 합 9,044,561."""
+    k = KEYS["09-8"]
+    r, rv = _run("09-8")
+    want = k["현행가산세"]
+    rows = {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
+    assert list(rows) == [("1", "00"), ("1", "10"), ("1", "20"), ("Z", "00")]
+    for key in (("1", "00"), ("Z", "00")):
+        x = rows[key]
+        assert (x["가산세-신고불성실"], x["가산세-납부불성실"], x["가산세-계"], x["가산세-기장불성실등"]) == \
+            (want["무신고"], want["납부지연"], want["계"], 0), key
+        assert x["자진납부할세액"] == want["납부할세액"]
+    assert (rows[("1", "10")]["가산세-신고불성실"], rows[("1", "10")]["가산세-납부불성실"], rows[("1", "10")]["자진납부할세액"]) == \
+        (733_556, 292_100, 8_361_212)
+    assert (rows[("1", "20")]["가산세-신고불성실"], rows[("1", "20")]["가산세-납부불성실"], rows[("1", "20")]["자진납부할세액"]) == \
+        (60_313, 19_900, 683_349)
+    z = rows[("Z", "00")]
+    assert (z["분납할세액"], z["자진납부세액"]) == (0, want["납부할세액"])
 
 
 def test_final_return_penalty_matches_hand_calculation():
     """예정신고를 하지 않은 확정신고(사례 09 하위 8)의 가산세. penalty.final_return 이 원문 방식과 규칙세트의 율·세율로 손계산한
-    기대값과 같다. 신고값에 넣는 일은 다음 태스크라 위 xfail(본지 가산세)은 그대로다."""
+    기대값과 같다. 신고값은 이 값을 본지와 03 레코드에 옮긴다(위 시험)."""
     k = KEYS["09-8"]
     r, _ = _run("09-8")
     want = k["현행가산세"]

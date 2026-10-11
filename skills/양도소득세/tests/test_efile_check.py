@@ -576,3 +576,58 @@ def test_cli_prints_warning_and_keeps_exit_zero(tmp_path):
     other = SELLER[:12] + str((int(SELLER[12]) + 1) % 10)
     code, out, err = _cli(_write(tmp_path, _join(_put(_lines(), "01", "납세자ID", other))))
     assert code == 0 and out.strip() == "검증 통과 (12줄)" and "경고" in err and other not in err
+
+
+# ---- 03 가산세 칸(15 신고불성실, 16 납부불성실, 17 계, 35 기장불성실등, 규격서 p41·p43) ----
+# 예정신고를 하지 않은 확정신고 파일은 이 칸에 예정신고 무신고가산세와 납부지연가산세를 적는다(계획 2b G1b).
+# 검증기는 가산세가 0 이어야 한다고 보지 않는다. 행 안의 산식, 합계 행 = 세율구분 행 합, 신고값 대사로 본다.
+
+def _with_penalty(nonfiling=20000, delay=5000):
+    """S1 정상 파일의 03 두 행에 가산세를 산식에 맞게 넣는다. 납부할 세액 38,329,466 에 가산세가 더해진다."""
+    lines = _lines()
+    for nth in (0, 1):
+        lines = _put(lines, "03", "가산세-신고불성실", nonfiling, nth=nth)
+        lines = _put(lines, "03", "가산세-납부불성실", delay, nth=nth)
+        lines = _put(lines, "03", "가산세-계", nonfiling + delay, nth=nth)
+        lines = _put(lines, "03", "자진납부할세액", 38329466 + nonfiling + delay, nth=nth)
+    return _put(lines, "03", "자진납부세액", 38329466 + nonfiling + delay, nth=1)
+
+
+def test_penalty_cells_consistent_file_passes(tmp_path):
+    assert _check(tmp_path, _with_penalty()) == []
+
+
+@pytest.mark.parametrize("name,no", [("가산세-신고불성실", "15"), ("가산세-납부불성실", "16")])
+def test_penalty_cell_changed_in_one_row_is_caught(tmp_path, name, no):
+    """세율구분 행의 가산세 한 칸만 바꾸면 그 행의 계(17)와, 합계 행 = 세율구분 행 합(p41 15~17번)에서 걸린다."""
+    lines = _put(_with_penalty(), "03", name, 12345, nth=0)
+    msgs = _check(tmp_path, lines)
+    assert _has(msgs, "3줄(03)", "17 가산세-계", "가산세 합")
+    assert _has(msgs, "4줄(03)", "%s %s" % (no, name), "세율구분 행 합")
+
+
+def test_penalty_total_must_be_in_tax_due(tmp_path):
+    """17 가산세-계가 19 자진납부할세액에 들어가지 않으면 걸린다(서식 ⑱ = ⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰)."""
+    lines = _with_penalty()
+    for nth in (0, 1):
+        lines = _put(lines, "03", "자진납부할세액", 38329466, nth=nth)
+    lines = _put(lines, "03", "자진납부세액", 38329466, nth=1)
+    msgs = _check(tmp_path, lines)
+    assert _has(msgs, "3줄(03)", "19", "가산세") and _has(msgs, "4줄(03)", "19", "가산세")
+
+
+def test_bookkeeping_penalty_cell_is_part_of_the_total(tmp_path):
+    lines = _put(_with_penalty(), "03", "가산세-기장불성실등", 700, nth=0)
+    assert _has(_check(tmp_path, lines), "3줄(03)", "17 가산세-계")
+
+
+def test_penalty_cells_are_reconciled_with_return_values(tmp_path):
+    """파일 안에서는 서로 맞게 바꿔도 신고값 전자신고.세율별 의 가산세 칸과 다르면 걸린다."""
+    rv = _rv()
+    for x in rv["전자신고"]["세율별"]:
+        last = x["국내외분"] == "Z"
+        x.update({"가산세-신고불성실": 20000, "가산세-납부불성실": 5000, "가산세-계": 25000, "자진납부할세액": 38354466,
+                  "자진납부세액": 38354466 if last else 0})
+    assert _check(tmp_path, _with_penalty(), rv=rv) == []
+    msgs = _check(tmp_path, _with_penalty(nonfiling=10000), rv=rv)        # 파일은 무신고 10,000, 신고값은 20,000
+    assert _has(msgs, "3줄(03)", "15 가산세-신고불성실", "신고값 20000") and _has(msgs, "4줄(03)", "17 가산세-계", "신고값 25000")

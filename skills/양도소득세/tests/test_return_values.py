@@ -270,8 +270,9 @@ def test_single_column_payment_rows():
         assert (c["기신고세액"], c["납부할세액"], c["분납"], c["신고기한내납부"]) == (0, 38329466, None, None), name
     t = rv["본지"]["열"]["합계"]
     assert (t["납부할세액"], t["분납"], t["신고기한내납부"]) == (38329466, 19164733, 19164733)
-    assert rv["지방"]["열"]["1-10"]["납부할세액"] == 3834946 and rv["지방"]["열"]["1-10"]["신고기한내납부"] is None
-    assert rv["지방"]["열"]["합계"]["신고기한내납부"] == 3834946
+    # 지방소득세 예정신고 전자신고세액공제 2,000원을 뺀다
+    assert rv["지방"]["열"]["1-10"]["납부할세액"] == 3832946 and rv["지방"]["열"]["1-10"]["신고기한내납부"] is None
+    assert rv["지방"]["열"]["합계"]["신고기한내납부"] == 3832946
 
 
 def _bf_merged():
@@ -300,7 +301,7 @@ def test_merged_comparison_form_columns_keep_engine_rate_rows():
     loc = rv["지방"]["열"]
     assert [(loc[k]["산출세액"], loc[k]["세율"]) for k in ("1-10", "1-15")] == [(4215200, "3.8%"), (23660000, "4%")]
     assert loc["국내소계"]["산출세액"] == 27875200 and loc["합계"]["산출세액"] == 28111800 and loc["합계"]["세율"] == ""
-    assert loc["1-10"]["납부할세액"] is None and loc["합계"]["납부할세액"] == 28111800
+    assert loc["1-10"]["납부할세액"] is None and loc["합계"]["납부할세액"] == 28111800      # 확정신고는 지방 공제도 없다
     assert any("합산 비교 세액이 커서" in x and "제104조⑤" in x for x in rv["확인사항"])
 
 
@@ -320,7 +321,8 @@ def test_merged_comparison_efile_rows_are_split_by_tax_base():
 def test_bf_final_return_has_no_credit_and_two_assets():
     r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
     t = rv["본지"]["열"]["합계"]
-    assert t["산출세액"] == 206274000 and t["전자신고공제"] == 0 and t["납부할세액"] == 206274000
+    assert t["산출세액"] == 206274000 and t["전자신고공제"] == 0
+    assert t["납부할세액"] == 206274000 + t["가산세"]             # 확정신고에는 전자신고세액공제가 없고 가산세가 더해진다
     assert rv["신고"]["유형"] == "5" and rv["신고"]["양도일자"] == "20261120"
     assert [x["자산"] for x in rv["부표1"]] == ["B", "F"]
     assert rv["부표1합계"]["양도소득금액"] == 163400000 + 415800000
@@ -433,29 +435,172 @@ def test_expense_lines_follow_the_acquisition_method():
     assert return_values.expense_lines(a, {"취득가액": None, "취득가액방법": None}) == []        # 전액 비과세
 
 
-# ---- 예정신고를 하지 않은 확정신고의 가산세 확인사항(정답지 사례 09-8) ----
+# ---- 예정신고를 하지 않은 확정신고의 가산세(계획 2b G1b) ----
+# 기대값은 손계산이다(references/정답지.md 「가산세 대조」).
+# BF(토지 F 2026-11-01, 주택 B 2026-11-20, 납부일 2027-05-20): 한 건, 예정신고 세액 206,274,000, 납부기한 2027-02-01, 107일
+#   무신고 = 206,274,000 × 20% × 50% = 20,627,400, 납부지연 = 206,274,000 × 107 × 22/100,000 = 4,855,689.96 → 4,855,680
+#   가산세 계 25,483,080, 납부할 세액 = 206,274,000 + 25,483,080 = 231,757,080
 
-PENALTY_PARTS = ("예정신고를 하지 않은 확정신고", "무신고가산세", "납부지연가산세", "계산하지 않")
+BF_PENALTY = (20627400, 4855680, 25483080)
 
 
-def _penalty_notes(rv):
-    return [m for m in rv["확인사항"] if all(p in m for p in PENALTY_PARTS)]
-
-
-def test_final_return_notes_that_penalties_are_not_computed():
+def test_bf_final_return_penalty_in_main_form():
     r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
-    notes = _penalty_notes(rv)
-    assert len(notes) == 1
+    cols = rv["본지"]["열"]
+    for name in ("합계", "국내소계", "1-10"):                  # 열이 하나면 합계·소계·세율구분 열에 같은 값(사례 09 하위 4·5·8)
+        c = cols[name]
+        assert (c["가산세_신고"], c["가산세_납부"], c["가산세"]) == BF_PENALTY and c["가산세_기장"] == 0, name
+    t = cols["합계"]
+    assert t["납부할세액"] == 231757080 and (t["분납"], t["신고기한내납부"]) == (0, 231757080)
+    assert cols["1-10"]["납부할세액"] == cols["국내소계"]["납부할세액"] == 231757080
+    assert cols["1-10"]["분납"] is None and cols["1-10"]["신고기한내납부"] is None
+    assert cols["국외소계"]["가산세"] == 0
+    loc = rv["지방"]["열"]["합계"]                              # 지방소득세 신고서의 가산세는 계산하지 않는다
+    assert (loc["전자신고공제"], loc["가산세"], loc["납부할세액"]) == (0, 0, 20627400)
+
+
+def test_bf_final_return_penalty_in_efile_rows():
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    rows = {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
+    assert list(rows) == [("1", "00"), ("1", "10"), ("Z", "00")]
+    for k, x in rows.items():
+        assert (x["가산세-신고불성실"], x["가산세-납부불성실"], x["가산세-계"]) == BF_PENALTY, k
+        assert x["가산세-기장불성실등"] == 0 and x["자진납부할세액"] == 231757080, k
+    z = rows[("Z", "00")]
+    assert (z["분납할세액"], z["자진납부세액"]) == (0, 231757080)
+    assert rows[("1", "10")]["자진납부세액"] == rows[("1", "00")]["자진납부세액"] == 0
+
+
+def test_installment_limit_excludes_penalty():
+    """분납 한도는 가산세를 뺀 세액 206,274,000 의 100분의 50 = 103,137,000. 가산세는 신고기한 안에 내는 세액에 들어간다."""
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
     t = rv["본지"]["열"]["합계"]
-    assert t["가산세"] == 0                                   # 금액은 계산하지 않는다
-    assert "납부할 세액이 실제보다 적" in notes[0]
-    assert not re.search(r"제\s*\d|\d+조", notes[0])           # 조문 번호는 적지 않는다(규칙세트에 근거가 없다)
-    assert "\u2014" not in notes[0] and not notes[0].rstrip().endswith("?")
+    assert (t["납부할세액"], t["분납"], t["신고기한내납부"]) == (231757080, 103137000, 128620080)
+    z = [x for x in rv["전자신고"]["세율별"] if x["국내외분"] == "Z"][0]
+    assert (z["자진납부할세액"], z["분납할세액"], z["자진납부세액"]) == (231757080, 103137000, 128620080)
+    note = [m for m in rv["확인사항"] if "분납할 세액의 한도" in m]
+    assert len(note) == 1 and "가산세를 뺀 세액 206274000원" in note[0]
+    assert "소득세법 제112조·제106조①·제111조①" in note[0]     # 규칙세트(판정.분납대상세액)에 실린 조문만 적는다
 
 
-def test_preliminary_return_has_no_penalty_note():
+def test_final_return_penalty_section_and_notes():
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    p = rv["가산세"]
+    assert p["계산"] is True and p["납부일"] == "2027-05-20"
+    assert (p["무신고"], p["납부지연"], p["계"]) == BF_PENALTY and p["무신고_감면전"] == 41254800
+    assert [(c["자산"], c["예정신고세액"], c["납부기한"], c["일수"]) for c in p["건"]] == [(["F", "B"], 206274000, "2027-02-01", 107)]
+    assert p["열"] == {"1-10": {"무신고": 20627400, "납부지연": 4855680}}
+    assert (p["양도일별"]["무신고"], p["양도일별"]["납부지연"]) == (18153200, 4273250)
+    json.dumps(p, ensure_ascii=False)                        # 신고값.json 에 그대로 실린다
+    notes = rv["확인사항"]
+
+    def one(*parts):
+        hit = [m for m in notes if all(x in m for x in parts)]
+        assert len(hit) == 1, parts
+        return hit[0]
+
+    one("본지 ⑯", "20627400원", "4855680원", "25483080원")
+    # 세액이 달라질 수 있는 해석 둘은 penalty 의 문장을 그대로 옮긴다
+    one("감면이 적용되지 않으면", "41254800원", "세무 전문가")
+    one("양도일마다 따로 신고하는 것으로 보면", "18153200원", "4273250원")
+    one("부정행위", "다루지 않는다")
+    one("납부일(2027-05-20) 기준")
+    one("지방소득세 신고서의 가산세는 계산하지 않아", "위택스")
+    assert not [m for m in notes if "가산세를 계산하지 않아 0 으로 두었으므로" in m]
+    for m in notes:
+        assert "\u2014" not in m and not m.rstrip().endswith("?")
+
+
+def test_preliminary_return_has_no_penalty():
     r, rv = _rv("S1")
-    assert _penalty_notes(rv) == []
+    assert rv["가산세"] is None
+    assert all(c["가산세"] == 0 for c in rv["본지"]["열"].values())
+    assert not [m for m in rv["확인사항"] if "무신고가산세" in m]
+    assert all(x["가산세-계"] == 0 and x["가산세-신고불성실"] == 0 for x in rv["전자신고"]["세율별"])
+
+
+def test_penalty_that_cannot_be_determined_is_flagged():
+    """같은 달에 양도한 두 자산의 세율이 다르고 합산 비교세액이 이기면 예정신고 세액을 정할 사례가 없다(penalty.Unsupported).
+    신고값은 가산세를 0 으로 두고 「가산세」 절에 사유를 실어, 진입점이 신고서와 전자신고 파일을 만들지 않게 한다."""
+    r, rv = _bf_merged()
+    p = rv["가산세"]
+    assert p["계산"] is False and p["계획"] == "없음" and "합산 비교세액" in p["사유"]
+    assert rv["본지"]["열"]["합계"]["가산세"] == 0 and rv["본지"]["열"]["합계"]["납부할세액"] == 281118000
+    note = [m for m in rv["확인사항"] if "가산세를 계산하지 못해" in m]
+    assert len(note) == 1 and "이 값으로 신고하지 않는다" in note[0] and p["사유"] in note[0]
+
+
+def _bf_merged_two_months():
+    """_bf_merged 의 토지 F 를 2026-10-01 에 양도한 것으로 바꾼다. 건이 둘(10월 F, 11월 B)이라 가산세를 계산할 수 있고,
+    연간 산출세액은 여전히 합산 비교세액 281,118,000 이다.
+      F 건: 591,500,000 × 40% = 236,600,000, 기한 2026-12-31(목), 2027-01-01 ~ 2027-05-19 = 31 + 28 + 31 + 30 + 19 = 139일
+      B 건: 37,060,000 + 13,400,000 × 38% = 42,152,000, 기한 2027-02-01(말일 01-31 일요일), 107일
+      무신고 = 278,752,000 × 20% × 50% = 27,875,200 (23,660,000 + 4,215,200)
+      납부지연 = 236,600,000 × 139 × 22/100,000 = 7,235,228 → 7,235,220, 42,152,000 × 107 × 22/100,000 = 992,258.08 → 992,250
+      가산세 계 = 27,875,200 + 8,227,470 = 36,102,670, 납부할 세액 = 281,118,000 + 36,102,670 = 317,220,670"""
+    facts = copy.deepcopy(CASES["BF"])
+    facts["자산"][1]["취득"]["잔금일"] = "2025-06-01"
+    facts["자산"][1]["양도"]["잔금일"] = "2026-10-01"
+    r = engine.calculate(facts, today="2026-10-11")
+    assert r["계산"]["합계"]["산출세액"] == r["계산"]["합계"]["합산비교세액"] == 281118000
+    f = filers.get("BF")
+    for aid in f["자산"]:
+        f["자산"][aid]["법정동코드"] = "1120011400"
+    return r, return_values.build(r, facts, filing.load(f))
+
+
+def test_merged_comparison_penalty_goes_to_total_column_only():
+    """국세청 확정신고 작성 사례 09 하위 2: 합산 비교세액이 이긴 신고서는 가산세와 납부할 세액을 합계 열에만 적었다."""
+    r, rv = _bf_merged_two_months()
+    cols = rv["본지"]["열"]
+    t = cols["합계"]
+    assert (t["가산세_신고"], t["가산세_납부"], t["가산세"]) == (27875200, 8227470, 36102670)
+    assert t["납부할세액"] == 317220670
+    for name in ("국내소계", "1-10", "1-15"):
+        assert all(cols[name][k] is None for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기장", "납부할세액")), name
+    rows = {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
+    # 03 레코드는 합계 행이 세율구분 행의 합이어야 해서 행마다 적는다(규격서 p41 15~17번)
+    assert (rows[("1", "10")]["가산세-신고불성실"], rows[("1", "10")]["가산세-납부불성실"]) == (4215200, 992250)
+    assert (rows[("1", "15")]["가산세-신고불성실"], rows[("1", "15")]["가산세-납부불성실"]) == (23660000, 7235220)
+    for k in ("가산세-신고불성실", "가산세-납부불성실", "가산세-계", "자진납부할세액", "산출세액"):
+        assert rows[("Z", "00")][k] == rows[("1", "00")][k] == rows[("1", "10")][k] + rows[("1", "15")][k], k
+    assert rows[("Z", "00")]["자진납부할세액"] == 317220670
+    assert any("합계 열에만 적었다" in m for m in rv["확인사항"])
+
+
+# ---- 지방소득세 전자신고세액공제(지방세특례제한법 제167조의3①, 같은 법 시행령 제116조의2: 예정신고 2천원) ----
+
+def test_local_efile_credit_on_preliminary_return():
+    r, rv = _rv("S1")
+    loc = rv["지방"]["열"]
+    for name in ("합계", "국내소계", "1-10"):
+        assert loc[name]["전자신고공제"] == 2000, name
+    assert loc["합계"]["산출세액"] == 3834946 and loc["합계"]["납부할세액"] == 3834946 - 2000
+    note = [m for m in rv["확인사항"] if "지방소득세 전자신고세액공제" in m]
+    assert len(note) == 1 and "2000원" in note[0] and "지방세특례제한법 제167조의3①" in note[0]
+    assert "규칙세트에 값이 없어" not in " ".join(rv["확인사항"])
+    assert all(x[k] == 0 for x in rv["전자신고"]["세율별"]            # 국세 파일의 주민세 칸은 그대로 0 이다
+               for k in ("주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"))
+
+
+def test_local_efile_credit_is_capped_by_local_tax():
+    """공제가 지방소득세 산출세액보다 크면 산출세액까지만 뺀다(납부할 세액이 음수이면 없는 것으로 한다)."""
+    r = engine.calculate(CASES["S1"], today="2026-10-11")
+    r = copy.deepcopy(r)
+    r["계산"]["합계"]["지방소득세"] = r["계산"]["합계"]["지방_호별합산"] = 1500
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    b = return_values._Builder(r, CASES["S1"], filing.load(f), None, None, None)
+    b.filing_section()
+    b.local_by_column = lambda taxed: {("1", "10"): 1500}
+    local = b.main_forms()[1]
+    assert (local["열"]["합계"]["전자신고공제"], local["열"]["합계"]["납부할세액"]) == (1500, 0)
+
+
+def test_no_local_efile_credit_on_final_return():
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    assert all(c["전자신고공제"] == 0 for c in rv["지방"]["열"].values())
+    assert not [m for m in rv["확인사항"] if "지방소득세 전자신고세액공제" in m]
 
 
 # ---- 신고기한이 지난 작성일(기한후신고)은 신고 범위가 아니다. 기한은 규칙세트와 dates.filing_deadline 에서 온다 ----
@@ -475,7 +620,8 @@ def _late(name, made, mutate=None, **over):
 
 
 def _weekend_notes(rv):
-    return [m for m in rv["확인사항"] if "다음 월요일" in m]
+    """신고기한의 끝이 토·일이라 옮겼다는 문장. 확정신고 가산세의 예정신고 납부기한 문장(「납부기한으로 보았다」)은 뺀다."""
+    return [m for m in rv["확인사항"] if "다음 월요일" in m and "납부기한으로 보았다" not in m]
 
 
 def test_preliminary_deadline_on_weekday_is_inclusive():

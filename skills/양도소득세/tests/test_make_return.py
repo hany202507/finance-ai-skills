@@ -127,11 +127,12 @@ def test_mcp_forms_and_efile_do_not_echo_personal_data(tmp_path):
 
 # ---------------------------------------------------------------- 종료코드 0
 
-# 확정신고(BF)는 가산세를 계산하지 않아 신고서와 전자신고 파일을 만들지 않는다. 아래 「확정신고」 시험이 본다
+# 확정신고(BF)는 가산세를 넣어 신고서와 전자신고 파일까지 만든다. 자세한 값은 아래 「확정신고」 시험이 본다
 # K 의 작성일은 2026-08-20 이라 오늘을 그 날로 준다(작성일이 오늘보다 앞서면 멈춘다)
 @pytest.mark.parametrize("name,file_name,law,today", [
     ("A", "20261220C116300.01", {}, TODAY),
     ("K", "20260820C116300.01", {}, "2026-08-20"),
+    ("BF", "20270520C116300.01", {}, TODAY),
 ])
 def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law, today):
     f = filers.get(name)
@@ -792,14 +793,78 @@ def test_no_path_and_no_sentence_is_not_a_pass(tmp_path, monkeypatch):
     assert "규격서 미확인 칸" not in text
 
 
-# ---------------------------------------------------------------- 확정신고(가산세를 계산하지 않아 신고서·파일을 만들지 않는다)
+# ---------------------------------------------------------------- 확정신고(가산세를 넣어 신고서와 전자신고 파일까지 만든다)
+# BF 손계산(references/정답지.md 「가산세 대조」): 무신고 20,627,400, 납부지연 4,855,680, 계 25,483,080,
+# 납부할 세액 = 산출세액 206,274,000 + 25,483,080 = 231,757,080
 
-PENALTY_WORDS = ("확정신고", "무신고가산세", "납부지연가산세", "가산세를 계산하지 않", "실제보다 적게")
+BF_FILE = "20270520C116300.01"
 
 
-def test_final_return_makes_no_forms_and_no_file(tmp_path, capsys):
+def _bf_merged_facts():
+    """같은 달에 양도한 두 자산의 세율이 다르고 합산 비교세액이 이기는 사례. 가산세를 정할 사례가 없다(penalty.Unsupported)."""
+    facts = copy.deepcopy(CASES["BF"])
+    facts["자산"][1]["취득"]["잔금일"] = "2025-06-01"
+    return facts
+
+
+def _main_facts(tmp_path, facts, filer, today=TODAY):
+    fp, gp, out = tmp_path / "f.json", tmp_path / "g.json", tmp_path / "out"
+    fp.write_text(json.dumps(facts, ensure_ascii=False), encoding="utf-8")
+    gp.write_text(json.dumps(filer, ensure_ascii=False), encoding="utf-8")
+    return MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", today]), out
+
+
+def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
     f = filers.get("BF")
     code, out = _main(tmp_path, "BF", f)
+    shown = capsys.readouterr()
+    assert code == 0, shown.out + shown.err + _confirm(out)
+    names = set(os.listdir(out))
+    assert CALC | GUIDES | PDFS | {"신고값.json", "신고_확인.md", BF_FILE} <= names
+    assert not [n for n in names if n.startswith(".efile-") or n.endswith(".tmp")]
+    text = _confirm(out)
+    assert "| 서식 검산 | 통과 |" in text and "| 신고서 PDF | 만듦 |" in text and "만듦(%s)" % BF_FILE in text
+    assert "만들지 않았다" not in text and "가산세를 계산하지 않" not in text
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    t = rv["본지"]["열"]["합계"]
+    assert (t["가산세_신고"], t["가산세_납부"], t["가산세"], t["납부할세액"]) == (20627400, 4855680, 25483080, 231757080)
+    assert rv["가산세"]["계산"] is True and rv["가산세"]["무신고_감면전"] == 41254800
+    # 전자신고 파일의 03 합계 행: 15 신고불성실, 16 납부불성실, 17 계, 19 자진납부할세액, 21 자진납부세액
+    with open(out / BF_FILE, "rb") as fh:
+        z = [ln for ln in fh.read().split(b"\r\n") if ln[:2] == b"03" and ln[9:12] == b"Z00"][0]
+    assert [int(z[a:b]) for a, b in ((134, 147), (147, 160), (160, 173), (186, 199), (212, 225))] == \
+        [20627400, 4855680, 25483080, 231757080, 231757080]
+    for v in _personal(f):
+        assert v not in text and v not in shown.out
+
+
+def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
+    """세액이 달라질 수 있는 해석 둘(감면 전 금액과 문구 개정, 같은 달 양도의 대안 금액)과 다루지 않는 경우가
+    신고_확인.md 와 입력 안내서에 그대로 실린다."""
+    code, out = _main(tmp_path, "BF", filers.get("BF"))
+    assert code == 0
+    notes = _confirm(out).split("## 확인사항", 1)[1].split("##")[0]
+    with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
+        md = fh.read()
+    for doc in (notes, md.split("## 확인사항", 1)[1]):
+        assert "감면이 적용되지 않으면 무신고가산세는 41254800원" in doc and "2026-01-01 부터" in doc
+        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "18153200원" in doc and "4273250원" in doc
+        assert "부정행위" in doc and "다루지 않는다" in doc
+        assert "납부일(2027-05-20) 기준" in doc
+        assert "지방소득세 신고서의 가산세는 계산하지 않아" in doc
+    assert not md.startswith(">")                              # 끝까지 간 실행이라 맨 위 경고 줄이 없다
+    body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
+    assert "가산세는 계산하지 않았다" not in body and "25,483,080원" in body and "따로 계산해 더한다" not in md
+    todo = _confirm(out).split("## 사람이 할 일", 1)[1]
+    assert "형식검증" in todo and "위택스" in todo
+    assert DASH not in _confirm(out) and not [ln for ln in _confirm(out).splitlines() if ln.rstrip().endswith("?")]
+
+
+def test_final_return_whose_penalty_cannot_be_determined_makes_no_forms(tmp_path, capsys):
+    """penalty.Unsupported 면 그 사유로 신고서와 전자신고 파일을 만들지 않고 종료코드 2 로 끝낸다(참고용 값은 낸다)."""
+    f = filers.get("BF")
+    code, out = _main_facts(tmp_path, _bf_merged_facts(), f)
     shown = capsys.readouterr()
     assert code == 2, shown.out + shown.err
     names = set(os.listdir(out))
@@ -807,40 +872,28 @@ def test_final_return_makes_no_forms_and_no_file(tmp_path, capsys):
     assert not PDFS & names and _efiles(out) == []
     assert not [n for n in names if n.startswith(".efile-") or n.endswith(".tmp")]
     text = _confirm(out)
-    for word in PENALTY_WORDS:
-        assert word in text, word
-    assert "신고서와 전자신고 파일을 만들지 않았다" in text
-    assert "제1" not in text.split("## 알림", 1)[1].split("##")[0]       # 조문 번호는 적지 않는다
+    alerts = text.split("## 알림", 1)[1].split("##")[0]
+    for word in ("확정신고", "가산세를 계산하지 못해", "신고서와 전자신고 파일을 만들지 않았다", "합산 비교세액", "실제보다 적게",
+                 "세무 전문가", "참고용"):
+        assert word in alerts, word
     assert "| 서식 검산 | 통과 |" in text and "만들지 않음(확정신고 가산세)" in text
-    assert "전액 비과세" not in text
-    assert "가산세" in shown.out
+    assert "전액 비과세" not in text and "가산세" in shown.out
     for v in _personal(f):
         assert v not in text and v not in shown.out
     for g in GUIDES:
         head = _first_line(out, g)
         assert "확정신고" in head and "가산세" in head and "참고용" in head and "전액 비과세" not in head
-    with open(out / "신고값.json", encoding="utf-8") as fh:
-        assert json.load(fh)["신고"]["구분"] == "확정"
-
-
-def test_final_return_guide_says_the_same_thing_about_penalty_in_three_places(tmp_path):
-    """맨 위 줄, 세액계산 본문, 확인사항이 모두 「가산세가 빠져 있어 이 값으로 신고하지 않는다」는 뜻이다."""
-    import re
-    code, out = _main(tmp_path, "BF", filers.get("BF"))
-    assert code == 2
     with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
         md = fh.read()
-    head = md.splitlines()[0]
     body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
-    notes = [ln for ln in md.split("## 확인사항", 1)[1].splitlines() if "무신고가산세" in ln]
-    assert "가산세" in head and "빠져 있다" in head
-    assert "가산세는 계산하지 않았다" in body and "입력하지 않는다" in body
-    assert len(notes) == 1 and "이 값으로 신고하지 않는다" in notes[0]
-    assert not re.search("가산세[^.]{0,20}0원", md) and "따로 계산해 더한다" not in md
-    assert "따로 계산해 더한다" not in _confirm(out)
+    assert "빠져 있다" in md.splitlines()[0] and "가산세는 계산하지 못했다" in body and "이 값으로 입력하지 않는다" in body
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    assert rv["신고"]["구분"] == "확정" and rv["가산세"]["계산"] is False
 
 
-def test_final_return_with_fully_exempt_asset_gives_both_reasons(tmp_path):
+def test_final_return_with_fully_exempt_asset_is_held_for_the_exempt_asset_only(tmp_path):
+    """전액 비과세 자산만 있는 확정신고는 가산세가 없다. 전액 비과세 사유 하나로 막힌다."""
     f = g_filer()
     f["신고"].update(구분="확정", 작성일="2027-05-20")
     code, out = _main(tmp_path, "G", f)
@@ -849,11 +902,11 @@ def test_final_return_with_fully_exempt_asset_gives_both_reasons(tmp_path):
     assert GUIDES | {"신고값.json"} <= names and not PDFS & names and _efiles(out) == []
     text = _confirm(out)
     notes = text.split("## 알림", 1)[1].split("##")[0]
-    assert "전액 비과세 자산(G)" in notes and "무신고가산세" in notes and "납부지연가산세" in notes
-    assert "전액 비과세" in text.splitlines()[2] and "확정신고" in text.splitlines()[2]      # 요약 줄에도 두 사유
+    assert "전액 비과세 자산(G)" in notes and "가산세" not in notes
+    assert "전액 비과세" in text.splitlines()[2] and "가산세" not in text.splitlines()[2]
     for g in GUIDES:
         head = _first_line(out, g)
-        assert "전액 비과세" in head and "확정신고" in head and "가산세" in head and "참고용" in head
+        assert "전액 비과세" in head and "참고용" in head and "가산세" not in head
 
 
 @pytest.mark.parametrize("tool", ["yangdo_forms", "yangdo_efile"])
@@ -862,14 +915,28 @@ def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
     out = tmp_path / "o"
     res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(out),
                                       "today": TODAY})
-    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and res["전자신고"] is None
-    notes = " ".join(res["알림"])
-    for word in PENALTY_WORDS:
-        assert word in notes, word
-    assert "가산세" in res["요약"] and res["서식검산"] == []
-    assert any("가산세" in x["내용"] for x in res["다루지않음"])
+    assert res["종료코드"] == 0 and res["상태"] == "완료" and res["서식검산"] == [] and res["다루지않음"] == []
     made = {os.path.basename(x) for x in res["파일"]}
-    assert GUIDES | {"신고값.json", "신고_확인.md"} <= made and not PDFS & made and not [n for n in made if "C116300" in n]
+    assert GUIDES | PDFS | {"신고값.json", "신고_확인.md"} <= made
+    if tool == "yangdo_efile":
+        assert res["전자신고"]["파일명"] == BF_FILE and res["전자신고"]["검증"] == [] and BF_FILE in made
+    else:
+        assert res["전자신고"] is None and not [n for n in made if "C116300" in n]
+    notes = " ".join(res["확인사항"])
+    assert "감면이 적용되지 않으면 무신고가산세는 41254800원" in notes and "부정행위" in notes
+    s = json.dumps(res, ensure_ascii=False)
+    for v in _personal(f):
+        assert v not in s
+
+
+def test_mcp_final_return_without_determinable_penalty_is_held(tmp_path):
+    f = filers.get("BF")
+    out = tmp_path / "o"
+    res = mcp_server.call_tool("yangdo_efile", {"facts": _bf_merged_facts(), "filer_path": _filer_file(tmp_path, f),
+                                                "out_dir": str(out), "today": TODAY})
+    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and res["전자신고"] is None
+    assert "확정신고 가산세" in " ".join(res["사람이할일"]) and res["서식검산"] == []
+    assert "가산세" in res["요약"] and any("가산세" in x["내용"] and "합산 비교세액" in x["내용"] for x in res["다루지않음"])
     names = set(os.listdir(out))
     assert not PDFS & names and _efiles(out) == []
     s = json.dumps(res, ensure_ascii=False)
@@ -878,17 +945,22 @@ def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
 
 
 def test_withheld_reasons_are_collected_in_one_place():
-    """신고서·파일을 만들지 않는 사유는 한 함수가 모은다. 예정신고의 과세 자산은 사유가 없다."""
-    def rv(kind):
-        return {"신고": {"구분": kind}}
+    """신고서·파일을 만들지 않는 사유는 한 함수가 모은다. 과세 자산의 예정신고와, 가산세를 계산한 확정신고는 사유가 없다."""
+    def rv(kind, pen=None):
+        return {"신고": {"구분": kind}, "가산세": pen}
 
     def res(*exempt):
         return {"계산": {"자산": [{"id": a, "판정": {"전액비과세": x}} for a, x in exempt]}}
 
+    done = {"계산": True, "무신고": 1, "납부지연": 2, "계": 3}
+    failed = {"계산": False, "사유": "자산 B, F: 정하지 않았다", "계획": "없음"}
     assert MR.withheld(rv("예정"), res(("A", False))) == []
+    assert MR.withheld(rv("확정", done), res(("A", False))) == []
     assert [w["이름"] for w in MR.withheld(rv("예정"), res(("A", False), ("G", True)))] == ["전액 비과세 자산"]
-    assert [w["이름"] for w in MR.withheld(rv("확정"), res(("A", False)))] == ["확정신고 가산세"]
-    both = MR.withheld(rv("확정"), res(("G", True)))
+    held = MR.withheld(rv("확정", failed), res(("A", False)))
+    assert [w["이름"] for w in held] == ["확정신고 가산세"]
+    assert "정하지 않았다" in held[0]["알림"] and held[0]["다루지않음"][0]["계획"] == "없음"
+    both = MR.withheld(rv("확정", failed), res(("G", True)))
     assert [w["이름"] for w in both] == ["전액 비과세 자산", "확정신고 가산세"]
     for w in both:
         assert set(w) == {"이름", "까닭", "알림", "안내", "다루지않음"}
@@ -914,8 +986,10 @@ FILE_FREE_WORDS = ("형식검증", "내용검증", "로그인", "제출", "위�
 
 @pytest.mark.parametrize("name,reason", [("BF", "확정신고 가산세"), ("G", "전액 비과세 자산")])
 def test_withheld_run_confirm_document_has_only_sentences_that_fit(tmp_path, name, reason):
-    f = filers.get(name) if name == "BF" else g_filer()
-    code, out = _main(tmp_path, name, f)
+    if name == "BF":                                        # 가산세를 정하지 못하는 확정신고
+        code, out = _main_facts(tmp_path, _bf_merged_facts(), filers.get("BF"))
+    else:
+        code, out = _main(tmp_path, name, g_filer())
     assert code == 2
     text = _confirm(out)
     todo = _todo_part(text)
@@ -933,7 +1007,7 @@ def test_withheld_run_confirm_document_has_only_sentences_that_fit(tmp_path, nam
 
 def test_withheld_run_mcp_response_matches_the_confirm_document(tmp_path):
     f = filers.get("BF")
-    res = mcp_server.call_tool("yangdo_efile", {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f),
+    res = mcp_server.call_tool("yangdo_efile", {"facts": _bf_merged_facts(), "filer_path": _filer_file(tmp_path, f),
                                                 "out_dir": str(tmp_path / "o"), "today": TODAY})
     assert res["종료코드"] == 2
     todo = " ".join(res["사람이할일"])
