@@ -1,5 +1,6 @@
 # finance-ai-skills: install skills (not the plugin) into ~/.claude/skills
-#                    and the korean-law MCP server into ~/.claude/mcp/korean-law
+#                    the korean-law MCP server into ~/.claude/mcp/korean-law
+#                    and the tax-source-guard hook into ~/.claude/hooks
 # usage (PowerShell):  irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 $repo = 'hany202507/finance-ai-skills'
@@ -47,6 +48,13 @@ try {
     } else {
         Write-Host "node not found: install Node.js 18+ and run  npm install  in $mcpDest"
     }
+    # tax-source-guard hook (used with the tax advisory skill)
+    $hookRoot = if ($env:CLAUDE_HOOKS_DIR) { $env:CLAUDE_HOOKS_DIR } else { Join-Path $HOME '.claude\hooks' }
+    New-Item -ItemType Directory -Force -Path $hookRoot | Out-Null
+    $hookDest = Join-Path $hookRoot 'tax-source-guard.mjs'
+    Copy-Item -Force (Join-Path $root 'hooks\tax-source-guard.mjs') $hookDest
+    Write-Host "installed: $hookDest"
+    Write-Host "register the hook once in ~/.claude/settings.json (UserPromptSubmit). see README: tax hook"
     Write-Host "done. restart Claude Code."
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

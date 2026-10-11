@@ -1,6 +1,7 @@
 #!/bin/sh
 # finance-ai-skills: install skills (not the plugin) into ~/.claude/skills
-#                    and the korean-law MCP server into ~/.claude/mcp/korean-law
+#                    the korean-law MCP server into ~/.claude/mcp/korean-law
+#                    and the tax-source-guard hook into ~/.claude/hooks
 # usage (macOS/Linux):  curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh
 set -e
 dest="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
@@ -38,4 +39,10 @@ if command -v npm >/dev/null 2>&1; then
 else
   echo "node not found: install Node.js 18+ and run  npm install  in $mcpdest"
 fi
+# tax-source-guard hook (used with the tax advisory skill)
+hookdest="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}"
+mkdir -p "$hookdest"
+cp "$src/hooks/tax-source-guard.mjs" "$hookdest/tax-source-guard.mjs"
+echo "installed: $hookdest/tax-source-guard.mjs"
+echo "register the hook once in ~/.claude/settings.json (UserPromptSubmit). see README: tax hook"
 echo "done. restart Claude Code."
