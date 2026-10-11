@@ -277,13 +277,15 @@ class _Builder:
         a = self.assets.get(row["id"]) or {}
         if a.get("토지거래허가대상") != "예":
             return sold
+        unreadable = False
         try:
             permit = to_date((a.get("토지거래허가") or {}).get("허가일"))
         except ValueError:
-            permit = None
+            permit, unreadable = None, True
         if permit is None:
-            self.note("%s: 토지거래허가 대상 자산이라 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이다. 허가일 값이 없어 "
-                      "허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다" % row["id"])
+            self.note("%s: 토지거래허가 대상 자산이라 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이다. 허가일 값%s "
+                      "허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다"
+                      % (row["id"], "을 읽지 못해" if unreadable else "이 없어"))
             return None
         if permit > sold:
             self.note("%s: 토지거래허가 전에 대금을 청산해 허가일(%s) 기준으로 신고기한을 셌다. 허가 전에 허가구역 지정이 해제됐으면 "
@@ -298,16 +300,16 @@ class _Builder:
         for r in rows:
             base = self.deadline_base(r)
             if base is not None:
-                due.append(dates.filing_deadline(kind, base, self.rs))
+                due.append(dates.filing_deadline(kind, base, self.rs) + (r["id"],))
         if not due:
             return
-        nominal, adjusted = min(due, key=lambda x: x[1])
+        nominal, adjusted, aid = min(due, key=lambda x: x[1])
         if made > adjusted:
             raise Unsupported(
-                "작성일 %s 이 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 예정신고를 하지 "
+                "작성일 %s 이 자산 %s 의 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 예정신고를 하지 "
                 "않은 확정신고 정기만 다룬다). 기한의 끝이 공휴일·대체공휴일·노동절이면 그 다음날까지인데 이 도구는 공휴일을 알지 못한다. "
                 "그런 경우라면 기한 안일 수 있으니 달력으로 확인한다%s"
-                % (made.isoformat(), adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()],
+                % (made.isoformat(), aid, adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()],
                    "" if nominal == adjusted else "(기한 말일 %s 이 %s요일이라 다음 월요일로 보았다)"
                    % (nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()])), "없음")
         if made > nominal:

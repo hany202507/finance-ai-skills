@@ -142,4 +142,3 @@ def filing_deadline(kind, base, rs):
     while adjusted.weekday() >= 5:
         adjusted += timedelta(days=1)
     return nominal, adjusted
-

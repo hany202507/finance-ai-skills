@@ -363,3 +363,57 @@ def test_final_return_penalty_note_reaches_input_guide():
     assert not guide.FILE_ONLY.search(notes[0])
     md = guide.hometax_input(rv)
     assert notes[0] in md
+
+
+# ---- 날짜 글자(YYYY-01-dd ~ YYYY-07-dd)를 레코드 칸 번호로 읽어 확인사항을 거르지 않는다 ----
+
+def _deadline_rv(name, made, mutate=None, **over):
+    f = copy.deepcopy(CASES[name])
+    if mutate:
+        mutate(f)
+    r = engine.calculate(f, today="2026-10-11")
+    filer = filers.get(name)
+    for aid in filer["자산"]:
+        filer["자산"][aid]["법정동코드"] = "1120011400"
+    filer["신고인"]["주소"]["법정동코드"] = "1144010200"
+    filer["신고"].update(작성일=made, **over)
+    return return_values.build(r, f, filing.load(filer))
+
+
+def _permit_facts(permit_date):
+    def mutate(f):
+        a = f["자산"][0]
+        a["토지거래허가대상"] = "예"
+        if permit_date:
+            a["토지거래허가"] = {"신청일": "2026-10-01", "허가일": permit_date}
+    return mutate
+
+
+def test_deadline_notes_with_january_to_july_dates_reach_input_guide():
+    cases = [
+        ("주말 보정", _deadline_rv("S1", "2027-02-01"), "다음 월요일", "2027-01-31"),           # 말일 2027-01-31 일요일
+        ("허가일 기준", _deadline_rv("S1", "2027-02-01", _permit_facts("2027-01-10")), "허가일(2027-01-10)", "2027-01-10"),
+        ("허가일 없음", _deadline_rv("S1", "2030-01-01", _permit_facts(None)), "신고기한을 판정하지 않았다", None),
+    ]
+    for label, rv, key, date_text in cases:
+        notes = [m for m in rv["확인사항"] if key in m]
+        assert len(notes) == 1, label
+        if date_text:
+            assert date_text in notes[0] and re.search(r"-0[1-7]-", notes[0]), label        # 1~7월 날짜를 담은 문장이다
+        assert not guide.FILE_ONLY.search(notes[0]), label
+        assert "- " + notes[0] in guide.hometax_input(rv), label
+
+
+def test_file_only_pattern_ignores_every_iso_date():
+    """2025~2040년 모든 날짜가 문장에 들어 있어도 칸 번호로 읽지 않는다."""
+    from datetime import date, timedelta
+    d, end = date(2025, 1, 1), date(2040, 12, 31)
+    while d <= end:
+        assert not guide.FILE_ONLY.search("신고기한 말일 %s 이 일요일이라 다음 월요일 %s 까지로 보았다" % (d, d + timedelta(days=1))), d
+        d += timedelta(days=1)
+
+
+def test_file_only_pattern_still_catches_record_field_numbers():
+    for text in ("03-31 주민세_세율은 합계 행만 10.00 이다", "일반건물 칸(05-46)에 넣었다", "05-10·11 칸에 적었다",
+                 "02-21 칸은 비웠다", "03-30~33 칸은 0 이다", "07 레코드 상호는 Not Null 이다", "01 레코드 길이"):
+        assert guide.FILE_ONLY.search(text), text

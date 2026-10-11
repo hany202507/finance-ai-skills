@@ -411,7 +411,6 @@ def test_expense_lines_follow_the_acquisition_method():
     assert return_values.expense_lines(a, {"취득가액": None, "취득가액방법": None}) == []        # 전액 비과세
 
 
-
 # ---- 예정신고를 하지 않은 확정신고의 가산세 확인사항(정답지 사례 09-8) ----
 
 PENALTY_PARTS = ("예정신고를 하지 않은 확정신고", "무신고가산세", "납부지연가산세", "계산하지 않")
@@ -512,9 +511,12 @@ def test_permit_zone_uses_permit_date_when_paid_before_permit():
 
 
 def test_permit_zone_ignores_permit_date_when_permit_came_first():
-    # 허가가 대금 청산보다 앞서면 단서가 아니다. 양도일 기준 기한 2027-02-01
-    with pytest.raises(return_values.Unsupported):
-        _late("S1", "2027-02-02", _permit("2026-11-01"))
+    # 허가가 대금 청산보다 앞서면 단서가 아니다. 허가일 2026-10-15 는 앞선 달이라 허가일 기준이면 기한이 2026-12-31 이 되어 달라진다.
+    # 양도일(2026-11-20) 기준 기한은 2027-02-01 이므로 2027-02-01 은 통과하고 2027-02-02 는 Unsupported 다
+    rv = _late("S1", "2027-02-01", _permit("2026-10-15"))
+    assert not any("허가일" in m and "기준으로" in m for m in rv["확인사항"])
+    with pytest.raises(return_values.Unsupported, match="2027-02-01"):
+        _late("S1", "2027-02-02", _permit("2026-10-15"))
 
 
 def test_permit_zone_without_permit_date_skips_deadline_check():
@@ -526,3 +528,61 @@ def test_permit_zone_without_permit_date_skips_deadline_check():
 def test_non_permit_asset_has_no_skip_note():
     rv = _late("S1", "2027-01-31")
     assert not any("신고기한을 판정하지 않았다" in m for m in rv["확인사항"])
+
+
+def _sold_on(date_text):
+    def mutate(f):
+        f["자산"][0]["양도"]["잔금일"] = date_text
+    return mutate
+
+
+def test_preliminary_deadline_on_saturday_moves_to_monday_through_build():
+    # 2026-08-20 양도: 기한 말일 2026-10-31(토요일) -> 2026-11-02(월요일)
+    m = _sold_on("2026-08-20")
+    assert _weekend_notes(_late("S1", "2026-10-31", m)) == []
+    for made in ("2026-11-01", "2026-11-02"):
+        notes = _weekend_notes(_late("S1", made, m))
+        assert len(notes) == 1 and "토요일" in notes[0] and "2026-11-02" in notes[0]
+    with pytest.raises(return_values.Unsupported, match="2026-11-02"):
+        _late("S1", "2026-11-03", m)
+
+
+def test_final_deadline_on_sunday_may_31_moves_to_monday_through_build():
+    # 2025-11-20 양도의 확정신고: 2026-05-31(일요일) -> 2026-06-01(월요일)
+    m = _sold_on("2025-11-20")
+    assert _weekend_notes(_late("S1", "2026-05-31", m, 구분="확정")) == []
+    notes = _weekend_notes(_late("S1", "2026-06-01", m, 구분="확정"))
+    assert len(notes) == 1 and "일요일" in notes[0]
+    with pytest.raises(return_values.Unsupported, match="2026-06-01"):
+        _late("S1", "2026-06-02", m, 구분="확정")
+
+
+def test_final_deadline_with_permit_date_in_next_year_counts_from_permit_year():
+    # 양도 2026-11-20, 허가일 2027-01-10(허가 전 대금 청산): 확정신고 기한은 허가일이 속한 과세기간의 다음 연도 5월 31일 = 2028-05-31
+    rv = _late("S1", "2027-06-15", _permit("2027-01-10"), 구분="확정")
+    assert any("허가일(2027-01-10)" in m for m in rv["확인사항"])
+    with pytest.raises(return_values.Unsupported, match="2028-05-31"):
+        _late("S1", "2028-06-01", _permit("2027-01-10"), 구분="확정")
+    with pytest.raises(return_values.Unsupported, match="2027-05-31"):          # 허가 단서가 없으면 양도 연도 기준
+        _late("S1", "2027-06-15", None, 구분="확정")
+
+
+def test_unreadable_permit_date_is_reported_as_unreadable_not_missing():
+    def mutate(f):
+        a = f["자산"][0]
+        a["토지거래허가대상"] = "예"
+        a["토지거래허가"] = {"신청일": "2026-10-01", "허가일": "미정"}
+    rv = _late("S1", "2030-01-01", mutate)
+    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    assert len(notes) == 1 and "읽지 못해" in notes[0] and "값이 없어" not in notes[0]
+    rv = _late("S1", "2030-01-01", _permit(None))
+    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    assert len(notes) == 1 and "값이 없어" in notes[0] and "읽지 못해" not in notes[0]
+
+
+def test_unsupported_names_the_asset_whose_deadline_was_missed():
+    with pytest.raises(return_values.Unsupported, match=r"자산 S1\b"):
+        _late("S1", "2027-02-02")
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("BF", "2027-06-01", 구분="확정")
+    assert "자산 B" in str(e.value) or "자산 F" in str(e.value)
