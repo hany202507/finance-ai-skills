@@ -749,6 +749,23 @@ def test_final_return_makes_no_forms_and_no_file(tmp_path, capsys):
         assert json.load(fh)["신고"]["구분"] == "확정"
 
 
+def test_final_return_guide_says_the_same_thing_about_penalty_in_three_places(tmp_path):
+    """맨 위 줄, 세액계산 본문, 확인사항이 모두 「가산세가 빠져 있어 이 값으로 신고하지 않는다」는 뜻이다."""
+    import re
+    code, out = _main(tmp_path, "BF", filers.get("BF"))
+    assert code == 2
+    with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
+        md = fh.read()
+    head = md.splitlines()[0]
+    body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
+    notes = [ln for ln in md.split("## 확인사항", 1)[1].splitlines() if "무신고가산세" in ln]
+    assert "가산세" in head and "빠져 있다" in head
+    assert "가산세는 계산하지 않았다" in body and "입력하지 않는다" in body
+    assert len(notes) == 1 and "이 값으로 신고하지 않는다" in notes[0]
+    assert not re.search("가산세[^.]{0,20}0원", md) and "따로 계산해 더한다" not in md
+    assert "따로 계산해 더한다" not in _confirm(out)
+
+
 def test_final_return_with_fully_exempt_asset_gives_both_reasons(tmp_path):
     f = g_filer()
     f["신고"].update(구분="확정", 작성일="2027-05-20")
