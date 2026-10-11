@@ -56,10 +56,11 @@ def _run(tmp_path, name, filer):
     return p, out
 
 
-def _main(tmp_path, name, filer, extra=()):
-    """같은 프로세스에서 main 을 부른다. (종료코드, 출력 폴더)."""
+def _main(tmp_path, name, filer, extra=(), today=TODAY):
+    """같은 프로세스에서 main 을 부른다. (종료코드, 출력 폴더). 오늘은 늘 준다(작성일이 오늘보다 앞서면 멈추므로
+    시험이 실행하는 날의 달력에 기대지 않게 한다)."""
     fp, gp, out = _write(tmp_path, name, filer)
-    code = MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", TODAY] + list(extra))
+    code = MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", today] + list(extra))
     return code, out
 
 
@@ -127,15 +128,16 @@ def test_mcp_forms_and_efile_do_not_echo_personal_data(tmp_path):
 # ---------------------------------------------------------------- 종료코드 0
 
 # 확정신고(BF)는 가산세를 계산하지 않아 신고서와 전자신고 파일을 만들지 않는다. 아래 「확정신고」 시험이 본다
-@pytest.mark.parametrize("name,file_name,law", [
-    ("A", "20261220C116300.01", {}),
-    ("K", "20260820C116300.01", {}),
+# K 의 작성일은 2026-08-20 이라 오늘을 그 날로 준다(작성일이 오늘보다 앞서면 멈춘다)
+@pytest.mark.parametrize("name,file_name,law,today", [
+    ("A", "20261220C116300.01", {}, TODAY),
+    ("K", "20260820C116300.01", {}, "2026-08-20"),
 ])
-def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law):
+def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law, today):
     f = filers.get(name)
     for aid, code in law.items():
         f["자산"][aid]["법정동코드"] = code
-    code, out = _main(tmp_path, name, f)
+    code, out = _main(tmp_path, name, f, today=today)
     shown = capsys.readouterr()
     assert code == 0, shown.out + shown.err + _confirm(out)
     names = set(os.listdir(out))
@@ -260,6 +262,78 @@ def test_other_sale_answer_is_raised_in_notes_and_todo(tmp_path):
     assert DASH not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
     plain, out2 = _a_with(tmp_path / "plain")
     assert plain["종료코드"] == 0 and plain["알림"] == [] and "같은 해 다른 양도" not in _confirm(out2)
+
+
+# ---------------------------------------------------------------- 작성일이 오늘보다 앞선 신고인 파일
+
+LATE = "2027-03-10"      # 사례 A 의 작성일 2026-12-20 과 신고기한 2027-02-01 을 모두 지난 날
+
+
+def _stopped_for_old_date(rep_or_text, out):
+    names = set(os.listdir(out))
+    assert CALC | {"신고_확인.md"} <= names
+    assert not (PDFS | GUIDES | {"신고값.json"}) & names and _efiles(out) == []
+    text = _confirm(out)
+    notes = text.split("## 알림", 1)[1].split("##")[0]
+    assert "작성일" in notes and "2026-12-20" in notes and LATE in notes and "오늘" in notes and "앞선다" in notes
+    assert "제출하는 날" in notes and "고쳐 다시 실행한다" in notes
+    assert "| 신고값 | 만들지 않음(작성일이 오늘보다 앞섬) |" in text
+    assert "입력 파일을 고친 뒤 다시 실행한다" in _todo_part(text)
+    assert DASH not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
+
+
+def test_return_date_before_today_stops_with_code_2(tmp_path, capsys):
+    """미리 만들어 둔 신고인 파일을 신고기한 뒤에 돌리면 기한후신고가 정기신고서로 나간다. 작성일이 오늘보다 앞서면 멈춘다."""
+    f = filers.get("A")
+    code, out = _main(tmp_path, "A", f, today=LATE)
+    shown = capsys.readouterr()
+    assert code == 2, shown.out + shown.err
+    _stopped_for_old_date(None, out)
+    assert "작성일" in shown.out
+    for v in _personal(f):
+        assert v not in shown.out and v not in _confirm(out)
+
+
+@pytest.mark.parametrize("today,code", [("2026-12-20", 0), ("2026-12-19", 0), ("2026-12-21", 2)])
+def test_return_date_on_or_after_today_passes(tmp_path, today, code):
+    """작성일이 오늘과 같거나 뒤면 지나간다. 하루라도 앞서면 멈춘다."""
+    rep = MR.make(CASES["A"], filers.get("A"), str(tmp_path / "o"), today=today)
+    assert rep["종료코드"] == code, rep["알림"]
+    assert (rep["상태"] == "입력오류") == (code == 2)
+
+
+def test_return_date_is_compared_with_the_real_today_when_today_is_not_given(tmp_path, monkeypatch):
+    """--오늘 을 주지 않으면 계산이 쓴 한국 시간 오늘과 견준다. 시험은 그 함수를 바꿔 끼워 달력에 기대지 않는다."""
+    from yangdo import engine
+    monkeypatch.setattr(engine, "today_seoul", lambda: LATE)
+    rep = MR.make(CASES["A"], filers.get("A"), str(tmp_path / "late"))
+    assert rep["종료코드"] == 2 and rep["상태"] == "입력오류" and rep["기준정보"]["오늘"] == LATE
+    _stopped_for_old_date(None, tmp_path / "late")
+    monkeypatch.setattr(engine, "today_seoul", lambda: "2026-12-01")
+    assert MR.make(CASES["A"], filers.get("A"), str(tmp_path / "early"))["종료코드"] == 0
+
+
+@pytest.mark.parametrize("tool", ["yangdo_forms", "yangdo_efile"])
+@pytest.mark.parametrize("key", ["today", "오늘"])
+def test_mcp_return_tools_stop_on_return_date_before_today(tmp_path, tool, key):
+    f = filers.get("A")
+    out = tmp_path / "o"
+    res = mcp_server.call_tool(tool, {"facts": CASES["A"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(out), key: LATE})
+    assert res["종료코드"] == 2 and res["상태"] == "입력오류" and res["전자신고"] is None and res["서식검산"] is None
+    assert any("작성일" in x and "앞선다" in x for x in res["알림"])
+    _stopped_for_old_date(None, out)
+    s = json.dumps(res, ensure_ascii=False)
+    for v in _personal(f):
+        assert v not in s
+
+
+def test_return_date_before_today_is_told_together_with_filer_questions(tmp_path):
+    """신고인 정보 질문이 있으면 질문으로 끝내되 작성일도 함께 알린다. 신고인 파일을 한 번에 고치게 하려는 것이다."""
+    rep = MR.make(CASES["S1"], filers.get("S1"), str(tmp_path / "o"), today=LATE)
+    assert rep["종료코드"] == 2 and rep["상태"] == "질문" and [q["문항"] for q in rep["신고인질문"]] == ["F04"]
+    assert any("작성일" in x and "앞선다" in x for x in rep["알림"])
+    rep = MR.make(CASES["S1"], filers.get("S1"), str(tmp_path / "p"), today=TODAY)
+    assert rep["상태"] == "질문" and rep["알림"] == []
 
 
 # ---------------------------------------------------------------- 종료코드 1
@@ -564,7 +638,7 @@ def test_mcp_write_failure_is_a_tool_error(tmp_path):
     r = mcp_server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                            "params": {"name": "yangdo_efile",
                                       "arguments": {"facts": CASES["S1"], "filer_path": _filer_file(tmp_path, s1_filer()),
-                                                    "out_dir": str(blocker / "out")}}})
+                                                    "out_dir": str(blocker / "out"), "today": TODAY}}})
     assert r["result"].get("isError") is True and "쓰지 못했다" in r["result"]["content"][0]["text"]
 
 

@@ -4,14 +4,19 @@
   python scripts/make_return.py --사실관계 facts.json --신고인 신고인.json --출력 out/ [--오늘 YYYY-MM-DD] [--rules rules/]
 
 차례: 계산(run.py 와 같은 outputs.calculate_to) → 신고인 정보 검사(filing.load) → 신고인 질문 F01~F08(filing.questions)
-→ 신고값(return_values.build) → 서식 검산(forms_check.check) → 신고서 PDF(forms.render) → 전자신고 파일(efile.write, 독립 검증기 통과분만)
+→ 작성일이 오늘보다 앞서는지 → 신고값(return_values.build) → 서식 검산(forms_check.check) → 신고서 PDF(forms.render)
+→ 전자신고 파일(efile.write, 독립 검증기 통과분만)
 → 입력 안내서·부속서류(guide) → 신고_확인.md. 앞 단계가 막히면 뒤 단계는 하지 않는다.
 
 종료코드
   0 완료
   1 서식 검산 또는 전자신고 검증 실패(엔진 검산 실패, 신고값이나 신고서 PDF 를 만들지 못한 경우 포함). 결과를 신고에 쓰지 않는다
   2 질문(계산 질문, 신고인 질문 F01~F08) 또는 다루지않음(신고 범위가 아닌 건, 전액 비과세 자산이 있는 건, 확정신고,
-    읽을 수 없거나 형식이 틀린 입력 파일)
+    읽을 수 없거나 형식이 틀린 입력 파일, 작성일이 오늘보다 앞선 신고인 파일)
+
+작성일(신고인 파일의 신고.작성일)은 신고서를 제출하는 날이다. 신고기한 판정이 작성일만 보므로, 신고인 파일을 미리 만들어 두고
+기한 뒤에 돌리면 기한후신고가 정기신고서로 나간다. 그래서 작성일이 오늘보다 앞서면 신고값을 만들지 않고 종료코드 2 로 멈춘다.
+오늘은 --오늘 로 준 날이고, 없으면 계산이 쓴 한국 시간 오늘이다(결과의 기준정보.오늘). 작성일이 오늘과 같거나 뒤면 지나간다.
   3 기준정보·서식판·규격판 오류(규격판 잠금 포함)
   4 출력 파일 쓰기 실패(이전 파일을 다른 프로그램이 열어 둔 경우 등. 파일을 닫고 다시 실행한다)
 
@@ -57,7 +62,7 @@ for _p in (SKILL, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from yangdo import bjd, efile, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
+from yangdo import bjd, dates, efile, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 from run import iso_date, read_facts  # noqa: E402
 
@@ -261,6 +266,22 @@ def _calculate(rep, facts, out, today, rules_dir):
     return facts, res
 
 
+def _old_return_date(f, res):
+    """작성일이 오늘보다 앞서면 알릴 문장, 아니면 None. 오늘은 계산이 쓴 날짜다(--오늘, 없으면 한국 시간 오늘).
+
+    작성일이 없거나 날짜로 읽을 수 없으면 None 이다. 그 경우는 신고인 질문 F05 나 신고값 단계가 알린다.
+    """
+    made, today = (f.get("신고") or {}).get("작성일"), (res.get("기준정보") or {}).get("오늘")
+    try:
+        late = dates.to_date(made) < dates.to_date(today)
+    except (ValueError, TypeError):
+        return None
+    if not late:
+        return None
+    return ("신고인 파일의 신고.작성일 %s 이 오늘 %s 보다 앞선다. 작성일은 신고서를 제출하는 날이다. "
+            "제출할 날짜로 고쳐 다시 실행한다" % (made, today))
+
+
 def _filer(rep, filer, facts, res):
     step = rep["단계"]
     try:
@@ -269,11 +290,14 @@ def _filer(rep, filer, facts, res):
         _stop(rep, 2, "입력오류", "신고인 파일을 읽지 못했거나 형식이 틀렸다", "신고인 정보", "형식 오류", "신고인 정보: %s" % e)
     rep["경고"] += f.get("_경고") or []
     qs = _reference(rep, "신고인 정보", lambda: filing.questions(f, facts, res))
+    old = _old_return_date(f, res)
     if qs:
-        rep["신고인질문"] = qs
+        rep["신고인질문"] = qs      # 작성일도 고쳐야 하면 함께 알려 신고인 파일을 한 번에 고치게 한다
         _stop(rep, 2, "질문", "신고인 정보 질문 %d개. 신고인 파일(F07 은 사실관계)을 채운 뒤 다시 실행한다" % len(qs),
-              "신고인 정보", "질문 %d개" % len(qs))
+              "신고인 정보", "질문 %d개" % len(qs), old)
     step["신고인 정보"] = "갖춤"
+    if old:
+        _stop(rep, 2, "입력오류", "작성일이 오늘보다 앞서 신고값을 만들지 않았다", "신고값", "만들지 않음(작성일이 오늘보다 앞섬)", old)
     return f
 
 
