@@ -417,3 +417,56 @@ def test_file_only_pattern_still_catches_record_field_numbers():
     for text in ("03-31 주민세_세율은 합계 행만 10.00 이다", "일반건물 칸(05-46)에 넣었다", "05-10·11 칸에 적었다",
                  "02-21 칸은 비웠다", "03-30~33 칸은 0 이다", "07 레코드 상호는 Not Null 이다", "01 레코드 길이"):
         assert guide.FILE_ONLY.search(text), text
+
+
+# ---- T18: 매입가액 행의 지급일자 ----
+# 부표3 서식은 매입가액(111) 행의 지급일 칸을 음영으로 막았고 전자신고 07 레코드도 이 행의 지급일자를 비운다.
+# 신고값 행에는 취득일이 들어 있지만 신고서와 파일에 쓰지 않는 값이라 안내서가 옮기지 않는다.
+
+def _section4(md):
+    return md.split("## 4. ", 1)[1].split("## 5. ", 1)[0]
+
+
+def _cells(line):
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def test_purchase_price_row_has_no_payment_date_in_the_guide():
+    for name in ("S1", "A", "K"):
+        rv = _rv(name)
+        md = guide.hometax_input(rv)
+        sec = _section4(md)
+        rows = [ln for ln in sec.splitlines() if ln.startswith("| 매입가액 ")]
+        assert rows, name
+        for ln in rows:
+            assert _cells(ln)[-1] == "-", (name, ln)            # 지급일자 칸이 비었다(빈 칸은 표에 - 로 나온다)
+        for a in rv["부표1"]:
+            assert a["취득일"] not in " ".join(rows), name        # 취득일을 대신 채워 넣지 않는다
+
+
+def test_purchase_price_note_follows_the_table_and_is_marked_unconfirmed():
+    sec = _section4(guide.hometax_input(_rv("S1")))
+    lines = sec.splitlines()
+    table_end = max(i for i, ln in enumerate(lines) if ln.startswith("|"))
+    note = [ln for ln in lines[table_end + 1:] if "매입가액 행의 지급일자" in ln]
+    assert len(note) == 1
+    assert "부표3" in note[0] and "전자신고 파일" in note[0] and "취득일" in note[0] and "(확인 필요)" in note[0]
+    assert "2018-03-15" in note[0]                               # 화면이 요구하면 넣을 취득일을 알려 준다
+
+
+def test_other_rows_keep_their_payment_dates():
+    sec = _section4(guide.hometax_input(_rv("S1")))
+    rows = {_cells(ln)[0]: _cells(ln) for ln in sec.splitlines() if ln.startswith("| ") and not ln.startswith("| ---")}
+    assert rows["기타 부대 비용 - 법무사비용"][-1] == "2018-03-15"
+    assert rows["취득세"][-1] == "-"
+
+
+def test_no_purchase_price_note_without_a_purchase_price_row():
+    sec = _section4(guide.hometax_input(_rv_facts(CASES["G"])[0]))   # 전액 비과세라 부표3 이 없다
+    assert "매입가액 행의 지급일자" not in sec
+
+
+def test_purchase_price_note_has_no_banned_style():
+    md = guide.hometax_input(_rv("S1"))
+    assert chr(0x2014) not in md
+    assert not [ln for ln in md.splitlines() if ln.rstrip().endswith("?")]

@@ -51,6 +51,11 @@ KEEP_NOTE = ("필요경비에서 뺀",)
 _cache = {}
 
 
+def is_file_only_note(note):
+    """확인사항 문장이 전자신고 파일의 칸·레코드 이야기뿐이면 참(화면 입력 안내와 파일을 만들지 않은 실행의 확인 문서에서 뺀다)."""
+    return bool(FILE_ONLY.search(note)) and not any(k in note for k in KEEP_NOTE)
+
+
 def _codes():
     if "codes" not in _cache:
         with open(os.path.join(EFILE_DIR, "codes_c116300.json"), encoding="utf-8") as f:
@@ -150,7 +155,9 @@ def _row_table(rows):
         ev = _evidence_name(r["증빙코드"]) if r["증빙코드"] else (NEED_VALUE if must else "")
         name = r["상호"] or NEED_VALUE
         biz = r["사업자번호"] or (NEED_VALUE if must else "")
-        day = r["지급일"] or (NEED_VALUE if must and r["금액"] else "")
+        # 매입가액(111) 행은 신고값에 취득일이 들어 있지만 부표3 서식은 이 행의 지급일 칸을 막았고 07 레코드도 비운다.
+        # 신고서와 파일에 적지 않은 값을 안내서가 옮기지 않는다(대신 표 아래 한 줄로 알린다)
+        day = "" if r["구분코드"] == ACQ_EXPENSE_CODE else (r["지급일"] or (NEED_VALUE if must and r["금액"] else ""))
         body.append([label, ev, name, biz, _won(r["금액"]), day])
     return _table(["구분", "증빙종류", "거래상대방(상호)", "사업자번호", "지급금액", "지급일자"], body)
 
@@ -238,6 +245,9 @@ def _sec_acquisition(rv):
             acq = [r for r in sh["행"] if _is_acq(r)]
             if acq:
                 out += _row_table(acq) + [""]
+                if any(r["구분코드"] == ACQ_EXPENSE_CODE for r in acq):
+                    out += ["매입가액 행의 지급일자는 신고서 부표3 과 전자신고 파일에 적지 않았다. 홈택스 화면이 지급일자를 요구하면 "
+                            "취득일 %s 을 넣는다 (확인 필요)." % a["취득일"], ""]
             out += ["취득가액 합계 %s" % _won(sh["취득가액계"]), ""]
         if a["취득가액종류"] == "환산취득가액":
             b = a["기준시가"]
@@ -382,7 +392,7 @@ def _sec_payment(rv):
 
 
 def _sec_notes(rv):
-    notes = [x for x in rv.get("확인사항") or [] if any(k in x for k in KEEP_NOTE) or not FILE_ONLY.search(x)]
+    notes = [x for x in rv.get("확인사항") or [] if not is_file_only_note(x)]
     if not notes:
         return []
     out = ["## 확인사항", ""] + ["- " + x for x in notes]

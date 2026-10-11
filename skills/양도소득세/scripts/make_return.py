@@ -206,7 +206,7 @@ def _report(out, upto):
     return {"종료코드": 0, "상태": "완료", "요약": "", "범위": upto, "출력": out,
             "단계": {name: NOT_DONE for name in STEPS}, "파일": [], "기준정보": None, "판": None, "합계": None,
             "질문": [], "다루지않음": [], "신고인질문": [], "검산": [], "서식검산": None, "전자신고": None,
-            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None}
+            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None, "보류사유": []}
 
 
 class _Stop(Exception):
@@ -270,8 +270,8 @@ def _calculate(rep, facts, out, today, rules_dir):
     rep["경고"] += res["경고"]
     if res["상태"] == "질문":
         n, m = len(res["질문"]), len(res["다루지않음"])
-        _stop(rep, 2, "질문" if n else "다루지않음", "계산 질문 %d개, 다루지않음 %d개. %s 에 적었다" % (n, m, outputs.QUESTIONS),
-              "계산", "질문 %d개, 다루지않음 %d개" % (n, m))
+        _stop(rep, 2, "질문" if n else "다루지않음", "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개. %s 에 적었다" % (n, m, outputs.QUESTIONS),
+              "계산", "질문 %d개, 다루지 않는 경우 %d개" % (n, m))
     rep["합계"] = {k: res["계산"]["합계"][k] for k in ("산출세액", "지방소득세")}
     if res["상태"] != "완료":
         _stop(rep, 1, "검산실패", "계산 검산 실패 %d건. 이 결과를 신고에 쓰지 않는다" % len(res["검산"]), "계산", "검산 실패 %d건" % len(res["검산"]))
@@ -356,6 +356,7 @@ def _forms_and_file(rep, rv, res, out, rules_dir, upto):
         rep["알림"] += [w["알림"] for w in held]
         rep["다루지않음"] = rep["다루지않음"] + [x for w in held for x in w["다루지않음"]]
         rep["안내서머리"] = " ".join(w["안내"] for w in held)
+        rep["보류사유"] = [w["이름"] for w in held]
         rep.update(종료코드=2, 상태="다루지않음", 요약="%s %s" % (", ".join(w["까닭"] for w in held), NOT_MADE))
         step["신고서 PDF"] = step["전자신고 파일"] = "만들지 않음(%s)" % ", ".join(w["이름"] for w in held)
         return
@@ -400,7 +401,10 @@ def _pipeline(rep, facts, filer, out, today, rules_dir, upto):
         _forms_and_file(rep, rv, res, out, rules_dir, upto)
     finally:
         # 신고값은 forms.render 가 확인사항을 덧붙인 뒤의 값으로 쓴다(render 전에 끝났으면 그때의 값)
-        rep["확인사항"] = _dedupe(rep["확인사항"] + list(rv.get("확인사항") or []))
+        notes = rep["확인사항"] + list(rv.get("확인사항") or [])
+        if rep["보류사유"]:         # 전자신고 파일을 만들지 않았으니 그 파일의 칸 번호·형식검증 문장은 싣지 않는다
+            notes = [x for x in notes if not guide.is_file_only_note(x)]
+        rep["확인사항"] = _dedupe(notes)
     _write_rv(rep, rv, out)
     _write_guides(rep, rv, facts, res, out)
     if rep["종료코드"] == 0:
@@ -428,9 +432,15 @@ def _todo(rep):
     code, sent = rep["종료코드"], rep["전자신고"]
     out = []
     if code != 0:
+        if code == 2 and rep["상태"] == "다루지않음":
+            # 신고서와 전자신고 파일이 앞으로도 없다. 형식검증·제출 안내는 붙이지 않는다
+            if rep["보류사유"]:       # 신고값은 만들었고 참고용으로 냈다
+                return ["신고서와 전자신고 파일이 없다. 사유는 %s이다. 사유를 세무 전문가와 확인한다. "
+                        "이 스킬은 이 건의 신고서와 전자신고 파일을 만들지 않으니 참고용으로 낸 값으로 신고하지 않는다"
+                        % ", ".join(rep["보류사유"])]
+            return ["이 건은 이 도구가 다루지 않는 경우라 신고서와 전자신고 파일이 없다. 신고값도 만들지 못했다. "
+                    "사유는 알림이나 %s 에 있다. 사유를 세무 전문가와 확인한다" % outputs.QUESTIONS]
         asked = {"질문": "위 질문에 답을 채운 뒤 다시 실행한다. 계산 질문은 사실관계 파일에, 신고인 정보 질문은 신고인 파일에 채운다(F07 은 사실관계 파일)",
-                 "다루지않음": "다루지않음 사유를 세무 전문가와 확인한다. 이 스킬은 이 건의 신고서와 전자신고 파일을 만들지 않는다. "
-                           "참고용으로 낸 값으로 신고하지 않는다",
                  "입력오류": "알림의 문장대로 입력 파일을 고친 뒤 다시 실행한다"}
         failed = ("이 실행의 결과로 신고하지 않는다. 표준오류에 나온 오류 기록과 함께 운영자에게 알린다" if rep["상태"] == "오류" else
                   "검산·검증 실패 문장을 확인한다. 이 실행의 결과로 신고하지 않는다. 입력이 틀렸으면 고쳐서 다시 실행하고, 아니면 운영자에게 알린다")
@@ -462,6 +472,17 @@ def _bullets(xs):
     return ["- " + x for x in xs]
 
 
+def _personal_files(rep):
+    """만든 파일 가운데 인적사항이 들어 있는 것의 이름. 만들지 않은 신고서 PDF 와 전자신고 파일은 적지 않는다."""
+    base = [os.path.basename(p) for p in rep["파일"]]
+    out = [RV_FILE]
+    if any(n in (forms.OUT_NATIONAL, forms.OUT_LOCAL) for n in base):
+        out.append("신고서 PDF")
+    if any(EFILE_NAME.match(n) for n in base):
+        out.append("전자신고 파일")
+    return out + [n for n in (GUIDE_FILE, ATTACH_FILE) if n in base]
+
+
 def confirm_md(rep):
     """신고_확인.md. 인적사항 값은 싣지 않는다."""
     L = ["# 양도소득세 신고 확인", "", "%s (종료코드 %d)" % (rep["요약"], rep["종료코드"]), ""]
@@ -475,7 +496,7 @@ def confirm_md(rep):
     if rep["알림"]:
         L += ["## 알림", ""] + _bullets(rep["알림"]) + [""]
     if rep["질문"] or (rep["다루지않음"] and rep["단계"]["계산"] != "완료"):
-        L += ["## 계산 질문", "", "계산 질문 %d개, 다루지않음 %d개. 문항은 %s 에 있다." % (len(rep["질문"]), len(rep["다루지않음"]), outputs.QUESTIONS), ""]
+        L += ["## 계산 질문", "", "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개. 문항은 %s 에 있다." % (len(rep["질문"]), len(rep["다루지않음"]), outputs.QUESTIONS), ""]
     if rep["신고인질문"]:
         L += ["## 신고인 정보 질문", ""]
         L += ["- [%s] %s%s" % (q["문항"], ("자산 %s: " % q["자산"]) if q.get("자산") else "", q["내용"]) for q in rep["신고인질문"]]
@@ -499,7 +520,7 @@ def confirm_md(rep):
     if rep["파일"]:
         L += ["## 만든 파일", ""] + _bullets([os.path.basename(p) for p in rep["파일"]]) + [""]
         if any(os.path.basename(p) == RV_FILE for p in rep["파일"]):
-            L += ["이 가운데 %s, 신고서 PDF, 전자신고 파일, %s, %s 에는 인적사항이 들어 있다. 공유하지 않는다." % (RV_FILE, GUIDE_FILE, ATTACH_FILE), ""]
+            L += ["이 가운데 %s 에는 인적사항이 들어 있다. 공유하지 않는다." % ", ".join(_personal_files(rep)), ""]
     L += ["## 사람이 할 일", ""] + ["%d. %s" % (i, x) for i, x in enumerate(rep["사람이할일"], 1)] + ["", TAIL, ""]
     return "\n".join(L)
 

@@ -651,3 +651,102 @@ def test_withheld_reasons_are_collected_in_one_place():
     assert [w["이름"] for w in both] == ["전액 비과세 자산", "확정신고 가산세"]
     for w in both:
         assert set(w) == {"이름", "까닭", "알림", "안내", "다루지않음"}
+
+
+# ---------------------------------------------------------------- T18: 신고서와 전자신고 파일을 만들지 않은 실행의 확인 문서
+
+def _prose(text):
+    """표의 줄을 뺀 글. 표의 상태 칸에는 다루지않음 같은 상태 값이 그대로 나올 수 있다."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.startswith("|"))
+
+
+def _todo_part(text):
+    return text.split("## 사람이 할 일", 1)[1]
+
+
+def _made_part(text):
+    return text.split("## 만든 파일", 1)[1].split("## 사람이 할 일", 1)[0]
+
+
+FILE_FREE_WORDS = ("형식검증", "내용검증", "로그인", "제출", "위택스", "만들어진 뒤")
+
+
+@pytest.mark.parametrize("name,reason", [("BF", "확정신고 가산세"), ("G", "전액 비과세 자산")])
+def test_withheld_run_confirm_document_has_only_sentences_that_fit(tmp_path, name, reason):
+    f = filers.get(name) if name == "BF" else g_filer()
+    code, out = _main(tmp_path, name, f)
+    assert code == 2
+    text = _confirm(out)
+    todo = _todo_part(text)
+    assert "신고서와 전자신고 파일이 없다" in todo and reason in todo and "세무 전문가" in todo
+    for word in FILE_FREE_WORDS:                            # 만들지 않은 파일의 형식검증·제출 안내는 나오지 않는다
+        assert word not in todo, word
+    assert "03 레코드" not in text and "형식검증" not in text   # 만들지 않은 전자신고 파일의 칸 문장도 싣지 않는다
+    notes = text.split("## 확인사항", 1)[1].split("##")[0] if "## 확인사항" in text else ""
+    assert not [ln for ln in notes.splitlines() if MR.guide.FILE_ONLY.search(ln) and "필요경비에서 뺀" not in ln]
+    made = _made_part(text)                                # 없는 파일을 인적사항 경고에 올리지 않는다
+    assert "인적사항이 들어 있다" in made and "신고서 PDF" not in made and "전자신고 파일" not in made
+    assert "다루지않음" not in _prose(text)
+    assert DASH not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
+
+
+def test_withheld_run_mcp_response_matches_the_confirm_document(tmp_path):
+    f = filers.get("BF")
+    res = mcp_server.call_tool("yangdo_efile", {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f),
+                                                "out_dir": str(tmp_path / "o"), "today": TODAY})
+    assert res["종료코드"] == 2
+    todo = " ".join(res["사람이할일"])
+    assert "신고서와 전자신고 파일이 없다" in todo and "확정신고 가산세" in todo
+    for word in FILE_FREE_WORDS:
+        assert word not in todo, word
+    assert not [x for x in res["확인사항"] if MR.guide.FILE_ONLY.search(x) and "필요경비에서 뺀" not in x]
+    assert "다루지않음" not in " ".join(res["알림"] + res["사람이할일"] + [res["요약"]])
+
+
+def test_full_run_confirm_document_keeps_its_file_sentences(tmp_path):
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    text = _confirm(out)
+    assert "신고서 PDF, 전자신고 파일" in _made_part(text)
+    todo = _todo_part(text)
+    assert "형식검증" in todo and "제출" in todo and "신고서와 전자신고 파일이 없다" not in todo
+
+
+def test_unsupported_run_has_no_reference_values_sentence(tmp_path, monkeypatch):
+    def out_of_scope(*a, **k):
+        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+
+    monkeypatch.setattr(MR.return_values, "build", out_of_scope)
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 2
+    text = _confirm(out)
+    todo = _todo_part(text)
+    assert "참고용" not in text                              # 신고값을 만들지 못했으니 참고용으로 낸 값이 없다
+    assert "신고서와 전자신고 파일이 없다" in todo and "세무 전문가" in todo
+    for word in FILE_FREE_WORDS:
+        assert word not in todo, word
+    assert "다루지않음" not in _prose(text)
+
+
+def test_calculation_stage_scope_stop_has_no_reference_values_sentence(tmp_path):
+    from answer_keys import OUT
+    fp, gp, out = tmp_path / "f.json", tmp_path / "g.json", tmp_path / "out"
+    fp.write_text(json.dumps(OUT["02"]["facts"], ensure_ascii=False), encoding="utf-8")
+    gp.write_text(json.dumps(s1_filer(), ensure_ascii=False), encoding="utf-8")
+    res = MR.make(str(fp), str(gp), str(out), today=TODAY)
+    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and not res["질문"]
+    text = _confirm(out)
+    assert "참고용" not in text
+    assert "신고서와 전자신고 파일이 없다" in _todo_part(text)
+    for word in FILE_FREE_WORDS:
+        assert word not in _todo_part(text), word
+    assert "다루지않음" not in _prose(text) and "다루지않음" not in res["요약"]
+    assert "다루지 않는 경우" in res["요약"] and "다루지 않는 경우" in text
+
+
+def test_question_run_keeps_its_instruction_and_has_no_reference_values_sentence(tmp_path):
+    p, out = _run(tmp_path, "S1", filers.get("S1"))          # 성수동 법정동코드 질문(F04)
+    assert p.returncode == 2
+    text = _confirm(out)
+    assert "참고용" not in text
+    assert "위 질문에 답을 채운 뒤 다시 실행한다" in _todo_part(text)
