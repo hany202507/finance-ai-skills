@@ -141,7 +141,15 @@ function makeCore(defs, conds) {
     if (t === 'bool') return typeof v === 'boolean' ? v : undefined;
     if (t === 'choice' || t === 'sido') return typeof v === 'string' && v ? v : undefined;
     if (t === 'multi') return Array.isArray(v) && v.length ? v.slice() : undefined;
-    if (t === 'text') return blank(v) ? undefined : String(v).trim();
+    if (t === 'text') {
+      if (blank(v)) return undefined;
+      var tx = String(v).trim();
+      if (spec.digits) {      // 번호 칸: 하이픈과 공백은 빼 주고 ASCII 숫자 N자리가 아니면 알린다
+        tx = tx.replace(/[-\s]/g, '');
+        if (!new RegExp('^[0-9]{' + spec.digits + '}$').test(tx)) { err('숫자 ' + spec.digits + '자리로 적어 주세요(하이픈은 빼도 됩니다)'); return undefined; }
+      }
+      return tx;
+    }
     if (t === 'date') {
       if (blank(v)) return undefined;
       v = String(v).trim();

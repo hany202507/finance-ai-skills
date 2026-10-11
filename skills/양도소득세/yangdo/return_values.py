@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+from collections import namedtuple
 from decimal import ROUND_DOWN, Decimal
 
 from yangdo import SKILL_DIR, calc, filing, ruleset
@@ -124,6 +125,59 @@ def _area(v):
     return float(Decimal(str(v)).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
 
 
+def load_codes(efile_dir=None):
+    """전자신고 코드표(efile/codes_c116300.json). filing 의 질문 F07 이 필수 구분코드를 볼 때도 같은 표를 쓴다."""
+    return _read_json(os.path.join(efile_dir or EFILE_DIR, "codes_c116300.json"))
+
+
+def expense_key(group, item):
+    """필요경비 항목이 가는 codes["필요경비구분"] 의 키. 계획 1 M09 선택지는 코드로, 자유 글은 낱말로 고른다."""
+    text = str(item.get("내용") or "")
+    if group == "자본적지출" and text in CAPEX_CODE:
+        return CAPEX_CODE[text]
+    for word, key in WORD_CODE.get(group, []):
+        if word in text:
+            return key
+    return FALLBACK_CODE[group]
+
+
+# 부표3·07 행이 되는 지출 하나. group 은 매입가액 · 취득세 · 취득부대 · 감가상각비 · 자본적지출 · 기타 · 양도비,
+# key 는 codes["필요경비구분"] 의 키, item 은 사실관계 필요경비 항목(매입가액 · 취득세 · 감가상각비는 항목이 없어 None),
+# no 는 그 항목이 사실관계 묶음 목록에서 몇 번째인지(1부터, 엔진이 뺀 항목도 센다. 항목이 없으면 0)
+ExpenseLine = namedtuple("ExpenseLine", "group key item no")
+
+
+def expense_lines(a, c):
+    """한 자산에서 부표3·07 행이 되는 지출 목록(정렬 전 순서). a 는 사실관계 자산, c 는 엔진 계산(result["계산"]["자산"][i]["계산"]).
+
+    어느 지출이 어느 구분코드 행이 되는지, 매입가액 행이 언제 생기는지를 정하는 한 곳이다. 신고값 생성과 filing 의 질문
+    F07(지급처 사업자번호)·F08(취득 상대방)이 같은 규칙을 쓴다.
+    실지거래가액이면 매입가액 · 취득세 · 취득부대 · 감가상각비 · 자본적지출 · 기타 · 양도비가 모두 줄이 된다. 환산취득가액을
+    쓰되 자본적지출·양도비를 필요경비로 하는 경우(취득가액 0, 소득세법 제97조②2호 단서)는 그 둘만 줄이 된다.
+    전액 비과세(취득가액 None)와 그 밖의 방법은 줄이 없다. 엔진이 필요경비에서 뺀 지출(calc.drop_reason)은 줄이 아니다.
+    """
+    if c["취득가액"] is None:
+        return []
+    ex = a.get("필요경비") or {}
+
+    def items(groups):
+        return [ExpenseLine(g, expense_key(g, it), it, n) for g in groups
+                for n, it in enumerate(ex.get(g) or [], 1) if not calc.drop_reason(g, it)]
+
+    method = c["취득가액방법"]
+    if method == "실지거래가액":
+        lines = [ExpenseLine("매입가액", "매입가액", None, 0)]
+        if _int(ex.get("취득세")):
+            lines.append(ExpenseLine("취득세", "취득세", None, 0))
+        lines += items(("취득부대",))
+        if _int(a.get("감가상각비")):
+            lines.append(ExpenseLine("감가상각비", "감가상각비", None, 0))
+        return lines + items(("자본적지출", "기타", "양도비"))
+    if c["취득가액"] == 0 and method == "환산가액":
+        return items(("자본적지출", "양도비"))
+    return []
+
+
 class _Builder:
     def __init__(self, result, facts, filer, rules_dir, forms_dir, efile_dir):
         self.result, self.facts, self.filer = result, facts, filer
@@ -132,7 +186,7 @@ class _Builder:
         self.rules_dir = rules_dir
         self.forms_dir = forms_dir or FORMS_DIR
         self.efile_dir = efile_dir or EFILE_DIR
-        self.codes = _read_json(os.path.join(self.efile_dir, "codes_c116300.json"))
+        self.codes = load_codes(self.efile_dir)
         self.layout = _read_json(os.path.join(self.efile_dir, "layout_c116300.json"))
         self.form_reg_path = os.path.join(self.forms_dir, "서식판.json")
         self.form_reg = _read_json(self.form_reg_path)
@@ -311,15 +365,6 @@ class _Builder:
                       % (aid, side, cause, where, side))
         return purpose, reg
 
-    def expense_code(self, group, it):
-        text = str(it.get("내용") or "")
-        if group == "자본적지출" and text in CAPEX_CODE:
-            return CAPEX_CODE[text]
-        for word, key in WORD_CODE.get(group, []):
-            if word in text:
-                return key
-        return FALLBACK_CODE[group]
-
     def schedule3_row(self, key, amount, date="", partner="", evidence=None, biz=""):
         e = self.codes["필요경비구분"][key]
         ev = (self.codes["증빙종류"].get(evidence) or {}).get("코드") if evidence else None
@@ -358,30 +403,22 @@ class _Builder:
         if c["취득가액"] is None:                        # 전액비과세
             return [], None, None
         ex = a.get("필요경비") or {}
-
-        def kept(group):
-            return [it for it in ex.get(group) or [] if not calc.drop_reason(group, it)]
-
-        def items(groups):
-            return [self.schedule3_row(self.expense_code(g, it), _int(it.get("금액")), it.get("지급일"), it.get("상대방"),
-                                       it.get("증빙종류"), self.biz_no(aid, it)) for g in groups for it in kept(g)]
-
         method = c["취득가액방법"]
-        if method == "실지거래가액":
-            dep = _int(a.get("감가상각비"))
-            rows = [self.schedule3_row("매입가액", c["취득가액"] + dep, v["취득일"], self.seller(aid, self.lots.get(aid)))]
-            if _int(ex.get("취득세")):
+        rows = []
+        for ln in expense_lines(a, c):
+            it = ln.item
+            if ln.group == "매입가액":
+                rows.append(self.schedule3_row("매입가액", c["취득가액"] + _int(a.get("감가상각비")), v["취득일"],
+                                               self.seller(aid, self.lots.get(aid))))
+            elif ln.group == "취득세":
                 rows.append(self.schedule3_row("취득세", _int(ex.get("취득세")), partner=self.tax_office(a)))
                 self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지 시군구 이름으로 적었다"
                           "(지방세법 제8조①1호, 규격서 p60 「거래상대방의 상호」)" % aid)
-            rows += items(("취득부대",))
-            if dep:
-                rows.append(self.schedule3_row("감가상각비", dep))
-            rows += items(("자본적지출", "기타", "양도비"))
-        elif c["취득가액"] == 0 and method == "환산가액":
-            rows = items(("자본적지출", "양도비"))
-        else:
-            rows = []
+            elif ln.group == "감가상각비":
+                rows.append(self.schedule3_row("감가상각비", _int(a.get("감가상각비"))))
+            else:
+                rows.append(self.schedule3_row(ln.key, _int(it.get("금액")), it.get("지급일"), it.get("상대방"),
+                                               it.get("증빙종류"), self.biz_no(aid, it)))
         rows.sort(key=lambda x: x["전자코드"])
         # 부표3 ⑤ 계 = ①+③-④ 또는 ②+③-④, ⑬ 기타 필요경비 계 = ⑨+⑫(codes 필요경비구분 묶음)
         acq = sum(x["금액"] for x in rows if x["_묶음"].startswith("취득가액") and "차감항목" not in x["_묶음"]) \
