@@ -126,9 +126,9 @@ def test_mcp_forms_and_efile_do_not_echo_personal_data(tmp_path):
 
 # ---------------------------------------------------------------- 종료코드 0
 
+# 확정신고(BF)는 가산세를 계산하지 않아 신고서와 전자신고 파일을 만들지 않는다. 아래 「확정신고」 시험이 본다
 @pytest.mark.parametrize("name,file_name,law", [
     ("A", "20261220C116300.01", {}),
-    ("BF", "20270520C116300.01", {}),
     ("K", "20260820C116300.01", {}),
 ])
 def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law):
@@ -566,3 +566,88 @@ def test_no_path_and_no_sentence_is_not_a_pass(tmp_path, monkeypatch):
     section = text.split("## 전자신고 검증", 1)[1].split("##")[0]
     assert "통과" not in section and "파일을 만들지 못했다" in section
     assert "규격서 미확인 칸" not in text
+
+
+# ---------------------------------------------------------------- 확정신고(가산세를 계산하지 않아 신고서·파일을 만들지 않는다)
+
+PENALTY_WORDS = ("확정신고", "무신고가산세", "납부지연가산세", "가산세를 계산하지 않", "실제보다 적게")
+
+
+def test_final_return_makes_no_forms_and_no_file(tmp_path, capsys):
+    f = filers.get("BF")
+    code, out = _main(tmp_path, "BF", f)
+    shown = capsys.readouterr()
+    assert code == 2, shown.out + shown.err
+    names = set(os.listdir(out))
+    assert CALC | GUIDES | {"신고값.json", "신고_확인.md"} <= names
+    assert not PDFS & names and _efiles(out) == []
+    assert not [n for n in names if n.startswith(".efile-") or n.endswith(".tmp")]
+    text = _confirm(out)
+    for word in PENALTY_WORDS:
+        assert word in text, word
+    assert "신고서와 전자신고 파일을 만들지 않았다" in text
+    assert "제1" not in text.split("## 알림", 1)[1].split("##")[0]       # 조문 번호는 적지 않는다
+    assert "| 서식 검산 | 통과 |" in text and "만들지 않음(확정신고 가산세)" in text
+    assert "전액 비과세" not in text
+    assert "가산세" in shown.out
+    for v in _personal(f):
+        assert v not in text and v not in shown.out
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert "확정신고" in head and "가산세" in head and "참고용" in head and "전액 비과세" not in head
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        assert json.load(fh)["신고"]["구분"] == "확정"
+
+
+def test_final_return_with_fully_exempt_asset_gives_both_reasons(tmp_path):
+    f = g_filer()
+    f["신고"].update(구분="확정", 작성일="2027-05-20")
+    code, out = _main(tmp_path, "G", f)
+    assert code == 2
+    names = set(os.listdir(out))
+    assert GUIDES | {"신고값.json"} <= names and not PDFS & names and _efiles(out) == []
+    text = _confirm(out)
+    notes = text.split("## 알림", 1)[1].split("##")[0]
+    assert "전액 비과세 자산(G)" in notes and "무신고가산세" in notes and "납부지연가산세" in notes
+    assert "전액 비과세" in text.splitlines()[2] and "확정신고" in text.splitlines()[2]      # 요약 줄에도 두 사유
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert "전액 비과세" in head and "확정신고" in head and "가산세" in head and "참고용" in head
+
+
+@pytest.mark.parametrize("tool", ["yangdo_forms", "yangdo_efile"])
+def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
+    f = filers.get("BF")
+    out = tmp_path / "o"
+    res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(out),
+                                      "today": TODAY})
+    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and res["전자신고"] is None
+    notes = " ".join(res["알림"])
+    for word in PENALTY_WORDS:
+        assert word in notes, word
+    assert "가산세" in res["요약"] and res["서식검산"] == []
+    assert any("가산세" in x["내용"] for x in res["다루지않음"])
+    made = {os.path.basename(x) for x in res["파일"]}
+    assert GUIDES | {"신고값.json", "신고_확인.md"} <= made and not PDFS & made and not [n for n in made if "C116300" in n]
+    names = set(os.listdir(out))
+    assert not PDFS & names and _efiles(out) == []
+    s = json.dumps(res, ensure_ascii=False)
+    for v in _personal(f):
+        assert v not in s
+
+
+def test_withheld_reasons_are_collected_in_one_place():
+    """신고서·파일을 만들지 않는 사유는 한 함수가 모은다. 예정신고의 과세 자산은 사유가 없다."""
+    def rv(kind):
+        return {"신고": {"구분": kind}}
+
+    def res(*exempt):
+        return {"계산": {"자산": [{"id": a, "판정": {"전액비과세": x}} for a, x in exempt]}}
+
+    assert MR.withheld(rv("예정"), res(("A", False))) == []
+    assert [w["이름"] for w in MR.withheld(rv("예정"), res(("A", False), ("G", True)))] == ["전액 비과세 자산"]
+    assert [w["이름"] for w in MR.withheld(rv("확정"), res(("A", False)))] == ["확정신고 가산세"]
+    both = MR.withheld(rv("확정"), res(("G", True)))
+    assert [w["이름"] for w in both] == ["전액 비과세 자산", "확정신고 가산세"]
+    for w in both:
+        assert set(w) == {"이름", "까닭", "알림", "안내", "다루지않음"}
