@@ -31,7 +31,7 @@ def _run(name):
     """(엔진 결과, 신고값). 한 번만 만들고 사본을 준다."""
     if name not in _CACHE:
         k = KEYS[name]
-        r = engine.calculate(copy.deepcopy(k["facts"]), today=TODAY)
+        r = engine.calculate(copy.deepcopy(k["facts"]), today=k.get("오늘", TODAY))
         rv = None
         if r["상태"] == "완료":
             rv = return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
@@ -81,6 +81,62 @@ def test_keys_carry_only_synthetic_people():
             assert b["성명"].endswith("합성") and b["번호"].startswith("000102"), name
         for lot in f["자산"].values():
             assert lot.get("취득상대방", "최합성").endswith("합성"), name
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_today_is_not_before_any_sale_date(name):
+    """엔진에 주는 오늘 날짜가 사례의 양도일보다 앞서지 않는다. 09-8 은 C 의 양도일이 기본 오늘보다 뒤라 사례에 오늘을 적었다."""
+    k = KEYS[name]
+    last = max(a["양도"]["잔금일"] for a in k["facts"]["자산"])
+    assert k.get("오늘", TODAY) >= last, (name, last)
+    assert ("오늘" in k) == (last > TODAY), name                  # 필요한 사례에만 적는다
+    r, _ = _run(name)
+    assert r["기준정보"]["오늘"] == k.get("오늘", TODAY) and r["기준정보"]["낡음"] is False
+
+
+def test_cells_that_need_confirmation_are_marked():
+    """원문과 다르게 둔 까닭을 원문만으로 확정하지 못한 칸은 이유가 「확인 필요」로 시작한다. 03 의 납부세액(분납)과 07 의 ⑰."""
+    from answer_keys import CONFIRM
+    marked = sorted((name, form, col, key) for name, k in KEYS.items()
+                    for (form, col, key), (why, _) in k["제외"].items() if why.startswith(CONFIRM))
+    assert marked == [("03", "납부", "합계", "신고기한내납부"), ("07", "부표1", "A", "장특공거주기간")]
+    assert "분납" in KEYS["03"]["제외"][("납부", "합계", "신고기한내납부")][0]
+    assert KEYS["03"]["filer"]["신고"]["분납신청"] is False
+    # 03 이 분납을 신청했다면: 납부할 세액 21,921,400 이 2천만원을 넘어 50% 인 10,960,700 까지 분납한다
+    k = KEYS["03"]
+    r, _ = _run("03")
+    asked = copy.deepcopy(k["filer"])
+    asked["신고"]["분납신청"] = True
+    t = return_values.build(r, k["facts"], filing.load(asked))["본지"]["열"]["합계"]
+    assert (t["납부할세액"], t["분납"], t["신고기한내납부"]) == (21_921_400, 10_960_700, 10_960_700)
+
+
+def test_case_01_rate_and_deduction_codes_come_from_the_simplified_return():
+    """사례 01 만 세율구분표기와 장특공코드를 원문 값으로 둔다(원문의 간편신고서 쪽 값). 원문 부표1 에 그 값이 없는 다른
+    예정신고 사례에는 두지 않는다."""
+    assert (KEYS["01"]["부표1"]["A"]["세율구분표기"], KEYS["01"]["부표1"]["A"]["장특공코드"]) == ("1-10", "02")
+    for name in ("02", "03", "07", "08"):
+        assert "장특공코드" not in KEYS[name]["부표1"]["A"] and "세율구분표기" not in KEYS[name]["부표1"]["A"], name
+
+
+def test_schedule1_period_cells_follow_the_original():
+    """부표1 ⑨ 보유기간, ⑩ 거주기간. 원문은 1세대1주택 고가주택 사례(03)에만 적었고 나머지 사례는 비웠다. 신고값도 같다."""
+    for name in NAMES:
+        _, rv = _run(name)
+        for a in rv["부표1"]:
+            want = KEYS[name]["부표1"][a["자산"]]
+            assert (a["보유기간"], a["거주기간"]) == (want["보유기간"], want["거주기간"]), (name, a["자산"])
+            assert (want["보유기간"] != "") == (name == "03"), name
+
+
+def test_out_case_09_3_carries_both_prior_returns():
+    """확정신고 사례 09 하위 3 은 두 번 모두 예정신고했다. 기신고는 두 건이고 결정세액의 합이 원문 서식 ⑯ 기신고세액이다.
+    손계산(2022년 귀속 세율표): (40,000,000 − 2,500,000) × 15% − 1,080,000 = 4,545,000, 61,600,000 × 24% − 5,220,000 = 9,564,000"""
+    prior = OUT["09-3"]["facts"]["연간"]["기신고"]
+    assert [x["양도소득금액"] for x in prior] == [40_000_000, 61_600_000]
+    assert [x["결정세액"] for x in prior] == [4_545_000, 9_564_000]
+    assert sum(x["결정세액"] for x in prior) == OUT["09-3"]["원문기신고세액"] == 14_109_000
+    assert len(OUT["09-1"]["facts"]["연간"]["기신고"]) == 2 and len(OUT["09-4"]["facts"]["연간"]["기신고"]) == 1
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -185,17 +241,23 @@ def test_main_form_matches_original_form(name):
     assert bad == []
 
 
-@pytest.mark.parametrize("name", [n for n in NAMES if KEYS[n]["납부"]])
+@pytest.mark.parametrize("name", NAMES)
 def test_payment_rows_match_original_form(name):
-    """합계 열의 전자신고세액공제, 납부할 세액, 분납할 세액, 납부세액. 감면·가산세·기신고세액은 원문도 비웠다."""
+    """합계 열의 전자신고세액공제, 납부할 세액, 분납할 세액, 납부세액. 감면·기신고세액은 원문도 비웠다.
+    가산세는 예정신고 사례에는 없고, 확정신고 사례 09-8 은 손계산한 현행 값이다(원문 값과 다른 까닭은 「가산세 대조」)."""
     k = KEYS[name]
+    assert set(k["납부"]) == {"전자신고공제", "납부할세액", "분납", "신고기한내납부"}
     _, rv = _run(name)
     got = rv["본지"]["열"]["합계"]
     bad = ["%s: %r ≠ %r" % (key, got[key], _want(k, "납부", "합계", key, value))
            for key, value in k["납부"].items() if not _same(got[key], _want(k, "납부", "합계", key, value))]
     assert bad == []
-    for key in ("감면세액", "외국납부", "원천징수", "연금계좌", "가산세", "기신고세액"):
+    for key in ("감면세액", "외국납부", "원천징수", "연금계좌", "기신고세액"):
         assert got[key] == 0, key
+    assert got["가산세"] == (k["현행가산세"]["계"] if "현행가산세" in k else 0)
+    if "현행가산세" in k:      # 원문도 납부할 세액 = 산출세액 + 가산세, 납부세액 = 납부할 세액이다
+        src = k["원문가산세"]
+        assert k["납부"]["납부할세액"] == k["원문"]["산출세액"] + src["계"] == src["납부할세액"] == k["납부"]["신고기한내납부"]
 
 
 # ---------------------------------------------------------------- 전자신고 파일
