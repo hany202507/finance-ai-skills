@@ -180,6 +180,12 @@ class Deadline(tuple):
         return self[0], self[1], self.공휴일표, self.옮긴이유
 
 
+def skipped_text(deadline):
+    """신고기한에서 건너뛴 날과 이유를 「2027-02-28(일요일), 2027-03-01(3·1절)」 꼴로 적는다. 옮기지 않았으면 빈 글자.
+    확인사항과 다루지않음 문장이 기한을 왜 옮겼는지 그대로 적을 때 쓴다."""
+    return ", ".join("%s(%s)" % (d.isoformat(), why) for d, why in getattr(deadline, "옮긴이유", ()))
+
+
 def filing_deadline(kind, base, rs):
     """양도소득세 신고기한 (명목 기한, 토·일·공휴일·노동절이 아닌 첫 날로 옮긴 기한). Deadline 을 돌려준다.
 

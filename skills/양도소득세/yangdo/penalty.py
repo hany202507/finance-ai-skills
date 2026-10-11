@@ -13,8 +13,9 @@
                 건별·열별 값은 건마다 원 미만을 버리고, 합계에 모자라는 원을 세액이 가장 큰 건에 더한다(사례 8 서식: 787,556 · 60,313)
   무신고_감면전 감면율을 곱하지 않은 금액. 끝수는 무신고와 같은 방식이다
   납부지연      건마다 예정신고세액 × 일수 × 일이자율. 10원 미만을 버린다(사례 2·4·5·8 의 모든 줄)
-  일수          납부기한(토요일·일요일이면 다음 월요일) 다음 날부터 납부일 전날까지. 규칙 `가산세.납부지연.납부일산입` 이 1 인
-                구간의 납부는 납부일까지
+  일수          납부기한 다음 날부터 납부일 전날까지. 규칙 `가산세.납부지연.납부일산입` 이 1 인 구간의 납부는 납부일까지.
+                납부기한은 예정신고 기한 말일이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날로 옮긴 날이다
+                (dates.filing_deadline). 공휴일 표가 덮지 않는 해에 끝나는 기한은 확인사항으로 알린다
   열            본지 세율구분 열. 건의 가산세를 그 건의 세율구분별 세액 비율로 나눈다(원문 사례는 모두 건 하나가 열 하나다)
 
 해석이 들어간 곳 둘은 결과와 확인사항에 다른 쪽 금액을 함께 싣는다.
@@ -155,7 +156,8 @@ def cases(rows, facts, rs):
     """과세 자산을 예정신고 건으로 묶고 건별 예정신고세액을 구한다. (건 목록, 확인사항).
 
     건 = {"자산": [id], "예정신고세액": int, "기한말일": date, "납부기한": date, "열": {세율구분 표기: 세액},
-          "양도일별": [{"자산", "양도일", "예정신고세액"}] 또는 None}.
+          "양도일별": [{"자산", "양도일", "예정신고세액"}] 또는 None, "공휴일표": bool}.
+    공휴일표는 그 건의 납부기한이 끝나는 해가 공휴일 표에 있는지다(dates.Deadline).
     양도일별은 건을 양도일마다 따로 신고하는 것으로 볼 때의 세액이다(양도일이 하나면 항목도 하나).
     rows 는 엔진 결과의 계산.자산이다. 과세표준과 합산 묶음, 세율구분 코드를 그대로 쓴다.
     """
@@ -164,18 +166,19 @@ def cases(rows, facts, rs):
     for r in sorted(rows, key=lambda r: (r["판정"]["양도일"], r["id"])):
         if r["판정"]["전액비과세"]:
             continue
-        nominal, adjusted = dates.filing_deadline("예정", _deadline_base(r, assets.get(r["id"]) or {}, notes), rs)
-        grouped.setdefault(nominal, (adjusted, []))[1].append(r)
+        deadline = dates.filing_deadline("예정", _deadline_base(r, assets.get(r["id"]) or {}, notes), rs)
+        grouped.setdefault(deadline[0], (deadline, []))[1].append(r)
     out = []
     for nominal in sorted(grouped):
-        adjusted, members = grouped[nominal]
+        deadline, members = grouped[nominal]
+        adjusted = deadline[1]
         ids = [m["id"] for m in members]
         cols, tax = _tax(members, rs)
         if nominal != adjusted:
-            notes.append("자산 %s: 예정신고 기한 말일 %s 이 %s요일이라 다음 월요일 %s 을 납부기한으로 보았다"
-                         % (", ".join(ids), nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()], adjusted.isoformat()))
+            notes.append("자산 %s: 예정신고 기한 말일은 %s 이고 납부기한은 %s 로 보았다. 건너뛴 날은 %s 이다"
+                         % (", ".join(ids), nominal.isoformat(), adjusted.isoformat(), dates.skipped_text(deadline)))
         out.append({"자산": ids, "예정신고세액": tax, "기한말일": nominal, "납부기한": adjusted, "열": cols,
-                    "양도일별": _by_sale_date(members, rs)})
+                    "양도일별": _by_sale_date(members, rs), "공휴일표": deadline.공휴일표})
     return out, notes
 
 
@@ -312,8 +315,12 @@ def final_return(result, facts, paid_on, rules_dir=None):
         "부정행위로 신고하지 않은 경우의 무신고가산세 율과, 과세표준과 세액을 경정할 것을 미리 알고 신고해 감면이 없는 경우는 다루지 않는다. "
         "일반 무신고 율 %s 와 감면 %s 를 적용했다" % (_pct(rate), _pct(relief)),
         "납부지연가산세는 건마다 %s원 미만을 버렸다(국세청 확정신고 작성 사례의 계산 근거와 같은 끝수 처리)" % LATE_UNIT,
-        "납부기한의 끝이 공휴일·대체공휴일·노동절이면 그 다음 날이 기한이라 일수가 줄어든다. 이 계산은 토요일·일요일만 옮겼다",
     ]
+    unknown = [c for c in found if not c["공휴일표"]]
+    if unknown:     # 공휴일 표가 덮는 해의 기한은 공휴일까지 건너뛴 날이라 알릴 것이 없다
+        head.append("자산 %s: 예정신고 납부기한이 끝나는 해가 공휴일 표에 없다. 토요일·일요일과 날짜가 고정된 공휴일·노동절만 건너뛰었고 "
+                    "그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 건너뛰지 못했다. 납부기한이 그런 날이면 실제 기한은 "
+                    "더 늦고 일수가 줄어든다" % ", ".join(i for c in unknown for i in c["자산"]))
     for m in head + notes:
         if m not in out["확인사항"]:
             out["확인사항"].append(m)

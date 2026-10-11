@@ -272,7 +272,9 @@ def test_notes_say_what_was_assumed():
     assert any("미리 알고" in m for m in notes)
     assert any("납부일" in m and "2027-05-20" in m for m in notes)
     assert any("같은 달" in m and "F" in m and "B" in m for m in notes)
-    assert any("공휴일" in m for m in notes)
+    # 2027년은 공휴일 표에 있다. 건너뛴 날을 그대로 적고 「토요일·일요일만 옮겼다」는 문장은 내지 않는다
+    assert any("건너뛴 날은 2027-01-31(일요일)" in m and "납부기한은 2027-02-01" in m for m in notes)
+    assert not any("토요일·일요일만" in m or "다음 월요일" in m for m in notes)
     assert any("10원 미만" in m for m in notes)
     assert all(chr(0x2014) not in m and not m.rstrip().endswith("?") for m in notes)
     assert [(c["법령"], c["조항"]) for c in out["근거"]][:2] == [("국세기본법", "제47조의2①2호"), ("국세기본법", "제47조의2⑤")]
@@ -446,3 +448,28 @@ def test_case_whose_merged_comparison_tax_wins_is_unsupported(rs):
     rows[1] = _row("B", "2026-06-02", 551_600_000, "10", 종류="주택")          # 다른 달이면 건마다 따로라 정해진다
     got, _ = penalty.cases(rows, _facts_for(rows), rs)
     assert [c["예정신고세액"] for c in got] == [11_865_000, 195_732_000]
+
+
+# ---- 공휴일 표를 반영한 납부기한 문장(계획 2b fix round 1) ----
+
+def test_due_date_note_names_the_holiday_that_was_skipped():
+    """F 를 2026-12-10 에 양도하면 예정신고 기한 말일은 2027-02-28(일요일)이고 다음 날이 3·1절이라 납부기한은 2027-03-02 다.
+    일수는 2027-03-03 ~ 2027-05-19 = 29 + 30 + 19 = 78."""
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2026-12-10"
+    out = penalty.final_return(_calc(f), f, "2027-05-20")
+    assert (out["건"][0]["기한말일"], out["건"][0]["납부기한"], out["건"][0]["일수"]) == ("2027-02-28", "2027-03-02", 78)
+    note = [m for m in out["확인사항"] if "납부기한은 2027-03-02" in m]
+    assert len(note) == 1 and "2027-02-28(일요일), 2027-03-01(3·1절)" in note[0]
+    assert not any("토요일·일요일만" in m or "다음 월요일" in m for m in out["확인사항"])
+
+
+def test_due_date_in_a_year_without_holiday_table_is_flagged():
+    """공휴일 표에 없는 해(2028년)에 끝나는 납부기한. 그 해의 연휴와 대체공휴일을 건너뛰지 못했다고 알린다.
+    F 를 2027-11-01 에 양도하면 기한은 2028-01-31(월요일)이다."""
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2027-11-01"
+    out = penalty.final_return(_calc(f), f, "2028-05-20")
+    assert out["건"][0]["납부기한"] == "2028-01-31"
+    note = [m for m in out["확인사항"] if "공휴일 표에 없" in m]
+    assert len(note) == 1 and "자산 F" in note[0] and "일수가 줄어든다" in note[0]
