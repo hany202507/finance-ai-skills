@@ -180,6 +180,7 @@ def test_clear_previous_keeps_user_folders_with_the_temp_prefix(tmp_path):
     assert outputs.clear_previous(str(tmp_path)) == []
     assert sorted(os.listdir(tmp_path)) == [".efile-abcd1234", ".efile-메모"]
     assert (memo / "메모.txt").read_text(encoding="utf-8") == "사용자 메모"
+    assert outputs.tmp_left_notes(str(tmp_path)) == []       # 이 도구의 파일이 없는 폴더는 알리지 않는다
 
 
 def _facts_file(tmp_path, name="A"):

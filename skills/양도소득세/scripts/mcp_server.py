@@ -114,8 +114,10 @@ def _malformed(e):
                      % type(e).__name__)
 
 
-def _write_error(e, fallback):
-    return ToolError("출력 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (e.filename or fallback, _why(e)))
+def _write_error(e, fallback, notes=()):
+    """출력 파일 쓰기 실패. notes 는 뒤에 붙일 문장(지우지 못한 임시 폴더 알림)이다."""
+    text = "출력 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (e.filename or fallback, _why(e))
+    return ToolError(". ".join([text] + list(notes)))
 
 
 def _label(key):
@@ -296,13 +298,14 @@ def _calculate(args):
     except OSError as e:
         if not out_dir:
             raise
-        raise _write_error(e, out_dir) from e
+        # 쓰기 실패로 끝나도 남은 임시 폴더는 알린다(run.py 와 같다). 인적사항이 든 신고값 사본이 있을 수 있다
+        raise _write_error(e, out_dir, outputs.tmp_left_notes(out_dir)) from e
     except (ValueError, TypeError, KeyError, AttributeError) as e:
         raise _malformed(e) from e
     s = {k: res[k] for k in ("상태", "기준정보", "질문", "다루지않음", "확인사항", "경고", "검산")}
     s["파일"] = files
     left = outputs.tmp_left_notes(out_dir) if out_dir else []
-    if left:        # 지우지 못한 전자신고 임시 폴더. 인적사항이 든 신고값 사본이 있을 수 있어 계산 도구도 알린다(폴더 이름만 싣는다)
+    if left:        # 지우지 못했거나 다른 파일이 함께 있어 지우지 않은 전자신고 임시 폴더. 인적사항이 든 신고값 사본이 있을 수 있어 계산 도구도 알린다(폴더 이름만 싣는다)
         s["알림"] = left
     cal = res["계산"]
     if cal:

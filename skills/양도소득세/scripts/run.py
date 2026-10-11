@@ -38,7 +38,7 @@ read_facts = outputs.read_facts
 
 
 def _tell_tmp_left(out):
-    """지우지 못한 전자신고 임시 폴더를 표준오류로 알린다(인적사항이 든 신고값 사본이 있을 수 있다)."""
+    """지우지 못했거나 다른 파일이 함께 있어 지우지 않은 전자신고 임시 폴더를 표준오류로 알린다(인적사항이 든 신고값 사본이 있을 수 있다)."""
     for note in outputs.tmp_left_notes(out):
         print(note, file=sys.stderr)
 

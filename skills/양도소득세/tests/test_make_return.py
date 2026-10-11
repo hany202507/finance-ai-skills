@@ -1311,8 +1311,9 @@ def test_ci_runs_make_return_on_the_synthetic_case(tmp_path):
     cmds = _ci_commands()
     assert len(cmds) == 3
     assert "tests/sample_inputs.py" in cmds[0] and "scripts/make_return.py" in cmds[1] and "yangdo.efile_check" in cmds[2]
+    # CI 작업과 같은 환경으로 돌린다. PYTHONPATH 는 주지 않는다(작업 폴더가 스킬 폴더인 것만으로 돌아야 한다)
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-    env["PYTHONPATH"] = os.pathsep.join(x for x in (SKILL, env.get("PYTHONPATH")) if x)
+    env.pop("PYTHONPATH", None)
     for cmd in cmds:
         words = cmd.split()
         assert words[0] == "python"
@@ -1382,3 +1383,122 @@ def test_final_return_after_preliminary_in_the_same_folder(tmp_path):
         rv = json.load(fh)
     assert rv["신고"]["구분"] == "확정" and {x["자산"] for x in rv["부표1"]} == {"B", "F"}
     assert {os.path.basename(p) for p in second["파일"]} == set(os.listdir(out))
+
+
+# ---------------------------------------------------------------- 검토 반영 1차(G7)
+
+def _plant_mixed(out):
+    """강제로 끝난 실행이 남긴 임시 폴더에 다른 파일이나 폴더가 끼어 있다. 이 도구의 폴더로 가리지 못해 지우지 않는다."""
+    a = out / ".efile-killed02"
+    a.mkdir(parents=True)
+    (a / "20261215C116300.01").write_bytes(b"unchecked")
+    (a / "신고값.json").write_text("{}", encoding="utf-8")
+    (a / ".DS_Store").write_bytes(b"x")
+    b = out / ".efile-killed03"
+    (b / "sub").mkdir(parents=True)
+    (b / "신고값.json").write_text("{}", encoding="utf-8")
+    c = out / ".efile-abcd1234"                               # 이 도구의 파일이 하나도 없다. 사용자의 폴더라 알리지 않는다
+    c.mkdir()
+    (c / "내파일.txt").write_text("x", encoding="utf-8")
+    return [".efile-killed02", ".efile-killed03"]
+
+
+def _mixed_told(notes, names):
+    for n in names:
+        assert any(n in x and "다른 파일이 함께 있어 지우지 않았다" in x and "직접 확인해 지운다" in x for x in notes), (n, notes)
+    assert not any(".efile-abcd1234" in x for x in notes)
+
+
+def test_make_return_tells_about_mixed_temp_folders_it_did_not_remove(tmp_path):
+    out = tmp_path / "out"
+    names = _plant_mixed(out)
+    rep = MR.make(CASES["S1"], s1_filer(), str(out), today=TODAY)
+    assert rep["종료코드"] == 0
+    left = set(os.listdir(out))
+    assert set(names) | {".efile-abcd1234"} <= left          # 지우지 않았다
+    assert (out / ".efile-killed02" / "신고값.json").exists()
+    _mixed_told(rep["알림"], names)
+    _mixed_told(_section(_confirm(out), "## 알림").splitlines(), names)
+    _mixed_told(rep["전자신고"]["경고"], names)               # efile.write 의 경고에도 실린다
+    res = mcp_server.call_tool("yangdo_efile", {"facts": CASES["S1"], "filer_path": _filer_file(tmp_path, s1_filer()),
+                                                "out_dir": str(out), "today": TODAY})
+    _mixed_told(res["알림"], names)
+
+
+def test_make_return_tells_about_mixed_temp_folders_even_when_it_stops_early(tmp_path):
+    """신고인 질문으로 끝나 전자신고 단계까지 가지 않은 실행도 알린다."""
+    out = tmp_path / "out"
+    names = _plant_mixed(out)
+    rep = MR.make(CASES["S1"], filers.get("S1"), str(out), today=TODAY)
+    assert rep["종료코드"] == 2 and rep["전자신고"] is None
+    _mixed_told(rep["알림"], names)
+
+
+def test_run_and_mcp_calculate_tell_about_mixed_temp_folders(tmp_path, capsys):
+    import run
+    out = tmp_path / "out"
+    names = _plant_mixed(out)
+    fp, _, _ = _write(tmp_path, "A", filers.get("A"))
+    capsys.readouterr()
+    assert run.main(["--사실관계", str(fp), "--출력", str(out), "--오늘", TODAY]) == 0
+    _mixed_told(capsys.readouterr().err.splitlines(), names)
+    res = mcp_server.call_tool("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(out), "today": TODAY})
+    _mixed_told(res["알림"], names)
+    assert set(names) <= set(os.listdir(out))
+
+
+def test_efile_write_warns_about_mixed_temp_folders(tmp_path):
+    names = _plant_mixed(tmp_path)
+    rep = MR.make(CASES["S1"], s1_filer(), str(tmp_path / "o"), today=TODAY)
+    with open(tmp_path / "o" / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    rv.pop("_주의")
+    w = efile.write(rv, str(tmp_path))
+    assert rep["종료코드"] == 0 and w["검증"] == [] and os.path.isfile(w["경로"])
+    _mixed_told(w["경고"], names)
+    assert efile_tmp.mixed(str(tmp_path)) == names and efile_tmp.left(str(tmp_path)) == []
+
+
+def test_mcp_calculate_write_failure_still_tells_about_temp_folders(tmp_path, monkeypatch):
+    """계산 도구가 쓰기 실패로 끝나도 지우지 못한 임시 폴더와 다른 파일이 섞인 임시 폴더를 알린다(run.py 와 같다)."""
+    out = tmp_path / "out"
+    names = _plant_mixed(out)
+    stuck = out / ".efile-stuck001"
+    stuck.mkdir()
+    (stuck / "신고값.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(efile_tmp.shutil, "rmtree", lambda *a, **k: None)
+    (out / "양도소득세_계산근거.xlsx").write_text("x", encoding="utf-8")
+    _lock(monkeypatch, "양도소득세_계산근거.xlsx")
+    r = mcp_server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "yangdo_calculate", "arguments": {"facts": CASES["A"], "out_dir": str(out), "today": TODAY}}})
+    monkeypatch.undo()
+    text = r["result"]["content"][0]["text"]
+    assert r["result"].get("isError") is True and "쓰지 못했다" in text
+    assert ".efile-stuck001" in text and "직접 지운다" in text
+    for n in names:
+        assert n in text
+
+
+def test_unexpected_error_marks_a_guide_that_already_has_another_head(tmp_path, monkeypatch):
+    """참고용 머리 줄이 붙은 안내서(가산세를 계산하지 못한 확정신고)도 오류로 끝나면 그 사실이 맨 위에 온다."""
+    def boom(rv, facts, res):
+        raise RuntimeError("터짐")
+
+    monkeypatch.setattr(MR.guide, "attachments", boom)
+    out = tmp_path / "o"
+    rep = MR.make(_bf_merged_facts(), filers.get("BF"), str(out), today=TODAY)
+    assert rep["종료코드"] == 1 and rep["상태"] == "오류"
+    with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    assert lines[0].startswith("> ") and "예상하지 못한 오류" in lines[0] and "신고하지 않는다" in lines[0]
+    assert lines[1] == "" and lines[2].startswith("> ") and "참고용" in lines[2]      # 먼저 붙은 머리 줄은 그 아래에 남는다
+    assert sum(1 for ln in lines if "예상하지 못한 오류" in ln) == 1
+
+
+def test_return_date_check_ignores_fully_exempt_assets(tmp_path):
+    """작성일과 양도일을 견줄 때 신고서에 넣지 않는 전액 비과세 자산의 양도일은 보지 않는다(신고값 단계와 같다)."""
+    res = {"계산": {"자산": [{"id": "A", "판정": {"양도일": "2026-11-20", "전액비과세": False}},
+                           {"id": "G", "판정": {"양도일": "2026-12-28", "전액비과세": True}}]}}
+    assert MR._return_before_sale({"신고": {"작성일": "2026-12-15"}}, res) is None
+    assert "2026-11-20" in MR._return_before_sale({"신고": {"작성일": "2026-11-01"}}, res)
+    assert MR._return_before_sale({"신고": {"작성일": None}}, res) is None

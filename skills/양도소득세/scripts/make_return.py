@@ -151,8 +151,9 @@ def clear_previous(out):
     run.py 의 파일(통합 문서부터)을 마지막에 지운다. 하나가 막혀도 나머지를 끝까지 지운다. 지우지 못한 파일이 있으면 처음 난
     OSError 를 돌려주고, 부른 쪽이 종료코드 4 로 멈춘다. 지우지 못한 임시 폴더는 문장으로 알린다. 폴더 안의 다른 파일은 그대로 둔다.
     """
-    left, first = outputs.clear_all(out)
-    return [outputs.TMP_LEFT_NOTE % name for name in left], first
+    _, first = outputs.clear_all(out)
+    # 지우지 못해 남은 임시 폴더와, 다른 파일이 함께 있어 지우지 않은 임시 폴더 꼴의 폴더를 같은 함수로 알린다
+    return outputs.tmp_left_notes(out), first
 
 
 def _leftovers(out):
@@ -204,7 +205,8 @@ def _drop_submittable(rep, out):
 def _mark_guides(rep, out, note):
     """예상하지 못한 오류로 끝날 때, 이번 실행이 이미 쓴 입력 안내서·부속서류 맨 위에 쓰지 말라는 줄을 붙인다.
 
-    안내서를 쓰는 도중에 오류가 나면 먼저 쓴 파일이 머리 줄 없이 남기 때문이다. 줄을 붙이지 못한 파일은 지운다.
+    안내서를 쓰는 도중에 오류가 나면 먼저 쓴 파일이 그 사실 없이 남기 때문이다. 다른 머리 줄이 이미 있는 안내서도 맨 위에
+    붙인다. 줄을 붙이지 못한 파일은 지운다.
     """
     made = False
     for name in (GUIDE_FILE, ATTACH_FILE):
@@ -214,7 +216,8 @@ def _mark_guides(rep, out, note):
         try:
             with open(path, encoding="utf-8") as fh:
                 body = fh.read()
-            if not body.startswith("> "):
+            # 다른 머리 줄(참고용, 검증 실패 등)이 먼저 붙어 있어도 오류로 끝났다는 줄을 그 위에 붙인다. 같은 줄을 두 번 붙이지는 않는다
+            if not body.startswith("> %s\n" % note):
                 _write_text(path, "> %s\n\n%s" % (note, body))
             made = True
         except (OSError, ValueError):
@@ -339,7 +342,8 @@ def _return_before_sale(f, res):
     """
     made = (f.get("신고") or {}).get("작성일")
     try:
-        last = max(r["판정"]["양도일"] for r in res["계산"]["자산"])
+        left_out = set(return_values.exempt_ids(res))      # 신고값 단계처럼 신고서에 넣지 않는 전액 비과세 자산은 보지 않는다
+        last = max(r["판정"]["양도일"] for r in res["계산"]["자산"] if r["id"] not in left_out)
         early = dates.to_date(made) < dates.to_date(last)
     except (ValueError, TypeError, KeyError):
         return None

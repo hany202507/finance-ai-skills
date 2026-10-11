@@ -445,7 +445,8 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     final = os.path.join(out_dir, name)
     if os.path.lexists(final):
         os.remove(final)
-    warns = [msg for _, msg in efile_tmp.sweep(out_dir)]
+    # 지우지 못한 폴더와, 다른 파일이 함께 있어 지우지 않은 폴더(신고값 사본이 있을 수 있다)를 경고로 알린다
+    warns = [msg for _, msg in efile_tmp.sweep(out_dir)] + efile_tmp.mixed_notes(out_dir)
     try:
         records, notes = build(rv, efile_dir)
     except BuildError as e:

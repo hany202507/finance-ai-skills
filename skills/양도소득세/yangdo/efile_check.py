@@ -1021,6 +1021,8 @@ class _Checker:
 
     def _reconcile_number(self, r, no, f, value, where):
         money = r.kind in ("03", "05") and f["len"] == 13 and f["dec"] == 0      # 두 금액을 문장에 싣는 칸
+        # 신고값이 None 이나 빈 글자면 실패로 본다. 생성기는 Null 허용 수치 칸의 빈 값을 0 으로 채우지만 검증기는 0 으로 읽어 주지 않는다.
+        # 신고값 전자신고 절은 0 칸까지 수로 싣기로 했으므로(global.md 「신고값 전자신고 키」) 빈 값은 신고값이 덜 채워진 것이다
         v = _scaled(value, f["dec"])
         if v is None:
             self.fail("신고값 %s 이 %s 아님" % (where, "정수가" if f["dec"] == 0 else "수가"))

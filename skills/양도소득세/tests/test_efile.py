@@ -516,6 +516,29 @@ def test_write_keeps_folders_it_did_not_make(tmp_path):
     assert (memo / "신고값.json").read_text(encoding="utf-8") == "사용자 메모"
 
 
+def test_mixed_temp_folder_is_kept_and_named(tmp_path):
+    """이 도구의 파일에 다른 파일이나 폴더가 섞인 임시 폴더는 지우지 않되 이름을 알린다. 이 도구의 파일이 없는 폴더는 알리지 않는다."""
+    d = str(tmp_path)
+    for name, files, dirs in ((".efile-killed02", ("신고값.json", "20261215C116300.01", ".DS_Store"), ()),
+                              (".efile-killed03", ("신고값.json",), ("sub",)),
+                              (".efile-killed04", ("검증안됨.tmp", "메모.txt"), ()),
+                              (".efile-abcd1234", ("내파일.txt",), ()),
+                              (".efile-메모", ("신고값.json", "메모.txt"), ())):
+        os.makedirs(os.path.join(d, name))
+        for f in files:
+            open(os.path.join(d, name, f), "w").close()
+        for sub in dirs:
+            os.makedirs(os.path.join(d, name, sub))
+    assert efile_tmp.mixed(d) == [".efile-killed02", ".efile-killed03", ".efile-killed04"]
+    assert efile_tmp.left(d) == [] and efile_tmp.sweep(d) == []
+    notes = efile_tmp.left_notes(d)
+    assert notes == efile_tmp.mixed_notes(d) and len(notes) == 3
+    assert all("직접 확인해 지운다" in x and "신고값 사본" in x for x in notes)
+    assert len(os.listdir(d)) == 5                          # 아무것도 지우지 않았다
+    out = efile.write(_rv("S1"), d)
+    assert out["검증"] == [] and out["경고"] == notes
+
+
 def test_temp_folder_made_by_the_tool_is_recognized(tmp_path):
     """mkdtemp 가 붙이는 이름이 이 도구의 폴더 꼴과 맞는다. 파이썬이 이름 짓는 법을 바꾸면 이 시험이 알린다."""
     work = efile_tmp.make(str(tmp_path))
