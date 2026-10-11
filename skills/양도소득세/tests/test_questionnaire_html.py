@@ -33,23 +33,75 @@ def test_generated_html_is_up_to_date(tmp_path):
     assert out.read_bytes() == open(HTML, "rb").read()
 
 
+def _html():
+    with open(HTML, encoding="utf-8") as f:
+        return f.read()
+
+
+def _questions():
+    with open(os.path.join(SKILL, "질문지", "문항.json"), encoding="utf-8") as f:
+        return json.load(f)["문항"]
+
+
+def _embedded(s, block):
+    """HTML 에 넣은 JSON 블록(defs, conditions)."""
+    m = re.search(r'<script id="%s" type="application/json">(.*?)</script>' % block, s, re.S)
+    return json.loads(m.group(1))
+
+
 def test_no_network_and_no_personal_questions():
-    s = open(HTML, encoding="utf-8").read()
+    s = _html()
     assert not re.search(r"https?://(?!www\.law\.go\.kr)", s)      # 외부 스크립트·전송 없음. 근거 링크만 허용
     assert "fetch(" not in s and "XMLHttpRequest" not in s
-    qs = json.load(open(os.path.join(SKILL, "질문지", "문항.json"), encoding="utf-8"))["문항"]
-    for q in qs:
-        if q.get("범위") == "서식단계":
-            assert ('data-q="%s"' % q["id"]) not in s
+    # 서식단계 문항(F0x, 인적사항 등)은 화면이 그리는 정의와 조건 목록에 아예 없다. 화면은 정의 JSON 에서만 문항을 만든다
+    form_ids = {q["id"] for q in _questions() if q.get("범위") == "서식단계"}
+    assert form_ids and all(i.startswith("F") for i in form_ids)
+    defs, conds = _embedded(s, "defs"), _embedded(s, "conditions")
+    shown = {q["id"] for q in defs["questions"]}
+    assert shown and not shown & form_ids and not set(conds) & form_ids
+    assert not [i for i in shown | set(conds) if re.fullmatch(r"F0\d", i)]
+    for i in form_ids:                                       # 정의 밖의 글자로도 문항 id 가 실리지 않았다
+        assert ('"%s"' % i) not in s, i
+
+
+def _csp(s):
+    """CSP meta 의 지시문 {이름: [값]} 과 meta 가 시작하는 위치."""
+    m = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)">', s)
+    assert m, "CSP meta 가 없다"
+    policy = {}
+    for part in m.group(1).split(";"):
+        words = part.split()
+        if words:
+            assert words[0] not in policy
+            policy[words[0]] = words[1:]
+    return policy, m.start()
+
+
+def test_csp_allows_only_what_the_page_uses():
+    """외부 요청이 없다는 것을 브라우저가 지키게 한다. 기본은 모두 막고 이 파일 안의 스크립트와 스타일만 허용한다."""
+    s = _html()
+    policy, at = _csp(s)
+    assert policy == {"default-src": ["'none'"], "script-src": ["'unsafe-inline'"], "style-src": ["'unsafe-inline'"],
+                      "base-uri": ["'none'"], "form-action": ["'none'"]}
+    # 정책은 스타일과 스크립트보다 앞에 있어야 그것들에 적용된다
+    assert at < s.index("<style>") and at < s.index("<script")
+    # 허용하지 않은 것을 페이지가 쓰지 않는다: 외부 스크립트·스타일·그림·글꼴·틀·양식, 문자열 실행
+    assert not re.search(r"<script[^>]*\ssrc=|<link\b|<img\b|<iframe\b|<object\b|<embed\b|<form\b|<base\b", s)
+    assert "@import" not in s and "url(" not in s and "@font-face" not in s
+    assert not re.search(r"\beval\(|new Function\(|WebSocket|EventSource|sendBeacon|importScripts|new Worker", s)
+    # 스크립트 블록은 넷뿐이다. 실행되는 것은 core 와 app 이고 나머지 둘은 자료(JSON)다
+    assert re.findall(r"<script([^>]*)>", s) == [' id="defs" type="application/json"', ' id="conditions" type="application/json"',
+                                                  ' id="core"', ' id="app"']
+
+
+def test_csp_is_in_the_template_not_patched_into_the_output():
+    assert "Content-Security-Policy" in mq.read("page.html") and _csp(mq.render())[0] == _csp(_html())[0]
 
 
 def test_condition_table_matches_python():
     """HTML 에 넣은 조건 목록이 문항.json 의 보이는조건과 같다."""
-    s = open(HTML, encoding="utf-8").read()
-    m = re.search(r'<script id="conditions" type="application/json">(.*?)</script>', s, re.S)
-    embedded = json.loads(m.group(1))
-    qs = json.load(open(os.path.join(SKILL, "질문지", "문항.json"), encoding="utf-8"))["문항"]
-    assert embedded == {q["id"]: q["보이는조건"] for q in qs if q.get("범위") != "서식단계"}
+    embedded = _embedded(_html(), "conditions")
+    assert embedded == {q["id"]: q["보이는조건"] for q in _questions() if q.get("범위") != "서식단계"}
 
 
 # ---- 생성물 점검 ---------------------------------------------------------------------------------
@@ -78,7 +130,10 @@ def test_generated_html_has_no_banned_marks_in_screen_copy():
 
 # ---- 화면 논리(core.js)를 node 로 돌려 파이썬과 견준다 -----------------------------------------------
 NODE = shutil.which("node")
-needs_node = pytest.mark.skipif(NODE is None, reason="node 가 없어 화면 논리 시험을 건너뛴다")
+# CI(환경 변수 CI 가 있을 때)에서는 node 가 없어도 건너뛰지 않는다. 화면 논리 시험이 조용히 빠진 채 통과하지 않게 하려는 것이다.
+# 건너뛰지 않은 시험은 _node 가 node 가 없다는 문장으로 실패시킨다
+IN_CI = bool(os.environ.get("CI"))
+needs_node = pytest.mark.skipif(NODE is None and not IN_CI, reason="node 가 없어 화면 논리 시험을 건너뛴다")
 HARNESS = os.path.join(SKILL, "tests", "questionnaire_harness.js")
 UNSET = object()
 
@@ -89,6 +144,7 @@ def _doc():
 
 
 def _node(payload):
+    assert NODE, "node 가 없다. CI 에서는 화면 논리 시험을 건너뛰지 않는다. 작업에 node 를 깔아 준다"
     p = subprocess.run([NODE, HARNESS], input=json.dumps(payload).encode("utf-8"), capture_output=True, check=True, env=_env())
     return json.loads(p.stdout.decode("utf-8"))
 

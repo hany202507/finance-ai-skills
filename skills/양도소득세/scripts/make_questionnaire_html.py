@@ -15,6 +15,8 @@ HTML 은 엔진을 돌릴 수 없다. 그래서 조건 문법(문항.json 머리
 서식단계 문항이 바뀌어도 생성물이 달라지지 않아야 하기 때문이다.
 
 화면 논리는 scripts/questionnaire_template/ 의 core.js(DOM 없음, node 시험이 파이썬 판정과 견준다), app.js, style.css, page.html 이다.
+page.html 의 CSP meta 가 이 파일 안의 스크립트·스타일만 허용하고 그 밖의 요청을 모두 막는다(default-src 'none'). 템플릿에 외부 자원,
+그림, 글꼴, 양식 전송, 문자열 실행(eval)을 더하면 브라우저가 막으니 정책과 시험(tests/test_questionnaire_html.py)을 함께 고친다.
 """
 import argparse
 import hashlib

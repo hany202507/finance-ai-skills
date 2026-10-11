@@ -1264,3 +1264,52 @@ def test_make_return_does_not_import_the_run_script():
     p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert p.returncode == 0 and p.stdout.strip() == "False", p.stdout + p.stderr
     assert run.iso_date is outputs.iso_date and run.read_facts is outputs.read_facts and run._iso_date is outputs.iso_date
+
+
+# ---------------------------------------------------------------- CI 의 합성 실행 단계
+
+WORKFLOW = os.path.join(os.path.dirname(os.path.dirname(SKILL)), ".github", "workflows", "test.yml")
+
+
+def _ci_commands():
+    """CI 작업 파일에서 양도소득세 단계의 명령 줄(run: python ...)을 차례로 뽑는다."""
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    out = []
+    for i, ln in enumerate(lines):
+        if ln.strip() == "if: matrix.skill == '양도소득세'" and i + 1 < len(lines) and lines[i + 1].strip().startswith("run: "):
+            out.append(lines[i + 1].strip()[len("run: "):])
+    return out
+
+
+@pytest.mark.skipif(not os.path.exists(WORKFLOW), reason="플러그인 저장소 없이 스킬 폴더만 있다")
+def test_ci_runs_make_return_on_the_synthetic_case(tmp_path):
+    """CI 작업 파일에 적힌 양도소득세 명령을 그대로 돌린다. 합성 입력 만들기, 신고서와 전자신고 파일 만들기, 파일 검증이 모두 0 으로 끝난다."""
+    cmds = _ci_commands()
+    assert len(cmds) == 3
+    assert "tests/sample_inputs.py" in cmds[0] and "scripts/make_return.py" in cmds[1] and "yangdo.efile_check" in cmds[2]
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    env["PYTHONPATH"] = os.pathsep.join(x for x in (SKILL, env.get("PYTHONPATH")) if x)
+    for cmd in cmds:
+        words = cmd.split()
+        assert words[0] == "python"
+        # 작업 폴더는 CI 처럼 스킬 폴더로 두고, 쓰는 폴더(ci_sample, ci_out)만 임시 폴더 아래로 돌린다
+        args = [str(tmp_path / w) if w.startswith(("ci_sample", "ci_out")) else w for w in words[1:]]
+        p = subprocess.run([sys.executable] + args, cwd=SKILL, capture_output=True, text=True, encoding="utf-8", env=env, timeout=300)
+        assert p.returncode == 0, cmd + chr(10) + p.stdout + p.stderr
+    names = set(os.listdir(tmp_path / "ci_out"))
+    assert PDFS | {"20261220C116300.01", "신고값.json", "신고_확인.md"} <= names
+
+
+def test_sample_inputs_script_writes_both_files(tmp_path, capsys):
+    import sample_inputs
+    assert sample_inputs.main(["A", str(tmp_path / "s")]) == 0
+    facts_path, filer_path, made = capsys.readouterr().out.split()
+    with open(facts_path, encoding="utf-8") as fh:
+        assert json.load(fh) == CASES["A"]
+    with open(filer_path, encoding="utf-8") as fh:
+        assert json.load(fh) == filers.get("A")
+    assert made == "2026-12-20" and os.path.basename(filer_path) == "a_신고인.json"
+    assert sample_inputs.main(["A"]) == 2
+    with pytest.raises(SystemExit):
+        sample_inputs.main(["없는사례", str(tmp_path / "t")])
