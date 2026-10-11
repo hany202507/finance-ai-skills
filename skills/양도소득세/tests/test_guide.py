@@ -137,7 +137,7 @@ def test_input_guide_marks_blank_required_values():
 def test_input_guide_style():
     for name in ("A", "S1", "BF", "K"):
         md = guide.hometax_input(_rv(name))
-        assert "—" not in md
+        assert chr(0x2014) not in md
         assert "그리디" not in md
         assert not any(line.rstrip().endswith(("?", "？")) for line in md.splitlines())
 
@@ -177,7 +177,7 @@ def test_attachment_list_has_no_personal_numbers():
         md = guide.attachments(rv, CASES[name], _res(name))
         for s in [rv["신고인"]["주민등록번호"], rv["신고인"]["전화"]] + [b["번호"] for b in rv["양수인"]]:
             assert s not in md
-        assert "—" not in md
+        assert chr(0x2014) not in md
         assert not any(line.rstrip().endswith(("?", "？")) for line in md.splitlines())
 
 
