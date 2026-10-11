@@ -122,12 +122,61 @@ def acquisition_date(취득):
 WEEKDAY_KO = "월화수목금토일"
 
 
+class Holidays:
+    """공휴일 표(rules/공휴일.json). 고정 공휴일은 월·일로 세고, 나머지는 연도별 날짜로 본다.
+
+    `고정` 은 날짜가 해마다 같은 공휴일과 노동절이다(시작·끝으로 공휴일이던 기간을 가른다).
+    `연도` 는 정부 발표로 확인한 해의 설날·추석 연휴, 부처님 오신 날, 대체공휴일, 선거일, 임시공휴일 날짜다.
+    대체공휴일을 규칙으로 계산하지 않는다. 표에 없는 해의 그런 날은 모른다.
+    """
+
+    def __init__(self, data):
+        self.fixed = [(int(f["월"]), int(f["일"]), f["이름"], to_date(f.get("시작")), to_date(f.get("끝")))
+                      for f in data.get("고정", [])]
+        self.days, self.years = {}, set()
+        for year, y in (data.get("연도") or {}).items():
+            for x in y.get("날짜", []):
+                d = to_date(x["날짜"])
+                if d.year != int(year):
+                    raise ValueError("공휴일 표의 %s년에 다른 해의 날짜가 있다: %s" % (year, d))
+                self.days[d] = x["이름"]
+            self.years.add(int(year))
+
+    def covers(self, year):
+        """그 해의 설날·추석 연휴, 대체공휴일 등이 표에 있는지."""
+        return year in self.years
+
+    def name(self, day):
+        """공휴일이면 이름, 아니면 None. 토요일·일요일은 여기서 보지 않는다."""
+        for m, d, name, start, end in self.fixed:
+            if (day.month, day.day) == (m, d) and (start is None or start <= day) and (end is None or day <= end):
+                return name
+        return self.days.get(day)
+
+
+class Deadline(tuple):
+    """신고기한 (명목 기한, 옮긴 기한). 예전처럼 두 값으로 풀어 쓴다.
+
+    공휴일표: 명목 기한부터 옮긴 기한까지의 해가 모두 공휴일 표에 있으면 True. False 면 그 해의 설날·추석 연휴,
+              대체공휴일, 선거일, 임시공휴일을 모르고 옮긴 기한이라 실제 기한이 더 늦을 수 있다.
+    옮긴이유: 기한에서 건너뛴 날과 이유 ((날짜, "일요일"), (날짜, "3·1절"), ...). 옮기지 않았으면 빈 튜플.
+    """
+
+    def __new__(cls, nominal, adjusted, covered, moved):
+        self = super().__new__(cls, (nominal, adjusted))
+        self.공휴일표 = covered
+        self.옮긴이유 = tuple(moved)
+        return self
+
+
 def filing_deadline(kind, base, rs):
-    """양도소득세 신고기한 (명목 기한, 토·일을 다음 월요일로 옮긴 기한).
+    """양도소득세 신고기한 (명목 기한, 토·일·공휴일·노동절이 아닌 첫 날로 옮긴 기한). Deadline 을 돌려준다.
 
     예정신고는 base(양도일, 허가 전 대금 청산이면 허가일)가 속하는 달의 말일에서 `신고기한.예정.개월` 달 뒤 말일(소득세법 제105조①1호),
     확정신고는 base 가 속하는 과세기간의 다음 연도 `신고기한.확정.월`·`신고기한.확정.일`(소득세법 제110조①)이다.
-    기한의 끝이 토요일·일요일이면 그 다음날까지가 기한이다(국세기본법 제5조①). 공휴일·대체공휴일·노동절은 표가 없어 옮기지 못한다.
+    기한이 토요일·일요일, 공휴일·대체공휴일, 노동절이면 그 다음날까지가 기한이다(국세기본법 제5조①).
+    공휴일은 규칙세트가 읽은 공휴일 표(rs.공휴일)로 본다. 표가 덮지 않는 해는 토·일과 날짜가 고정된 공휴일·노동절만 옮기고,
+    표가 아예 없는 규칙세트는 토·일만 옮긴다. 두 경우 모두 결과의 `공휴일표` 가 False 다.
     """
     b = to_date(base)
     if kind == "예정":
@@ -138,7 +187,16 @@ def filing_deadline(kind, base, rs):
         nominal = date(b.year + 1, rs.value("신고기한.확정.월", b), rs.value("신고기한.확정.일", b))
     else:
         raise ValueError("신고 구분은 예정 또는 확정이어야 합니다: %r" % (kind,))
-    adjusted = nominal
-    while adjusted.weekday() >= 5:
+    table = getattr(rs, "공휴일", None)
+    adjusted, moved = nominal, []
+    while True:
+        if adjusted.weekday() >= 5:
+            why = WEEKDAY_KO[adjusted.weekday()] + "요일"
+        else:
+            why = table.name(adjusted) if table is not None else None
+        if why is None:
+            break
+        moved.append((adjusted, why))
         adjusted += timedelta(days=1)
-    return nominal, adjusted
+    covered = table is not None and all(table.covers(y) for y in range(nominal.year, adjusted.year + 1))
+    return Deadline(nominal, adjusted, covered, moved)

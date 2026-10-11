@@ -196,9 +196,9 @@ def rs():
     ("예정", "2026-01-15", "2026-03-31", "2026-03-31"),      # 화요일 말일
     ("예정", "2026-08-20", "2026-10-31", "2026-11-02"),      # 토요일 말일은 월요일로
     ("예정", "2026-11-20", "2027-01-31", "2027-02-01"),      # 일요일 말일은 월요일로
-    ("예정", "2026-12-10", "2027-02-28", "2027-03-01"),      # 12월 양도는 2월 말일(일요일)
+    ("예정", "2026-12-10", "2027-02-28", "2027-03-02"),      # 12월 양도는 2월 말일(일요일), 월요일이 3·1절이라 화요일로
     ("예정", "2027-12-10", "2028-02-29", "2028-02-29"),      # 윤년 2월 말일(화요일)
-    ("예정", "2026-12-31", "2027-02-28", "2027-03-01"),      # 양도일이 말일이어도 같은 달 말일 기준
+    ("예정", "2026-12-31", "2027-02-28", "2027-03-02"),      # 양도일이 말일이어도 같은 달 말일 기준
     ("확정", "2026-03-10", "2027-05-31", "2027-05-31"),      # 월요일
     ("확정", "2025-11-10", "2026-05-31", "2026-06-01"),      # 5월 31일이 일요일인 해
     ("확정", "2030-11-10", "2031-05-31", "2031-06-02"),      # 5월 31일이 토요일인 해
@@ -218,3 +218,148 @@ def test_filing_deadline_reads_ruleset_values(rs):
 def test_filing_deadline_rejects_unknown_kind(rs):
     with pytest.raises(ValueError):
         dates.filing_deadline("수정", "2026-01-15", rs)
+
+
+# ---- 공휴일(국세기본법 제5조①). 날짜가 고정된 공휴일과 노동절은 월·일로, 나머지는 rules/공휴일.json 의 연도별 날짜로 본다 ----
+
+def _d(text):
+    return date.fromisoformat(text)
+
+
+def test_deadline_still_unpacks_into_two_dates(rs):
+    # 기존 호출부는 둘로 풀어 쓰거나 튜플을 이어 붙인다. 그 모양은 그대로다
+    got = dates.filing_deadline("예정", "2026-01-15", rs)
+    nominal, adjusted = got
+    assert (nominal, adjusted) == (_d("2026-03-31"), _d("2026-03-31")) and len(got) == 2
+    assert got + ("A",) == (_d("2026-03-31"), _d("2026-03-31"), "A")
+    assert got.공휴일표 is True and got.옮긴이유 == ()
+
+
+def test_deadline_moves_past_fixed_holiday_after_weekend(rs):
+    # 2026-12 양도: 말일 2027-02-28(일) 다음 날이 3·1절(월)이라 2027-03-02(화)까지다
+    got = dates.filing_deadline("예정", "2026-12-10", rs)
+    assert got == (_d("2027-02-28"), _d("2027-03-02")) and got.공휴일표 is True
+    assert got.옮긴이유 == ((_d("2027-02-28"), "일요일"), (_d("2027-03-01"), "3·1절"))
+
+
+def test_deadline_moves_past_substitute_holiday_in_table(rs):
+    # 2025-12 양도: 말일 2026-02-28(토), 3·1절(일), 대체공휴일 2026-03-02(월, 표에 날짜로 있다) 다음인 2026-03-03(화)
+    got = dates.filing_deadline("예정", "2025-12-10", rs)
+    assert got == (_d("2026-02-28"), _d("2026-03-03")) and got.공휴일표 is True
+    assert [why for _, why in got.옮긴이유] == ["토요일", "일요일", "대체공휴일(3·1절)"]
+
+
+def test_deadline_moves_past_labor_day(rs):
+    # 2028-02 양도: 말일 2028-04-30(일) 다음 날이 노동절(월)이라 2028-05-02(화)까지다. 노동절은 표가 없는 해에도 월·일로 안다
+    got = dates.filing_deadline("예정", "2028-02-10", rs)
+    assert got == (_d("2028-04-30"), _d("2028-05-02"))
+    assert got.옮긴이유 == ((_d("2028-04-30"), "일요일"), (_d("2028-05-01"), "노동절"))
+    assert got.공휴일표 is rs.공휴일.covers(2028)
+
+
+class _FakeRules:
+    """신고기한 값만 주는 규칙세트 대역. 공휴일 표를 시험용으로 바꿔 끼운다."""
+
+    def __init__(self, table=None):
+        if table is not None:
+            self.공휴일 = dates.Holidays(table)
+
+    def value(self, key, on):
+        return {"신고기한.예정.개월": 2, "신고기한.확정.월": 5, "신고기한.확정.일": 31}[key]
+
+
+SYNTHETIC = {  # 시험용 표다. 1월 말일이 설 연휴 첫날인 해의 모양만 흉내 낸다
+    "고정": [{"월": 1, "일": 1, "이름": "1월 1일", "시작": None, "끝": None},
+             {"월": 5, "일": 1, "이름": "노동절", "시작": None, "끝": None}],
+    "연도": {"2033": {"확인일": "2026-10-11", "출처": [{"이름": "시험용", "URL": "https://example.invalid/"}],
+                      "날짜": [{"날짜": "2033-01-31", "이름": "설날(연휴)"}, {"날짜": "2033-02-01", "이름": "설날(연휴)"},
+                               {"날짜": "2033-02-02", "이름": "설날(연휴)"}]}}}
+
+
+def test_january_end_deadline_inside_lunar_new_year_holidays():
+    # 11월 양도의 기한 말일 1월 31일(월)이 설 연휴 첫날이면 연휴가 끝난 다음 날까지다
+    got = dates.filing_deadline("예정", "2032-11-10", _FakeRules(SYNTHETIC))
+    assert got == (_d("2033-01-31"), _d("2033-02-03")) and got.공휴일표 is True
+    assert [why for _, why in got.옮긴이유] == ["설날(연휴)"] * 3
+
+
+def test_year_without_table_moves_weekend_and_fixed_holidays_only():
+    # 표에 2034년이 없다. 토·일과 고정 공휴일만 옮기고 표가 덮지 않는다고 표시한다
+    got = dates.filing_deadline("예정", "2033-11-10", _FakeRules(SYNTHETIC))     # 2034-01-31 은 화요일
+    assert got == (_d("2034-01-31"), _d("2034-01-31")) and got.공휴일표 is False
+    got = dates.filing_deadline("예정", "2034-02-10", _FakeRules(SYNTHETIC))     # 2034-04-30(일), 05-01(월) 노동절
+    assert got == (_d("2034-04-30"), _d("2034-05-02")) and got.공휴일표 is False
+
+
+def test_deadline_crossing_into_uncovered_year_is_not_covered():
+    # 10월 양도: 2033-12-31(토), 2034-01-01(일), 2034-01-02(월). 넘어간 해(2034)가 표에 없으면 덮지 않는다고 본다
+    got = dates.filing_deadline("예정", "2033-10-10", _FakeRules(SYNTHETIC))
+    assert got == (_d("2033-12-31"), _d("2034-01-02")) and got.공휴일표 is False
+
+
+def test_rules_without_holiday_table_keep_weekend_only_behaviour():
+    # 공휴일 표가 없는 규칙세트(rules 폴더만 따로 쓰는 경우)는 예전처럼 토·일만 옮긴다
+    got = dates.filing_deadline("예정", "2026-12-10", _FakeRules())
+    assert got == (_d("2027-02-28"), _d("2027-03-01")) and got.공휴일표 is False
+    assert got.옮긴이유 == ((_d("2027-02-28"), "일요일"),)
+
+
+def test_real_table_far_future_year_is_not_covered(rs):
+    got = dates.filing_deadline("확정", "2030-11-10", rs)      # 2031-05-31(토)
+    assert got == (_d("2031-05-31"), _d("2031-06-02")) and got.공휴일표 is False
+
+
+def test_fixed_holidays_follow_their_start_dates(rs):
+    h = rs.공휴일
+    assert h.name(_d("2025-07-17")) is None            # 제헌절은 2026-05-11 부터 공휴일이다
+    assert h.name(_d("2026-07-17")) == "제헌절"
+    assert h.name(_d("2025-05-01")) == "노동절" and h.name(_d("2031-05-01")) == "노동절"
+    assert h.name(_d("2031-03-01")) == "3·1절" and h.name(_d("2031-03-03")) is None
+    assert h.name(_d("2027-05-13")) == "부처님 오신 날" and h.name(_d("2027-05-14")) is None
+
+
+def test_holiday_table_file_has_source_and_check_date_for_every_year(rs):
+    import json
+    import os
+    from yangdo import RULES_DIR
+    with open(os.path.join(RULES_DIR, "공휴일.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["연도"], "연도 표가 비었다"
+    for year, y in data["연도"].items():
+        assert dates.ISO_DATE.fullmatch(y["확인일"]), year
+        assert y["출처"] and all(s["이름"] and s["URL"].startswith("https://") for s in y["출처"]), year
+        days = [x["날짜"] for x in y["날짜"]]
+        assert days == sorted(set(days)) and all(d.startswith(year + "-") and x["이름"] for d, x in zip(days, y["날짜"])), year
+        assert rs.공휴일.covers(int(year))
+    for f in data["고정"]:
+        assert date(2028, f["월"], f["일"]) and f["이름"] and "근거" in f      # 2028 은 윤년이라 어느 월·일이든 만들어진다
+
+
+def test_holiday_table_rejects_date_in_wrong_year():
+    bad = {"고정": [], "연도": {"2033": {"확인일": "2026-10-11", "출처": [], "날짜": [{"날짜": "2034-01-01", "이름": "x"}]}}}
+    with pytest.raises(ValueError, match="2033"):
+        dates.Holidays(bad)
+
+
+def test_holiday_table_is_part_of_the_edition(rs, tmp_path):
+    import os
+    import shutil
+    from yangdo import RULES_DIR, ruleset
+    assert "공휴일.json" in rs.edition["파일"]
+    # 표를 고치면 판이 달라졌다고 알린다
+    d = str(tmp_path / "rules")
+    shutil.copytree(RULES_DIR, d)
+    p = tmp_path / "rules" / "공휴일.json"
+    p.write_text(p.read_text(encoding="utf-8").replace("2027-05-13", "2027-05-14"), encoding="utf-8")
+    with pytest.raises(ruleset.RuleError, match="공휴일.json"):
+        ruleset.load(d)
+    # 표 파일이 없는 rules 폴더는 읽히고, 공휴일을 모르는 규칙세트가 된다
+    p.unlink()
+    assert ruleset.load(d).공휴일 is None
+    # 표가 생기기 전에 만든 판(파일 목록에 표가 없다)에 표 파일만 놓으면 대조하지 않은 표라 읽지 않는다
+    ruleset.write_edition(d, rs.확인일)
+    shutil.copy(os.path.join(RULES_DIR, "공휴일.json"), str(p))
+    with pytest.raises(ruleset.RuleError, match="공휴일.json"):
+        ruleset.load(d)
+    ruleset.write_edition(d, rs.확인일)
+    assert ruleset.load(d).공휴일.covers(2027)

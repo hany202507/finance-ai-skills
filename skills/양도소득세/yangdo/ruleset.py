@@ -6,14 +6,16 @@ import os
 from decimal import Decimal
 
 from yangdo import RULES_DIR
-from yangdo.dates import to_date
+from yangdo.dates import Holidays, to_date
 
 EDITION_FILES = ["ruleset.json", "코드표.json", "행정구역_대응.json",
                  "고시/조정대상지역.json", "고시/투기과열지구.json", "고시/투기지역.json"]
 # 서식 판·전자신고 규격 판(설계 ① 다섯 묶음). rules 폴더 기준 상대 경로. 판 id 에 들어가지만,
 # rules 폴더만 따로 쓰는 경우(시험의 임시 사본, --rules)가 있어 파일이 없을 때는 대조하지 않는다
+# 공휴일 표는 신고기한을 옮길 때 쓴다(dates.filing_deadline). 없으면 공휴일을 모르는 규칙세트가 된다
+HOLIDAY_FILE = "공휴일.json"
 EDITION_EXTRA = ["../forms/서식판.json", "../efile/규격판.json", "../efile/법정동코드.json",
-                 "../efile/layout_c116300.json", "../efile/codes_c116300.json"]
+                 "../efile/layout_c116300.json", "../efile/codes_c116300.json", HOLIDAY_FILE]
 
 
 class RuleError(Exception):
@@ -72,9 +74,10 @@ def _in_force(pans, on):
 
 
 class Ruleset:
-    def __init__(self, data, edition):
+    def __init__(self, data, edition, 공휴일=None):
         self.data = data
         self.edition = edition
+        self.공휴일 = 공휴일  # dates.Holidays 또는 None(표 파일이 없는 rules 폴더)
 
     @property
     def 판id(self):
@@ -139,5 +142,12 @@ def load(rules_dir=None):
             continue
         if not os.path.exists(fp) or canonical_hash(fp) != h:
             raise RuleError("%s 가 기준정보 판 %s 과 다르다. python scripts/build_ruleset.py 판 을 다시 돌려라" % (p, ed["id"]))
+    holidays = None
+    hp = os.path.join(rules_dir, HOLIDAY_FILE)
+    if os.path.exists(hp):
+        if HOLIDAY_FILE not in ed["파일"]:  # 해시로 대조하지 않은 표는 쓰지 않는다
+            raise RuleError("%s 이 기준정보 판 %s 에 없다. python scripts/build_ruleset.py 판 을 다시 돌려라" % (HOLIDAY_FILE, ed["id"]))
+        with open(hp, encoding="utf-8") as f:
+            holidays = Holidays(json.load(f))
     with open(os.path.join(rules_dir, "ruleset.json"), encoding="utf-8") as f:
-        return Ruleset(json.load(f), ed)
+        return Ruleset(json.load(f), ed, holidays)
