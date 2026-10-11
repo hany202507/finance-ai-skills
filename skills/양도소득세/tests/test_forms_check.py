@@ -147,7 +147,8 @@ def test_payment_formula_is_checked():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["납부할세액"] += 10
-    assert any("⑱" in m for m in _fc(bad, r))
+    # ⑱ 만 보면 ⑳ 산식 문장(⑱-⑲)과 전자신고 대조 문장으로도 통과한다. ⑱ 산식 문장을 짚는다
+    assert any("본지 합계 ⑱ 납부할 세액" in m and "⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰" in m for m in _fc(bad, r))
 
 
 def test_local_tax_base_equals_national():
@@ -198,7 +199,7 @@ def test_main_taxable_base_formula():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["기본공제"] += 1
-    _hit(bad, r, "본지 합계", "⑧")
+    _hit(bad, r, "본지 합계 ⑧ 과세표준", "④+⑤-⑥-⑦")
 
 
 def test_payment_net_line():
@@ -206,7 +207,7 @@ def test_payment_net_line():
     bad = copy.deepcopy(rv)
     t = bad["본지"]["열"]["합계"]
     t["신고기한내납부"] += 1
-    _hit(bad, r, "⑳")
+    _hit(bad, r, "본지 합계 ⑳ 납부세액", "⑱-⑲")            # ⑳ 만 보면 전자신고 대조 문장으로도 통과한다
 
 
 def test_installment_limit():
@@ -215,7 +216,8 @@ def test_installment_limit():
     t = bad["본지"]["열"]["합계"]
     t["분납"] = 30000000
     t["신고기한내납부"] = t["납부할세액"] - t["분납"]          # ⑳ 산식은 맞게 두고 한도만 넘긴다
-    got = _hit(bad, r, "⑲")
+    # 손계산: ⑱ 38,329,466 은 2천만원을 넘어 한도가 50% = 19,164,733. ⑲ 만 보면 전자신고 대조 문장으로도 통과한다
+    got = _hit(bad, r, "본지 합계 ⑲ 분납할 세액 30,000,000 이 한도 19,164,733 를 넘는다")
     assert not any("⑳" in m for m in _form_only(got))
 
 
@@ -315,14 +317,15 @@ def test_filing_credit_is_capped_by_tax_after_credits():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["감면세액"] = bad["본지"]["열"]["합계"]["산출세액"] - 5000
-    _hit(bad, r, "본지 합계", "⑮")                         # 기대값은 min(20,000, 5,000) = 5,000
+    # 기대값은 min(20,000, 5,000) = 5,000. 「본지 합계」와 「⑮」만 보면 ⑱ 산식 문장(⑩-⑪-...-⑮+⑯-⑰)으로도 통과한다
+    _hit(bad, r, "본지 합계 ⑮ 전자신고세액공제 20,000 ≠ 5,000")
 
 
 def test_local_tax_cells_are_checked():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["1-10"]["산출세액"] += 1
-    _hit(bad, r, "지방", "⑦")
+    _hit(bad, r, "지방 국내소계 ⑦ 산출세액", "세율구분 열 합")
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["합계"]["산출세액"] += 1
     _hit(bad, r, "지방 합계", "⑦", "엔진 지방소득세")
@@ -330,10 +333,13 @@ def test_local_tax_cells_are_checked():
 
 def test_schedule1_row_formulas():
     r, rv = _pair("S1")
-    for key, word in (("양도차익", "양도차익"), ("과세양도차익", "⑮"), ("양도소득금액", "⑱")):
+    # 란 번호만 보면 합계 행·엔진 대조·전자신고 대조 문장으로도 통과한다. 행 산식 문장(오른쪽의 식)을 짚는다
+    for key, word, formula in (("양도차익", "부표1 S1 양도차익", "⑪-⑫-⑬-⑭"),
+                               ("과세양도차익", "부표1 S1 ⑮ 과세대상양도차익", "양도차익-비과세양도차익"),
+                               ("양도소득금액", "부표1 S1 ⑱ 양도소득금액", "⑮-⑯")):
         bad = copy.deepcopy(rv)
         bad["부표1"][0][key] += 1
-        _hit(bad, r, "부표1", word)
+        _hit(bad, r, word, "≠ " + formula)
 
 
 def test_schedule1_total_row():
@@ -351,16 +357,16 @@ def test_schedule3_rows_sum_uses_group_not_code_prefix():
     rows = rv["부표3"][0]["행"]
     bad = copy.deepcopy(rv)
     bad["부표3"][0]["행"][1]["금액"] += 1               # 취득세 행
-    got = _hit(bad, r, "부표3", "⑤")
+    got = _hit(bad, r, "부표3 S1 ⑤ 계", "행 합")
     assert not any("⑬" in m and "행 합" in m for m in got)
     bad = copy.deepcopy(rv)
     bad["부표3"][0]["행"][5]["금액"] += 1               # 양도비 행
-    _hit(bad, r, "부표3", "⑬")
+    _hit(bad, r, "부표3 S1 ⑬ 기타 필요경비 계", "행 합")
     # 행의 구분을 취득가액 묶음에서 기타필요경비 묶음으로 옮기면 계가 어긋난다
     bad = copy.deepcopy(rv)
     bad["부표3"][0]["행"][2]["구분코드"] = "260"
     bad["부표3"][0]["행"][2]["전자코드"] = "26001"
-    _hit(bad, r, "부표3", "⑤")
+    _hit(bad, r, "부표3 S1 ⑤ 계", "행 합")
     assert len(rows) == 6
 
 
@@ -408,7 +414,8 @@ def test_column_sum_equals_total_column():
     for key, word in (("과세표준", "⑧"), ("산출세액", "⑩")):
         bad = copy.deepcopy(rv)
         bad["본지"]["열"]["1-15"][key] += 1
-        _hit(bad, r, "본지", word)
+        _hit(bad, r, "본지 국내소계", word, "세율구분 열 합")   # 란 번호만 보면 열의 산식·엔진 대조 문장으로도 통과한다
+        _hit(bad, r, "본지 합계", word, "세율구분 열 합")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["산출세액"] += 1
     bad["본지"]["열"]["합계"]["납부할세액"] += 1
@@ -420,19 +427,44 @@ def test_local_column_sum_and_engine():
     r, rv = _bf_two_columns()
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["1-10"]["산출세액"] += 1
-    _hit(bad, r, "지방", "⑦")
+    _hit(bad, r, "지방 합계 ⑦ 산출세액", "세율구분 열 합")
+    _hit(bad, r, "지방 세율구분 열 ⑦ 합", "엔진 호별합산")
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["합계"]["산출세액"] += 1
     bad["지방"]["열"]["합계"]["납부할세액"] += 1
     bad["지방"]["열"]["합계"]["신고기한내납부"] += 1
-    _hit(bad, r, "지방", "엔진")
+    _hit(bad, r, "지방 합계 ⑦ 산출세액", "엔진 지방소득세")
+
+
+def test_local_tax_is_reconciled_with_the_engine_column_by_column():
+    """지방 세율구분 열의 산출세액은 열마다 다시 계산한 값과 같아야 한다. 두 열 사이에서 옮기면(합은 그대로) 열 합 검사와
+    엔진 호별합산 대조를 모두 지나가므로 열마다 본다.
+    손계산: 1-10 열 과세표준 163,400,000 → 163,400,000 × 3.8% - 1,994,000 = 4,215,200.
+            1-15 열 과세표준 294,500,000 × 4%(2년 미만 보유) = 11,780,000"""
+    r, rv = _bf_two_columns()
+    cols = rv["지방"]["열"]
+    assert (cols["1-10"]["산출세액"], cols["1-15"]["산출세액"]) == (4215200, 11780000)
+    bad = copy.deepcopy(rv)
+    for name, by in (("1-10", -1000), ("1-15", 1000)):    # 열의 산식(⑮ = ⑦ - ... + ⑬)은 맞게 둔다
+        bad["지방"]["열"][name]["산출세액"] += by
+        bad["지방"]["열"][name]["납부할세액"] += by
+    got = _fc(bad, r)
+    assert got == ["지방 1-10 열 ⑦ 산출세액 4,214,200 ≠ 엔진 과세표준에 지방소득세 세율을 적용한 값 4,215,200",
+                   "지방 1-15 열 ⑦ 산출세액 11,781,000 ≠ 엔진 과세표준에 지방소득세 세율을 적용한 값 11,780,000"], got
+    # 지방소득세 합산 비교세액이 이긴 신고서도 열은 세율구분별 세액이다(합계만 비교세액)
+    r3, rv3 = _bf_merged()
+    assert (rv3["지방"]["열"]["1-10"]["산출세액"], rv3["지방"]["열"]["1-15"]["산출세액"]) == (4215200, 23660000)
+    bad = copy.deepcopy(rv3)
+    bad["지방"]["열"]["1-10"]["산출세액"] -= 1000
+    bad["지방"]["열"]["1-15"]["산출세액"] += 1000
+    _hit(bad, r3, "지방 1-15 열 ⑦ 산출세액 23,661,000", "지방소득세 세율을 적용한 값 23,660,000")
 
 
 def test_local_payment_formula_and_base_per_column():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["합계"]["납부할세액"] += 1
-    _hit(bad, r, "지방", "⑮")
+    _hit(bad, r, "지방 합계 ⑮ 납부할 총세액", "⑦-⑧-⑨-⑩-⑪-⑫+⑬-⑭")   # ⑮ 만 보면 신고기한내 납부 문장으로도 통과한다
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["1-10"]["과세표준"] += 1
     _hit(bad, r, "지방", "1-10", "본지")
@@ -452,11 +484,12 @@ def test_merged_comparison_total_may_differ_from_column_sum():
     # 국내소계는 이때도 열 합이다
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["국내소계"]["산출세액"] += 1
-    _hit(bad, r, "국내소계", "⑩")
+    _hit(bad, r, "본지 국내소계 ⑩ 산출세액", "세율구분 열 합")
+    _hit(bad, r, "본지 국내소계 ⑩ 산출세액", "엔진 세율별 합")
     # 지방도 같다
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["국내소계"]["산출세액"] += 1
-    _hit(bad, r, "지방", "국내소계", "⑦")
+    _hit(bad, r, "지방 국내소계 ⑦ 산출세액", "세율구분 열 합")
 
 
 def test_blank_columns_are_not_summed():
@@ -608,6 +641,168 @@ def test_messages_never_carry_personal_values():
     assert text
     for s in secrets:
         assert s and s not in text
+
+
+# ---- 시험이 없던 실패 문장 ----
+
+def test_local_rate_labels_must_match_main():
+    r, rv = _bf_two_columns()
+    bad = copy.deepcopy(rv)
+    bad["지방"]["세율구분"] = bad["지방"]["세율구분"][:1]
+    assert "지방 세율구분 열 1-10 이 본지 1-10, 1-15 와 다르다" in _fc(bad, r)
+    bad = copy.deepcopy(rv)
+    bad["지방"]["세율구분"] = []
+    assert "지방 세율구분 열 없음 이 본지 1-10, 1-15 와 다르다" in _fc(bad, r)
+
+
+def test_unreadable_ruleset_is_reported_once(tmp_path):
+    """규칙세트를 읽지 못하면 한도 검사를 건너뛰지 않고 실패로 알린다(빈 폴더에는 기준정보판.json 이 없다)."""
+    r, rv = _pair("S1", 분납신청=True)
+    got = _fc(rv, r, rules_dir=str(tmp_path))
+    assert got == ["규칙세트를 읽지 못해 분납 한도와 전자신고세액공제 한도를 검사하지 못했다"]
+
+
+def test_missing_rule_value_is_reported(monkeypatch):
+    r, rv = _pair("S1", 분납신청=True)
+    real = ruleset.Ruleset.value
+
+    def value(self, key, on):
+        if key == "분납.상한율":
+            raise ruleset.RuleError("없음")
+        return real(self, key, on)
+    monkeypatch.setattr(ruleset.Ruleset, "value", value)
+    assert _fc(rv, r) == ["규칙세트에 분납.상한율 의 2026-11-20 값이 없어 한도를 검사하지 못했다"]
+
+
+def test_filing_kind_must_be_provisional_or_final():
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    bad["신고"]["구분"] = "기한후"
+    _hit(bad, r, "신고 구분 기한후 이 예정이나 확정이 아니다")
+
+
+def test_blank_address_buyer_mismatch_and_duplicate_schedule3():
+    r, rv = _pair("BF")
+    bad = copy.deepcopy(rv)
+    for k in ("시도", "시군구", "읍면동"):
+        bad["신고인"]["주소"][k] = " "
+    assert _fc(bad, r) == ["본지 ① 신고인 주소가 비어 있다"]
+    bad = copy.deepcopy(rv)
+    bad["신고인"]["주소"] = None
+    assert _fc(bad, r) == ["본지 ① 신고인 주소가 비어 있다"]
+    bad = copy.deepcopy(rv)
+    bad["양수인"][1]["자산"] = "X"                          # F 를 산 양수인이 없는 자산 X 를 가리킨다
+    assert _fc(bad, r) == ["본지 ② 양수인의 자산 X 가 부표1 에 없다", "본지 ② 양수인이 없다(자산 F)"]
+    bad = copy.deepcopy(rv)
+    bad["부표3"].append(copy.deepcopy(bad["부표3"][0]))
+    assert _fc(bad, r) == ["부표3 이 자산 B 에 둘 이상 있다"]
+    bad = copy.deepcopy(rv)
+    bad["부표3"][0]["자산"] = "X"
+    got = _fc(bad, r)
+    assert "부표3 의 자산 X 가 부표1 에 없다" in got and "부표1 B ⑫ 취득가액이 실지거래가액인데 부표3 이 없다" in got
+
+
+def test_left_out_section_must_match_engine():
+    r, rv = _mixed()
+    assert rv["제외자산"] == [{"자산": "G", "사유": "전액 비과세"}]
+    bad = copy.deepcopy(rv)
+    bad["제외자산"] = []
+    assert _fc(bad, r) == ["신고값 제외자산 [] ≠ 엔진이 전액 비과세로 판정한 자산 [G]"]
+    r2, rv2 = _pair("S1")
+    bad = copy.deepcopy(rv2)
+    bad["제외자산"] = [{"자산": "S1", "사유": "전액 비과세"}]
+    assert _fc(bad, r2) == ["신고값 제외자산 [S1] ≠ 엔진이 전액 비과세로 판정한 자산 []"]
+    bad = copy.deepcopy(rv)
+    bad["부표3"].append({"자산": "G", "행": [], "취득가액계": 0, "기타필요경비계": 0})
+    bad["양수인"].append(dict(copy.deepcopy(bad["양수인"][0]), 자산="G"))
+    bad["전자신고"]["필요경비명세"].append({"자산": "G"})
+    got = _fc(bad, r)
+    for place in ("부표3", "본지 ② 양수인", "전자신고 필요경비명세"):
+        assert place + " 에 전액 비과세 자산 G 가 있다. 전액 비과세 자산은 신고서와 전자신고 파일에 넣지 않는다" in got, (place, got)
+
+
+def test_no_taxable_asset_sentence_names_the_assets():
+    r = engine.calculate(CASES["G"], today="2026-10-11")
+    assert forms_check.check({}, r, facts=CASES["G"]) == [
+        "과세 자산이 없다. 전액 비과세 자산(G)뿐인 건은 신고서와 전자신고 파일을 만들지 않는다"]
+
+
+def test_negative_credit_installment_and_other_shape_failures():
+    r, rv = _pair("S1", 분납신청=True)
+    bad = copy.deepcopy(rv)
+    bad["본지"]["열"]["1-10"]["전자신고공제"] = -1
+    _hit(bad, r, "본지 1-10 열 ⑮ 전자신고세액공제 -1 가 음수다")
+    bad = copy.deepcopy(rv)
+    bad["지방"]["열"]["1-10"]["전자신고공제"] = -1
+    _hit(bad, r, "지방 1-10 열 ⑫ 전자신고세액공제 -1 가 음수다")
+    bad = copy.deepcopy(rv)
+    bad["본지"]["열"]["합계"]["분납"] = -5
+    _hit(bad, r, "본지 합계 ⑲ 분납할 세액 -5 가 음수다")
+    bad = copy.deepcopy(rv)
+    bad["부표1"][0]["지분분모"] = 0
+    _hit(bad, r, "부표1 S1 양도 지분이 비어 있다")
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["세율별"].append(copy.deepcopy(bad["전자신고"]["세율별"][0]))
+    _hit(bad, r, "전자신고 세율별에 1/00 행이 둘 이상 있다")
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["필요경비명세"][0]["자산"] = "X"
+    _hit(bad, r, "전자신고 필요경비명세의 자산 X 가 부표1 에 없다")
+    bad = copy.deepcopy(rv)
+    del bad["본지"]["열"]["국외소계"]
+    _hit(bad, r, "본지 열 목록에 국외소계 열이 없다")
+    bad = copy.deepcopy(rv)
+    bad["부표1"][0]["세율구분표기"] = "1-99"
+    _hit(bad, r, "부표1 S1 ① 세율구분 1-99 에 해당하는 본지 열이 없다")
+
+
+def test_schedule3_row_with_an_unknown_group_is_reported(tmp_path):
+    """코드표의 묶음 이름이 취득가액·기타필요경비로 시작하지 않는 구분은 어느 계에 넣을지 몰라 실패로 알린다."""
+    import json
+    import shutil
+    r, rv = _pair("S1")
+    efile_dir = tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL_DIR, "efile"), str(efile_dir))
+    path = efile_dir / "codes_c116300.json"
+    codes = json.loads(path.read_text(encoding="utf-8"))
+    codes["필요경비구분"]["취득세"]["묶음"] = "모르는 묶음"
+    path.write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    assert "부표3 S1 전자코드 11201 의 묶음을 알 수 없다" in _fc(rv, r, efile_dir=str(efile_dir))
+
+
+def test_step_that_cannot_run_names_the_exception_type():
+    """검사 단계가 신고값의 모양 때문에 돌지 못하면 단계 이름과 예외 형 이름을 적는다. 값은 싣지 않는다."""
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    del bad["부표1합계"]
+    assert "부표1 검사를 하지 못했다. 신고값에 필요한 칸이 없거나 모양이 다르다(KeyError 부표1합계)" in _fc(bad, r)
+    bad = copy.deepcopy(rv)
+    bad["본지"]["열"]["합계"]["산출세액"] = "삼천만원"
+    got = [m for m in _fc(bad, r) if "검사를 하지 못했다" in m]
+    assert got and all("ValueError)" in m and "삼천만원" not in m for m in got), got
+    # 신고값의 모양과 상관없는 예외(프로그램 오류)는 삼키지 않는다
+    chk = forms_check._Check(copy.deepcopy(rv), r, None, None, None)
+    chk.schedule1 = lambda: 1 // 0
+    with pytest.raises(ZeroDivisionError):
+        chk.run()
+
+
+# ---- 규칙세트를 읽는 날짜와 판 ----
+
+def test_reference_dates_are_reconciled_with_the_engine():
+    """분납 한도는 신고 절 양도일자로 규칙을 읽는다. 그 날짜가 엔진 결과의 마지막 양도일과 다르면 알린다."""
+    r, rv = _pair("BF")                                   # 양도일 F 2026-11-01, B 2026-11-20
+    bad = copy.deepcopy(rv)
+    bad["신고"]["양도일자"] = "20261101"
+    assert _fc(bad, r) == ["신고 절 양도일자 2026-11-01 ≠ 엔진 과세 자산의 마지막 양도일 2026-11-20"]
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    bad["신고"]["작성일"] = "20261119"
+    _hit(bad, r, "신고 절 작성일 2026-11-19 이 엔진 과세 자산의 마지막 양도일 2026-11-20 보다 앞선다")
+    bad = copy.deepcopy(rv)
+    bad["판"]["기준정보"] = "0" * 16
+    assert _fc(bad, r) == ["신고값 판의 기준정보 0000000000000000 ≠ 엔진 결과의 기준정보 판 %s" % r["기준정보"]["판"]]
+    r, rv = _mixed()                                      # 전액 비과세 G 의 양도일은 기준일이 아니다
+    assert _fc(rv, r) == []
 
 
 # ---- 금액 칸 전부가 어딘가에서 검산된다 ----
@@ -819,6 +1014,36 @@ def test_efile_section_when_merged_tax_wins_rate_rows_sum_to_total():
     bad = copy.deepcopy(rv)
     [x for k, x in _rate_rows(bad).items() if k[1] != "00"][0]["산출세액"] -= 1000
     _hit(bad, r, "전자신고", "세율구분 행 산출세액 합", "본지 합계 ⑩")
+
+
+def test_efile_section_when_merged_tax_wins_each_rate_row_is_reallocated():
+    """합산 비교세액이 이긴 신고서의 03 세율구분 행은 합계 산출세액을 과세표준 비율로 나눈 값이어야 한다. 두 행 사이에서
+    금액을 옮기면(합은 그대로) 행 합 검사는 통과하므로 행마다 다시 나눠 대조한다.
+    손계산: 합계 281,118,000, 과세표준 163,400,000(1-10)과 591,500,000(1-15), 합 754,900,000.
+      1-10 = 281,118,000 × 163,400,000 ÷ 754,900,000 = 60,848,696.3 → 60,848,696
+      1-15 = 281,118,000 × 591,500,000 ÷ 754,900,000 = 220,269,303.6 → 220,269,303, 남는 1원을 과세표준이 큰 이 행에 더해 220,269,304"""
+    r, rv = _bf_merged()
+    rows = _rate_rows(rv)
+    assert (rows[("1", "10")]["산출세액"], rows[("1", "15")]["산출세액"]) == (60848696, 220269304)
+    bad = copy.deepcopy(rv)
+    low, high = _rate_rows(bad)[("1", "10")], _rate_rows(bad)[("1", "15")]
+    for x, by in ((low, -1000), (high, 1000)):            # 행 안의 산식(19 = 10 - 36 + 17)은 맞게 둔다
+        x["산출세액"] += by
+        x["자진납부할세액"] += by
+    got = _fc(bad, r)
+    assert len(got) == 2 and all("과세표준 비율" in m for m in got), got
+    assert "전자신고 세율별 1-10 행 산출세액 60,847,696 ≠ 합계 산출세액을 과세표준 비율로 나눈 값 60,848,696" in got
+    assert "전자신고 세율별 1-15 행 산출세액 220,270,304 ≠ 합계 산출세액을 과세표준 비율로 나눈 값 220,269,304" in got
+    # 남는 원을 과세표준이 작은 행에 준 것도 잡는다
+    bad = copy.deepcopy(rv)
+    low, high = _rate_rows(bad)[("1", "10")], _rate_rows(bad)[("1", "15")]
+    for x, by in ((low, 1), (high, -1)):
+        x["산출세액"] += by
+        x["자진납부할세액"] += by
+    _hit(bad, r, "1-15 행 산출세액 220,269,303", "과세표준 비율")
+    # 합산 비교세액이 이기지 않은 신고서는 나누지 않는다(본지 열과 대조한다)
+    r2, rv2 = _bf_two_columns()
+    assert not any("과세표준 비율" in m for m in _fc(rv2, r2))
 
 
 def test_efile_section_asset_rows_are_reconciled_with_schedule1():
