@@ -105,6 +105,11 @@ def _msgs(bad, r):
     return forms_check.check(bad, r)
 
 
+def _form_only(msgs):
+    """서식 값끼리의 검산 문장만. 본지만 바꾼 변조는 신고값 전자신고 절과도 어긋나 그 대조 문장이 함께 나온다."""
+    return [m for m in msgs if not m.startswith("전자신고")]
+
+
 # ---- 브리프 시험 ----
 
 def test_clean_values_pass():
@@ -200,7 +205,7 @@ def test_installment_limit():
     t["분납"] = 30000000
     t["신고기한내납부"] = t["납부할세액"] - t["분납"]          # ⑳ 산식은 맞게 두고 한도만 넘긴다
     got = _hit(bad, r, "⑲")
-    assert not any("⑳" in m for m in got)
+    assert not any("⑳" in m for m in _form_only(got))
 
 
 def test_installment_must_be_requested():
@@ -268,7 +273,7 @@ def test_filing_credit_must_equal_rule_on_provisional_return():
             if t.get("신고기한내납부") is not None:
                 t["신고기한내납부"] += diff
         got = _hit(bad, r, "본지 합계", "⑮", "한도")
-        assert not any("⑱" in m or "⑳" in m for m in got), got
+        assert not any("⑱" in m or "⑳" in m for m in _form_only(got)), got
 
 
 def test_filing_credit_on_final_return_is_zero_without_rule_lookup(monkeypatch):
@@ -710,3 +715,132 @@ def test_import_does_not_load_generator_modules():
     p = subprocess.run([sys.executable, "-c", code], cwd=SKILL_DIR, capture_output=True, timeout=120)
     assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
     assert p.stdout.decode("ascii").strip() == ""
+
+
+# ---- 전자신고 절(03·05 레코드 값)과 본지·부표1 대조 ----
+# 신고값의 「전자신고」 절은 생성기가 본지와 다른 경로로 만든다. 서식 값만 검산하면 이 절의 세액이 틀려도 지나간다.
+
+def _rate_rows(rv):
+    return {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
+
+
+def test_efile_section_tax_lowered_in_every_row_is_caught(tmp_path):
+    """세율별 세 행의 산출세액과 자진납부할세액(합계 행은 자진납부세액도)을 똑같이 5,000,000원 줄인 신고값."""
+    from yangdo import efile
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    for x in bad["전자신고"]["세율별"]:
+        x["산출세액"] -= 5000000
+        x["자진납부할세액"] -= 5000000
+        if (x["국내외분"], x["세율구분"]) == ("Z", "00"):
+            x["자진납부세액"] -= 5000000
+    got = forms_check.check(bad, r)
+    text = "\n".join(got)
+    assert got and all("전자신고" in m for m in got), got
+    for word in ("합계 행", "산출세액 33,349,466", "본지 합계 ⑩", "자진납부할세액 33,329,466", "본지 합계 ⑱",
+                 "자진납부세액 33,329,466", "본지 합계 ⑳", "1-10 행", "국내소계 행"):
+        assert word in text, (word, got)
+    # 파일 검증기는 이 변조를 잡지 못한다(파일을 신고값의 같은 절과만 대사한다). 그래서 서식 검산이 막아야 한다
+    assert efile.write(bad, str(tmp_path))["검증"] == []
+
+
+def test_efile_section_total_row_amounts_are_reconciled():
+    r, rv = _pair("S1", 분납신청=True)
+    for key, no in (("양도소득금액", "④"), ("양도소득기본공제", "⑦"), ("과세표준", "⑧"), ("산출세액", "⑩"),
+                    ("전자신고세액공제", "⑮"), ("자진납부할세액", "⑱"), ("분납할세액", "⑲"), ("자진납부세액", "⑳")):
+        bad = copy.deepcopy(rv)
+        _rate_rows(bad)[("Z", "00")][key] += 1
+        _hit(bad, r, "전자신고", "합계 행", key, "본지 합계 " + no)
+
+
+def test_efile_section_rate_row_amounts_are_reconciled():
+    r, rv = _bf_two_columns()
+    for key, no in (("양도소득금액", "④"), ("양도소득기본공제", "⑦"), ("과세표준", "⑧"), ("산출세액", "⑩")):
+        bad = copy.deepcopy(rv)
+        _rate_rows(bad)[("1", "15")][key] += 1
+        _hit(bad, r, "전자신고", "1-15 행", key, "본지 1-15 열 " + no)
+
+
+def test_efile_section_rate_rows_must_match_main_columns():
+    r, rv = _bf_two_columns()
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["세율별"] = [x for x in bad["전자신고"]["세율별"] if x["세율구분"] != "15"]
+    _hit(bad, r, "전자신고", "1-15", "행이 없다")
+    bad = copy.deepcopy(rv)
+    _rate_rows(bad)[("1", "15")]["세율구분"] = "47"
+    _hit(bad, r, "전자신고", "1-47", "본지 열이 없다")
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["세율별"] = [x for x in bad["전자신고"]["세율별"] if x["국내외분"] != "Z"]
+    _hit(bad, r, "전자신고", "합계 행", "없다")
+
+
+def test_efile_section_when_merged_tax_wins_rate_rows_sum_to_total():
+    """합산 비교세액이 이기면 03 행은 합계 산출세액을 나눠 적는다. 행마다 본지 열과 같지 않고, 행 합이 본지 합계 ⑩ 과 같아야 한다."""
+    r, rv = _bf_merged()
+    rows = [x for k, x in _rate_rows(rv).items() if k[1] != "00"]
+    main = rv["본지"]["열"]
+    assert len(rows) == 2 and sum(x["산출세액"] for x in rows) == main["합계"]["산출세액"]
+    assert any(x["산출세액"] != main["%s-%s" % (x["국내외분"], x["세율구분"])]["산출세액"] for x in rows)
+    assert forms_check.check(rv, r) == []
+    bad = copy.deepcopy(rv)
+    [x for k, x in _rate_rows(bad).items() if k[1] != "00"][0]["산출세액"] -= 1000
+    _hit(bad, r, "전자신고", "세율구분 행 산출세액 합", "본지 합계 ⑩")
+
+
+def test_efile_section_asset_rows_are_reconciled_with_schedule1():
+    r, rv = _bf_two_columns()
+    for key, name in (("거래금액_양도가액", "⑪ 양도가액"), ("거래금액_취득가액", "⑫ 취득가액"), ("기타필요경비", "⑭ 기타 필요경비"),
+                      ("양도차익_전체양도차익", "양도차익"), ("양도차익_비과세양도차익", "비과세양도차익"),
+                      ("양도차익_과세대상양도차익", "⑮ 과세대상양도차익"), ("장기보유특별공제", "⑯ 장기보유특별공제"),
+                      ("양도소득금액", "⑱ 양도소득금액")):
+        bad = copy.deepcopy(rv)
+        bad["전자신고"]["계산명세"][1][key] += 1
+        _hit(bad, r, "전자신고", "계산명세 F", key, "부표1 F " + name)
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["계산명세"].pop()
+    _hit(bad, r, "전자신고", "계산명세 자산", "부표1 자산")
+
+
+def test_efile_section_fully_exempt_asset_has_zero_amounts():
+    """전액 비과세 자산은 부표1 의 취득가액, 기타 필요경비, 양도차익이 비어 있다. 계산명세의 같은 칸은 0 이어야 한다."""
+    r, rv = _exempt()
+    assert rv["부표1"][0]["취득가액"] is None and rv["전자신고"]["계산명세"][0]["거래금액_취득가액"] == 0
+    assert forms_check.check(rv, r) == []
+    bad = copy.deepcopy(rv)
+    bad["전자신고"]["계산명세"][0]["거래금액_취득가액"] = 600000000
+    _hit(bad, r, "전자신고", "계산명세 S1", "거래금액_취득가액")
+
+
+def test_efile_section_missing_is_reported_not_raised():
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    del bad["전자신고"]
+    assert any("전자신고" in m for m in forms_check.check(bad, r))
+    bad = copy.deepcopy(rv)
+    del _rate_rows(bad)[("Z", "00")]["산출세액"]
+    assert any("전자신고" in m for m in forms_check.check(bad, r))
+
+
+def test_efile_section_messages_carry_no_personal_values():
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    for x in bad["전자신고"]["세율별"]:
+        x["산출세액"] -= 1
+    bad["전자신고"]["계산명세"][0]["거래금액_양도가액"] += 1
+    text = "\n".join(forms_check.check(bad, r))
+    assert text and "성수동" not in text and "김합성" not in text and "최합성" not in text
+    assert chr(0x2014) not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
+
+
+def test_efile_section_check_does_not_import_the_file_generator():
+    src = open(os.path.join(SKILL_DIR, "yangdo", "forms_check.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    names = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module} | \
+            {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+    banned = {"return_values", "forms", "forms_pdf", "efile", "efile_check"}
+    assert not {x.split(".")[-1] for x in names} & banned and not imported & banned
+    code = ("import sys, yangdo.forms_check; "
+            "print(','.join(m for m in ('yangdo.efile', 'yangdo.efile_check', 'yangdo.return_values') if m in sys.modules))")
+    p = subprocess.run([sys.executable, "-c", code], cwd=SKILL_DIR, capture_output=True, timeout=120)
+    assert p.returncode == 0 and p.stdout.decode("ascii").strip() == ""

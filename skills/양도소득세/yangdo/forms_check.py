@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """서식 검산. 신고값(C8)의 서식 값이 서로 맞는지, 엔진 결과(C4)와 맞는지를 따로 다시 검사한다.
 
-신고값 생성기(return_values), 서식 렌더러(forms, forms_pdf)를 부르지 않는다. 신고값이 틀린 채로 서식 PDF와 전자신고 파일이
-만들어지는 것을 막으려는 검사라서, 생성기와 같은 코드를 쓰면 같이 틀린다. 읽는 표는 셋이다.
+신고값 생성기(return_values), 서식 렌더러(forms, forms_pdf), 전자신고 생성기와 검증기(efile, efile_check)를 부르지 않는다.
+신고값이 틀린 채로 서식 PDF와 전자신고 파일이 만들어지는 것을 막으려는 검사라서, 생성기와 같은 코드를 쓰면 같이 틀린다. 읽는 표는 셋이다.
   efile/codes_c116300.json 의 필요경비구분: 부표3 행의 전자코드가 취득가액·차감·기타필요경비 중 어느 묶음인지(코드 앞자리로 가르지 않는다)
+                           세율별특수행: 신고값 전자신고.세율별 의 국내 소계 행과 합계 행의 국내외분·세율구분
   forms/서식판.json 의 부표1_장특공코드: 판정의 장특공(없음·표1·표2)에 맞는 부표1 ⑯ 코드
   rules/ruleset.json: 분납 기준금액·상한, 전자신고세액공제 금액(엔진과 같이 규칙세트에서만 읽는다)
 
@@ -22,9 +23,19 @@
   엔진 대조           자산별 양도일·취득일·양도가액·양도차익·비과세양도차익·과세양도차익·장특공·양도소득금액, 취득가액+필요경비,
                       지분으로 나눈 양도가액, 서식에 옮겨 적은 자산종류·장특공 코드·취득가액종류,
                       합계 과세표준·산출세액·지방소득세, 세율구분 열별 과세표준·산출세액·양도소득금액·기본공제
+  전자신고 절         신고값 「전자신고」 절(03·05 레코드 값)은 생성기가 본지와 다른 경로로 만들고, 파일 검증기(efile_check)는 파일을
+                      이 절과만 대사한다. 그래서 이 절을 본지·부표1 과 대조한다.
+                      세율별 합계 행의 양도소득금액·양도소득기본공제·과세표준·산출세액·전자신고세액공제·자진납부할세액·분납할세액·
+                      자진납부세액 = 본지 합계 열 ④ ⑦ ⑧ ⑩ ⑮ ⑱ ⑲ ⑳. 국내 소계 행과 세율구분 행의 ④ ⑦ ⑧ = 본지 같은 열.
+                      산출세액은 합산 비교세액이 이기지 않으면 본지 같은 열과 같고, 세율구분 행 합 = 본지 합계 ⑩(이기면 이것만 본다).
+                      세율구분 행의 전자신고세액공제·자진납부할세액은 합산 비교세액이 이기지 않고 본지 칸이 비어 있지 않을 때 대조한다.
+                      계산명세 행의 양도가액·취득가액·기타필요경비·양도차익(전체·비과세·과세대상)·장기보유특별공제·양도소득금액
+                      = 부표1 같은 자산의 행. 전액비과세 자산처럼 부표1 칸이 비어 있으면 계산명세의 그 칸은 0 이어야 한다.
 
-검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인, 신고 절의 코드와 날짜.
-세율과 기간 글자는 생성기의 표기 규칙을 되풀이해야 해서 뺐고(세액은 엔진과 대조한다), 나머지는 전자신고 파일 검증기(efile_check)가 본다.
+검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인, 신고 절의 코드와 날짜,
+전자신고 절의 세율·코드·날짜·면적·법정동코드·지번 칸과 필요경비명세(07), 합산 비교세액이 이길 때 세율구분 행마다 나눈 산출세액.
+세율과 기간 글자는 생성기의 표기 규칙을 되풀이해야 해서 뺐고(세액은 엔진과 대조한다), 나머지는 전자신고 파일 검증기(efile_check)가
+파일의 형식과 코드로 본다.
 감면율은 감면이 이번 신고 범위가 아니라 항상 0 이다.
 
 열의 칸이 None 이면 서식에서 비워 두는 칸이다. 합하지 않고 산식에도 넣지 않는다(세율구분 열이 여럿이면 열의 ⑰~⑳ 이 비어 있다).
@@ -66,6 +77,18 @@ NAT_WIN = ("산출세액", "전자신고공제", "납부할세액", "분납", "�
 LOCAL_WIN = ("산출세액", "전자신고공제", "납부할세액", "신고기한내납부")
 NAT_PENALTY = ("가산세_신고", "가산세_납부", "가산세_기장")
 LOCAL_PENALTY = ("가산세_신고", "가산세_납부", "가산세_기타")
+
+# 신고값 전자신고.세율별 행(03 레코드)의 금액 키 → 본지 열의 키. 03 쪽 키는 레이아웃 필드 name 그대로다
+EFILE_TOTAL = (("양도소득금액", "양도소득금액"), ("양도소득기본공제", "기본공제"), ("과세표준", "과세표준"), ("산출세액", "산출세액"),
+               ("전자신고세액공제", "전자신고공제"), ("자진납부할세액", "납부할세액"), ("분납할세액", "분납"),
+               ("자진납부세액", "신고기한내납부"))
+EFILE_BASE = EFILE_TOTAL[:3]                       # 소계 행과 세율구분 행이 본지 같은 열과 언제나 같아야 하는 칸
+EFILE_TAX = EFILE_TOTAL[3]                         # 합산 비교세액이 이기면 세율구분 행이 본지 열과 달라지는 칸
+EFILE_RATE_PAYMENT = EFILE_TOTAL[4:6]              # 세율구분 행의 전자신고세액공제·자진납부할세액(본지 칸이 비어 있으면 보지 않는다)
+# 신고값 전자신고.계산명세 행(05 레코드)의 금액 키 → 부표1 행의 키
+EFILE_ASSET = (("거래금액_양도가액", "양도가액"), ("거래금액_취득가액", "취득가액"), ("기타필요경비", "기타필요경비"),
+               ("양도차익_전체양도차익", "양도차익"), ("양도차익_비과세양도차익", "비과세양도차익"),
+               ("양도차익_과세대상양도차익", "과세양도차익"), ("장기보유특별공제", "장특공"), ("양도소득금액", "양도소득금액"))
 
 # 부표1 행 금액 칸. (신고값 키, 서식 번호, 이름)
 SHEET1_MONEY = (("양도가액", "⑪", "양도가액"), ("취득가액", "⑫", "취득가액"), ("토초세", "⑬", "기납부 토지초과이득세"),
@@ -120,6 +143,18 @@ def _expense_table(efile_dir):
     with open(os.path.join(efile_dir, CODES_FILE), encoding="utf-8") as f:
         table = json.load(f)["필요경비구분"]
     return {v["전자코드"]: v for v in table.values()}
+
+
+def _special_rows(efile_dir):
+    """전자신고 세율별의 (국내 소계 행, 합계 행). 각각 (국내외분, 세율구분)."""
+    with open(os.path.join(efile_dir, CODES_FILE), encoding="utf-8") as f:
+        table = json.load(f)["세율별특수행"]
+    return tuple((table[k]["국내외분"], table[k]["세율구분"]) for k in ("국내소계", "합계"))
+
+
+def _named(table):
+    """금액 칸 표 (키, 서식 번호, 이름) → {키: 「⑩ 산출세액」}."""
+    return {key: (no + " " if no else "") + name for key, no, name in table}
 
 
 class _Check:
@@ -186,7 +221,8 @@ class _Check:
             return ["엔진 결과가 완료 상태가 아니라 서식 값을 엔진과 대조하지 못했다"]
         steps = (("신고인·양수인", self.required), ("부표3", self.schedule3), ("부표1", self.schedule1),
                  ("본지", self.main), ("지방", self.local), ("엔진 대조(부표1)", self.engine_assets),
-                 ("엔진 대조(본지)", self.engine_main), ("엔진 대조(지방)", self.engine_local))
+                 ("엔진 대조(본지)", self.engine_main), ("엔진 대조(지방)", self.engine_local),
+                 ("전자신고 절", self.efile_section))
         for name, step in steps:
             try:
                 step()
@@ -589,6 +625,76 @@ class _Check:
         if all(x in cols for x in labels):
             self.same(sum(_i(cols[x].get("산출세액")) for x in labels), t["지방_호별합산"], "지방 세율구분 열 ⑦ 합",
                       "엔진 호별합산")
+
+
+    # ------------------------------------------------------------ 전자신고 절 ↔ 본지·부표1
+
+    def efile_section(self):
+        """신고값 「전자신고」 절의 03·05 금액을 본지·부표1 과 대조한다. 신고값만 읽는다."""
+        sec = self.rv["전자신고"]
+        self.efile_rates(sec["세율별"])
+        self.efile_assets(sec["계산명세"])
+
+    def efile_rates(self, rows):
+        cols = self.rv["본지"]["열"]
+        labels = [x["표기"] for x in self.rv["본지"]["세율구분"]]
+        names = _named(NAT)
+        sub_key, total_key = _special_rows(self.efile_dir)
+        by = {}
+        for x in rows:
+            k = (str(x["국내외분"]), str(x["세율구분"]))
+            if k in by:
+                self.fail("전자신고 세율별에 %s/%s 행이 둘 이상 있다" % k)
+            by[k] = x
+
+        def compare(x, row_name, col_name, pairs):
+            c = cols.get(col_name)
+            if c is None:
+                return
+            for key, main_key in pairs:
+                self.same(x[key], c.get(main_key), "전자신고 세율별 %s %s" % (row_name, key),
+                          "본지 %s %s" % (_col(col_name), names[main_key]))
+
+        total = by.get(total_key)
+        if total is None:
+            self.fail("전자신고 세율별에 합계 행(%s/%s)이 없다" % total_key)
+        else:
+            compare(total, "합계 행", "합계", EFILE_TOTAL)
+        sub = by.get(sub_key)
+        if sub is None:
+            self.fail("전자신고 세율별에 국내소계 행(%s/%s)이 없다" % sub_key)
+        else:
+            compare(sub, "국내소계 행", "국내소계", EFILE_BASE + (() if self.nat_win else (EFILE_TAX,)))
+        rate = {"%s-%s" % k: x for k, x in by.items() if k not in (sub_key, total_key)}
+        for label in labels:
+            if label not in rate:
+                self.fail("전자신고 세율별에 본지 %s 열의 행이 없다" % label)
+        for label, x in rate.items():
+            if label not in labels or label not in cols:
+                self.fail("전자신고 세율별 %s 행에 맞는 본지 열이 없다" % label)
+                continue
+            pairs = EFILE_BASE
+            if not self.nat_win:      # 합산 비교세액이 이기면 03 행은 합계 산출세액을 나눠 적어 본지 열과 다르다
+                pairs += (EFILE_TAX,) + tuple(p for p in EFILE_RATE_PAYMENT if cols[label].get(p[1]) is not None)
+            compare(x, label + " 행", label, pairs)
+        if rate and "합계" in cols:
+            self.same(sum(_i(x[EFILE_TAX[0]]) for x in rate.values()), cols["합계"].get("산출세액"),
+                      "전자신고 세율별 세율구분 행 산출세액 합", "본지 합계 %s" % names["산출세액"])
+
+    def efile_assets(self, rows):
+        sheet = self.rv["부표1"]
+        names = _named(SHEET1_MONEY)
+        ids, form_ids = [x["자산"] for x in rows], [r["자산"] for r in sheet]
+        if ids != form_ids:
+            self.fail("전자신고 계산명세 자산 [%s] ≠ 부표1 자산 [%s]" % (", ".join(map(str, ids)), ", ".join(map(str, form_ids))))
+        by = {r["자산"]: r for r in sheet}
+        for x in rows:
+            r = by.get(x["자산"])
+            if r is None:
+                continue
+            for key, form_key in EFILE_ASSET:      # 부표1 칸이 비어 있으면(전액비과세 자산) 0 과 견준다
+                self.same(x[key], r.get(form_key), "전자신고 계산명세 %s %s" % (x["자산"], key),
+                          "부표1 %s %s" % (x["자산"], names[form_key]))
 
 
 def check(rv, result, rules_dir=None, efile_dir=None, forms_dir=None):
