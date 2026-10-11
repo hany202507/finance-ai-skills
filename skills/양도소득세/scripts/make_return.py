@@ -29,7 +29,7 @@
   신고_확인.md                                             항상. 단계별 결과, 검산·검증 문장, 확인사항, 사람이 할 일
 
 같은 출력 폴더에 다시 실행하면 이 스크립트와 run.py 가 쓰는 이름만 먼저 지운다. 옛 전자신고 파일(<8자리>C116300.<2자리>)과
-앞선 실행이 남긴 임시 폴더(.efile-*)도 지운다. 이번에 새 파일을 만들지 못했을 때 옛 파일이 새 결과처럼 남지 않게 하려는 것이다.
+앞선 실행이 남긴 임시 폴더(.efile-*, 이 도구가 만든 것만)도 지운다. 이번에 새 파일을 만들지 못했을 때 옛 파일이 새 결과처럼 남지 않게 하려는 것이다.
 지울 이름과 차례는 yangdo/outputs.py 한 곳에 있고(clear_all), run.py 와 MCP 계산 도구도 같은 것을 지운다.
 지우는 차례는 전자신고 파일, 임시 폴더, 신고서 PDF, 나머지 이 스크립트의 파일, 마지막이 run.py 의 파일(통합 문서부터)이다.
 하나가 다른 프로그램에 잡혀 지워지지 않아도 나머지를 끝까지 지운 뒤 종료코드 4 로 멈추고, 남은 파일 이름을 신고_확인.md 에
@@ -58,7 +58,6 @@
 import argparse
 import json
 import os
-import shutil
 import sys
 import traceback
 
@@ -68,7 +67,7 @@ for _p in (SKILL, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from yangdo import bjd, dates, efile, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
+from yangdo import bjd, dates, efile, efile_tmp, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 from run import iso_date, read_facts  # noqa: E402
 
@@ -139,17 +138,12 @@ def clear_previous(out):
     OSError 를 돌려주고, 부른 쪽이 종료코드 4 로 멈춘다. 지우지 못한 임시 폴더는 문장으로 알린다. 폴더 안의 다른 파일은 그대로 둔다.
     """
     left, first = outputs.clear_all(out)
-    return ["앞선 실행이 남긴 임시 폴더 %s 를 지우지 못했다. 인적사항이 든 임시 파일이 남아 있을 수 있으니 직접 지운다" % name
-            for name in left], first
+    return [outputs.TMP_LEFT_NOTE % name for name in left], first
 
 
 def _leftovers(out):
     """출력 폴더에 남아 있는, 이 스크립트와 run.py 가 쓰는 이름의 파일(신고_확인.md 제외)."""
-    known = set(OWN_NAMES + tuple(outputs.OUTPUT_NAMES)) - {CONFIRM_FILE}
-    try:
-        return [n for n in sorted(os.listdir(out)) if n in known or EFILE_NAME.match(n)]
-    except OSError:
-        return []
+    return outputs.stale_names(out, skip=(CONFIRM_FILE,))
 
 
 def _clear_all(rep, out):
@@ -162,8 +156,7 @@ def _clear_all(rep, out):
     if first is not None:
         stale = _leftovers(out)
         if stale:
-            rep["알림"].append("지우지 못해 남은 파일: %s. 이 파일은 이전 실행의 것이다. 이번 실행의 결과가 아니니 신고에 쓰지 않는다"
-                             % ", ".join(stale))
+            rep["알림"].append(outputs.STALE_NOTE % ", ".join(stale))
         raise first
 
 
@@ -180,7 +173,7 @@ def _drop_submittable(rep, out):
     for name in names:
         path = os.path.join(out, name)
         if _is_tmp_dir(out, name):
-            shutil.rmtree(path, ignore_errors=True)
+            efile_tmp.remove(path)
         elif _clear_order(name) in (0, 2) and (name in OWN_NAMES or EFILE_NAME.match(name)) and os.path.isfile(path):
             try:
                 os.remove(path)

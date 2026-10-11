@@ -17,7 +17,7 @@ import filers
 import make_return as MR
 import mcp_server
 from cases import CASES
-from yangdo import efile, forms, forms_pdf, return_values
+from yangdo import efile, efile_tmp, forms, forms_pdf, return_values
 
 SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(SKILL, "scripts", "make_return.py")
@@ -483,13 +483,13 @@ def test_relative_output_folder_runs_to_the_end(tmp_path, monkeypatch, capsys):
 
 def test_relative_output_folder_runs_to_the_end_on_old_python(tmp_path, monkeypatch, capsys):
     """파이썬 3.10·3.11 의 tempfile.mkdtemp 는 dir 가 상대 경로면 상대 경로를 돌려준다. 그 동작을 흉내 내 돌린다."""
-    real = efile.tempfile.mkdtemp
+    real = efile_tmp.tempfile.mkdtemp
 
     def mkdtemp(suffix=None, prefix=None, dir=None):
         made = real(suffix=suffix, prefix=prefix, dir=dir)
         return os.path.join(dir, os.path.basename(made)) if dir else made
 
-    monkeypatch.setattr(efile.tempfile, "mkdtemp", mkdtemp)
+    monkeypatch.setattr(efile_tmp.tempfile, "mkdtemp", mkdtemp)
     _relative_run(tmp_path, monkeypatch, capsys)
 
 
@@ -502,13 +502,13 @@ def test_rerun_drops_stale_results_and_keeps_other_files(tmp_path):
     for n, body in keep.items():
         (out / n).write_text(body, encoding="utf-8")
     (out / "20251130C116300.01").write_text("옛 전자신고 파일", encoding="utf-8")
-    stale = out / ".efile-old"
+    stale = out / ".efile-old_0001"
     stale.mkdir()
     (stale / "신고값.json").write_text("{}", encoding="utf-8")
     code, out = _main(tmp_path, "S1", filers.get("S1"))     # 이번에는 신고인 질문 F04 로 끝난다
     assert code == 2
     names = set(os.listdir(out))
-    assert not (PDFS | GUIDES | {"신고값.json", S1_FILE, "20251130C116300.01", ".efile-old"}) & names
+    assert not (PDFS | GUIDES | {"신고값.json", S1_FILE, "20251130C116300.01", ".efile-old_0001"}) & names
     for n, body in keep.items():
         assert (out / n).read_text(encoding="utf-8") == body
     assert "F04" in _confirm(out)
@@ -532,7 +532,7 @@ def _plant(out):
         (out / n).write_text(body, encoding="utf-8")
     (out / "20251130C116300.01").write_text("옛 전자신고 파일", encoding="utf-8")
     (out / "양도소득세_신고서.pdf.tmp").write_text("쓰다 만 PDF", encoding="utf-8")
-    stale = out / ".efile-old"
+    stale = out / ".efile-old_0001"
     stale.mkdir()
     (stale / "신고값.json").write_text("{}", encoding="utf-8")
 
@@ -701,13 +701,13 @@ def test_rerun_with_locked_workbook_leaves_no_submittable_file(tmp_path, monkeyp
 def test_rerun_with_locked_pdf_leaves_no_submittable_file(tmp_path, monkeypatch):
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 0
-    (out / ".efile-old").mkdir()
+    (out / ".efile-old_0001").mkdir()
     _lock(monkeypatch, "양도소득세_신고서.pdf")                 # PDF 보기 프로그램이 국세 신고서를 열어 둔 채 다시 실행
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 4
     names = set(os.listdir(out))
     assert _efiles(out) == []
-    assert not (GUIDES | CALC | {"신고값.json", "지방소득세_신고서.pdf", ".efile-old"}) & names   # 막힌 파일 말고는 끝까지 지운다
+    assert not (GUIDES | CALC | {"신고값.json", "지방소득세_신고서.pdf", ".efile-old_0001"}) & names   # 막힌 파일 말고는 끝까지 지운다
     assert "양도소득세_신고서.pdf" in names
     text = _confirm(out)
     assert "양도소득세_신고서.pdf" in text and "이전 실행" in text

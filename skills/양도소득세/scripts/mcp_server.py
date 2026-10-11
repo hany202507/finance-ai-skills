@@ -295,6 +295,9 @@ def _calculate(args):
         raise _malformed(e) from e
     s = {k: res[k] for k in ("상태", "기준정보", "질문", "다루지않음", "확인사항", "경고", "검산")}
     s["파일"] = files
+    left = outputs.tmp_left_notes(out_dir) if out_dir else []
+    if left:        # 지우지 못한 전자신고 임시 폴더. 인적사항이 든 신고값 사본이 있을 수 있어 계산 도구도 알린다(폴더 이름만 싣는다)
+        s["알림"] = left
     cal = res["계산"]
     if cal:
         s["합계"] = cal["합계"]
