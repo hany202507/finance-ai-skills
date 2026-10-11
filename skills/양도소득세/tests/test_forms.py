@@ -71,7 +71,7 @@ def test_every_mapping_target_exists():
         ids = set()
         for x in fl:
             ids |= {f["id"] for f in json.load(open(os.path.join(SKILL, "forms", "필드목록", x), encoding="utf-8"))["fields"]}
-        for c in m["칸"]:
+        for c in m.get("칸", []):                       # 부표3 은 「칸」 없이 행·소계·계 표로 쓴다
             assert c["필드"] in ids, (name, c["필드"])
 
 
@@ -102,7 +102,7 @@ def test_mapping_columns_exist_and_are_not_shaded():
     for name, m in _mappings().items():
         fields = _fields(m["필드목록"])
         alias = m.get("열") or {}
-        for c in m["칸"]:
+        for c in m.get("칸", []):
             f = fields[c["필드"]]
             assert not f.get("쓰지않음"), (name, c["필드"])
             cols = list((f.get("좌표") or {}).get("값_칸_해석") or {})
@@ -275,6 +275,31 @@ def test_several_items_of_one_kind_go_to_detail_sheet():
     assert ("부표3(2).03", "구분코드") not in d
 
 
+def test_narrow_cells_keep_clear_of_the_ruled_lines(tmp_path):
+    """부표3 (2) 「구분」과 본지 ② 양수인 성명은 좁은 칸이다. 글자가 칸 선에 붙지 않게 왼쪽에 맞추고 좌우 2pt 를 띄운다."""
+    rv = _rv_cached("S1")
+    rows = rv["부표3"][0]["행"]
+    work = next(x for x in rows if x["전자코드"] == "26001")          # 구분 이름이 두 줄로 나뉘는 「용도변경,개량,이용편의를 위한 지출」
+    second = dict(work, 상호="합성창호", 금액=2000000)
+    work["금액"] -= 2000000
+    rows.insert(rows.index(work) + 1, second)
+    rv["양수인"][0]["성명"] = "남궁합성합성"
+    rv["양수인"].append(dict(rv["양수인"][0], 일련번호=2, 성명="박합성"))
+    plan = forms.plan(rv)
+    name = next(p for p in plan["국세"]["칸"] if p["필드"] == "양수인" and p["열"] == "성명")
+    kind = next(p for p in plan["국세"]["칸"] if p["필드"] == "부표3(2).01" and p["열"] == "구분")
+    assert name["값"] == "남궁합성합성 외 1명" and (name["맞춤"], name["pad"]) == (None, 2)
+    assert (kind["맞춤"], kind["pad"], kind["줄"]) == ("left", 2, 2)
+    doc = pymupdf.open(forms.render(rv, str(tmp_path))[0])
+    for p in (name, kind):
+        cell = pymupdf.Rect(p["칸"])
+        words = [pymupdf.Rect(w[:4]) for w in doc[p["쪽"]].get_text("words", clip=cell)]
+        assert words, p["필드"]
+        assert min(w.x0 for w in words) >= cell.x0 + 2 - 0.05, (p["필드"], "왼쪽 선에 붙었다")
+        assert max(w.x1 for w in words) <= cell.x1 - 2 + 0.05, (p["필드"], "오른쪽 선에 붙었다")
+        assert abs(min(w.x0 for w in words) - (cell.x0 + 2)) < 0.6, (p["필드"], "왼쪽 맞춤이 아니다")
+
+
 def test_more_than_thirty_detail_rows_add_another_detail_sheet():
     rv = _rv_cached("S1")
     rows = rv["부표3"][0]["행"]
@@ -322,11 +347,166 @@ def test_value_that_cannot_fit_raises_without_echoing_it(tmp_path):
     assert "신고인.성명" in str(e.value)
 
 
-def test_long_address_is_shortened_to_fit_and_noted():
+def _forms_copy(tmp_path):
+    """매핑이나 필드목록을 바꿔 보는 시험용 forms 폴더 사본."""
+    import shutil
+    d = tmp_path / "forms"
+    shutil.copytree(os.path.join(SKILL, "forms"), str(d))
+    return d
+
+
+def _edit_json(path, edit):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    edit(data)
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def _narrow(d, list_name, fid, col, width):
+    """필드목록 사본에서 칸 하나의 폭을 줄인다(왼쪽 끝은 그대로)."""
+    def edit(data):
+        f = next(x for x in data["fields"] if x["id"] == fid)
+        r = f["좌표"]["값_칸_해석"][col]
+        r[2] = r[0] + width
+    _edit_json(d / "필드목록" / list_name, edit)
+
+
+def test_long_address_is_shortened_to_fit_and_noted(tmp_path):
+    """칸에 다 들어가지 않는 소재지는 줄인 후보를 쓰고, 줄여 썼다는 확인사항을 붙인다. 폭을 줄인 합성 칸으로 실제로 써 본다."""
     rv = _rv_cached("S1")
-    plan = forms.plan(rv)
-    cell = next(p for p in plan["국세"]["칸"] if p["필드"] == "양수인" and p["열"] == "양도자산 소재지")
-    assert isinstance(cell["값"], list) and cell["값"][0] == rv["부표1"][0]["소재지"]
+    full = rv["부표1"][0]["소재지"]
+    cell = next(p for p in forms.plan(rv)["국세"]["칸"] if p["필드"] == "양수인" and p["열"] == "양도자산 소재지")
+    assert isinstance(cell["값"], list) and cell["값"][0] == full and len(cell["값"]) > 2
+
+    def written(forms_dir, out):
+        """(쓴 후보의 번호, 더해진 확인사항). 후보는 긴 것부터라 쪽 글자에 처음 나오는 후보가 쓴 후보다."""
+        rv = _rv_cached("S1")
+        before = list(rv["확인사항"])
+        paths = forms.render(rv, str(tmp_path / out), forms_dir=forms_dir)
+        text = _squash(pymupdf.open(paths[0])[0].get_text())
+        return next(i for i, v in enumerate(cell["값"]) if _squash(v) in text), [s for s in rv["확인사항"] if s not in before]
+
+    real, added = written(None, "real")                    # 본지 ② 칸은 한 줄짜리라 원래 서식에서도 전체 글자가 들어가지 않는다
+    assert real >= 1
+    notes = [s for s in added if "별지84 본지 ② 양도자산 소재지" in s]
+    assert len(notes) == 1 and "시도 이름을 줄이거나 아파트 이름 등을 빼고" in notes[0]
+    assert full not in "\n".join(added) and "성수동" not in "\n".join(added)   # 값은 싣지 않는다
+    d = _forms_copy(tmp_path)                              # 칸을 더 좁히면 더 짧은 후보로 넘어간다
+    _narrow(d, "필드목록_별지84_신고및납부계산서.json", "양수인", "양도자산 소재지", 50)
+    narrow, added = written(str(d), "narrow")
+    assert narrow > real and len([s for s in added if "별지84 본지 ② 양도자산 소재지" in s]) == 1
+
+
+def test_shortened_note_matches_the_kind_of_cell(tmp_path):
+    """줄여 썼다는 문장은 칸의 형식마다 다르다. 납세지와 자산종류 칸에 「아파트 이름」을 뺐다고 적지 않는다."""
+    d = _forms_copy(tmp_path)
+    _narrow(d, "필드목록_지방세_별지40의11_신고및납부계산서.json", "신고인.납세지", "첫_칸", 20)
+    rv = _rv_cached("S1")
+    before = list(rv["확인사항"])
+    real = _rv_cached("S1")
+    forms.render(real, str(tmp_path / "real"))
+    assert not any("① 납세지" in s for s in real["확인사항"])                  # 원래 서식의 칸에는 그대로 들어간다
+    paths = forms.render(rv, str(tmp_path / "out"), forms_dir=str(d))
+    text = _squash(pymupdf.open(paths[1])[0].get_text())
+    assert "서울마포구" in text                                               # 후보 「서울 마포구」를 썼다
+    added = [s for s in rv["확인사항"] if s not in before]
+    notes = [s for s in added if "별지40의11 ① 납세지" in s]
+    assert len(notes) == 1 and "시도 이름을 줄이거나 빼고" in notes[0] and "아파트" not in notes[0]
+    assert forms.shortened_note({"이름": "별지84 부표1 자산1 자산종류", "형식": "자산종류"}) == (
+        "별지84 부표1 자산1 자산종류 칸이 좁아 자산종류 이름을 짧은 이름으로 적었다. 코드는 그대로다")
+    assert "줄인 값으로 적었다" in forms.shortened_note({"이름": "X", "형식": "글"})
+    for kind in ("주소", "소재지", "자산소재지"):
+        assert "아파트 이름 등을 빼고" in forms.shortened_note({"이름": "X", "형식": kind})
+
+
+def test_schedule3_totals_follow_the_mapping_table(tmp_path):
+    """부표3 ⑤·⑬ 계의 0 적음과 소계·합계액을 적는 열은 매핑 표가 정한다. 읽지 않는 「칸」 항목은 두지 않는다."""
+    m = _mappings()["부표3.json"]
+    assert "칸" not in m and m["금액열"] == "지급금액"
+    assert all(r["0적음"] is True and r["열"] == m["금액열"] for r in m["계"].values())
+
+    def s3(forms_dir=None):
+        p = forms.plan(_rv_cached("A"), forms_dir=forms_dir)
+        return {(c["필드"], c["열"]): c["값"] for c in p["국세"]["칸"] if c["필드"].startswith("부표3.")}
+    assert s3()[("부표3.⑬기타필요경비계", "지급금액")] == "0" and ("부표3.①소계", "지급금액") in s3()
+    d = _forms_copy(tmp_path)
+    _edit_json(d / "매핑" / "부표3.json", lambda mm: mm["계"]["부표3.⑬기타필요경비계"].update({"0적음": False}))
+    assert ("부표3.⑬기타필요경비계", "지급금액") not in s3(str(d))
+    _edit_json(d / "매핑" / "부표3.json", lambda mm: mm.update(금액열="없는 열"))
+    with pytest.raises(ValueError, match="없는 열"):
+        s3(str(d))
+
+
+def test_unplaced_is_judged_form_by_form(tmp_path):
+    """국세 서식과 지방 서식은 저마다 신고·신고인·양수인 절을 놓거나 「안씀」으로 이유를 대야 한다. 한쪽 매핑에서 빠진 경로를
+    다른 쪽 매핑이 가리지 않는다."""
+    rv = _rv_cached("S1")
+    assert forms.unplaced(rv) == []
+    d = _forms_copy(tmp_path)
+    _edit_json(d / "매핑" / "지방.json", lambda m: m["안씀"].pop("신고.홈택스ID"))
+    assert forms.unplaced(rv, forms_dir=str(d)) == ["지방: 신고.홈택스ID"]
+    d2 = _forms_copy(tmp_path / "second")
+    _edit_json(d2 / "매핑" / "본지.json", lambda m: m["안씀"].pop("양수인[*].전화"))
+    rv["양수인"][0]["전화"] = "0212345678"
+    assert forms.unplaced(rv, forms_dir=str(d2)) == ["국세: 양수인[0].전화"]
+    p = forms.plan(rv)
+    assert set(p["서식별"]) == {"국세", "지방"} and "신고.홈택스ID" in p["서식별"]["지방"]["안씀"]
+    assert "지방.열.국외소계" not in p["서식별"]["국세"]["안씀"]            # 지방 매핑의 항목은 국세 쪽에 섞이지 않는다
+
+
+def test_code_with_an_empty_name_stops_instead_of_going_blank(tmp_path):
+    """코드표에 코드는 있는데 이름이 비어 있으면 빈칸으로 두지 않고 멈춘다."""
+    import shutil
+    e = tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL, "efile"), str(e))
+    rv = _rv_cached("S1")
+    rv["환급계좌"] = {"은행코드": "004", "계좌번호": "1234567890"}
+    assert forms.plan(rv)                                                     # 이름이 있으면 그대로 놓인다
+    _edit_json(e / "codes_c116300.json", lambda c: c["은행"]["004"].update(이름=""))
+    with pytest.raises(ValueError) as err:
+        forms.plan(rv, efile_dir=str(e))
+    assert "은행" in str(err.value) and "이름이 비어" in str(err.value) and "004" not in str(err.value)
+
+
+def test_area_and_period_formats():
+    from yangdo import forms_fmt
+    fmt = forms_fmt._Fmt({}, {}, {"특수지": {}})
+    # 면적: 소수 둘째 자리까지, 셋째 자리 값이 있으면 셋째 자리까지. 그 아래는 신고값과 같이 버린다(반올림하지 않는다)
+    assert [fmt("면적", v, {}) for v in (84.0, 84.5, 12.345, 1234.5, 0, None, "")] == ["84.00", "84.50", "12.345", "1,234.50", "", "", ""]
+    assert fmt("면적", "84.9996", {}) == "84.999" and fmt("면적", "84.9951", {}) == "84.995"
+    assert fmt("기간", "3년 이상 4년 미만", {}) == {"이상": "3", "미만": "4"}
+    assert fmt("기간", "10년 이상", {}) == {"이상": "10", "미만": ""} and fmt("기간", "", {}) == ""
+    with pytest.raises(ValueError) as e:
+        fmt("기간", "약 3년쯤", {"필드": "보유기간"})
+    assert "보유기간" in str(e.value) and "약 3년쯤" not in str(e.value)
+
+
+def test_address_shortening_knows_the_merged_province_and_the_mountain_code():
+    from yangdo import forms_fmt
+    assert forms.SIDO_SHORT is forms_fmt.SIDO_SHORT and forms.SIDO_SHORT["전남광주통합특별시"] == "광주특별시"
+    cands = forms_fmt._shorter("전남광주통합특별시 서구 치평동 1200 합성아파트 101동 1001호")
+    assert "광주특별시 서구 치평동 1200 합성아파트 101동 1001호" in cands and cands[-1] == "치평동 1200"
+    codes = json.load(open(os.path.join(SKILL, "efile", "codes_c116300.json"), encoding="utf-8"))
+    fmt = forms_fmt._Fmt({}, {}, codes)
+    addr = {"시도": "경기도", "시군구": "평택시", "읍면동": "고덕동", "특수지": "1", "번지": "12", "호": "3"}
+    assert fmt("주소", addr, {})[0] == "경기도 평택시 고덕동 산 12-3"
+    assert fmt("주소", dict(addr, 특수지="0"), {})[0] == "경기도 평택시 고덕동 12-3"
+    codes["특수지"]["1"]["이름"], codes["특수지"]["2"]["이름"] = "가", "산"        # 「산」 코드는 코드표의 이름으로 찾는다
+    fmt = forms_fmt._Fmt({}, {}, codes)
+    assert fmt("주소", addr, {})[0] == "경기도 평택시 고덕동 12-3"
+    assert fmt("주소", dict(addr, 특수지="2"), {})[0] == "경기도 평택시 고덕동 산 12-3"
+
+
+def test_sources_hold_no_private_use_characters():
+    """사용자 정의 영역 글자(U+E000~U+F8FF)는 편집기에서 보이지 않는다. 코드에는 \\uf000 같은 이스케이프로 적는다."""
+    bad = []
+    for sub in ("yangdo", "scripts", os.path.join("scripts", "refresh")):
+        folder = os.path.join(SKILL, sub)
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".py"):
+                src = open(os.path.join(folder, name), encoding="utf-8").read()
+                if any(0xE000 <= ord(ch) <= 0xF8FF for ch in src):
+                    bad.append(os.path.join(sub, name))
+    assert bad == []
 
 
 def test_local_form_uses_local_values():
@@ -454,7 +634,7 @@ def test_mapping_part_names_match_anchor_names():
     for name, m in _mappings().items():
         fields = _fields(m["필드목록"])
         alias = m.get("열") or {}
-        for c in m["칸"]:
+        for c in m.get("칸", []):
             f = fields[c["필드"]]
             spec = c.get("열")
             a = alias.get(spec, spec)
