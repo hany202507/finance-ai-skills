@@ -344,6 +344,33 @@ def test_write_failure_in_the_middle_is_code_4(tmp_path, monkeypatch, capsys):
     assert "쓰지 못했다" in _confirm(out)
 
 
+# ---------------------------------------------------------------- 상대 경로 출력 폴더
+
+def _relative_run(tmp_path, monkeypatch, capsys):
+    fp, gp, _ = _write(tmp_path, "S1", s1_filer())
+    monkeypatch.chdir(tmp_path)
+    code = MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", "out", "--오늘", TODAY])
+    shown = capsys.readouterr()
+    assert code == 0, shown.out + shown.err + _confirm(tmp_path / "out")
+    assert PDFS | GUIDES | CALC | {S1_FILE, "신고값.json", "신고_확인.md"} <= set(os.listdir(tmp_path / "out"))
+
+
+def test_relative_output_folder_runs_to_the_end(tmp_path, monkeypatch, capsys):
+    _relative_run(tmp_path, monkeypatch, capsys)
+
+
+def test_relative_output_folder_runs_to_the_end_on_old_python(tmp_path, monkeypatch, capsys):
+    """파이썬 3.10·3.11 의 tempfile.mkdtemp 는 dir 가 상대 경로면 상대 경로를 돌려준다. 그 동작을 흉내 내 돌린다."""
+    real = efile.tempfile.mkdtemp
+
+    def mkdtemp(suffix=None, prefix=None, dir=None):
+        made = real(suffix=suffix, prefix=prefix, dir=dir)
+        return os.path.join(dir, os.path.basename(made)) if dir else made
+
+    monkeypatch.setattr(efile.tempfile, "mkdtemp", mkdtemp)
+    _relative_run(tmp_path, monkeypatch, capsys)
+
+
 # ---------------------------------------------------------------- 이전 결과 지우기
 
 def test_rerun_drops_stale_results_and_keeps_other_files(tmp_path):

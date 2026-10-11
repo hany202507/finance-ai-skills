@@ -487,6 +487,7 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     검증기는 파일명도 보므로 임시 파일을 임시 폴더 안에 최종 이름으로 둔다. 끝나면 그 파일부터 지우고 폴더를 지운다.
     폴더를 지우지 못하면 삼키지 않고 알린다. 검증에 실패한 실행이면 「검증」에, 통과한 실행이면 「경고」에 문장을 더한다.
     경고에는 검증기의 알림(주민등록번호 검증번호가 옛 규칙과 다름, 막지 않는다)과 build 의 경고도 들어간다.
+    out_dir 는 상대 경로여도 된다. 절대 경로로 바꿔 쓰고 「경로」도 절대 경로로 돌려준다.
     efile_dir 는 스킬의 efile 폴더(기본값)만 받는다. 검증기 명령줄에 폴더 인자가 없어 다른 폴더의 레이아웃·코드로
     만든 파일은 같은 기준으로 검증할 수 없기 때문이다. 다른 폴더가 오면 ValueError 다.
     """
@@ -496,6 +497,9 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     if _spec_locked(efile_dir):
         raise Locked(_lock_reason(efile_dir) or "규격판이 잠겨 있어 전자신고 파일을 만들지 않는다")
     name = file_name(rv, efile_dir)
+    # 검증기는 스킬 폴더를 작업 폴더로 돈다. 파이썬 3.10·3.11 의 mkdtemp 는 dir 가 상대 경로면 상대 경로를 돌려주므로
+    # 출력 폴더를 먼저 절대 경로로 바꾼다. 돌려주는 「경로」도 절대 경로다
+    out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     final = os.path.join(out_dir, name)
     if os.path.lexists(final):
