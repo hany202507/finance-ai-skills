@@ -247,21 +247,23 @@ def test_final_return_without_preliminary_return_notes_the_penalty():
     assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세 %d원" % want["무신고"] in m
                and "납부지연가산세 %d원" % want["납부지연"] in m for m in notes)
     assert any("본지 ⑯" in m and "%d원" % want["계"] in m for m in notes)
-    assert any("감면이 적용되지 않으면" in m and "%d원" % want["무신고_감면전"] in m and "2026-01-01" in m for m in notes)
+    assert any("감면 없이" in m and "감면이 적용되면" in m and "%d원" % want["무신고_감면적용"] in m and "2026-01-01" in m
+               for m in notes)
     assert any("부정행위" in m and "다루지 않는다" in m for m in notes)
     assert not any("계산하지 않아 0 으로 두었으므로" in m for m in notes)
 
 
 def test_final_return_without_preliminary_return_penalty_in_form_matches_hand_calculation():
     """본지 ⑯ 가산세와 ⑱ 납부할 세액(계획 2 에서 xfail 로 남겼던 결함). 원문 서식은 2022년 귀속 세율표와 2023-05-31 납부로
-    847,869 · 335,360 · 1,183,229, 납부할 세액 9,661,921 이다. 현행 기대값은 같은 방식에 규칙세트의 율·세율을 넣어 손계산했다
-    (references/정답지.md 「가산세 대조」): 793,869 · 312,000 · 1,105,869, 납부할 세액 7,938,692 + 1,105,869 = 9,044,561."""
+    847,869 · 335,360 · 1,183,229, 납부할 세액 9,661,921 이다(무신고가산세에 50% 감면을 적용했다). 현행 기대값은 규칙세트의
+    율·세율로 손계산했고 지금 문언에 따라 감면을 적용하지 않는다(references/정답지.md 「가산세 대조」):
+    1,587,738 · 312,000 · 1,899,738, 납부할 세액 7,938,692 + 1,899,738 = 9,838,430."""
     k = KEYS["09-8"]
     r, rv = _run("09-8")
     want, src = k["현행가산세"], k["원문가산세"]
     _require(rv["신고"]["구분"] == "확정")
     _require(k["원문"]["산출세액"] + src["계"] == src["납부할세액"])       # 원문 ⑰ = ⑩ + ⑮ (공제와 기신고세액이 없다)
-    _require(k["현행"]["산출세액"] + want["계"] == want["납부할세액"] == 9_044_561)
+    _require(k["현행"]["산출세액"] + want["계"] == want["납부할세액"] == 9_838_430)
     cols = rv["본지"]["열"]
     # 원문은 합계, 국내분 소계, 세율구분 열에 모두 적었다(행 1859~1862)
     for name in ("합계", "국내소계"):
@@ -274,13 +276,14 @@ def test_final_return_without_preliminary_return_penalty_in_form_matches_hand_ca
     t = cols["합계"]
     assert t["납부할세액"] == want["납부할세액"]
     assert (t["전자신고공제"], t["기신고세액"], t["분납"], t["신고기한내납부"]) == (0, 0, 0, want["납부할세액"])
-    assert rv["가산세"]["계산"] is True and rv["가산세"]["무신고_감면전"] == want["무신고_감면전"]
+    assert rv["가산세"]["계산"] is True and rv["가산세"]["감면적용"] is False
+    assert rv["가산세"]["무신고_감면적용"] == want["무신고_감면적용"]
     assert [{key: c[key] for key in want["건"][0]} for c in rv["가산세"]["건"]] == want["건"]
 
 
 def test_final_return_without_preliminary_return_penalty_in_efile_rows():
     """전자신고 03 레코드의 가산세 칸. 세율구분 행은 열별 금액, 국내 소계와 합계 행은 합계다(규격서 p41 15~17번).
-    19 자진납부할세액: 1-10 행 7,335,556 + 1,025,656 = 8,361,212, 1-20 행 603,136 + 80,213 = 683,349, 합 9,044,561."""
+    19 자진납부할세액: 1-10 행 7,335,556 + 1,759,211 = 9,094,767, 1-20 행 603,136 + 140,527 = 743,663, 합 9,838,430."""
     k = KEYS["09-8"]
     r, rv = _run("09-8")
     want = k["현행가산세"]
@@ -292,9 +295,9 @@ def test_final_return_without_preliminary_return_penalty_in_efile_rows():
             (want["무신고"], want["납부지연"], want["계"], 0), key
         assert x["자진납부할세액"] == want["납부할세액"]
     assert (rows[("1", "10")]["가산세-신고불성실"], rows[("1", "10")]["가산세-납부불성실"], rows[("1", "10")]["자진납부할세액"]) == \
-        (733_556, 292_100, 8_361_212)
+        (1_467_111, 292_100, 9_094_767)
     assert (rows[("1", "20")]["가산세-신고불성실"], rows[("1", "20")]["가산세-납부불성실"], rows[("1", "20")]["자진납부할세액"]) == \
-        (60_313, 19_900, 683_349)
+        (120_627, 19_900, 743_663)
     z = rows[("Z", "00")]
     assert (z["분납할세액"], z["자진납부세액"]) == (0, want["납부할세액"])
 
@@ -310,9 +313,9 @@ def test_final_return_penalty_matches_hand_calculation():
     assert (got["무신고"], got["납부지연"], got["계"]) == (want["무신고"], want["납부지연"], want["계"])
     assert [{key: c[key] for key in want["건"][0]} for c in got["건"]] == want["건"]
     assert got["열"] == want["열"]
-    # 감면이 적용되지 않는 쪽으로 해석되면 무신고가산세는 감면 전 금액이다. 결과와 확인사항이 그 금액을 싣는다
-    assert got["무신고_감면전"] == want["무신고_감면전"]
-    assert any("감면이 적용되지 않으면" in m and "%s원" % want["무신고_감면전"] in m for m in got["확인사항"])
+    # 예정신고분을 기한 후 신고로 내 감면이 적용되면 무신고가산세는 절반이다. 결과와 확인사항이 그 금액을 싣는다
+    assert got["감면적용"] is False and got["무신고_감면적용"] == want["무신고_감면적용"]
+    assert any("감면이 적용되면" in m and "%s원" % want["무신고_감면적용"] in m for m in got["확인사항"])
     assert got["양도일별"] is None                      # A·B 는 같은 날 양도라 대안 계산이 없다
 
 

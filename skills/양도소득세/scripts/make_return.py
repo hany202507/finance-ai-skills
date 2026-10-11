@@ -324,7 +324,11 @@ def _values(rep, res, facts, f, rules_dir):
     rep["판"] = rv.get("판")
     pen = rv.get("가산세")
     if isinstance(pen, dict) and pen.get("계산") and pen.get("계"):      # 가산세를 넣은 확정신고. 납부일(작성일)과 금액만 싣는다
-        rep["가산세"] = {"계": pen["계"], "납부일": pen.get("납부일")}
+        rep["가산세"] = {"계": pen["계"], "납부일": pen.get("납부일"),
+                      "감면적용금액": None if pen.get("감면적용") else pen.get("무신고_감면적용")}
+        if not pen.get("감면적용") and pen.get("감면안내"):
+            # 무신고가산세를 감면 없이 넣었다. 금액이 절반으로 달라질 수 있는 문장이라 확인사항에만 두지 않고 알림에도 올린다
+            rep["알림"].append(pen["감면안내"])
     if (facts.get("연간") or {}).get("다른양도") is True:      # 기신고 금액이 있으면 위에서 다루지않음으로 끝났다
         rep["알림"].append(OTHER_SALE)
     return rv
@@ -483,6 +487,10 @@ def _todo_steps(rep):
         return out
     out.append("%s, %s 과 %s 을 계약서·증빙과 대조해 검토한다. 신고 전 최종 판단은 세무 전문가가 한다"
                % (forms.OUT_NATIONAL, forms.OUT_LOCAL, RV_FILE))
+    if rep["가산세"] and rep["가산세"]["감면적용금액"] is not None:
+        out.append("예정신고분을 확정신고기한까지 기한 후 신고로 내는 방법과 견주어 본다. 그렇게 내 감면이 적용되면 무신고가산세가 "
+                   "%s원으로 줄어든다. 이 신고서는 감면 없이 만들었다. 어느 쪽으로 신고할지 세무 전문가와 정한다"
+                   % rep["가산세"]["감면적용금액"])
     if sent:
         out.append("홈택스에 사람이 로그인해 양도소득세 변환파일 %s 을 올리고 형식검증과 내용검증을 돌린다. "
                    "오류가 나오면 제출하지 않고 오류 문장을 그대로 알린다" % sent["파일명"])

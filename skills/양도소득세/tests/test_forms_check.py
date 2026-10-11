@@ -875,7 +875,7 @@ def test_efile_section_check_does_not_import_the_file_generator():
 
 # ---- ⑯ 가산세: 규칙세트 값과 엔진 결과·사실관계로 다시 계산해 대조한다(계획 2b G1b) ----
 # 신고값의 가산세는 yangdo.penalty 가 계산한다. 서식 검산은 그 모듈을 부르지 않고 같은 값을 따로 계산한다.
-# BF 손계산: 예정신고 세액 206,274,000, 107일, 무신고 20,627,400, 납부지연 4,855,680, 계 25,483,080
+# BF 손계산: 예정신고 세액 206,274,000, 107일, 무신고 206,274,000 × 20% = 41,254,800(감면 없음), 납부지연 4,855,680, 계 46,110,480
 
 def _bump_penalty(rv, col, key, by):
     """본지 한 열의 가산세 한 줄을 바꾸고 그 열의 계와 납부 칸을 산식에 맞게 함께 바꾼다(다른 열은 그대로)."""
@@ -891,10 +891,10 @@ def _bump_penalty(rv, col, key, by):
 
 def test_penalty_cells_are_recalculated():
     r, rv = _pair("BF")
-    assert rv["본지"]["열"]["합계"]["가산세"] == 25483080
+    assert rv["본지"]["열"]["합계"]["가산세"] == 46110480
     assert _fc(rv, r, facts=CASES["BF"]) == []
     for col, shown in (("합계", "본지 합계"), ("국내소계", "본지 국내소계"), ("1-10", "본지 1-10 열")):
-        for key, name, want in (("가산세_신고", "무(과소)신고", "20,627,400"), ("가산세_납부", "납부지연", "4,855,680")):
+        for key, name, want in (("가산세_신고", "무(과소)신고", "41,254,800"), ("가산세_납부", "납부지연", "4,855,680")):
             msgs = _fc(_bump_penalty(rv, col, key, 10), r, facts=CASES["BF"])
             hit = [m for m in msgs if shown in m and "⑯" in m and name in m and "다시 계산" in m and want in m]
             assert hit, (col, key, msgs)
@@ -909,21 +909,44 @@ def test_penalty_lowered_in_every_place_is_still_caught():
     for col in ("합계", "국내소계", "1-10"):
         c = bad["본지"]["열"][col]
         c["가산세_신고"] = 0
+        c["가산세"] -= 41254800
+        for k in ("납부할세액", "신고기한내납부"):
+            if c.get(k) is not None:
+                c[k] -= 41254800
+    for x in bad["전자신고"]["세율별"]:
+        x["가산세-신고불성실"] = 0
+        x["가산세-계"] -= 41254800
+        x["자진납부할세액"] -= 41254800
+        if x["자진납부세액"]:
+            x["자진납부세액"] -= 41254800
+    bad["가산세"].update(무신고=0, 계=4855680)
+    msgs = _fc(bad, r, facts=CASES["BF"])
+    assert any("본지 합계" in m and "⑯" in m and "무(과소)신고" in m and "41,254,800" in m for m in msgs), msgs
+    assert any(m.startswith("전자신고") and "가산세-신고불성실" in m and "41,254,800" in m for m in msgs), msgs
+    assert any("가산세 절" in m and "41,254,800" in m for m in msgs), msgs
+
+
+def test_relieved_penalty_on_the_form_is_caught():
+    """지금 문언에서는 확정신고서의 무신고가산세에 감면을 넣지 않는다. 감면을 적용한 금액(20,627,400)을 모든 곳에 맞춰 적어도
+    다시 계산한 값(41,254,800)과 달라 걸린다."""
+    r, rv = _pair("BF")
+    bad = copy.deepcopy(rv)
+    for col in ("합계", "국내소계", "1-10"):
+        c = bad["본지"]["열"][col]
+        c["가산세_신고"] = 20627400
         c["가산세"] -= 20627400
         for k in ("납부할세액", "신고기한내납부"):
             if c.get(k) is not None:
                 c[k] -= 20627400
     for x in bad["전자신고"]["세율별"]:
-        x["가산세-신고불성실"] = 0
+        x["가산세-신고불성실"] = 20627400
         x["가산세-계"] -= 20627400
         x["자진납부할세액"] -= 20627400
         if x["자진납부세액"]:
             x["자진납부세액"] -= 20627400
-    bad["가산세"].update(무신고=0, 계=4855680)
-    msgs = _fc(bad, r, facts=CASES["BF"])
-    assert any("본지 합계" in m and "⑯" in m and "무(과소)신고" in m and "20,627,400" in m for m in msgs), msgs
-    assert any(m.startswith("전자신고") and "가산세-신고불성실" in m and "20,627,400" in m for m in msgs), msgs
-    assert any("가산세 절" in m and "20,627,400" in m for m in msgs), msgs
+    bad["가산세"].update(무신고=20627400, 계=25483080)
+    msgs = _fc(bad, r)
+    assert any("본지 합계" in m and "무(과소)신고" in m and "20,627,400 ≠ 다시 계산한 값 41,254,800" in m for m in msgs), msgs
 
 
 def test_penalty_in_efile_rows_is_recalculated():
@@ -956,16 +979,17 @@ def test_penalty_recalculation_works_without_the_penalty_module(monkeypatch):
 
 
 def test_penalty_two_cases_two_columns_from_answer_key():
-    """정답지 09-8: 건 둘(A·B 2026-09-13, C 2026-10-13), 열 둘. 1-10 열 733,556 · 292,100, 1-20 열 60,313 · 19,900."""
+    """정답지 09-8: 건 둘(A·B 2026-09-13, C 2026-10-13), 열 둘. 무신고는 감면 없이 7,335,556 × 20% = 1,467,111 과
+    603,136 × 20% = 120,627. 1-10 열 1,467,111 · 292,100, 1-20 열 120,627 · 19,900."""
     from answer_keys import KEYS
     k = KEYS["09-8"]
     r = engine.calculate(copy.deepcopy(k["facts"]), today="2026-10-11")
     _FACTS[id(r)] = k["facts"]
     rv = return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
     assert _fc(rv, r, facts=k["facts"]) == []
-    for col, key, name, want in (("1-10", "가산세_신고", "무(과소)신고", "733,556"), ("1-10", "가산세_납부", "납부지연", "292,100"),
-                                 ("1-20", "가산세_신고", "무(과소)신고", "60,313"), ("1-20", "가산세_납부", "납부지연", "19,900"),
-                                 ("합계", "가산세_신고", "무(과소)신고", "793,869"), ("합계", "가산세_납부", "납부지연", "312,000")):
+    for col, key, name, want in (("1-10", "가산세_신고", "무(과소)신고", "1,467,111"), ("1-10", "가산세_납부", "납부지연", "292,100"),
+                                 ("1-20", "가산세_신고", "무(과소)신고", "120,627"), ("1-20", "가산세_납부", "납부지연", "19,900"),
+                                 ("합계", "가산세_신고", "무(과소)신고", "1,587,738"), ("합계", "가산세_납부", "납부지연", "312,000")):
         msgs = _fc(_bump_penalty(rv, col, key, 1), r, facts=k["facts"])
         shown = "본지 %s" % (col if col == "합계" else col + " 열")
         assert any(shown in m and "⑯" in m and name in m and want in m for m in msgs), (col, key, msgs)
@@ -1002,18 +1026,18 @@ def test_penalty_flag_must_not_hide_a_computable_penalty():
     r, rv = _pair("BF")
     bad = copy.deepcopy(rv)
     bad["가산세"] = {"계산": False, "사유": "시험", "계획": "없음"}
-    _hit(bad, r, "가산세 절", "25,483,080")
+    _hit(bad, r, "가산세 절", "46,110,480")
 
 
 def test_penalty_merged_comparison_total_column_only():
     """합산 비교세액이 이긴 신고서는 가산세를 합계 열에만 적는다. 열이 비어 있어도 통과하고 합계 열과 03 행은 대조한다.
-    F 를 2026-10-01 에 양도한 것으로 바꾼 사례: 무신고 27,875,200, 납부지연 7,235,220 + 992,250 = 8,227,470."""
+    F 를 2026-10-01 에 양도한 것으로 바꾼 사례: 무신고 278,752,000 × 20% = 55,750,400, 납부지연 7,235,220 + 992,250 = 8,227,470."""
     facts = copy.deepcopy(CASES["BF"])
     facts["자산"][1]["취득"]["잔금일"] = "2025-06-01"
     facts["자산"][1]["양도"]["잔금일"] = "2026-10-01"
     r, rv = _pair("BF", facts)
     assert r["계산"]["합계"]["합산비교세액"] > r["계산"]["합계"]["호별합산세액"]
-    assert rv["본지"]["열"]["1-10"]["가산세"] is None and rv["본지"]["열"]["합계"]["가산세"] == 36102670
+    assert rv["본지"]["열"]["1-10"]["가산세"] is None and rv["본지"]["열"]["합계"]["가산세"] == 63977870
     assert _fc(rv, r, facts=facts) == []
     msgs = _fc(_bump_penalty(rv, "합계", "가산세_납부", 10), r, facts=facts)
     assert any("본지 합계" in m and "납부지연" in m and "8,227,470" in m for m in msgs), msgs
@@ -1049,7 +1073,7 @@ def test_final_return_check_needs_facts():
 
 def test_penalty_follows_ruleset_values(tmp_path):
     """율은 규칙세트에서 읽는다. 율을 바꾼 규칙세트 사본으로 검산하면 지금 값이 틀린 값이 된다.
-    무신고 206,274,000 × 40% × 75% = 61,882,200."""
+    무신고 206,274,000 × 40% = 82,509,600(감면율은 지금 문언에서 쓰지 않는다)."""
     import json
     import shutil
     d = str(tmp_path / "rules")
@@ -1067,14 +1091,14 @@ def test_penalty_follows_ruleset_values(tmp_path):
     ruleset.write_edition(d, data["확인일"])
     r, rv = _pair("BF")
     msgs = _fc(rv, r, rules_dir=d, facts=CASES["BF"])
-    assert any("본지 합계" in m and "무(과소)신고" in m and "61,882,200" in m for m in msgs), msgs
+    assert any("본지 합계" in m and "무(과소)신고" in m and "82,509,600" in m for m in msgs), msgs
 
 
 def test_installment_limit_excludes_penalty():
-    """분납 한도는 가산세를 뺀 세액으로 센다. BF: (231,757,080 - 25,483,080) × 50% = 103,137,000."""
+    """분납 한도는 가산세를 뺀 세액으로 센다. BF: (252,384,480 - 46,110,480) × 50% = 103,137,000."""
     r, rv = _pair("BF", 분납신청=True)
     t = rv["본지"]["열"]["합계"]
-    assert (t["분납"], t["신고기한내납부"]) == (103137000, 128620080)
+    assert (t["분납"], t["신고기한내납부"]) == (103137000, 149247480)
     assert _fc(rv, r, facts=CASES["BF"]) == []
     bad = copy.deepcopy(rv)
     for c in (bad["본지"]["열"]["합계"],):

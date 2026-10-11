@@ -809,8 +809,8 @@ def test_no_path_and_no_sentence_is_not_a_pass(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- 확정신고(가산세를 넣어 신고서와 전자신고 파일까지 만든다)
-# BF 손계산(references/정답지.md 「가산세 대조」): 무신고 20,627,400, 납부지연 4,855,680, 계 25,483,080,
-# 납부할 세액 = 산출세액 206,274,000 + 25,483,080 = 231,757,080
+# BF 손계산(references/정답지.md 「가산세 대조」): 무신고 41,254,800(감면 없음), 납부지연 4,855,680, 계 46,110,480,
+# 납부할 세액 = 산출세액 206,274,000 + 46,110,480 = 252,384,480
 
 BF_FILE = "20270520C116300.01"
 
@@ -843,13 +843,13 @@ def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
     with open(out / "신고값.json", encoding="utf-8") as fh:
         rv = json.load(fh)
     t = rv["본지"]["열"]["합계"]
-    assert (t["가산세_신고"], t["가산세_납부"], t["가산세"], t["납부할세액"]) == (20627400, 4855680, 25483080, 231757080)
-    assert rv["가산세"]["계산"] is True and rv["가산세"]["무신고_감면전"] == 41254800
+    assert (t["가산세_신고"], t["가산세_납부"], t["가산세"], t["납부할세액"]) == (41254800, 4855680, 46110480, 252384480)
+    assert rv["가산세"]["계산"] is True and rv["가산세"]["감면적용"] is False and rv["가산세"]["무신고_감면적용"] == 20627400
     # 전자신고 파일의 03 합계 행: 15 신고불성실, 16 납부불성실, 17 계, 19 자진납부할세액, 21 자진납부세액
     with open(out / BF_FILE, "rb") as fh:
         z = [ln for ln in fh.read().split(b"\r\n") if ln[:2] == b"03" and ln[9:12] == b"Z00"][0]
     assert [int(z[a:b]) for a, b in ((134, 147), (147, 160), (160, 173), (186, 199), (212, 225))] == \
-        [20627400, 4855680, 25483080, 231757080, 231757080]
+        [41254800, 4855680, 46110480, 252384480, 252384480]
     for v in _personal(f):
         assert v not in text and v not in shown.out
 
@@ -863,14 +863,20 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
         md = fh.read()
     for doc in (notes, md.split("## 확인사항", 1)[1]):
-        assert "감면이 적용되지 않으면 무신고가산세는 41254800원" in doc and "2026-01-01 부터" in doc
-        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "18153200원" in doc and "4273250원" in doc
+        assert "감면 없이" in doc and "감면이 적용되면 무신고가산세는 20627400원" in doc and "2026-01-01 부터" in doc
+        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36306400원" in doc and "4273250원" in doc
         assert "부정행위" in doc and "다루지 않는다" in doc
         assert "납부일(2027-05-20) 기준" in doc
         assert "지방소득세 신고서의 가산세는 계산하지 않아" in doc
     assert not md.startswith(">")                              # 끝까지 간 실행이라 맨 위 경고 줄이 없다
     body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
-    assert "가산세는 계산하지 않았다" not in body and "25,483,080원" in body and "따로 계산해 더한다" not in md
+    assert "가산세는 계산하지 않았다" not in body and "46,110,480원" in body and "따로 계산해 더한다" not in md
+    # 감면을 적용하지 않았다는 문장은 확인사항 여러 줄에 묻히지 않게 알림 절에도 올리고, 사람이 할 일에 한 줄을 둔다
+    alerts = _confirm(out).split("## 알림", 1)[1].split("##")[0]
+    assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20627400원" in alerts and "세무 전문가" in alerts
+    todo = _confirm(out).split("## 사람이 할 일", 1)[1]
+    late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
+    assert len(late) == 1 and "견주어 본다" in late[0] and "20627400원" in late[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
     # 지방소득세 신고서는 가산세가 빠진 값이다. 값의 출처로 가리키지 않고 가산세를 더하라고 적는다
@@ -947,7 +953,8 @@ def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
     else:
         assert res["전자신고"] is None and not [n for n in made if "C116300" in n]
     notes = " ".join(res["확인사항"])
-    assert "감면이 적용되지 않으면 무신고가산세는 41254800원" in notes and "부정행위" in notes
+    assert "감면이 적용되면 무신고가산세는 20627400원" in notes and "부정행위" in notes
+    assert any("감면 없이" in x for x in res["알림"]) and any("기한 후 신고로 내는 방법" in x for x in res["사람이할일"])
     s = json.dumps(res, ensure_ascii=False)
     for v in _personal(f):
         assert v not in s
