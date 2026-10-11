@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""결과 JSON, 검토 문서, 질문 문서를 쓰는 출력 함수. scripts/run.py 와 scripts/mcp_server.py 가 함께 쓴다.
+"""결과 JSON, 검토 문서, 질문 문서를 쓰는 출력 함수. scripts/run.py, scripts/mcp_server.py, scripts/make_return.py 가 함께 쓴다.
 
 이 모듈이 쓰는 파일 이름은 RESULT, QUESTIONS, REVIEW, WORKBOOK 넷이다(OUTPUT_NAMES). 통합 문서(WORKBOOK)는 engine 이 쓰고
-이 모듈은 있으면 경로만 돌려준다.
+이 모듈은 있으면 경로만 돌려준다. 출력 폴더에 계산 결과를 내는 차례(이전 결과 지움 → 계산 → 파일 쓰기)는 calculate_to 하나에 있다.
 """
 import json
 import os
 
-from yangdo import QUESTIONS_PATH
+from yangdo import QUESTIONS_PATH, engine
 
 TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
 
@@ -145,3 +145,16 @@ def write_outputs(res, out):
     paths.append(p)
     wb = os.path.join(out, WORKBOOK)
     return paths + ([wb] if os.path.exists(wb) else [])
+
+
+def calculate_to(facts, out, rules_dir=None, today=None):
+    """출력 폴더에 계산 결과를 낸다. (engine.calculate 결과, 쓴 파일 경로 목록).
+
+    폴더를 만들고 이 모듈이 쓰는 이전 결과를 지운 뒤 계산하고(통합 문서 포함) 결과 파일을 쓴다. 이번 결과가 질문이어도
+    이전 완료 결과가 옆에 남지 않는다. run.py, mcp_server.py, make_return.py 가 이 함수 하나를 같이 쓴다.
+    기준정보가 깨졌으면 ruleset.RuleError, 사실관계가 틀렸으면 facts.FactsError, 폴더나 파일을 쓰지 못하면 OSError 가 그대로 나온다.
+    """
+    os.makedirs(out, exist_ok=True)
+    clear_previous(out)
+    res = engine.calculate(facts, rules_dir=rules_dir, today=today, workbook_path=os.path.join(out, WORKBOOK))
+    return res, write_outputs(res, out)
