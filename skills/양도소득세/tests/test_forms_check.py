@@ -236,6 +236,69 @@ def test_e_filing_credit_cap_and_final_return():
     _hit(bad, r, "⑮", "확정")
 
 
+def test_total_column_payment_cells_must_not_be_blank():
+    """합계 열의 납부 칸(본지 ⑰~⑳, 지방 ⑮ 와 납부세액)이 비면 산식을 건너뛰지 말고 실패해야 한다."""
+    r, rv = _pair("S1", 분납신청=True)
+    for key, no in (("기신고세액", "⑰"), ("납부할세액", "⑱"), ("분납", "⑲"), ("신고기한내납부", "⑳")):
+        bad = copy.deepcopy(rv)
+        bad["본지"]["열"]["합계"][key] = None
+        _hit(bad, r, "본지 합계", no, "비어 있다")
+    for key, no in (("납부할세액", "⑮"), ("신고기한내납부", "납부")):
+        bad = copy.deepcopy(rv)
+        bad["지방"]["열"]["합계"][key] = None
+        _hit(bad, r, "지방 합계", no, "비어 있다")
+    # 세율구분 열과 국내소계의 납부 칸은 비워 두는 것이 정상이다
+    r2, rv2 = _bf_two_columns()
+    assert rv2["본지"]["열"]["1-10"]["납부할세액"] is None
+    assert forms_check.check(rv2, r2) == []
+
+
+def test_filing_credit_must_equal_rule_on_provisional_return():
+    """예정신고에서는 합계 열 ⑮ 가 min(규칙세트 금액, 산출세액-⑪~⑭) 와 같아야 한다. 빠져도 잡는다."""
+    r, rv = _pair("S1")
+    assert rv["신고"]["구분"] == "예정" and rv["본지"]["열"]["합계"]["전자신고공제"] == 20000
+    for amount in (0, 10000):                              # 빠뜨려도, 한도보다 적게 넣어도 잡는다
+        bad = copy.deepcopy(rv)
+        for name in ("합계", "국내소계", "1-10"):          # 열 합은 맞게, 산식도 맞게 두고 ⑮ 만 틀린다
+            t = bad["본지"]["열"][name]
+            diff = 20000 - amount
+            t["전자신고공제"] = amount
+            if t.get("납부할세액") is not None:
+                t["납부할세액"] += diff
+            if t.get("신고기한내납부") is not None:
+                t["신고기한내납부"] += diff
+        got = _hit(bad, r, "본지 합계", "⑮", "한도")
+        assert not any("⑱" in m or "⑳" in m for m in got), got
+
+
+def test_filing_credit_on_final_return_is_zero_without_rule_lookup(monkeypatch):
+    r, rv = _pair("BF")
+    assert rv["신고"]["구분"] == "확정" and rv["본지"]["열"]["합계"]["전자신고공제"] == 0
+
+    def boom(self, key, on):
+        raise AssertionError("확정신고는 전자신고세액공제 규칙 키를 부르지 않는다: %s" % key)
+    monkeypatch.setattr(ruleset.Ruleset, "value", boom)
+    assert forms_check.check(rv, r) == []
+
+
+def test_filing_credit_is_capped_by_tax_after_credits():
+    """산출세액이 한도보다 작으면 공제는 산출세액까지다(공제 뒤 세액은 음수가 되지 않는다)."""
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    bad["본지"]["열"]["합계"]["감면세액"] = bad["본지"]["열"]["합계"]["산출세액"] - 5000
+    _hit(bad, r, "본지 합계", "⑮")                         # 기대값은 min(20,000, 5,000) = 5,000
+
+
+def test_local_tax_cells_are_checked():
+    r, rv = _pair("S1")
+    bad = copy.deepcopy(rv)
+    bad["지방"]["열"]["1-10"]["산출세액"] += 1
+    _hit(bad, r, "지방", "⑦")
+    bad = copy.deepcopy(rv)
+    bad["지방"]["열"]["합계"]["산출세액"] += 1
+    _hit(bad, r, "지방 합계", "⑦", "엔진 지방소득세")
+
+
 def test_schedule1_row_formulas():
     r, rv = _pair("S1")
     for key, word in (("양도차익", "양도차익"), ("과세양도차익", "⑮"), ("양도소득금액", "⑱")):

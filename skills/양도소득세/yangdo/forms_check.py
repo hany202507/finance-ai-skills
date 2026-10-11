@@ -15,7 +15,8 @@
   부표3 → 부표1       ⑤ 계 = ⑫ 취득가액, ⑬ 계 = ⑭ 기타 필요경비, 실지거래가액 자산에는 부표3이 있어야 한다
   부표1 행 산식       양도차익 = ⑪-⑫-⑬-⑭, ⑮ = 양도차익-비과세양도차익, ⑱ = ⑮-⑯, 합계 행 = 자산 행 합, ⑦ 양도면적 = ⑥ 총면적 × 지분
   부표1 → 본지        부표1 ⑱ 합 = 본지 ④(합계, 세율구분 열별, 국내소계)
-  본지 산식           ⑧ = ④+⑤-⑥-⑦, ⑯ 계, ⑱ = ⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰, ⑳ = ⑱-⑲, ⑲ 분납 한도, ⑮ 전자신고세액공제 한도
+  본지 산식           ⑧ = ④+⑤-⑥-⑦, ⑯ 계, ⑱ = ⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰, ⑳ = ⑱-⑲, ⑲ 분납 한도, ⑮ 전자신고세액공제(합계 열은 기대값과 같아야 하고 다른 열은 한도 이하)
+                      합계 열의 ⑰~⑳(지방은 납부할 총세액·신고기한내 납부)은 비어 있으면 실패
   세율구분 열 합      합계 열·국내소계 = 세율구분 열의 합. 합산 비교세액이 이기면 합계 열의 ⑩·⑮·⑱~⑳ 은 열 합과 다르다(빼고 본다)
   본지 → 지방         지방 과세표준 = 본지 ⑧(열마다), 지방 납부할 세액 산식, 지방 열 합
   엔진 대조           자산별 양도일·취득일·양도가액·양도차익·비과세양도차익·과세양도차익·장특공·양도소득금액, 취득가액+필요경비,
@@ -57,6 +58,9 @@ LOCAL = (("과세표준", "⑤", "과세표준"), ("산출세액", "⑦", "산�
          ("외국납부", "⑨", "외국납부세액공제"), ("원천징수", "⑩", "특별징수세액공제"), ("연금계좌", "⑪", "연금계좌세액공제"),
          ("전자신고공제", "⑫", "전자신고세액공제"), ("가산세", "⑬", "가산세 합계"), ("기신고세액", "⑭", "기신고세액"),
          ("납부할세액", "⑮", "납부할 총세액"), ("신고기한내납부", "", "신고기한내 납부"))
+# 합계 열은 납부 칸이 반드시 숫자여야 한다. 세율구분 열·소계의 납부 칸은 비워 두는 것이 정상이다(서식 열 납부 행 계약)
+NAT_TOTAL_REQUIRED = ("기신고세액", "납부할세액", "분납", "신고기한내납부")
+LOCAL_TOTAL_REQUIRED = ("납부할세액", "신고기한내납부")
 # 합산 비교세액이 이기면 합계 열이 세율구분 열의 합과 달라지는 칸(산출세액과 그에 딸린 칸)
 NAT_WIN = ("산출세액", "전자신고공제", "납부할세액", "분납", "신고기한내납부")
 LOCAL_WIN = ("산출세액", "전자신고공제", "납부할세액", "신고기한내납부")
@@ -353,8 +357,18 @@ class _Check:
         self.sums("본지", cols, labels, NAT, NAT_WIN, self.nat_win)
         self.payment_limits(cols, [n for n in names if n in cols])
 
+    def total_payment_filled(self, form, c, keys, table):
+        """합계 열의 납부 칸이 비어 있으면 알린다. 비어 있으면 산식 검사를 건너뛰어 틀린 값을 놓치기 때문이다."""
+        names = {key: (no, name) for key, no, name in table}
+        for key in keys:
+            if c.get(key) is None:
+                no, name = names[key]
+                self.fail("%s 합계 %s%s 칸이 비어 있다(합계 열의 납부 칸은 숫자여야 한다)" % (form, no + " " if no else "", name))
+
     def main_column(self, n, c):
         cn = "본지 " + _col(n)
+        if n == "합계":
+            self.total_payment_filled("본지", c, NAT_TOTAL_REQUIRED, NAT)
         base = _i(c.get("양도소득금액")) + _i(c.get("기신고양도소득금액")) - _i(c.get("감면소득금액")) - _i(c.get("기본공제"))
         self.same(c.get("과세표준"), base, cn + " ⑧ 과세표준", "④+⑤-⑥-⑦")
         self.same(c.get("가산세"), sum(_i(c.get(k)) for k in NAT_PENALTY), cn + " ⑯ 가산세 계", "세 칸 합")
@@ -381,27 +395,40 @@ class _Check:
                 self.same(cols[sub].get(key), sum(_i(v) for v in vals), "%s %s %s%s" % (form, sub, no + " " if no else "", name),
                           "세율구분 열 합")
 
+    def filing_credit(self, cols, names, kind, sin):
+        """⑮ 전자신고세액공제. 합계 열은 기대값과 같아야 하고(빠뜨려도 잡는다), 다른 열은 기대값 이하이면 된다.
+        기대값은 예정신고 min(규칙세트 금액, ⑩-⑪-⑫-⑬-⑭) (음수면 0), 확정신고 0. 확정신고에서는 규칙 키를 부르지 않는다."""
+        if kind == "예정":
+            cap, why = self.rule("전자신고세액공제.예정", _iso(sin["작성일"])), "예정신고 한도"
+        else:
+            cap, why = 0, "확정신고에는 전자신고세액공제가 없다"
+        for n in names:
+            c = cols[n]
+            got = _i(c.get("전자신고공제"))
+            if n != "합계" and got == 0:
+                continue
+            room = max(0, _i(c.get("산출세액")) - _i(c.get("감면세액")) - _i(c.get("외국납부")) - _i(c.get("원천징수"))
+                       - _i(c.get("연금계좌")))
+            if got < 0:
+                self.fail("본지 %s ⑮ 전자신고세액공제 %s 가 음수다" % (_col(n), _w(c.get("전자신고공제"))))
+            elif cap is None:
+                continue
+            elif n == "합계" and got != min(int(cap), room):
+                self.fail("본지 합계 ⑮ 전자신고세액공제 %s ≠ %s (%s %s, 산출세액에서 ⑪~⑭ 를 뺀 %s)"
+                          % (_w(c.get("전자신고공제")), _w(min(int(cap), room)), why, _w(int(cap)), _w(room)))
+            elif n != "합계" and got > min(int(cap), room):
+                self.fail("본지 %s ⑮ 전자신고세액공제 %s 이 한도 %s 를 넘는다(%s, 산출세액에서 ⑪~⑭ 를 뺀 %s)"
+                          % (_col(n), _w(c.get("전자신고공제")), _w(min(int(cap), room)), why, _w(room)))
+
     def payment_limits(self, cols, names):
-        """⑮ 전자신고세액공제 한도와 ⑲ 분납 한도. 한도는 규칙세트 값이고, 값이 있는 칸이 있을 때만 규칙세트를 읽는다."""
+        """⑮ 전자신고세액공제와 ⑲ 분납 한도. 한도는 규칙세트 값이다. 확정신고의 ⑮ 는 규칙을 부르지 않고 0 으로 본다.
+        분납 규칙은 ⑲ 에 값이 있는 칸이 있을 때만 읽는다."""
         sin = self.rv["신고"]
         kind = sin["구분"]
         if kind not in ("예정", "확정"):
             self.fail("신고 구분 %s 이 예정이나 확정이 아니다" % _w(kind))
-        credits = [n for n in names if _i(cols[n].get("전자신고공제")) != 0]
-        if credits and kind in ("예정", "확정"):
-            if kind == "예정":
-                cap, why = self.rule("전자신고세액공제.예정", _iso(sin["작성일"])), "예정신고 한도"
-            else:
-                cap, why = 0, "확정신고에는 전자신고세액공제가 없다"
-            for n in credits:
-                c = cols[n]
-                room = max(0, _i(c.get("산출세액")) - _i(c.get("감면세액")) - _i(c.get("외국납부")) - _i(c.get("원천징수"))
-                           - _i(c.get("연금계좌")))
-                if _i(c.get("전자신고공제")) < 0:
-                    self.fail("본지 %s ⑮ 전자신고세액공제 %s 가 음수다" % (_col(n), _w(c.get("전자신고공제"))))
-                elif cap is not None and _i(c.get("전자신고공제")) > min(int(cap), room):
-                    self.fail("본지 %s ⑮ 전자신고세액공제 %s 이 한도 %s 를 넘는다(%s, 산출세액에서 ⑪~⑭ 를 뺀 %s)"
-                              % (_col(n), _w(c.get("전자신고공제")), _w(min(int(cap), room)), why, _w(room)))
+        if kind in ("예정", "확정"):
+            self.filing_credit(cols, names, kind, sin)
         installments = [n for n in names if _i(cols[n].get("분납")) != 0]
         if not installments:
             return
@@ -443,6 +470,8 @@ class _Check:
             if c is None:
                 continue
             cn = "지방 " + _col(n)
+            if n == "합계":
+                self.total_payment_filled("지방", c, LOCAL_TOTAL_REQUIRED, LOCAL)
             m = main.get(n)
             if m is not None:
                 self.same(c.get("과세표준"), m.get("과세표준"), cn + " ⑤ 과세표준", "본지 %s ⑧" % _col(n))
