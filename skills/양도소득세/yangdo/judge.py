@@ -162,6 +162,10 @@ def count_for_heavy(f, a, houses, me, on, rs, reg):
                 m += 1
                 continue
             if p <= limit:
+                city = reg.metro_caveat(h["소재지"], on)
+                if city:
+                    notes.append("%s: %s 시 지역의 집이다. 통합 근거 법률의 시·군 관할구역 특례에 따라 광역시가 아닌 지역으로 보고 "
+                                 "주택 수에서 뺐다. 소관 기관의 다른 결정이나 과세관청 해석이 있는지 세무 전문가와 확인하라" % (h["id"], city))
                 continue
         elif metro is None:
             notes.append("%s: 광역시 해당 여부를 정하지 못해 주택 수에 넣었다" % h["id"])

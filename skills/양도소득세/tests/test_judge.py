@@ -737,6 +737,9 @@ class _RegionWithLocalDesignation:
     def metro(self, addr, on=None):
         return False
 
+    def metro_caveat(self, addr, on):
+        return None
+
 
 def _local_house(기준시가):
     return _d_with(lambda f: f["자산"][0].update(기준시가={"취득": {"주택": 100_000_000}, "양도": {"주택": 기준시가}}))
@@ -791,3 +794,112 @@ def test_temporary_exclusion_hint_holding_boundary_is_two_years_exactly():
 def test_hint_condition_does_not_change_tax_verdict():
     short = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
     assert short["중과"] == "중과2" and short["단기"] is not None
+
+
+# --- 전남광주통합특별시 주소의 지방 저가주택 판정 ---
+
+def _k2_with_third(시도, 시군구, 읍면동, 양도일=None):
+    """사례 K2(송파 집 양도, 강남 집, 셋째 집 기준시가 2억원)의 셋째 집 소재지만 바꾼다."""
+    f = copy.deepcopy(CASES["K2"])
+    for h in f["세대"]["주택목록"]:
+        if h["id"] == "H3":
+            h["소재지"] = addr(시도, 시군구, 읍면동)
+    if 양도일:
+        f["자산"][0]["양도"]["잔금일"] = 양도일
+    return f
+
+
+특례_확인 = "시·군 관할구역 특례"
+
+
+@pytest.mark.parametrize("시도", ["전라남도", "전남", "전남광주통합특별시"])
+@pytest.mark.parametrize("양도일", [None, "2026-06-30"])            # K2 의 양도일은 통합 시행일인 2026-07-01 이다
+def test_merged_city_county_house_is_a_local_low_price_house(시도, 양도일):
+    """통합특별시의 시·군(옛 전라남도) 집은 도 지역이라 기준시가 3억원 이하면 중과 주택 수에서 뺀다. 춘천 집(K2)과 같은 결과다.
+    통합 뒤 양도일에 시의 동 지역 집을 빼면 특례를 적용했다는 확인사항을 한 줄 단다. 통합 전 양도일에는 달지 않는다."""
+    f = _k2_with_third(시도, "순천시", "조례동", 양도일)
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과2" and v["주택수_중과"] == 2 and not _note(v, "정하지 못해")
+    assert J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)["주택별"]["H3"]["지방소재"] is True
+    notes = _note(v, 특례_확인)
+    if 양도일 is None:
+        assert _engine_tax(f) == EXPECT_AMOUNTS["K2"]["산출세액"] == 272_560_000
+        assert len(notes) == 1 and notes[0].startswith("H3: ") and "세무 전문가" in notes[0], notes
+        assert "제11조" not in notes[0] and "조제" not in notes[0]       # 규칙세트에 없는 조문 번호는 적지 않는다
+    else:
+        assert notes == []
+
+
+@pytest.mark.parametrize("시군구", ["목포시", "여수시", "순천시", "나주시", "광양시"])
+def test_merged_city_urban_house_note_only_after_the_merger(시군구):
+    """다섯 시의 동 지역 집: 통합 뒤 양도일에는 확인사항이 있고 통합 전 양도일에는 없다. 판정과 주택 수는 같다."""
+    for 시도 in ("전남광주통합특별시", "전라남도"):
+        after = run(_k2_with_third(시도, 시군구, "중앙동"))["자산"][0]
+        before = run(_k2_with_third(시도, 시군구, "중앙동", "2026-06-30"))["자산"][0]
+        assert after["주택수_중과"] == before["주택수_중과"] == 2 and after["중과"] == before["중과"] == "중과2"
+        assert len(_note(after, 특례_확인)) == 1 and _note(before, 특례_확인) == []
+
+
+@pytest.mark.parametrize("시군구,읍면동", [("강진군", "강진읍"), ("담양군", "담양읍"), ("순천시", "승주읍"), ("나주시", "남평읍")])
+def test_merged_city_county_or_town_house_has_no_note(시군구, 읍면동):
+    """군과 시의 읍·면 집은 어느 쪽으로 읽어도 광역시가 아닌 지역이라 확인사항을 달지 않는다."""
+    v = run(_k2_with_third("전남광주통합특별시", 시군구, 읍면동))["자산"][0]
+    assert v["주택수_중과"] == 2 and _note(v, 특례_확인) == []
+
+
+def test_merged_city_urban_house_over_the_price_limit_has_no_note():
+    """기준시가가 3억원을 넘어 주택 수에서 빼지 않은 집에는 달지 않는다(특례에 기대지 않은 결과다)."""
+    f = _k2_with_third("전남광주통합특별시", "순천시", "조례동")
+    for h in f["세대"]["주택목록"]:
+        if h["id"] == "H3":
+            h["양도당시기준시가"] = 300_000_001
+    v = run(f)["자산"][0]
+    assert v["주택수_중과"] == 3 and _note(v, 특례_확인) == []
+
+
+def test_other_local_low_price_house_has_no_merged_city_note():
+    assert _note(one("K2"), 특례_확인) == []                              # 춘천 집
+
+
+@pytest.mark.parametrize("시도", ["광주광역시", "광주", "전남광주통합특별시", "광주특별시"])
+@pytest.mark.parametrize("양도일", [None, "2026-06-30"])
+def test_merged_city_district_house_counts_like_a_metropolitan_house(시도, 양도일):
+    """통합특별시의 자치구(옛 광주광역시) 집은 광역시 지역이라 기준시가가 낮아도 주택 수에 넣는다. 서초 집(K)과 같은 결과다."""
+    f = _k2_with_third(시도, "서구", "치평동", 양도일)
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과3" and v["주택수_중과"] == 3 and not _note(v, "정하지 못해") and _note(v, 특례_확인) == []
+    assert J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)["주택별"]["H3"]["지방소재"] is False
+    if 양도일 is None:
+        assert _engine_tax(f) == EXPECT_AMOUNTS["K"]["산출세액"] == 322_310_000
+
+
+def test_sold_house_in_a_merged_city_urban_area_gets_the_note():
+    """판 집이 통합특별시 시의 동 지역 지방 저가주택이라 중과하지 않은 경우에도 같은 확인사항을 단다(실제 고시에는 없는 조합이라 가짜 이력을 쓴다)."""
+    class Designated(regions.Regions):
+        def status(self, regime, addr, on, 지구해당=None):
+            return {"지정": True, "공고": "가짜", "공고일": "2020-01-01", "효력발생일": "2020-01-01", "주석": []}
+
+    reg = Designated({name: {"이벤트": []} for name in regions.REGIMES}, REG.admin)
+
+    def sold(양도일):
+        f = _d_with(lambda f: f["자산"][0].update(기준시가={"취득": {"주택": 100_000_000}, "양도": {"주택": 300_000_000}}))
+        place = addr("전남광주통합특별시", "여수시", "학동")
+        f["자산"][0]["소재지"] = place
+        f["자산"][0]["양도"]["잔금일"] = 양도일
+        f["자산"][0]["양도"]["계약일"] = f["자산"][0]["양도"]["계약금수령일"] = "2026-05-20"
+        for h in f["세대"]["주택목록"]:
+            if h.get("자산id") == f["자산"][0]["id"]:
+                h["소재지"] = place
+        return J.judge(f, F.prepare(f), RS, reg)["자산"][0]
+
+    after, before = sold("2026-10-15"), sold("2026-06-30")
+    for v in (after, before):
+        assert v["중과"] is None and len(_note(v, "판 집이 지방 저가주택이거나")) == 1
+    assert len(_note(after, 특례_확인)) == 1 and _note(before, 특례_확인) == []
+
+
+def test_merged_city_house_without_district_is_counted_with_a_note():
+    f = _k2_with_third("전남광주통합특별시", "", "조례동")
+    v = run(f)["자산"][0]
+    assert v["주택수_중과"] == 3 and len(_note(v, "H3: 광역시 해당 여부를 정하지 못해 주택 수에 넣었다")) == 1
+

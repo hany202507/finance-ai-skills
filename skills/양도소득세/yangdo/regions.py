@@ -3,6 +3,16 @@
 
 공고를 효력발생일 순서로 다시 적용한다. 지정된 기간은 지정일부터 해제일 전날까지다.
 지구 단위 지정은 지번 경계 자료가 없어 문항 A02 로 묻는다.
+
+시도가 합쳐진 경우(행정구역_대응.json 의 통합. 2026-07-01 전남광주통합특별시)는 옛 시도 이름과 새 시도 이름을 모두 받는다.
+고시 이력은 새 이름으로 맞춰 판정하고, 광역시 해당 여부(metro)는 시군구가 통합 전 어느 시도의 것이었는지로 정한다.
+통합 근거 법률이 다른 법령의 광역시·도 규정을 그 법령이 개정될 때까지 자치구 관할구역에는 광역시 규정으로,
+시·군 관할구역에는 도 규정으로 적용하게 했기 때문이다. 그래서 통합 전후와 적은 이름에 관계없이 결과가 같다.
+옛 시도 이름은 제 시군구일 때만(또는 시군구를 비웠을 때만) 새 이름으로 바꾼다. 전라남도 서구처럼 맞지 않는 주소는
+바꾸지 않아 고시 이력을 잇지 않고, 통합 뒤 기준일의 metro 는 None 이다.
+
+시의 동 지역을 광역시가 아닌 지역으로 보는 것은 그 특례를 적용한 결과이고, 특례에는 소관 기관이 달리 정할 수 있다는
+단서가 있다. 그래서 통합 뒤 기준일의 그런 주소는 metro_caveat 로 알려 판정이 확인사항을 달게 한다.
 """
 import json
 import os
@@ -17,12 +27,13 @@ SIDO_SHORT = {"서울": "서울특별시", "부산": "부산광역시", "대구"
               "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도", "경남": "경상남도",
               "제주": "제주특별자치도",
               "서울시": "서울특별시", "부산시": "부산광역시", "대구시": "대구광역시", "인천시": "인천광역시",
-              "대전시": "대전광역시", "울산시": "울산광역시", "세종시": "세종특별자치시"}
+              "대전시": "대전광역시", "울산시": "울산광역시", "세종시": "세종특별자치시",
+              "광주특별시": "전남광주통합특별시"}       # 통합 근거 법률이 정한 약칭. 질문지 시도 목록의 순서가 바뀌지 않게 맨 뒤에 둔다
 CAPITAL = {"서울특별시", "인천광역시", "경기도"}
-METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시", "광주광역시"}
+METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시", "광주광역시"}    # 광주광역시는 통합 전 날짜에 옛 이름으로 적은 주소에 쓴다
 SEJONG = "세종특별자치시"
-UNKNOWN_METRO = {"전남광주통합특별시"}
-KNOWN_SIDO = set(SIDO_SHORT.values()) | {"전남광주통합특별시"}
+KNOWN_SIDO = set(SIDO_SHORT.values())
+_PLAIN = object()      # 합쳐진 시도와 관계없는 주소
 
 
 class NeedAnswer(Exception):
@@ -53,6 +64,13 @@ class Regions:
     def __init__(self, notices, admin):
         self.admin = admin
         self.rename = {r["옛"]: r for r in admin.get("이름변경", [])}
+        self.merged, self.old_merged = {}, {}
+        for m in admin.get("통합", []):
+            groups = {g["시도"]: g for g in m["옛"]}
+            self.merged[m["시도"]] = {"시작": _d(m["시작"]), "옛": groups,
+                                    "시군구": {name: g for g in m["옛"] for name in g["시군구"]}}
+            for g in m["옛"]:
+                self.old_merged[g["시도"]] = {"시작": _d(m["시작"]), "시군구": set(g["시군구"])}
         self.events = {}
         for name in REGIMES:
             evs = (notices.get(name) or {}).get("이벤트", [])
@@ -64,7 +82,8 @@ class Regions:
                 out.append(e)
             self.events[name] = out
 
-    def _sido(self, s, notes=None, on=None):
+    def _sido(self, s, notes=None, on=None, gu=None):
+        """시도 이름을 약칭 풀이와 이름변경으로 맞춘다. gu(시군구)를 주면 합쳐지기 전 시도 이름은 제 시군구일 때만 바꾼다."""
         s = _clean(s)
         s = SIDO_SHORT.get(s, s)
         seen = set()
@@ -72,6 +91,8 @@ class Regions:
             seen.add(s)
             r = self.rename[s]
             if on is not None and _d(r["시작"]) > on:
+                break
+            if gu and s in self.old_merged and gu not in self.old_merged[s]["시군구"]:
                 break
             if notes is not None and r.get("등급") != "★★★":
                 notes.append("%s 를 %s 로 바꿔 판정했다(%s, %s)" % (s, r["새"], r["등급"], r.get("근거", "")))
@@ -85,8 +106,9 @@ class Regions:
         return r2
 
     def canon(self, addr, notes=None, on=None):
-        a = {"시도": self._sido((addr or {}).get("시도"), notes, on),
-             "시군구": _clean((addr or {}).get("시군구")), "읍면동": _clean((addr or {}).get("읍면동"))}
+        gu = _clean((addr or {}).get("시군구"))
+        a = {"시도": self._sido((addr or {}).get("시도"), notes, on, gu),
+             "시군구": gu, "읍면동": _clean((addr or {}).get("읍면동"))}
         if a["시도"] == SEJONG:
             a["시군구"] = SEJONG
         return a
@@ -193,20 +215,65 @@ class Regions:
                 pass
         return False
 
+    def _merged_apply(self, addr, a, on):
+        """합쳐진 시도의 주소 a(canon 을 거친 것)에 적용할 규정(통합 표의 적용: 광역시, 도). 정하지 못하면 None,
+        합쳐진 시도와 관계없는 주소면 _PLAIN.
+
+        새 이름 주소는 시군구가 표에 있어야 정한다. 옛 시도 이름만 적고 시군구를 비웠으면 그 시도의 적용을 쓴다.
+        옛 시도 이름이 새 이름으로 바뀌지 않은 채 남았으면 둘 가운데 하나다. 기준일이 통합 전이면 관계없는 주소로 보아
+        종전 규칙(시도 이름만으로 판정)에 맡기고, 통합 뒤(또는 기준일 없음)면 시군구가 그 시도의 것이 아니라 정하지 않는다.
+        """
+        m = self.merged.get(a["시도"])
+        if m is not None:
+            g = m["시군구"].get(a["시군구"])
+            if g is None and not a["시군구"]:
+                raw = _clean((addr or {}).get("시도"))
+                g = m["옛"].get(SIDO_SHORT.get(raw, raw))
+            return g["적용"] if g else None
+        old = self.old_merged.get(a["시도"])
+        if old is not None and (on is None or on >= old["시작"]):
+            return None
+        return _PLAIN
+
     def metro(self, addr, on=None):
-        a = self.canon(addr, on=_d(on) if on is not None else None)
+        """수도권이거나 광역시(군 제외)·세종(읍·면 제외)이면 True, 나머지 지역이면 False, 정하지 못하면 None.
+
+        합쳐진 시도는 자치구 관할구역(통합 표의 적용이 광역시)에 광역시 규정을, 시·군 관할구역(적용이 도)에 도 규정을 적용한다.
+        """
+        on = _d(on) if on is not None else None
+        a = self.canon(addr, on=on)
         if a["시도"] not in KNOWN_SIDO:
             return None
         if a["시도"] in CAPITAL:
             return True
-        if a["시도"] in UNKNOWN_METRO:
-            return None
+        rule = self._merged_apply(addr, a, on)
+        if rule is not _PLAIN:
+            if rule is None:
+                return None
+            return rule == "광역시" and not a["시군구"].endswith("군")
         if a["시도"] in METRO:
             return not a["시군구"].endswith("군")
         if a["시도"] == SEJONG:
             first = a["읍면동"].split(" ")[0] if a["읍면동"] else ""
             return not (first.endswith("읍") or first.endswith("면"))
         return False
+
+    def metro_caveat(self, addr, on):
+        """metro 가 False 인 까닭이 합쳐진 시도의 시·군 관할구역 특례에 달린 주소면 그 시도 이름, 아니면 None.
+
+        통합 뒤 기준일에 적용이 도인 관할구역 가운데 군도 읍·면도 아닌 곳(시의 동 지역, 시군구를 비운 옛 도 이름 주소)이다.
+        특례를 적용하지 않고 합쳐진 시도 전체를 광역시로 읽으면 이런 곳만 결과가 달라진다. 군과 읍·면은 광역시 안에서도
+        빼는 지역이라 어느 쪽으로 읽어도 같고, 통합 전 기준일에는 합쳐진 시도가 없었다.
+        """
+        on = _d(on)
+        a = self.canon(addr, on=on)
+        m = self.merged.get(a["시도"])
+        if m is None or on < m["시작"] or self._merged_apply(addr, a, on) != "도":
+            return None
+        first = a["읍면동"].split(" ")[0] if a["읍면동"] else ""
+        if a["시군구"].endswith("군") or first.endswith("읍") or first.endswith("면"):
+            return None
+        return a["시도"]
 
     def capital(self, addr):
         return self.canon(addr)["시도"] in CAPITAL
