@@ -411,7 +411,7 @@ def test_render_error_makes_no_pdf_and_no_file(tmp_path, monkeypatch, exc):
 def test_locked_spec_is_code_3_and_drops_old_file(tmp_path, monkeypatch):
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 0 and _efiles(out) == [S1_FILE]
-    monkeypatch.setattr(efile, "_spec_locked", lambda efile_dir=None: True)     # 규격판.json 의 잠금이 걸린 것처럼
+    monkeypatch.setattr(efile, "_lock_reason", lambda efile_dir=None: "규격판이 잠겨 있다(시험)")     # 규격판.json 의 잠금이 걸린 것처럼
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 3
     names = set(os.listdir(out))

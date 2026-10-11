@@ -45,7 +45,7 @@ import sys
 import tempfile
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 
-from yangdo import SKILL_DIR
+from yangdo import SKILL_DIR, efile_text
 
 EFILE_DIR = os.path.join(SKILL_DIR, "efile")
 LAYOUT_FILE = "layout_c116300.json"
@@ -98,20 +98,6 @@ class BuildError(ValueError):
 
 # ---------------------------------------------------------------- 칸 채우기
 
-def _ksx_ok(b):
-    """ASCII(0x20~0x7E)와 KS X 1001 완성형 2바이트(한글 0xB0~0xC8 행, 기호 0xA1~0xAC 행, 둘째 0xA1~0xFE)만인지."""
-    i, n = 0, len(b)
-    while i < n:
-        x = b[i]
-        if 0x20 <= x <= 0x7E:
-            i += 1
-        elif (0xB0 <= x <= 0xC8 or 0xA1 <= x <= 0xAC) and i + 1 < n and 0xA1 <= b[i + 1] <= 0xFE:
-            i += 2
-        else:
-            return False
-    return True
-
-
 def _c(v, n, where=""):
     """문자 칸: 왼쪽부터, 남는 바이트는 공백. KS X 1001 완성형과 ASCII 만. where 는 오류 문장에 쓸 칸 이름."""
     if v is None:
@@ -126,7 +112,7 @@ def _c(v, n, where=""):
         b = s.encode("cp949")
     except UnicodeEncodeError:
         b = None
-    if b is None or not _ksx_ok(b):
+    if b is None or not efile_text.ksx_bytes_ok(b):       # 신고인 검사(filing)와 같은 함수다. 검증기는 따로 갖는다
         raise BuildError("%s: KS X 1001 완성형에 없는 글자가 있다(한글 완성형과 ASCII 만 쓴다, 규격서 p15)" % (where or "문자 칸"))
     if len(b) > n:
         raise BuildError("%s: 칸 길이 %d바이트를 넘는다" % (where or "문자 칸", n))
@@ -368,7 +354,9 @@ class _Builder:
         rows = sorted(self.rv["전자신고"]["계산명세"], key=lambda r: r["일련번호"])
         return [self.record("05", self.from_row("05", r), i) for i, r in enumerate(rows, 1)]
 
-    # 07 취득가액및필요경비계산상세명세: 일련번호·구분코드·상세일련번호 순(p104)
+    # 07 취득가액및필요경비계산상세명세: 일련번호·구분코드·상세일련번호 순(p104).
+    # 상세일련번호는 신고값이 필요경비신고자료일련번호마다 구분코드 순으로 1 부터 센 값이다(p60 5번). p104 는 정렬 키의
+    # 셋째를 「구분코드별_일련번호」라 적어 p60 과 말이 다르다. 칸 설명인 p60 을 따른다(홈택스 형식검증으로 확인할 항목)
     def expenses(self):
         rows = sorted(self.rv["전자신고"]["필요경비명세"], key=lambda r: (r["일련번호"], str(r["전자코드"]), r["상세일련번호"]))
         return [self.record("07", self.from_row("07", r, EXPENSE_RENAMES), i) for i, r in enumerate(rows, 1)]
@@ -495,8 +483,9 @@ def write(rv, out_dir, efile_dir=None, python=sys.executable):
     if efile_dir is not None and not _same_dir(efile_dir, EFILE_DIR):
         raise ValueError("write 의 efile_dir 는 스킬의 efile 폴더만 받는다. 검증기 명령줄에 폴더 인자가 없어 "
                          "다른 폴더의 레이아웃·코드로 만든 파일은 같은 기준으로 검증할 수 없다")
-    if _spec_locked(efile_dir):
-        raise Locked(_lock_reason(efile_dir) or "규격판이 잠겨 있어 전자신고 파일을 만들지 않는다")
+    locked = _lock_reason(efile_dir)          # 규격판과 레이아웃은 여기서 한 번만 읽는다
+    if locked:
+        raise Locked(locked)
     name = file_name(rv, efile_dir)
     # 검증기는 스킬 폴더를 작업 폴더로 돈다. 파이썬 3.10·3.11 의 mkdtemp 는 dir 가 상대 경로면 상대 경로를 돌려주므로
     # 출력 폴더를 먼저 절대 경로로 바꾼다. 돌려주는 「경로」도 절대 경로다

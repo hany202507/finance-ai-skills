@@ -40,7 +40,8 @@ def test_does_not_import_generator():
 def test_import_does_not_load_generator_modules():
     # 정적 시험은 「from yangdo import calc」 꼴을 못 잡으므로 실제로 import 한 뒤 불러온 모듈을 본다
     code = ("import sys, yangdo.efile_check; "
-            "print(','.join(m for m in ('yangdo.efile', 'yangdo.return_values', 'yangdo.calc') if m in sys.modules))")
+            "print(','.join(m for m in ('yangdo.efile', 'yangdo.efile_text', 'yangdo.return_values', 'yangdo.calc') "
+            "if m in sys.modules))")
     p = subprocess.run([sys.executable, "-c", code], cwd=SKILL, capture_output=True, timeout=120)
     assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
     assert p.stdout.decode("ascii").strip() == ""
@@ -501,11 +502,22 @@ MONEY03 = [f["name"] for f in L["레코드"]["03"]["필드"] if f["type"] == "N"
 MONEY05 = [f["name"] for f in L["레코드"]["05"]["필드"] if f["type"] == "N" and f["len"] == 13 and f["dec"] == 0]
 
 
+def _rv_row(kind, vals, **extra):
+    """레이아웃 name 을 키로 하는 신고값 전자신고 행. 자료구분·서식코드와 공란을 뺀 모든 칸을 싣는다(없는 수치 칸은 0, 문자 칸은 빈 글자)."""
+    row = {f["name"]: vals.get(f["name"], 0 if f["type"] == "N" else "")
+           for f in L["레코드"][kind]["필드"] if f["no"] > 2 and f["class"] != "SPACE"}
+    row.update(extra)
+    return row
+
+
 def _rv():
-    zero03 = {k: 0 for k in MONEY03}
-    r10 = dict(zero03, 국내외분="1", 세율구분="10", **RATE)
-    tot = dict(r10, 국내외분="Z", 세율구분="00", 자진납부세액=38329466)
-    calc = dict({k: ASSET.get(k, 0) for k in MONEY05}, 자산="S1", 일련번호=1)
+    r10 = _rv_row("03", dict(RATE, 국내외분="1", 세율구분="10"))
+    tot = _rv_row("03", dict(RATE, 국내외분="Z", 세율구분="00", 자진납부세액=38329466, 주민세_세율="10.00"))
+    calc = _rv_row("05", ASSET, 자산="S1", 일련번호=1)
+    # 07 행은 신고값 키가 다르다: 일련번호, 전자코드(5자리), 사업자번호. 구분코드는 서식 부표3 의 3자리다
+    exps = [{"일련번호": 1, "전자코드": c, "상세일련번호": i, "상호": who, "사업자번호": biz, "지급일자": day,
+             "지급금액": amt, "증빙종류코드": proof, "구분코드": c[:3], "자산": "S1"}
+            for i, (c, who, biz, day, amt, proof) in enumerate(EXPENSES, 1)]
     addr = {"시도": "서울특별시", "시군구": "마포구", "읍면동": "공덕동", "특수지": "0", "번지": "1", "호": "0",
             "아파트명": "합성아파트", "아파트동": "101", "아파트호": "1001", "법정동코드": "1144010200"}
     return {"신고": {"구분코드": "03", "상세코드": "01", "유형": "1", "과세기간": "202601", "서식종류": "D03",
@@ -514,7 +526,7 @@ def _rv():
                      "내외국인": "1", "거주구분": "1", "거주지국": "KR", "국적": "KR"},
             "양수인": [{"자산": "S1", "일련번호": 1, "구분": "1", "내외국인": "1", "번호": BUYER, "성명": "이합성",
                      "전화": None, "지분분자": 1, "지분분모": 1, "관계": "ZA"}],
-            "전자신고": {"세율별": [r10, tot], "계산명세": [calc], "필요경비명세": []}}
+            "전자신고": {"세율별": [r10, tot], "계산명세": [calc], "필요경비명세": exps}}
 
 
 def test_return_values_reconcile(tmp_path):
@@ -631,3 +643,130 @@ def test_penalty_cells_are_reconciled_with_return_values(tmp_path):
     assert _check(tmp_path, _with_penalty(), rv=rv) == []
     msgs = _check(tmp_path, _with_penalty(nonfiling=10000), rv=rv)        # 파일은 무신고 10,000, 신고값은 20,000
     assert _has(msgs, "3줄(03)", "15 가산세-신고불성실", "신고값 20000") and _has(msgs, "4줄(03)", "17 가산세-계", "신고값 25000")
+
+
+# --- 신고값 대사 범위: 05 의 날짜·면적·법정동코드·지번·코드와 07 전체 ---
+# 파일의 그 칸만 형식에 맞는 다른 값으로 바꾼다. 신고값 없이 검사하면 통과하는 칸(형식만 맞으면 되는 칸)도 신고값과 대사하면 걸린다.
+
+# (칸 이름, 바꿔 넣을 값, 신고값 없이도 다른 검사에 걸리는지)
+TAMPER_05 = [
+    ("거래일자_취득일자", "20180316", False),
+    ("거래일자_양도일자", "20261119", True),            # HEADER 양도일자와 달라진다
+    ("거래자산면적_총면적_토지_면적", 31, False),
+    ("거래자산면적_총면적_토지_지분(분자)", 2, False),
+    ("거래자산면적_총면적_건물_지분(분모)", 2, False),
+    ("거래자산면적_양도면적_건물_면적", "84.5", False),
+    ("거래자산면적_취득면적_토지_면적", "30.001", False),
+    ("소재지_법정동코드", "1144010200", False),
+    ("소재지_특수지코드", "1", False),
+    ("소재지_번지", "457", False),
+    ("소재지_호", "1", False),
+    ("소재지_아파트명", "다른아파트", False),
+    ("소재지_아파트동", "102", False),
+    ("소재지_아파트호", "1002", False),
+    ("거래일자_양도등기원인", "0028", False),           # 교환(p109). 등기목적 A1ZZCZ 의 코드다
+    ("거래일자_취득등기원인", "0028", False),
+    ("거래일자_취득등기목적", "A1ZZAZ", True),          # 소유권보존이면 등기원인을 적지 않는다
+    ("자산의종류", "03", False),
+    ("과세구분", "01", False),
+    ("세율구분", "15", True),                           # 03 에 세율구분 15 행이 없다
+    ("취득가액종류", "02", False),
+    ("주택거주기간년수", 8, False),
+    ("1세대1주택비과세_보유기간", "09", False),
+    ("1세대1주택_비과세_거주기간", "06", False),
+    ("장기보유특별공제적용구분코드", "Z1", False),
+]
+
+
+@pytest.mark.parametrize("name,value,caught_anyway", TAMPER_05, ids=[t[0] for t in TAMPER_05])
+def test_asset_record_cell_is_reconciled_with_return_values(tmp_path, name, value, caught_anyway):
+    lines = _put(_lines(), "05", name, value)
+    no = _field("05", name)["no"]
+    msgs = _check(tmp_path, lines, rv=_rv())
+    assert _has(msgs, "6줄(05) %d %s" % (no, name), "신고값 전자신고.계산명세[1].%s 와 다름" % name), msgs
+    if not caught_anyway:
+        assert _check(tmp_path, lines) == []        # 신고값이 없으면 형식만 보므로 통과한다
+
+
+# 07 은 줄을 (일련번호, 구분코드, 상세일련번호)로 신고값 행과 잇는다. 넷째 줄(11501, 중개수수료)의 칸을 바꾼다
+TAMPER_07 = [
+    ("상호", "다른공인중개사", "상호", False),
+    ("사업자등록번호", BIZ_LAW, "사업자번호", False),
+    ("지급일자", "20180316", "지급일자", False),
+    ("증빙종류코드", "02", "증빙종류코드", False),
+    ("지급금액", 2400001, "지급금액", True),            # 05-34 취득가액과 07 합이 달라진다
+]
+
+
+@pytest.mark.parametrize("name,value,key,caught_anyway", TAMPER_07, ids=[t[0] for t in TAMPER_07])
+def test_expense_record_cell_is_reconciled_with_return_values(tmp_path, name, value, key, caught_anyway):
+    lines = _put(_lines(), "07", name, value, nth=3)
+    no = _field("07", name)["no"]
+    msgs = _check(tmp_path, lines, rv=_rv())
+    assert _has(msgs, "10줄(07) %d %s" % (no, name), "신고값"), msgs
+    if name != "지급금액":
+        assert _has(msgs, "신고값 전자신고.필요경비명세[1/11501/4].%s 와 다름" % key), msgs
+    if not caught_anyway:
+        assert _check(tmp_path, lines) == []
+
+
+def test_expense_record_code_changed_is_a_missing_row(tmp_path):
+    """구분코드를 같은 묶음의 다른 코드로 바꾸면(26001 → 26002) 파일 안의 합은 그대로라 신고값 없이는 통과한다."""
+    lines = _put(_lines(), "07", "구분코드", "26002", nth=4)
+    assert _check(tmp_path, lines) == []
+    msgs = _check(tmp_path, lines, rv=_rv())
+    assert _has(msgs, "11줄(07)", "신고값 전자신고.필요경비명세 에 1/26002/5 행이 없음")
+    assert _has(msgs, "신고값 전자신고.필요경비명세 의 1/26001/5 행이 파일에 없음")
+
+
+def test_expense_rows_must_exist_on_both_sides(tmp_path):
+    rv = _rv()
+    dropped = rv["전자신고"]["필요경비명세"].pop()
+    msgs = _check(tmp_path, _lines(), rv=rv)
+    assert _has(msgs, "12줄(07)", "필요경비명세 에 1/%s/6 행이 없음" % dropped["전자코드"])
+    rv = _rv()
+    del rv["전자신고"]["필요경비명세"]
+    assert _has(_check(tmp_path, _lines(), rv=rv), "신고값에 전자신고.필요경비명세 없음")
+
+
+def test_rate_cells_of_rate_record_are_reconciled(tmp_path):
+    """03 의 세율 칸(5자리 고정 소수)도 신고값과 대사한다."""
+    rv = _rv()
+    rv["전자신고"]["세율별"][0]["세율"] = "38.00"
+    msgs = _check(tmp_path, _lines(), rv=rv)
+    assert _has(msgs, "3줄(03) 9 세율", "신고값 전자신고.세율별[1/10].세율 와 다름")
+
+
+def test_reconcile_sentences_carry_names_not_values(tmp_path):
+    """지번과 07 상호는 인적 성격의 값이다. 다르다는 문장에 파일 값도 신고값도 싣지 않는다."""
+    lines = _put(_lines(), "07", "상호", "다른매도인", nth=0)
+    lines = _put(lines, "05", "소재지_번지", "457")
+    lines = _put(lines, "05", "소재지_아파트명", "다른아파트")
+    rv = _rv()
+    rv["전자신고"]["계산명세"][0]["소재지_아파트동"] = "909"
+    text = "\n".join(_check(tmp_path, lines, rv=rv))
+    assert "소재지_번지" in text and "상호" in text and "소재지_아파트동" in text
+    for v in ("다른매도인", "합성매도인", "457", "456", "다른아파트", "합성아파트", "909", SELLER, BUYER):
+        assert v not in text, v
+
+
+@pytest.mark.parametrize("key,value,word", [
+    ("거래자산면적_총면적_토지_면적", "서른", "수가 아님"),
+    ("주택거주기간년수", 7.5, "정수가 아님"),
+    ("소재지_번지", ["456"], "글자가 아님"),
+    ("일련번호", "첫째", None),
+])
+def test_unreadable_return_value_is_a_sentence(tmp_path, key, value, word):
+    rv = _rv()
+    rv["전자신고"]["계산명세"][0][key] = value
+    msgs = _check(tmp_path, _lines(), rv=rv)        # 예외 없이 문장으로 알린다
+    assert msgs and (word is None or _has(msgs, "신고값 전자신고.계산명세[1].%s" % key, word)), msgs
+
+
+def test_long_term_deduction_allowed_for_rate_code_11(tmp_path):
+    """05-41 장기보유특별공제는 세율구분 10 과 11(2년 이상 보유한 비사업용 토지)에서 받는다(p33, p50, p51)."""
+    lines = _put(_put(_lines(), "05", "세율구분", "11"), "03", "세율구분", "11")
+    assert not _has(_check(tmp_path, lines), "41 장기보유특별공제")
+    lines = _put(_put(_lines(), "05", "세율구분", "15"), "03", "세율구분", "15")
+    assert _has(_check(tmp_path, lines), "6줄(05) 41 장기보유특별공제", "세율구분 10·11")
+

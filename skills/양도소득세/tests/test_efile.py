@@ -87,9 +87,26 @@ def test_check_failure_leaves_no_file(tmp_path):
 
 
 def test_locked_spec_refuses(tmp_path, monkeypatch):
-    monkeypatch.setattr(efile, "_spec_locked", lambda d=None: True)
+    monkeypatch.setattr(efile, "_lock_reason", lambda d=None: "규격판이 잠겨 있다(시험)")
     with pytest.raises(efile.Locked):
         efile.write(_rv("S1"), str(tmp_path))
+    assert os.listdir(tmp_path) == []
+
+
+def test_locked_spec_file_is_read_once(tmp_path, monkeypatch):
+    """잠겨 있을 때도 규격판 파일은 한 번만 읽고, 그때 얻은 까닭을 그대로 낸다."""
+    seen, real = [], efile._read_json
+
+    def fake(path):
+        name = os.path.basename(path)
+        seen.append(name)
+        data = real(path)
+        return dict(data, 잠금=True) if name == efile.SPEC_FILE else data
+
+    monkeypatch.setattr(efile, "_read_json", fake)
+    with pytest.raises(efile.Locked) as e:
+        efile.write(_rv("S1"), str(tmp_path))
+    assert "잠겨" in str(e.value) and seen.count(efile.SPEC_FILE) == 1
     assert os.listdir(tmp_path) == []
 
 
@@ -99,6 +116,30 @@ def test_non_ksx1001_name_is_refused():
     with pytest.raises(ValueError, match="완성형") as e:
         efile.build_records(rv)
     assert "김똠" not in str(e.value) and "양수인_성명" in str(e.value)
+
+
+def test_generator_and_filer_check_share_one_ksx_function(monkeypatch):
+    """완성형 검사는 efile_text 한 곳에 있다. 그 함수를 바꾸면 생성기와 신고인 검사가 함께 바뀌고 검증기는 그대로다."""
+    from yangdo import efile_text
+    name = "김합성"
+    assert filing.ksx1001_ok(name) and efile._c(name, 10, "칸") == name.encode("cp949") + b"    "
+    monkeypatch.setattr(efile_text, "ksx_bytes_ok", lambda raw, symbols=True: False)
+    assert not filing.ksx1001_ok(name)
+    with pytest.raises(efile.BuildError, match="완성형"):
+        efile._c(name, 10, "칸")
+    assert efile_check._ksx_problem(name.encode("cp949")) is None      # 검증기는 자기 규칙을 따로 갖는다
+
+
+@pytest.mark.parametrize("text", ["김합성", "ABC abc 019 ~", "합성아파트 101동", "가운뎃점·", "김똠", "金합성", "탭	", "", "끝"])
+def test_shared_ksx_function_agrees_with_checker(text):
+    """생성기 쪽 함수(기호 행 포함)와 검증기의 판정이 같다."""
+    from yangdo import efile_text
+    try:
+        raw = text.encode("cp949")
+    except UnicodeEncodeError:
+        raw = None
+    want = raw is not None and efile_check._ksx_problem(raw) is None
+    assert efile_text.ksx1001_ok(text, symbols=True) is want
 
 
 # ---------------------------------------------------------------- 합성 사례 네 건
