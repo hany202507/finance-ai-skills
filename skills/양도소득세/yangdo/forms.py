@@ -165,7 +165,7 @@ class _Planner:
         col = col or self.only_col(f)
         kind = e.get("형식", "글")
         return {"쪽": page, "필드": fid, "목록": lst, "열": col, "칸": self.rect(f, col), "값": value, "신고값": paths,
-                "맞춤": e.get("맞춤") or _ALIGN.get(kind), "줄": e.get("줄", 1), "pad": e.get("pad"),
+                "맞춤": e.get("맞춤") or _ALIGN.get(kind), "줄": e.get("줄", 1), "pad": e.get("pad"), "간격": e.get("간격"),
                 "이름": e.get("이름") or _cell_name(m["이름"], fid, col), "형식": kind, "서식": m["이름"]}
 
     # ---- 일반 매핑(본지·부표1·지방)
@@ -337,7 +337,7 @@ def plan(rv, forms_dir=None, efile_dir=None):
     """서식에 쓸 것. {"국세": {"원본", "쪽", "칸"}, "지방": {...}, "확인사항": [...], "서식별": {...}, "사용": [...], "안씀": {...}}.
 
     「쪽」 은 새 문서의 쪽마다 원본 쪽 번호(1부터), 「칸」 은 {"쪽"(새 문서 0부터), "필드", "목록", "열", "칸"(좌표),
-    "값", "신고값", "맞춤", "줄", "pad", "이름", "형식", "서식"} 목록이다. 「값」 이 목록이면 앞에서부터 칸에 들어가는 것을 쓴다.
+    "값", "신고값", "맞춤", "줄", "pad", "간격", "이름", "형식", "서식"} 목록이다. 「값」 이 목록이면 앞에서부터 칸에 들어가는 것을 쓴다.
     「서식별」 은 {"국세": {"사용", "안씀"}, "지방": {...}} 로, 그 서식의 매핑이 놓은 신고값 경로와 「안씀」 표다.
     「사용」·「안씀」 은 두 서식의 것을 합친 것이다."""
     return _Planner(rv, forms_dir, efile_dir).build()
@@ -377,7 +377,7 @@ def _write(page, field, c, font):
     for n, v in enumerate(values):
         try:
             forms_pdf.put_field(page, field, v, col=c["열"], align=c["맞춤"], size=SIZE, font=font, lines=c["줄"],
-                                pad=c["pad"])
+                                pad=c["pad"], gap=c.get("간격"))
             return n
         except forms_pdf.Overflow:
             continue

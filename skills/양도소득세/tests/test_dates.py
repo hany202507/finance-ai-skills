@@ -428,3 +428,32 @@ def test_holiday_table_is_part_of_the_edition(rs, tmp_path):
         ruleset.load(d)
     ruleset.write_edition(d, rs.확인일)
     assert ruleset.load(d).공휴일.covers(2027)
+
+
+# ---- 분납 기한(소득세법 제112조 「납부기한이 지난 후 2개월 이내」). 날짜 계산은 이 스킬의 가정이다 ----
+
+@pytest.mark.parametrize("종류,양도,신고기한,분납기한,요일", [
+    ("확정", "2026-11-20", "2027-05-31", "2027-08-02", 0),     # 2027-07-31 토요일, 08-01 일요일을 건너뛴다
+    ("예정", "2026-10-20", "2026-12-31", "2027-03-02", 1),     # 2027-02-28 일요일, 03-01 삼일절을 건너뛴다
+    ("예정", "2026-06-10", "2026-08-31", "2026-11-02", 0),     # 2026-10-31 토요일, 11-01 일요일
+    ("예정", "2026-01-15", "2026-03-31", "2026-06-01", 0),     # 말일 3월 31일의 2개월 뒤는 5월 31일(일요일)이라 월요일로
+])
+def test_installment_deadline_adds_two_months_to_the_adjusted_deadline(rs, 종류, 양도, 신고기한, 분납기한, 요일):
+    filing = dates.filing_deadline(종류, 양도, rs)
+    assert filing[1] == date.fromisoformat(신고기한)
+    due = dates.installment_deadline(filing, rs)
+    assert due[1] == date.fromisoformat(분납기한) and due[1].weekday() == 요일 and due[1].weekday() < 5
+    assert due.공휴일표 is True
+
+
+def test_installment_deadline_starts_from_the_moved_deadline_and_tells_what_it_skipped(rs):
+    filing = dates.filing_deadline("예정", "2026-12-10", rs)           # 말일 2027-02-28(일) 이 3·1절 다음 화요일 03-02 로 옮겨진 기한
+    assert filing[0] == date(2027, 2, 28) and filing[1] == date(2027, 3, 2)
+    due = dates.installment_deadline(filing, rs)
+    assert due[0] == date(2027, 5, 2) and due[1] == date(2027, 5, 4)   # 05-02 일요일, 05-03 노동절 대체휴일
+    assert dates.skipped_text(due).startswith("2027-05-02(일요일), 2027-05-03(")
+
+
+def test_installment_deadline_marks_a_year_missing_from_the_holiday_table(rs):
+    filing = dates.filing_deadline("확정", "2038-11-20", rs)
+    assert dates.installment_deadline(filing, rs).공휴일표 is False

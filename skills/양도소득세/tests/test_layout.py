@@ -33,6 +33,16 @@ def test_header_fixup_is_recorded():
     assert any(x["레코드"] == "01" and "350" in x["내용"] for x in L["FIXUPS"])
 
 
+def test_value_chosen_for_05_62_is_listed_as_a_cell_to_check_with_hometax():
+    """05-62 장기보유특별공제적용구분코드는 규격서에 값 설명이 없어 ZZ 를 넣는다. 형식검증으로 확인할 칸에 있고, 스크립트의 FIXUPS 와 같다."""
+    mine = [x for x in L["FIXUPS"] if x.get("칸이름", "").startswith("05-62 ")]
+    assert len(mine) == 1 and mine[0]["종류"] == "정한값" and mine[0]["확인"] == "홈택스 형식검증" and mine[0]["칸번호"] == [62]
+    import extract_layout
+    names = {f["no"]: f["name"] for f in L["레코드"]["05"]["필드"]}
+    assert names[62] == "장기보유특별공제적용구분코드"
+    assert mine[0] in extract_layout.FIXUPS
+
+
 def test_names_unique_within_record():
     for r in L["레코드"].values():
         names = [f["name"] for f in r["필드"]]

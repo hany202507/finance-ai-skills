@@ -915,6 +915,54 @@ def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
         assert v not in text and v not in shown.out
 
 
+def test_late_filing_stop_says_it_once_and_points_only_at_files_that_exist(tmp_path, capsys):
+    """기한후신고는 알림이 같은 말을 두 번 하지 않고 이 스킬이라고만 부른다. 질문.md 가 없는 실행의 사람이 할 일은 질문.md 를 가리키지 않는다."""
+    f = s1_filer()
+    f["신고"]["작성일"] = "2027-02-02"
+    code, out = _main(tmp_path, "S1", f, today="2027-02-02")
+    shown = capsys.readouterr().out
+    text = _confirm(out)
+    assert code == 2 and "질문.md" not in os.listdir(out)
+    alert = [ln for ln in _section(text, "## 알림").splitlines() if "기한후신고" in ln]
+    assert len(alert) == 1 and alert[0].count("다루지 않는다") == 1 and "이 스킬이 다루지 않는다." not in alert[0]
+    assert "도구" not in alert[0] and "도구" not in shown.split("기한후신고", 1)[1].splitlines()[0]
+    todo = _section(text, "## 사람이 할 일")
+    assert "질문.md" not in todo and "알림에 적힌 사유" in todo and "이 도구" not in todo
+
+
+def test_installment_split_in_the_human_todo_matches_the_return_values(tmp_path):
+    """분납을 신청한 실행은 「사람이 할 일」 납부 줄이 둘이다. 작성일에 낼 금액과 분납할 세액·기한이 신고값, 안내서의 값과 같다."""
+    f = filers.get("BF")
+    f["신고"]["분납신청"] = True
+    code, out = _main(tmp_path, "BF", f)
+    assert code == 0
+    text = _confirm(out)
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    col, loc = rv["본지"]["열"]["합계"], rv["지방"]["열"]["합계"]
+    assert (col["분납"], col["신고기한내납부"], col["납부할세액"]) == (103137000, 149247480, 252384480)
+    todo = _section(text, "## 사람이 할 일")
+    first = [ln for ln in todo.splitlines() if "납부할 세액에서 분납할 세액을 뺀 금액" in ln]
+    second = [ln for ln in todo.splitlines() if "분납할 세액 103,137,000원은" in ln]
+    assert len(first) == 1 and len(second) == 1
+    assert "작성일 2027-05-20 에 국세 149,247,480원" in first[0] and "지방소득세 %s원" % format(loc["납부할세액"], ",") in first[0]
+    assert "2027-08-02(월요일)까지 납부한다" in second[0] and "신고기한 2027-05-31" in second[0]
+    assert "건너뛴 날은 2027-07-31(토요일), 2027-08-01(일요일)" in second[0] and "홈택스 분납 납부서에 적힌 기한을 따른다" in second[0]
+    assert "국세와 지방소득세는 작성일 2027-05-20 에 납부한다" not in todo                    # 옛 한 줄은 없다
+    assert rv["분납기한"] == {"기한": "2027-08-02", "신고기한": "2027-05-31", "건너뛴날": "2027-07-31(토요일), 2027-08-01(일요일)",
+                          "공휴일표": True}
+    guide_text = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
+    assert "103,137,000원" in guide_text and "149,247,480원" in guide_text and "103,137,000원" in text
+
+
+def test_no_installment_keeps_the_single_payment_line(tmp_path):
+    code, out = _main(tmp_path, "BF", filers.get("BF"))
+    todo = _section(_confirm(out), "## 사람이 할 일")
+    assert code == 0 and "국세와 지방소득세는 작성일 2027-05-20 에 납부한다" in todo and "분납할 세액" not in todo
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        assert "분납기한" not in json.load(fh)
+
+
 def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     """세액이 달라질 수 있는 해석 둘(감면 전 금액과 문구 개정, 같은 달 양도의 대안 금액)과 다루지 않는 경우가
     신고_확인.md 와 입력 안내서에 그대로 실린다."""
@@ -1239,7 +1287,7 @@ def test_withheld_todo_does_not_repeat_the_word_reason(tmp_path):
 
 
 def test_question_counts_use_one_wording(tmp_path):
-    """계산 질문으로 끝난 실행의 요약, 단계 칸, 확인 문서가 같은 말(계산 질문 n개, 이 도구가 다루지 않는 경우 m개)을 쓴다."""
+    """계산 질문으로 끝난 실행의 요약, 단계 칸, 확인 문서가 같은 말(계산 질문 n개, 이 스킬이 다루지 않는 경우 m개)을 쓴다."""
     from yangdo import outputs
     rep = MR.make(CASES["L"], filers.get("A"), str(tmp_path / "o"), today=TODAY)
     assert rep["종료코드"] == 2
@@ -1314,7 +1362,7 @@ def test_unconfirmed_cells_come_from_the_layout_file(tmp_path, monkeypatch):
     marked = [x for x in layout["FIXUPS"] if "형식검증" in x.get("확인", "")]
     lines = MR._unconfirmed()
     assert len(lines) == len(marked) >= 5
-    for word in ("01-23 세무프로그램코드", "01-18~22·26·27 세무대리인 칸", "03-31 주민세_세율", "01 레코드", "05 레코드 과세구분"):
+    for word in ("01-23 세무프로그램코드", "01-18~22·26·27 세무대리인 칸", "03-31 주민세_세율", "05-62 장기보유특별공제적용구분코드", "01 레코드", "05 레코드 과세구분"):
         assert any(x.startswith(word) for x in lines), word
     # 레이아웃 파일의 문장을 바꾸면 확인 문서의 문장이 따라 바뀐다
     for x in layout["FIXUPS"]:

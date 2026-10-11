@@ -36,7 +36,7 @@ SCREENS = (
     ("기본정보", "기본정보"),
     ("양수인", "양수인"),
     ("양도자산", "양도자산 및 거래일"),
-    ("취득가액", "양도소득금액의 취득가액 입력 " + NEED_NAME),
+    ("취득가액", "양도소득금액"),            # 화면 안의 취득가액 란 이름은 확인하지 못했다(4절 본문이 NEED_NAME 으로 알린다)
     ("필요경비", "양도소득금액의 필요경비 상세"),
     ("세액계산", "세율 선택 도우미, 장특공 계산기, 세액계산"),
     ("납부", "분납·환급계좌, 제출 뒤 신고내역 조회"),
@@ -130,6 +130,12 @@ def _expense_meta():
     return _cache["meta"]
 
 
+def _kind_name(row):
+    """필요경비 구분 이름. 코드표의 이름 가운데 (2)·(10)·(11) 은 서식의 번호가 이름 앞에 붙은 것이다. 다른 구분은 번호를 묶음 이름에 두므로
+    안내서에서는 번호를 떼어 구분 이름의 꼴을 맞춘다(번호는 신고값과 서식에 그대로 있다)."""
+    return re.sub(r"^\(\d+\)\s*", "", row["구분"])
+
+
 def _is_acq(row):
     """부표3 행이 취득가액 묶음(매입가액·취득세·부대비용·가산·차감)이면 참."""
     return (_expense_meta().get(row.get("전자코드")) or {}).get("묶음", "").startswith("취득가액")
@@ -162,7 +168,7 @@ def _row_table(rows):
     body = []
     for r in rows:
         must = (meta.get(r["전자코드"]) or {}).get("필수", False)
-        label = r["구분"] + (" (취득가액에서 뺀다)" if _is_deduct(r) else "")
+        label = _kind_name(r) + (" (취득가액에서 뺀다)" if _is_deduct(r) else "")
         ev = _evidence_name(r["증빙코드"]) if r["증빙코드"] else (NEED_VALUE if must else "")
         name = r["상호"] or NEED_VALUE
         biz = r["사업자번호"] or (NEED_VALUE if must else "")
@@ -545,7 +551,7 @@ def _expense_line(r, lead=""):
                          ("거래상대방 %s" % r["상호"]) if r["상호"] else "",
                          ("사업자번호 %s" % r["사업자번호"]) if r["사업자번호"] else "",
                          ("지급일 %s" % r["지급일"]) if r["지급일"] else "") if x]
-    return "- [ ] %s %s%s" % (r["구분"], _won(r["금액"]), (" (" + ", ".join(extra) + ")") if extra else "")
+    return "- [ ] %s %s%s" % (_kind_name(r), _won(r["금액"]), (" (" + ", ".join(extra) + ")") if extra else "")
 
 
 def attachments(rv, facts, result):

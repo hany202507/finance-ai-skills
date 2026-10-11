@@ -236,6 +236,19 @@ def add_months(day, months):
     return date(year, month, start.day) - timedelta(days=1)
 
 
+# 분납 기한: 소득세법 제112조 「납부기한이 지난 후 2개월 이내」. 개월 수는 조문에 적힌 값이라 규칙세트에 두지 않는다
+INSTALLMENT_MONTHS = 2
+
+
+def installment_deadline(filing, rs):
+    """분납할 세액의 납부 기한 Deadline. filing 은 신고·납부 기한(filing_deadline 의 결과, 옮긴 기한을 쓴다).
+
+    옮긴 기한에서 2개월 뒤 같은 날(add_months)이고, 그날이 토요일·일요일·공휴일·대체공휴일·노동절이면 다음 평일이다.
+    조문은 「납부기한이 지난 후 2개월 이내」만 적고 기한을 세는 법은 적지 않아서, 어느 날에서 세는지와 쉬는 날을 옮기는 것은
+    이 스킬의 가정이다. 실제 기한은 홈택스 분납 납부서에 적힌 날짜를 따른다."""
+    return _moved(add_months(filing[1], INSTALLMENT_MONTHS), rs)
+
+
 def local_filing_deadline(kind, base, rs):
     """양도소득에 대한 개인지방소득세의 신고기한(명목 기한, 옮긴 기한). Deadline 을 돌려준다.
 

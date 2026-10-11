@@ -129,7 +129,7 @@ def gain(a, v, rs):
                                     % (aid, _won(환산 + 개산), _won(실제)))
             else:
                 취득, 경비 = 환산, 개산
-        out["확인사항"].append("%s: 취득가액을 %s 으로 계산했다. 매매사례가액·감정가액·환산취득가액 순서를 확인하라" % (aid, kind))
+        out["확인사항"].append("%s: 취득가액을 %s으로 계산했다. 매매사례가액·감정가액·환산취득가액 순서를 확인하라" % (aid, kind))
         상대방 = F.get(a, "취득.상대방유형")   # 모를때처리(M20): 실제 금액을 먼저 찾아보라는 안내. 계산은 위 방법 그대로다
         if 상대방 in BUYER_LABELS:
             out["확인사항"].append("%s: %s" % (aid, F.NOT_REFLECTED % (

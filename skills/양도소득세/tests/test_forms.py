@@ -432,6 +432,29 @@ def test_cell_name_does_not_repeat_a_column_named_like_the_field():
     assert forms._cell_name("별지84 부표1", "자산1", "자산종류") == "별지84 부표1 자산1 자산종류"
 
 
+def test_schedule1_tax_rate_code_has_the_same_size_in_every_asset_column(tmp_path):
+    """부표1 ① 세율구분은 자산 열마다 괄호 폭이 달라(둘째 열은 한 칸 좁다) 글자가 5pt 까지 줄던 칸이다. 세 열 모두 7.5pt 로 찍고
+    인쇄된 괄호와 겹치지 않는다."""
+    rv = _rv_cached("BF")
+    assert len(rv["부표1"]) == 2
+    paths = forms.render(rv, str(tmp_path / "bf"))
+    page = pymupdf.open(paths[0])[2]                 # 새 문서의 3쪽이 부표1 이다
+    words = [w for w in page.get_text("words") if 143 < w[1] < 154 and w[0] > 290]
+    spans = [(sp["text"].strip(), sp["size"], sp["bbox"]) for b in page.get_text("dict")["blocks"] for ln in b.get("lines", [])
+             for sp in ln["spans"] if 138 < sp["bbox"][1] < 156 and sp["bbox"][0] > 290 and re.fullmatch(r"\d+", sp["text"].strip())]
+    assert [t for t, _, _ in spans] == ["1", "10", "1", "10"] and {round(sz, 1) for _, sz, _ in spans} == {7.5}
+    closers = sorted(w[0] for w in words if w[4] == ")")
+    for text, _, box in spans:
+        if text == "10":
+            assert not any(box[0] < x <= box[2] - 0.2 for x in closers), (box, closers)     # 글자가 닫는 괄호 위로 넘어가지 않는다
+
+
+def test_anchored_gap_can_be_set_per_side():
+    from yangdo import forms_pdf
+    assert forms_pdf._gap(None, "뒤") == forms_pdf.GAP and forms_pdf._gap(-0.5, "앞") == -0.5
+    assert forms_pdf._gap({"뒤": -0.5}, "뒤") == -0.5 and forms_pdf._gap({"뒤": -0.5}, "앞") == forms_pdf.GAP
+
+
 def test_schedule3_totals_follow_the_mapping_table(tmp_path):
     """부표3 ⑤·⑬ 계의 0 적음과 소계·합계액을 적는 열은 매핑 표가 정한다. 읽지 않는 「칸」 항목은 두지 않는다."""
     m = _mappings()["부표3.json"]

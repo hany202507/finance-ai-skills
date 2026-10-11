@@ -34,7 +34,7 @@ RETURN_NAMES = (RETURN_VALUES, FORM_NATIONAL, FORM_LOCAL, FORM_NATIONAL + ".tmp"
 EFILE_NAME = re.compile(r"^[0-9]{8}C116300\.[0-9]{2}$")     # 양도소득세 전자신고 파일 이름 꼴(규격서 p20). 다른 세목 파일은 건드리지 않는다
 EFILE_TMP_PREFIX = efile_tmp.PREFIX                         # efile.write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
 # 여러 진입점(run.py, make_return.py, MCP)이 같이 쓰는 문장
-QUESTION_COUNTS = "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개"
+QUESTION_COUNTS = "계산 질문 %d개, 이 스킬이 다루지 않는 경우 %d개"
 STALE_NOTE = "지우지 못해 남은 파일: %s. 이 파일은 이전 실행의 것이다. 이번 실행의 결과가 아니니 신고에 쓰지 않는다"
 TMP_LEFT_NOTE = efile_tmp.LEFT_NOTE                         # 지우지 못한 임시 폴더를 알리는 문장(폴더 이름 하나를 넣는다)
 

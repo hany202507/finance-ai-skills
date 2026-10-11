@@ -215,7 +215,7 @@ def test_run_question_line_is_a_sentence(tmp_path, capsys):
     with open(tmp_path / "o" / outputs.RESULT, encoding="utf-8") as f:
         res = json.load(f)
     assert res["상태"] == "질문" and "다루지않음" in res                 # 결과의 상태 값과 키는 그대로다
-    assert line == "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개. 질문.md 에 적었다" % (
+    assert line == "계산 질문 %d개, 이 스킬이 다루지 않는 경우 %d개. 질문.md 에 적었다" % (
         len(res["질문"]), len(res["다루지않음"])), line
 
 

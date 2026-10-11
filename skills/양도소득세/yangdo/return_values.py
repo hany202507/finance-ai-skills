@@ -382,10 +382,11 @@ class _Builder:
         if not due:
             return
         deadline, aid = min(due, key=lambda x: x[0][1])
+        self.filing_due = deadline          # 분납 기한을 셀 때 쓴다
         nominal, adjusted = deadline
         skipped = dates.skipped_text(deadline)
         if made > adjusted:
-            text = ("작성일 %s 이 자산 %s 의 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 "
+            text = ("작성일 %s 이 자산 %s 의 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 스킬이 다루지 않는다(예정신고 정기와 "
                     "예정신고를 하지 않은 확정신고 정기만 다룬다)"
                     % (made.isoformat(), aid, adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()]))
             if skipped:
@@ -835,6 +836,19 @@ class _Builder:
             return due - base_amt
         return calc.floor(Decimal(due) * self.rs.value("분납.상한율", self.last_sold))
 
+    def installment_due(self, main):
+        """분납할 세액이 있으면 그 납부 기한 {"기한", "신고기한", "옮긴이유"}. 없으면 None. 금액은 본지 합계 열의 값을 그대로 쓰고
+        여기서 새로 세지 않는다. 기한은 dates.installment_deadline(소득세법 제112조)이다."""
+        total = main["열"]["합계"]
+        if not total.get("분납") or getattr(self, "filing_due", None) is None:
+            return None
+        due = dates.installment_deadline(self.filing_due, self.rs)
+        if not due.공휴일표:        # 신고기한과 같은 방식으로 표에 없는 해를 알린다
+            self.note("분납 기한이 끝나는 해가 공휴일 표에 없어 그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 알지 못한다. "
+                      "분납 기한이 그런 날이면 더 늦을 수 있으니 홈택스 분납 납부서와 달력으로 확인한다")
+        return {"기한": due[1].isoformat(), "신고기한": self.filing_due[1].isoformat(),
+                "건너뛴날": dates.skipped_text(due), "공휴일표": due.공휴일표}
+
     @staticmethod
     def blank_payment(col, write_due, keys):
         """세율구분 열·국내소계의 납부 행. keys 는 (기신고세액, 납부할세액, 그 뒤의 합계 열 전용 칸).
@@ -1035,6 +1049,7 @@ class _Builder:
             calc05.append(c5)
             exp07 += e7
         main, local, pen, rates = self.main_forms()
+        installment = self.installment_due(main)
         if self.left_out:
             self.note(left_out_note(self.left_out))
         money = ("양도가액", "취득가액", "토초세", "기타필요경비", "양도차익", "비과세양도차익", "과세양도차익", "장특공",
@@ -1044,6 +1059,8 @@ class _Builder:
         out.update({"본지": main, "부표1": sheet1, "부표1합계": totals, "부표3": sheet3, "지방": local, "가산세": pen,
                     "제외자산": [{"자산": a, "사유": LEFT_OUT_REASON} for a in self.left_out],
                     "전자신고": {"세율별": rates, "계산명세": calc05, "필요경비명세": exp07}, "확인사항": list(self.notes)})
+        if installment:
+            out["분납기한"] = installment
         return out
 
 
