@@ -164,7 +164,8 @@ def count_for_heavy(f, a, houses, me, on, rs, reg):
             if p <= limit:
                 city = reg.metro_caveat(h["소재지"], on)
                 if city:
-                    notes.append("%s: %s 시 지역의 집이다. 통합 근거 법률의 시·군 관할구역 특례에 따라 광역시가 아닌 지역으로 보고 "
+                    notes.append("%s: 소재지가 %s의 시 지역이다(시군구를 적지 않은 주소도 시 지역으로 보았다). "
+                                 "통합 근거 법률의 시·군 관할구역 특례에 따라 광역시가 아닌 지역으로 보고 "
                                  "주택 수에서 뺐다. 소관 기관의 다른 결정이나 과세관청 해석이 있는지 세무 전문가와 확인하라" % (h["id"], city))
                 continue
         elif metro is None:
@@ -444,7 +445,7 @@ def judge_asset(f, a, prep, rs, reg):
         if holding_start(a, 취득) != 취득:
             # 소득세법 제95조⑤: 건물로 보유한 기간은 표1, 주택으로 보유한 기간은 표2 로 나눠 합산하고 거주 공제율은 주택 기간 중 거주만 본다.
             # 엔진은 취득일부터 표2 를 주므로 이 경우는 계산하지 않는다
-            raise F.OutOfScope(aid, "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "5")
+            raise F.OutOfScope(aid, "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", F.UNDECIDED)
         v["장특공"] = "표2"
         for k in ("장특공.표2.보유", "장특공.표2.거주", "장특공.표2.거주요건"):
             v["근거"] += rs.cite(k, 양도)

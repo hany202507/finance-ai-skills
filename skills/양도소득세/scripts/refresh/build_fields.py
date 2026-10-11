@@ -246,7 +246,7 @@ def build(pdf, page_no, meta, spec, out_name, out_dir=None):
                 f["좌표"] = None
             else:
                 bb, s = hit
-                g = {"라벨_bbox": list(bb), "라벨_원문": s.replace("", "")}
+                g = {"라벨_bbox": list(bb), "라벨_원문": s.replace("\uf000", "")}
                 if geo == "row":
                     _geo_row(p, bb, f, g)
                 elif geo == "below":

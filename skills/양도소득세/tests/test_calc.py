@@ -276,7 +276,7 @@ def test_group_with_rates_that_differ_by_transfer_date_is_out_of_scope():
     for order in (vs, list(reversed(vs))):
         with pytest.raises(C.Unsupported) as e:
             C.annual(f, order, _ShiftedRules(RS), CD)
-        assert "양도일" in str(e.value) and e.value.계획 == "5"
+        assert "양도일" in str(e.value) and e.value.계획 == "미정"
 
 
 def test_group_with_unchanged_rates_ignores_shifted_rule_for_other_keys():

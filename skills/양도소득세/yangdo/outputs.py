@@ -56,6 +56,16 @@ def _question_text():
         return {}
 
 
+def plan_text(plan):
+    """다루지않음의 「계획」 값을 사람에게 말하는 문장. 값은 계획 번호, 「미정」(다루려고 하지만 어느 계획에도 없다),
+    「없음」(다룰 계획이 없다) 가운데 하나다(references/적용한계.md 의 표)."""
+    if plan == "없음":
+        return "이 스킬이 다루지 않는다"
+    if plan == "미정":
+        return "다룰 계획이 정해지지 않았다"
+    return "계획 %s 에서 다룬다" % plan
+
+
 def questions_md(res):
     qs = _question_text()
     L = ["# 계산 전에 확인할 것", ""]
@@ -67,7 +77,7 @@ def questions_md(res):
         if d.get("모를때확인처"):
             L.append("  - 모를 때 확인하는 곳: %s" % ", ".join(d["모를때확인처"]))
     for o in res["다루지않음"]:
-        plan = "계획 %s 에서 다룬다" % o["계획"] if o["계획"] != "없음" else "이 스킬이 다루지 않는다"
+        plan = plan_text(o["계획"])
         L.append("- %s%s. %s" % (("자산 %s: " % o["자산"]) if o.get("자산") else "", o["내용"], plan))
     return "\n".join(L) + "\n"
 

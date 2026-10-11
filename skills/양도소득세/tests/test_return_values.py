@@ -104,7 +104,8 @@ def test_prior_return_blocks_preliminary_return_too():
     facts = dict(CASES["A"], 연간=dict(CASES["A"]["연간"], 다른양도=True, 기신고=50000000))
     with pytest.raises(return_values.Unsupported, match="기신고") as e:
         return_values.build(r, facts, filing.load(f))
-    assert e.value.계획 == "5" and "예정신고" in str(e.value)
+    assert e.value.계획 == "미정" and "예정신고" in str(e.value)       # 기신고 합산은 어느 계획에도 들어 있지 않다
+    assert "계획 5" not in str(e.value) and "아직 다루지 않는다" in str(e.value)
     assert "제1" not in str(e.value)                      # 조문 번호는 적지 않는다
 
 
@@ -190,6 +191,113 @@ def test_expense_business_number_and_counterparty_names():
     del f["자산"]["S1"]["취득상대방"]                             # 빠지면 상호를 비우고 확인사항으로 남긴다(질문 F08)
     rv = return_values.build(r, CASES["S1"], filing.load(f))
     assert rv["전자신고"]["필요경비명세"][0]["상호"] == "" and any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
+
+
+def _dated_expenses():
+    """S1 에 필수가 아닌 구분의 지출 둘을 지급일과 함께 더한다.
+    인지세(기타부대비용 11601): 부표3 서식에서 지급일 칸이 열려 있고 07 레코드는 필수가 아니라 비운다.
+    수익자부담금(28101): 부표3 서식에서 지급일 칸이 음영이고 07 레코드도 비운다."""
+    facts = copy.deepcopy(CASES["S1"])
+    ex = facts["자산"][0]["필요경비"]
+    ex["취득부대"].append({"내용": "인지세", "지급일": "2018-03-20", "금액": 150_000, "증빙종류": "계좌이체", "상대방": "합성은행"})
+    ex["기타"] = [{"내용": "수익자부담금", "지급일": "2020-01-10", "금액": 1_000_000, "증빙종류": "계좌이체", "상대방": "합성시청"}]
+    r = engine.calculate(facts, today="2026-10-11")
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    return r, return_values.build(r, facts, filing.load(f))
+
+
+def test_schedule3_payment_date_is_kept_only_where_the_form_writes_it():
+    """신고값 부표3 행의 지급일은 부표3 서식이 실제로 적는 값이다. 서식에서 지급일 칸이 음영인 행(매입가액, 취득세,
+    수익자부담금 등)은 빈 글자다. 07 레코드의 지급일자는 필수 구분코드 행에만 적는다(규격서 p60)."""
+    r, rv = _dated_expenses()
+    rows = {x["전자코드"]: x for x in rv["부표3"][0]["행"]}
+    assert {k: v["지급일"] for k, v in rows.items()} == {
+        "11101": "", "11201": "",                          # 매입가액(취득일을 넣지 않는다), 취득세: 음영
+        "11401": "2018-03-15", "11501": "2018-03-15",      # 법무사비용, 취득 중개수수료: 필수
+        "11601": "2018-03-20",                             # 인지세: 필수는 아니지만 서식 칸이 열려 있다
+        "26001": "2018-04-10", "28101": "",                # 발코니확장: 필수, 수익자부담금: 음영
+        "29001": "2026-11-20"}
+    ex = {x["전자코드"]: x["지급일자"] for x in rv["전자신고"]["필요경비명세"]}
+    assert ex == {"11101": "", "11201": "", "11401": "20180315", "11501": "20180315", "11601": "",
+                  "26001": "20180410", "28101": "", "29001": "20261120"}
+    assert not any(k.startswith("_") for x in rv["부표3"][0]["행"] for k in x)
+
+
+def test_form_guide_and_file_follow_the_payment_date_in_the_values():
+    """서식 계획, 입력 안내서, 부속서류 목록이 신고값의 지급일을 그대로 쓴다. 음영 행의 날짜는 어디에도 나오지 않는다."""
+    from yangdo import forms, guide
+    r, rv = _dated_expenses()
+    cells = {(p["필드"], p["열"]): p["값"] for p in forms.plan(rv)["국세"]["칸"] if p["필드"].startswith("부표3.")}
+    assert cells[("부표3.취득기타", "지급일")] == "2018.03.20"
+    assert cells[("부표3.법무사비용", "지급일")] == "2018.03.15"
+    for fid in ("부표3.매입가액", "부표3.취득세", "부표3.수익자부담금"):
+        assert (fid, "지급일") not in cells, fid
+    md = guide.hometax_input(rv)
+    lines = {ln.split("|")[1].strip(): [c.strip() for c in ln.strip().strip("|").split("|")]
+             for ln in md.splitlines() if ln.startswith("| ") and ln.count("|") == 7}
+    assert lines["기타 부대 비용 - 기타"][-1] == "2018-03-20"
+    paid = [row[-1] for name, row in lines.items() if "수익자부담금" in name]
+    assert paid == ["-"], lines.keys()
+    assert "2020-01-10" not in md and "2020-01-10" not in guide.attachments(rv, None, r)
+    assert "2018-03-20" in md
+
+
+def test_years_text_cap_and_mountain_code_come_from_tables(tmp_path):
+    """⑨·⑩·⑰ 기간 글자의 「10년 이상」 눈금은 forms/서식판.json, 소재지의 「산」 표기는 코드표 특수지에서 읽는다."""
+    import os
+    import shutil
+    from yangdo import SKILL_DIR
+    r, rv = _rv("A")
+    assert rv["부표1"][0]["보유기간"] == "10년 이상"               # A 는 2014 취득, 2026 양도(보유 12년)
+    forms_dir, efile_dir = tmp_path / "forms", tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL_DIR, "forms"), str(forms_dir))
+    shutil.copytree(os.path.join(SKILL_DIR, "efile"), str(efile_dir))
+    reg = json.loads((forms_dir / "서식판.json").read_text(encoding="utf-8"))
+    assert reg["부표1_기간표기"]["끝햇수"] == 10
+    reg["부표1_기간표기"].update(끝햇수=8, 끝="8년 이상")
+    (forms_dir / "서식판.json").write_text(json.dumps(reg, ensure_ascii=False), encoding="utf-8")
+    codes = json.loads((efile_dir / "codes_c116300.json").read_text(encoding="utf-8"))
+    codes["특수지"]["1"]["이름"], codes["특수지"]["2"]["이름"] = codes["특수지"]["2"]["이름"], "산"
+    (efile_dir / "codes_c116300.json").write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    f = filers.get("S1")
+    f["자산"]["S1"].update(법정동코드="1120011400", 특수지="2", 번지="12", 호="3")
+    f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    r = engine.calculate(CASES["S1"], today="2026-10-11")
+    b = return_values._Builder(r, CASES["S1"], filing.load(f), None, str(forms_dir), str(efile_dir))
+    assert (b.years_text(7), b.years_text(8), b.years_text(12)) == ("7년 이상 8년 미만", "8년 이상", "8년 이상")
+    assert "산 12-3" in b.place(CASES["S1"]["자산"][0], f["자산"]["S1"], "1120011400")
+    f["자산"]["S1"]["특수지"] = "1"                               # 바꾼 표에서는 1 이 산이 아니다
+    assert "산 " not in b.place(CASES["S1"]["자산"][0], f["자산"]["S1"], "1120011400")
+
+
+def test_acquisition_tax_row_note_cites_no_article_outside_the_ruleset():
+    """확인사항 문장에 적는 조문은 규칙세트에 근거가 실린 것뿐이다. 취득세 납세지 조문(지방세법 제8조)은 규칙세트에 없다."""
+    r, rv = _rv("S1")
+    notes = [m for m in rv["확인사항"] if "취득세(11201) 행 상호" in m]
+    assert len(notes) == 1 and "부동산 소재지" in notes[0] and "규격서 p60" in notes[0]
+    assert "지방세법" not in notes[0] and "제8조" not in notes[0]
+    laws = {g["법령"] + " " + ruleset.label(g["조"]) for v in ruleset.load().data["규칙"].values()
+            for e in v["이력"] for g in e["근거"] if g["조"] != "부칙"}
+    assert "지방세법 제8조" not in laws
+
+
+def test_amounts_in_check_items_use_thousands_separators():
+    """신고값 확인사항의 금액은 천 단위 쉼표로 적는다(가산세, 분납, 합산 비교세액, 지방소득세 전자신고세액공제)."""
+    import re
+    raw = re.compile(r"(?<![\d,])\d{4,}원")
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
+    text = "\n".join(rv["확인사항"])
+    assert "가산세를 뺀 세액 206,274,000원" in text and "분납할 세액 103,137,000원" in text
+    assert raw.findall(text) == []
+    r, rv = _rv("S1")                                     # 예정신고: 지방소득세 전자신고세액공제 2,000원
+    assert any("지방소득세 전자신고세액공제 2,000원" in m for m in rv["확인사항"])
+    assert raw.findall("\n".join(rv["확인사항"])) == []
+    r, rv = _bf_merged()                                  # 합산 비교세액이 큰 신고서: 281,118,000 과 열 합 278,752,000
+    notes = [m for m in rv["확인사항"] if "합산 비교 세액이 커서" in m]
+    assert any("합계 산출세액 281,118,000원이 세율구분 열의 합 278,752,000원과 다르다" in m for m in notes)
+    assert raw.findall("\n".join(rv["확인사항"])) == []
 
 
 def test_missing_payment_date_is_a_check_item():
@@ -486,7 +594,7 @@ def test_installment_limit_excludes_penalty():
     z = [x for x in rv["전자신고"]["세율별"] if x["국내외분"] == "Z"][0]
     assert (z["자진납부할세액"], z["분납할세액"], z["자진납부세액"]) == (252384480, 103137000, 149247480)
     note = [m for m in rv["확인사항"] if "분납할 세액의 한도" in m]
-    assert len(note) == 1 and "가산세를 뺀 세액 206274000원" in note[0]
+    assert len(note) == 1 and "가산세를 뺀 세액 206,274,000원" in note[0]
     assert "소득세법 제112조·제106조①·제111조①" in note[0]     # 규칙세트(판정.분납대상세액)에 실린 조문만 적는다
 
 
@@ -508,16 +616,16 @@ def test_final_return_penalty_section_and_notes():
         assert len(hit) == 1, parts
         return hit[0]
 
-    one("본지 ⑯", "41254800원", "4855680원", "46110480원")
+    one("본지 ⑯", "41,254,800원", "4,855,680원", "46,110,480원")
     # 세액이 달라질 수 있는 해석 둘은 penalty 의 문장을 그대로 옮긴다
-    assert one("감면 없이", "감면이 적용되면", "20627400원", "세무 전문가") == p["감면안내"]
-    one("양도일마다 따로 신고하는 것으로 보면", "36306400원", "4273250원")
+    assert one("감면 없이", "감면이 적용되면", "20,627,400원", "세무 전문가") == p["감면안내"]
+    one("양도일마다 따로 신고하는 것으로 보면", "36,306,400원", "4,273,250원")
     one("부정행위", "다루지 않는다")
     one("납부일(2027-05-20) 기준")
-    one("지방소득세 신고서 ⑬", "4125480원", "226901원", "4352381원")
+    one("지방소득세 신고서 ⑬", "4,125,480원", "226,901원", "4,352,381원")
     assert one("두 가지를 가정", "옮기기 전", "원 미만을 버렸다", "위택스 값을 따른다") == p["지방"]["가정안내"]
     # 지방도 감면을 적용하지 않았다. 감면이 적용될 때의 금액은 대안으로 싣는다
-    assert one("지방소득세 무신고가산세는 감면 없이", "감면이 적용되면", "2062740원", "위택스 값을 따른다") == p["지방"]["감면안내"]
+    assert one("지방소득세 무신고가산세는 감면 없이", "감면이 적용되면", "2,062,740원", "위택스 값을 따른다") == p["지방"]["감면안내"]
     assert (p["지방"]["무신고"], p["지방"]["납부지연"], p["지방"]["계"]) == (4125480, 226901, 4352381)
     assert p["지방"]["감면적용"] is False and p["지방"]["무신고_감면적용"] == 2062740
     assert not [m for m in notes if "가산세는 계산하지 않아" in m or "가산세가 빠진" in m]
@@ -593,7 +701,7 @@ def test_local_efile_credit_on_preliminary_return():
         assert loc[name]["전자신고공제"] == 2000, name
     assert loc["합계"]["산출세액"] == 3834946 and loc["합계"]["납부할세액"] == 3834946 - 2000
     note = [m for m in rv["확인사항"] if "지방소득세 전자신고세액공제" in m]
-    assert len(note) == 1 and "2000원" in note[0] and "지방세특례제한법 제167조의3①" in note[0]
+    assert len(note) == 1 and "2,000원" in note[0] and "지방세특례제한법 제167조의3①" in note[0]
     assert "규칙세트에 값이 없어" not in " ".join(rv["확인사항"])
     assert all(x[k] == 0 for x in rv["전자신고"]["세율별"]            # 국세 파일의 주민세 칸은 그대로 0 이다
                for k in ("주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"))
@@ -708,15 +816,53 @@ def test_permit_zone_ignores_permit_date_when_permit_came_first():
         _late("S1", "2027-02-02", _permit("2026-10-15"))
 
 
-def test_permit_zone_without_permit_date_skips_deadline_check():
-    rv = _late("S1", "2030-01-01", _permit(None))
-    assert any("허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다" in m for m in rv["확인사항"])
+def test_permit_zone_without_permit_date_passes_only_inside_the_sale_based_deadline():
+    """허가일이 없으면 허가구역 단서(허가일 기준 기한)에 해당하는지 알 수 없다. 허가일 기준 기한은 양도일 기준 기한보다
+    이르지 않으므로, 작성일이 양도일 기준 기한 안이면 어느 쪽이든 기한 안이다. 그 기한을 지났으면 판정할 수 없어 신고값을
+    만들지 않고 허가일을 받는다. S1 양도 2026-11-20: 양도일 기준 기한 말일 2027-01-31(일요일) → 2027-02-01(월요일)."""
+    rv = _late("S1", "2027-02-01", _permit(None))
     assert rv["신고"]["상세코드"] == "01"
+    notes = [m for m in rv["확인사항"] if "허가일 값이 없어" in m]
+    assert len(notes) == 1 and "양도일 기준 신고기한 2027-02-01" in notes[0] and "어느 쪽이든 신고기한 안" in notes[0]
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("S1", "2027-02-02", _permit(None))
+    msg = str(e.value)
+    assert "자산 S1" in msg and "허가일 값이 없어" in msg and "양도일 기준 신고기한 2027-02-01" in msg
+    assert "토지거래허가의 허가일" in msg and "YYYY-MM-DD" in msg and e.value.계획 == "없음"
+    with pytest.raises(return_values.Unsupported, match="허가일 값이 없어"):       # 기한을 한참 넘긴 작성일도 통과시키지 않는다
+        _late("S1", "2030-01-01", _permit(None))
+
+
+def test_permit_zone_without_permit_date_is_judged_asset_by_asset():
+    """허가일이 있는 자산이 기한 안이어도 허가일이 없는 자산은 따로 본다. BF 확정신고: B 는 허가일 2027-01-10(허가 전 대금
+    청산)이라 기한이 2028-05-31, F 는 허가 대상인데 허가일이 없어 양도일 기준 기한 2027-05-31 까지만 판정할 수 있다."""
+    def mutate(f):
+        f["자산"][0].update(토지거래허가대상="예", 토지거래허가={"신청일": "2026-10-01", "허가일": "2027-01-10"})
+        f["자산"][1].update(토지거래허가대상="예", 토지거래허가=None)
+    assert [a["id"] for a in CASES["BF"]["자산"]] == ["B", "F"]
+    assert _late("BF", "2027-05-31", mutate, 구분="확정")["신고"]["구분"] == "확정"
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("BF", "2027-06-15", mutate, 구분="확정")
+    assert "자산 F" in str(e.value) and "허가일 값이 없어" in str(e.value) and "2027-05-31" in str(e.value)
+
+
+def test_unknown_permit_zone_answer_gets_the_proviso_in_the_deadline_message():
+    """토지거래허가대상이 「모름」이면 양도일 기준으로 기한을 본다. 기한을 넘겨 멈출 때 허가구역 단서로 기한이 달라질 수 있다고 알린다."""
+    def unknown(f):
+        f["자산"][0]["토지거래허가대상"] = "모름"
+    assert _late("S1", "2027-02-01", unknown)["신고"]["상세코드"] == "01"
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("S1", "2027-02-02", unknown)
+    msg = str(e.value)
+    assert "2027-02-01" in msg and "토지거래허가대상이 「모름」" in msg and "허가일 기준" in msg
+    with pytest.raises(return_values.Unsupported) as e:        # 「아니오」인 자산에는 붙이지 않는다
+        _late("S1", "2027-02-02")
+    assert "모름" not in str(e.value)
 
 
 def test_non_permit_asset_has_no_skip_note():
     rv = _late("S1", "2027-01-31")
-    assert not any("신고기한을 판정하지 않았다" in m for m in rv["확인사항"])
+    assert not any("허가구역 단서" in m for m in rv["확인사항"])
 
 
 def _sold_on(date_text):
@@ -761,12 +907,15 @@ def test_unreadable_permit_date_is_reported_as_unreadable_not_missing():
         a = f["자산"][0]
         a["토지거래허가대상"] = "예"
         a["토지거래허가"] = {"신청일": "2026-10-01", "허가일": "미정"}
-    rv = _late("S1", "2030-01-01", mutate)
-    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    rv = _late("S1", "2027-02-01", mutate)                       # 양도일 기준 기한 안이라 통과하고 확인사항으로 남는다
+    notes = [m for m in rv["확인사항"] if "허가구역 단서에 해당하는지 알 수 없다" in m]
     assert len(notes) == 1 and "읽지 못해" in notes[0] and "값이 없어" not in notes[0]
-    rv = _late("S1", "2030-01-01", _permit(None))
-    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    rv = _late("S1", "2027-02-01", _permit(None))
+    notes = [m for m in rv["확인사항"] if "허가구역 단서에 해당하는지 알 수 없다" in m]
     assert len(notes) == 1 and "값이 없어" in notes[0] and "읽지 못해" not in notes[0]
+    with pytest.raises(return_values.Unsupported) as e:          # 기한을 지났으면 멈추는 문장도 읽지 못한 것과 없는 것을 가른다
+        _late("S1", "2027-02-02", mutate)
+    assert "읽지 못해" in str(e.value) and "값이 없어" not in str(e.value) and "미정" not in str(e.value)
 
 
 def test_unsupported_names_the_asset_whose_deadline_was_missed():
@@ -835,7 +984,7 @@ def test_single_column_with_merged_comparison_win_blanks_penalty_and_tax_due_tog
 
 def test_installment_on_final_return_notes_delay_penalty_on_the_deferred_part():
     r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
-    note = [m for m in rv["확인사항"] if "분납할 세액 103137000원" in m and "납부지연가산세" in m]
+    note = [m for m in rv["확인사항"] if "분납할 세액 103,137,000원" in m and "납부지연가산세" in m]
     assert len(note) == 1
     assert "작성일 2027-05-20" in note[0] and "더 붙을 수 있다" in note[0] and "세무 전문가" in note[0]
     assert rv["본지"]["열"]["합계"]["분납"] == 103137000 and rv["본지"]["열"]["합계"]["가산세_납부"] == 4855680   # 금액은 그대로

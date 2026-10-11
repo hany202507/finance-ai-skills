@@ -7,13 +7,18 @@ efile/법정동코드.json 은 행정표준코드 법정동코드 전체자료�
 
 찾기 규칙
 - 적은 이름과 같은 법정동이 있으면 그 코드 하나만 후보다(영등포동 은 영등포동1가와 다른 법정동이다)
-- 같은 이름이 없으면 「성수동1가·2가」 처럼 숫자 가가 붙은 이름과 「기암리(岐岩)」 처럼 한자가 붙은 이름을 후보로 모은다
+- 같은 이름이 없으면 「성수동1가·2가」 처럼 숫자 가가 붙은 이름과 「기암리(岐岩)」 처럼 한자가 붙은 이름을 후보로 모은다.
+  리 이름이면 「창선1리·창선2리」 처럼 「리」 앞에 숫자가 붙은 이름도 모은다(창선리 로 적었을 때)
 - lookup 은 후보가 정확히 하나일 때만 코드를 돌려주고, 없거나 여럿이면 None 이다. 어느 쪽인지는 candidates 로 본다
 - 시도 약칭(서울, 광주특별시 등)은 지역 판정과 같은 표(regions.SIDO_SHORT)로 푼다
 - 옛 시도 이름은 행정구역_대응.json 의 이름변경 중 등급이 ★★★ 인 것만 on 날짜(없으면 항상) 이후에 지금 이름으로 바꾼다.
 - 시도 둘이 합쳐진 경우(같은 파일의 통합. 2026-07-01 광주광역시·전라남도 → 전남광주통합특별시)는 시군구·읍면동 이름이
   통합 전과 같아 옛 시도 이름으로 적은 주소도 on 날짜가 통합일 이후면 새 코드를 찾는다. 옛 시도 이름과 시군구가 맞지 않으면
   (전라남도 서구) 바꾸지 않는다. on 날짜가 통합일 전이면 옛 이름 그대로 찾는데, 폐지된 옛 코드는 표에 없어 None 이다
+- 표에는 「존재」 행만 있어서 시군구가 바뀌며 폐지된 이름은 찾지 못한다. 원자료에서 「폐지」인 예: 인천광역시 중구 중앙동1가
+  (2811010100. 중구가 폐지되어 지금은 제물포구 중앙동1가 2812510800), 경상남도 창원시 의창구 신월동(4812112600. 지금은
+  성산구 신월동 4812313600). 이런 주소는 지금의 시군구 이름으로 적거나 법정동코드 10자리를 직접 적는다. 시군구가 바뀐
+  이름을 지금 이름으로 잇는 표는 없다(행정구역_대응.json 은 시도 이름만 다룬다)
 """
 import json
 import os
@@ -28,6 +33,7 @@ TABLE_FILE = "법정동코드.json"
 RENAME_FILE = "행정구역_대응.json"
 RENAME_GRADE = "★★★"
 _VARIANT = r"(?:[0-9]+가|\([^()]*\))"
+_NUMBERED_RI = r"[0-9]+리"          # 「창선리」 로 적은 이름에 맞출 「창선1리」 의 뒷부분(앞부분은 「리」 를 뗀 이름)
 
 
 class BjdError(Exception):
@@ -112,7 +118,10 @@ class Bjd:
             return []
         if dong in names:
             return [names[dong]]
-        variant = re.compile(re.escape(dong) + _VARIANT)
+        pattern = re.escape(dong) + _VARIANT
+        if dong.endswith("리") and len(dong.split(" ")[-1]) > 1:
+            pattern += "|" + re.escape(dong[:-1]) + _NUMBERED_RI
+        variant = re.compile(pattern)
         return sorted(code for name, code in names.items() if variant.fullmatch(name))
 
     def lookup(self, 시도, 시군구, 읍면동, on=None):

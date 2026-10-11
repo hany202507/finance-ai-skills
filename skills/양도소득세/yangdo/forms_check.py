@@ -35,12 +35,19 @@
   엔진 대조           부표1 자산 목록과 순서 = 엔진 결과의 과세 자산(전액 비과세가 아닌 자산) 목록과 순서.
                       자산별 양도일·취득일·양도가액·양도차익·비과세양도차익·과세양도차익·장특공·양도소득금액, 취득가액+필요경비,
                       지분으로 나눈 양도가액, 서식에 옮겨 적은 자산종류·장특공 코드·취득가액종류,
-                      합계 과세표준·산출세액·지방소득세, 세율구분 열별 과세표준·산출세액·양도소득금액·기본공제
+                      합계 과세표준·산출세액·지방소득세, 세율구분 열별 과세표준·산출세액·양도소득금액·기본공제.
+                      지방 세율구분 열의 산출세액은 엔진이 열별로 내지 않아, 과세 자산의 과세표준을 합산 묶음마다 더해
+                      엔진 결과의 지방 적용세율과 규칙세트 지방소득세 세율표로 다시 구한 값과 열마다 대조한다
+  기준일              이 검산이 규칙세트를 읽는 날짜는 신고값 「신고」 절에서 온다(분납은 양도일자, 전자신고세액공제와 가산세는 작성일).
+                      양도일자 = 엔진 결과 과세 자산의 마지막 양도일, 작성일은 그 날 이후, 신고값 「판」의 기준정보 = 엔진 결과의 판.
+                      작성일 자체는 신고인 파일의 값이라 엔진 결과와 견줄 값이 없다
   전자신고 절         신고값 「전자신고」 절(03·05 레코드 값)은 생성기가 본지와 다른 경로로 만들고, 파일 검증기(efile_check)는 파일을
                       이 절과만 대사한다. 그래서 이 절을 본지·부표1 과 대조한다.
                       세율별 합계 행의 양도소득금액·양도소득기본공제·과세표준·산출세액·전자신고세액공제·자진납부할세액·분납할세액·
                       자진납부세액 = 본지 합계 열 ④ ⑦ ⑧ ⑩ ⑮ ⑱ ⑲ ⑳. 국내 소계 행과 세율구분 행의 ④ ⑦ ⑧ = 본지 같은 열.
-                      산출세액은 합산 비교세액이 이기지 않으면 본지 같은 열과 같고, 세율구분 행 합 = 본지 합계 ⑩(이기면 이것만 본다).
+                      산출세액은 합산 비교세액이 이기지 않으면 본지 같은 열과 같고, 세율구분 행 합 = 본지 합계 ⑩.
+                      합산 비교세액이 이기면 엔진의 합계 산출세액을 엔진 세율별 과세표준 비율로 다시 나눠 행마다 대조한다
+                      (원 미만 버림, 남는 원은 과세표준이 가장 큰 행. 규격서 p40 10번).
                       세율구분 행의 전자신고세액공제·자진납부할세액은 합산 비교세액이 이기지 않고 본지 칸이 비어 있지 않을 때 대조한다.
                       계산명세 행의 양도가액·취득가액·기타필요경비·양도차익(전체·비과세·과세대상)·장기보유특별공제·양도소득금액
                       = 부표1 같은 자산의 행. 부표1 칸이 비어 있으면 계산명세의 그 칸은 0 이어야 한다.
@@ -61,8 +68,9 @@
   지방 서식 ⑬ 과 「가산세.지방」 을 대조한다.
   국세와 지방 가운데 한쪽이라도 정할 수 없으면 둘 다 0 이어야 한다.
 
-검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인, 신고 절의 코드와 날짜,
-전자신고 절의 세율·코드·날짜·면적·법정동코드·지번 칸과 필요경비명세(07), 합산 비교세액이 이길 때 세율구분 행마다 나눈 산출세액.
+검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인,
+신고 절의 코드와 날짜(양도일자와 기준정보 판은 본다. 위 「기준일」),
+전자신고 절의 세율·코드·날짜·면적·법정동코드·지번 칸과 필요경비명세(07), 합산 비교세액이 이길 때 세율구분 행에 나눈 전자신고세액공제.
 세율과 기간 글자는 생성기의 표기 규칙을 되풀이해야 해서 뺐고(세액은 엔진과 대조한다), 나머지는 전자신고 파일 검증기(efile_check)가
 파일의 형식과 코드로 본다.
 감면율은 감면이 이번 신고 범위가 아니라 항상 0 이다.
@@ -308,6 +316,7 @@ class _Check:
                  ("본지", self.main), ("본지 ⑯ 가산세", self.penalty), ("지방", self.local),
                  ("엔진 대조(부표1)", self.engine_assets),
                  ("엔진 대조(본지)", self.engine_main), ("엔진 대조(지방)", self.engine_local),
+                 ("엔진 대조(기준일)", self.engine_dates),
                  ("전자신고 절", self.efile_section))
         for name, step in steps:
             try:
@@ -624,8 +633,9 @@ class _Check:
             raise _Undetermined("%s 의 허가일 값이 없거나 읽을 수 없어 예정신고 납부기한을 정할 수 없다" % row["id"])
         return permit if permit > sold else sold
 
-    def case_tax(self, members, rs, local=False):
-        """한 건(한 번에 예정신고하는 자산들)의 세율구분 표기별 세액. 합산 묶음마다 과세표준을 더해 세율을 적용한다.
+    @staticmethod
+    def column_tax(members, rs, local=False):
+        """자산들의 세율구분 표기별 세액. 합산 묶음마다 과세표준을 더해 세율을 적용한다. 합산 비교세액은 보지 않는다.
         local 이면 엔진 결과의 지방 적용세율과 규칙세트의 지방소득세 세율표를 쓴다."""
         single_key, extra_key, table_key = (("지방단일", "지방가산", "지방.기본세율") if local else ("단일", "가산", "기본세율"))
         groups = {}
@@ -648,7 +658,14 @@ class _Check:
             code = anchor["계산"]["코드"]
             name = "%s-%s" % (code["국내외분"], code["세율구분"])
             cols[name] = cols.get(name, 0) + tax
-        if len(groups) >= 2:
+        return cols
+
+    def case_tax(self, members, rs, local=False):
+        """한 건(한 번에 예정신고하는 자산들)의 세율구분 표기별 세액(column_tax). 합산 묶음이 둘 이상이고 합산 비교세액이
+        더 크면 예정신고 세액을 정할 수 없다."""
+        table_key = "지방.기본세율" if local else "기본세율"
+        cols = self.column_tax(members, rs, local)
+        if len({m["계산"]["합산묶음"] for m in members}) >= 2:
             first = min(m["판정"]["양도일"] for m in members)
             whole = sum(_i(m["계산"]["과세표준"]) for m in members)
             if _floor(_progressive(whole, rs.value(table_key, first))) > sum(cols.values()):
@@ -950,7 +967,35 @@ class _Check:
         if all(x in cols for x in labels):
             self.same(sum(_i(cols[x].get("산출세액")) for x in labels), t["지방_호별합산"], "지방 세율구분 열 ⑦ 합",
                       "엔진 호별합산")
+        # 열마다: 엔진은 지방소득세를 합계로만 내므로 과세 자산의 과세표준과 적용세율로 열의 세액을 다시 구한다.
+        # 합만 보면 두 열 사이에서 옮긴 금액을 놓친다. 합산 비교세액이 이겨도 열은 세율구분별 세액이다
+        rs = self.rules()
+        if rs is None:
+            return
+        taxed = [x for x in self.calc["자산"] if not x["판정"].get("전액비과세")]
+        try:
+            want = self.column_tax(taxed, rs, local=True)
+        except ruleset.RuleError as e:
+            self.fail("규칙세트에서 지방 세율구분 열의 세액을 다시 계산할 값을 읽지 못했다(%s)" % e)
+            return
+        for x in labels:
+            if x in cols and x in want:
+                self.same(cols[x].get("산출세액"), want[x], "지방 %s 열 ⑦ 산출세액" % x, "엔진 과세표준에 지방소득세 세율을 적용한 값")
 
+    def engine_dates(self):
+        """규칙세트를 읽는 날짜와 판이 엔진 결과와 맞는가. 신고 절의 양도일자가 틀리면 분납 한도를 다른 날의 규칙으로 읽는다."""
+        sin = self.rv["신고"]
+        last = max(self.eng[aid]["판정"]["양도일"] for aid in self.taxed)
+        got = _iso(sin["양도일자"])
+        if got != last:
+            self.fail("신고 절 양도일자 %s ≠ 엔진 과세 자산의 마지막 양도일 %s" % (_w(got), last))
+        made = _iso(sin["작성일"])
+        if dates.to_date(made) < dates.to_date(last):
+            self.fail("신고 절 작성일 %s 이 엔진 과세 자산의 마지막 양도일 %s 보다 앞선다" % (_w(made), last))
+        want = (self.result.get("기준정보") or {}).get("판")
+        have = (self.rv.get("판") or {}).get("기준정보")
+        if have != want:
+            self.fail("신고값 판의 기준정보 %s ≠ 엔진 결과의 기준정보 판 %s" % (_w(have), _w(want)))
 
     # ------------------------------------------------------------ 전자신고 절 ↔ 본지·부표1
 
@@ -1009,7 +1054,24 @@ class _Check:
         if rate and "합계" in cols:
             self.same(sum(_i(x[EFILE_TAX[0]]) for x in rate.values()), cols["합계"].get("산출세액"),
                       "전자신고 세율별 세율구분 행 산출세액 합", "본지 합계 %s" % names["산출세액"])
+        if self.nat_win:
+            self.efile_allocation(rate)
         self.efile_penalty(total, sub, rate)
+
+    def efile_allocation(self, rate):
+        """합산 비교세액이 이긴 신고서의 03 세율구분 행 산출세액. 합계 행 = 세율구분 행 합이어야 해서(규격서 p40 10번
+        「합계와 세율구분별 산출세액 합계와 일치」) 합계 산출세액을 세율구분 행에 과세표준 비율로 나눠 적는다. 같은 10번의
+        「각각의 8.과세표준 기준으로 안분함」은 세율구분 1-10 과 1-11(지정지역)의 과세표준을 합산해 계산한 경우를 두고 한
+        말이다. 합산 비교세액이 이긴 경우를 어떻게 나누는지는 규격서에 없어, 생성기가 그 지정지역 문장의 방법을 이 경우에도
+        같게 썼다. 원 미만은 버리고 남는 원은 과세표준이 가장 큰 행(같으면 엔진 세율별의 앞 행)에 더한다. 행 합만 보면 두 행
+        사이에서 옮긴 금액을 놓치므로 엔진 결과의 합계 산출세액과 세율별 과세표준으로 다시 나눠 행마다 대조한다."""
+        eng = self.calc["세율별"]
+        labels = ["%s-%s" % (x["국내외분"], x["세율구분"]) for x in eng]
+        parts = _share(_i(self.calc["합계"]["산출세액"]), [_i(x["과세표준"]) for x in eng])
+        for label, part in zip(labels, parts):
+            x = rate.get(label)
+            if x is not None:
+                self.same(x[EFILE_TAX[0]], part, "전자신고 세율별 %s 행 산출세액" % label, "합계 산출세액을 과세표준 비율로 나눈 값")
 
     def efile_penalty(self, total, sub, rate):
         """03 행의 가산세 칸(15 신고불성실, 16 납부불성실, 17 계, 35 기장불성실등)을 다시 계산한 값과 대조한다.

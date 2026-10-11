@@ -425,7 +425,7 @@ def test_converted_building_with_table2_is_out_of_scope():
     """근생 건물을 2023-06-01 에 주거로 바꾸고 20억에 팔면 표2 가 걸린다. 건물 기간은 표1 이라 표2 를 전 기간에 줄 수 없다."""
     r = run(_converted())
     assert r["자산"] == [] and r["질문"] == []
-    assert r["다루지않음"] == [{"자산": "W", "내용": "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "계획": "5"}]
+    assert r["다루지않음"] == [{"자산": "W", "내용": "주택으로 용도를 바꾼 건물의 장기보유특별공제(소득세법 제95조⑤)", "계획": "미정"}]
 
 
 def test_converted_building_fully_exempt_is_unaffected():
@@ -450,7 +450,7 @@ def test_converted_building_reaches_engine_as_out_of_scope():
     from yangdo import engine
     r = engine.calculate(_converted(), today="2026-10-09")
     assert r["상태"] == "질문" and r["계산"] is None
-    assert r["다루지않음"][0]["계획"] == "5" and "제95조⑤" in r["다루지않음"][0]["내용"]
+    assert r["다루지않음"][0]["계획"] == "미정" and "제95조⑤" in r["다루지않음"][0]["내용"]
 
 
 # ---- 최종 검토 반영: 일반주택 10호 확인사항 ----------------------------------------------------
@@ -825,6 +825,9 @@ def test_merged_city_county_house_is_a_local_low_price_house(시도, 양도일):
     if 양도일 is None:
         assert _engine_tax(f) == EXPECT_AMOUNTS["K2"]["산출세액"] == 272_560_000
         assert len(notes) == 1 and notes[0].startswith("H3: ") and "세무 전문가" in notes[0], notes
+        # 「통합특별시 시 지역의 집」으로 읽히지 않게 소재지를 주어로 쓰고, 시군구를 적지 않은 주소도 여기 든다고 밝힌다
+        assert notes[0].startswith("H3: 소재지가 전남광주통합특별시의 시 지역이다(시군구를 적지 않은 주소도 시 지역으로 보았다). ")
+        assert "통합특별시 시 지역의 집" not in notes[0]
         assert "제11조" not in notes[0] and "조제" not in notes[0]       # 규칙세트에 없는 조문 번호는 적지 않는다
     else:
         assert notes == []

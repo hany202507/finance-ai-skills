@@ -43,6 +43,44 @@ def test_exact_name_wins_over_numbered_variants():
     assert len(B.candidates("서울특별시", "성동구", "성수동")) == 2
 
 
+def test_numbered_ri_rows_are_gathered_for_the_base_name():
+    """숫자가 붙은 리(창선1리·창선2리)는 숫자를 뺀 이름(창선리)으로 적으면 후보로 모은다. 하나로 정하지는 않는다."""
+    assert B.candidates("충청남도", "서천군", "장항읍 창선리") == ["4477025021", "4477025022"]
+    assert B.lookup("충청남도", "서천군", "장항읍 창선리") is None
+    assert B.lookup("충청남도", "서천군", "장항읍 창선1리") == "4477025021"
+    assert B.lookup("충청남도", "서천군", "장항읍 창선2리") == "4477025022"
+    # 같은 이름의 리가 따로 있으면 그것 하나만 후보다(광령리·어음리 는 광령1리~3리, 어음1리·2리와 다른 법정리다)
+    assert B.candidates("제주특별자치도", "제주시", "애월읍 광령리") == ["5011025321"]
+    assert B.candidates("제주특별자치도", "제주시", "애월읍 어음리") == ["5011025336"]
+    assert B.lookup("제주특별자치도", "제주시", "애월읍 광령2리") == "5011025392"
+    assert B.candidates("충청남도", "서천군", "창선리") == []                 # 읍·면 이름을 빼면 찾지 않는다
+    assert B.candidates("충청남도", "서천군", "장항읍 창리") == []            # 이름의 다른 글자까지 넘겨짚지 않는다
+    assert B.candidates("경기도", "평택시", "고덕면 당현리") == ["4122033021"]
+
+
+def test_single_variant_is_returned_as_the_code():
+    """「충정로」처럼 가가 붙은 이름이 하나뿐이면 후보가 하나라 그 코드를 돌려준다."""
+    assert B.candidates("서울특별시", "중구", "충정로") == ["1114017000"]
+    assert B.lookup("서울특별시", "중구", "충정로") == "1114017000" and B.name("1114017000") == "서울특별시 중구 충정로1가"
+
+
+def test_same_dong_name_in_other_districts_stays_separate():
+    """같은 이름의 동이 여러 시군구에 있어도 적은 시군구의 것만 찾는다."""
+    assert B.lookup("서울특별시", "양천구", "신월동") == "1147010300"
+    assert B.lookup("경상남도", "창원시 성산구", "신월동") == "4812313600"
+    assert B.lookup("경상남도", "창원시 마산합포구", "신월동") == "4812512300"
+    assert B.candidates("경상남도", "창원시 진해구", "신월동") == []
+
+
+def test_names_abolished_by_district_changes_are_not_found():
+    """법정동코드 표에는 「존재」 행만 있다. 시군구가 바뀌어 폐지된 이름은 옛 이름으로 찾지 못하고 지금 이름으로 찾는다.
+    인천광역시 중구는 2026-07-01 폐지되어 중앙동1가는 제물포구 아래에 있고, 창원시 의창구 신월동은 폐지되어 성산구에 있다."""
+    assert B.lookup("인천광역시", "중구", "중앙동1가") is None and B.candidates("인천광역시", "중구", "중앙동1가") == []
+    assert B.lookup("인천광역시", "제물포구", "중앙동1가") == "2812510800"
+    assert B.lookup("경상남도", "창원시 의창구", "신월동") is None
+    assert not B.exists("2811010100") and not B.exists("4812112600")          # 폐지된 옛 코드
+
+
 def test_hanja_suffix_rows_are_ambiguous_without_hanja():
     c = B.candidates("충청북도", "청주시 상당구", "미원면 기암리")
     assert c == ["4311132026", "4311132033"]
@@ -294,3 +332,21 @@ def test_main_writes_table_and_checks_sha(tmp_path):
     out.unlink()
     assert import_bjd.main(args[:-1] + ["0" * 64]) == 1
     assert not out.exists()
+
+
+def test_main_leaves_no_tmp_file_when_writing_fails(tmp_path, monkeypatch):
+    """파일을 쓰다 실패하면 .tmp 를 남기지 않고, 먼저 있던 출력 파일은 그대로 둔다."""
+    src = tmp_path / "법정동코드 전체자료.txt"
+    src.write_bytes(_raw(MINI))
+    out = tmp_path / "법정동코드.json"
+    args = ["--입력", str(src), "--출력", str(out), "--받은날", "2026-10-11"]
+    assert import_bjd.main(args) == 0
+    first = out.read_bytes()
+
+    def boom(*a, **k):
+        raise OSError("디스크가 가득 찼다")
+    monkeypatch.setattr(import_bjd.json, "dump", boom)
+    assert import_bjd.main(args) == 1
+    assert out.read_bytes() == first
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["법정동코드 전체자료.txt", "법정동코드.json"]
+

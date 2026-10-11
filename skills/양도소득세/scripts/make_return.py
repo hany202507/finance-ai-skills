@@ -360,6 +360,8 @@ def _filer(rep, filer, facts, res):
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일을 읽지 못했거나 형식이 틀렸다", "신고인 정보", "형식 오류", "신고인 정보: %s" % e)
     rep["경고"] += f.get("_경고") or []
+    # filing.questions 의 efile_dir 는 주지 않는다. 이 진입점은 efile 폴더를 따로 받지 않고 신고값 생성, 전자신고 파일, 검증기가
+    # 모두 기본 폴더(efile/)를 읽으므로 질문도 같은 코드표와 법정동코드 표를 본다
     qs = _reference(rep, "신고인 정보", lambda: filing.questions(f, facts, res))
     old = _old_return_date(f, res)
     if qs:
@@ -382,7 +384,7 @@ def _values(rep, res, facts, f, rules_dir):
         _taxable(rep, res)
         raise
     except return_values.Unsupported as u:
-        plan = "계획 %s 에서 다룬다" % u.계획 if u.계획 != "없음" else "이 스킬이 다루지 않는다"
+        plan = outputs.plan_text(u.계획)
         text = str(u).rstrip(". ")
         rep["다루지않음"] = rep["다루지않음"] + [{"자산": None, "내용": str(u), "계획": u.계획}]
         # 신고값 모듈의 문장이 이미 어느 계획에서 다루는지 말했으면 같은 말을 한 번 더 붙이지 않는다
@@ -565,9 +567,9 @@ def _todo_steps(rep):
     out.append("%s, %s 과 %s 을 계약서·증빙과 대조해 검토한다. 신고 전 최종 판단은 세무 전문가가 한다"
                % (forms.OUT_NATIONAL, forms.OUT_LOCAL, RV_FILE))
     if rep["가산세"] and rep["가산세"]["감면적용금액"] is not None:
-        out.append("예정신고분을 확정신고기한까지 기한 후 신고로 내는 방법과 견주어 본다. 그렇게 내 감면이 적용되면 무신고가산세가 "
+        out.append("예정신고분을 확정신고기한까지 기한 후 신고로 내는 방법과 견주어 본다. 그렇게 내서 감면이 적용되면 무신고가산세가 "
                    "%s원으로 줄어든다. 이 신고서는 감면 없이 만들었다. 어느 쪽으로 신고할지 세무 전문가와 정한다"
-                   % rep["가산세"]["감면적용금액"])
+                   % outputs.won(rep["가산세"]["감면적용금액"]))
     if sent:
         out.append("홈택스에 사람이 로그인해 양도소득세 변환파일 %s 을 올리고 형식검증과 내용검증을 돌린다. "
                    "오류가 나오면 제출하지 않고 오류 문장을 그대로 알린다" % sent["파일명"])

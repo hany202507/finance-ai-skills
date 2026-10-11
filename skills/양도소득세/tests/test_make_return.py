@@ -157,29 +157,33 @@ def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, today):
     assert "서식 검산" in text and "전자신고 검증" in text and "통과" in text
 
 
-# 예정신고의 전자신고 파일 바이트(sha256). 기대 해시는 통합 브랜치(계획 2b, 공휴일과 확정신고 가산세 병합 뒤)가 만든 파일의 값이다.
+# 전자신고 파일 바이트(sha256). 예정신고 S1·A·K 의 기대 해시는 통합 브랜치(계획 2b, 공휴일과 확정신고 가산세 병합 뒤)가 만든
+# 파일의 값이고, 확정신고 BF 의 기대 해시는 전액 비과세 자산 처리까지 병합한 뒤(가산세 감면 미적용)의 파일 값이다.
 # 레코드 레이아웃이나 합성 신고인 값, 사례의 사실관계를 일부러 바꾸면 이 값도 새 파일에서 다시 얻는다.
 # K 의 작성일은 2026-08-20 이라 오늘을 그 날로 준다
 PINNED = [
     ("S1", S1_FILE, TODAY, "d82dff1e2fb66add08a8699c3c8c43a3cc0308581177786b52600992809f85b2"),
     ("A", "20261220C116300.01", TODAY, "713f3b5d3e115737df257157da810b2034c8cf33acfdd5fd7cfdcd93fdc3de13"),
     ("K", "20260820C116300.01", "2026-08-20", "9e05b7c3e1f3bd3eaeec9399da53b50c310c47b2962dd5a23980d746987f30a7"),
+    ("BF", "20270520C116300.01", TODAY, "446e14bcfac6293ade138847fe25446bbc1e1e0d865e2897c31d3f1d0eeece12"),
 ]
 
 
 @pytest.mark.parametrize("name,file_name,today,digest", PINNED)
-def test_preliminary_efile_bytes_are_pinned(tmp_path, name, file_name, today, digest):
-    """예정신고 S1·A·K 의 전자신고 파일 바이트를 고정한다. 확정신고 가산세, 지방소득세, 서식 열 규칙, 전액 비과세 자산 처리를
-    고치는 동안 과세 자산만 있는 예정신고의 국세 파일이 바뀌지 않았다는 것을 본다."""
+def test_efile_bytes_are_pinned(tmp_path, name, file_name, today, digest):
+    """예정신고 S1·A·K 와 확정신고 BF 의 전자신고 파일 바이트를 고정한다. 신고값·서식·검산을 고치는 동안 정상 사례의
+    국세 파일이 바뀌지 않았다는 것을 본다. BF 는 가산세(03 레코드 15·16·17·19)가 들어간 확정신고 파일이다."""
     import hashlib
-    code, out = _main(tmp_path, name, s1_filer() if name == "S1" else filers.get(name), today=today)
+    filer = s1_filer() if name == "S1" else filers.get(name)
+    code, out = _main(tmp_path, name, filer, today=today)
     assert code == 0
     with open(out / file_name, "rb") as fh:
         data = fh.read()
     assert hashlib.sha256(data).hexdigest() == digest
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
-    assert "신고기한 안에 국세와 지방소득세를 납부한다" in todo        # 예정신고의 납부 안내는 그대로다
     assert "값은 지방소득세_신고서.pdf 에 있다" in todo
+    # 예정신고의 납부 안내는 그대로다. 확정신고에는 그 줄이 없다(가산세를 넣은 납부 안내가 따로 나온다)
+    assert ("신고기한 안에 국세와 지방소득세를 납부한다" in todo) == (filer["신고"]["구분"] == "예정")
 
 
 def test_confirm_document_lists_what_people_do(tmp_path):
@@ -260,12 +264,13 @@ def test_unreadable_inputs_are_code_2(tmp_path):
 
 def test_unsupported_scope_is_code_2(tmp_path, monkeypatch):
     def out_of_scope(*a, **k):
-        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 아직 다루지 않는다", "미정")
 
     monkeypatch.setattr(MR.return_values, "build", out_of_scope)
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 2
-    assert "기신고" in _confirm(out) and "계획 5" in _confirm(out)
+    assert "기신고" in _confirm(out) and "다룰 계획이 정해지지 않았다" in _confirm(out)
+    assert "계획 미정" not in _confirm(out) and "계획 5" not in _confirm(out)
     assert not (PDFS | GUIDES | {"신고값.json"}) & set(os.listdir(out))
 
 
@@ -285,8 +290,9 @@ def test_preliminary_return_with_prior_return_is_code_2(tmp_path):
     assert CALC | {"신고_확인.md"} <= names
     assert not (PDFS | GUIDES | {"신고값.json"}) & names and _efiles(out) == []
     text = _confirm(out)
-    assert "기신고" in text and "계획 5" in text and "| 신고값 | 다루지않음 |" in text
-    assert any(x["계획"] == "5" and "기신고" in x["내용"] for x in rep["다루지않음"])
+    assert "기신고" in text and "다룰 계획이 정해지지 않았다" in text and "| 신고값 | 다루지않음 |" in text
+    assert "계획 5" not in text and "계획 미정" not in text
+    assert any(x["계획"] == "미정" and "기신고" in x["내용"] for x in rep["다루지않음"])
 
 
 def test_other_sale_answer_is_raised_in_notes_and_todo(tmp_path):
@@ -867,6 +873,21 @@ def _main_facts(tmp_path, facts, filer, today=TODAY):
     return MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", today]), out
 
 
+def test_foreign_filer_whose_nationality_has_no_korean_name_still_finishes(tmp_path, capsys):
+    """국적 CD(코드표에 한글 이름이 없는 하나뿐인 국가)인 외국인 신고인도 신고서와 전자신고 파일까지 만든다. 국적 칸은 영문
+    이름이 들어가지 않아 비우고 확인사항으로 알린다. 신고인이 고칠 수 있는 입력이 아니라 멈추지 않는다."""
+    f = s1_filer()
+    f["신고인"].update(내외국인="9", 국적="CD", 주민등록번호=filers.rrn("0001015", "23456"))
+    code, out = _main(tmp_path, "S1", f)
+    shown = capsys.readouterr()
+    assert code == 0, shown.out + shown.err + _confirm(out)
+    names = set(os.listdir(out))
+    assert PDFS | {"신고값.json", "신고_확인.md", S1_FILE} <= names
+    text = _confirm(out)
+    assert "| 신고서 PDF | 만듦 |" in text and "국적" in text and "비워 두었다" in text
+    assert "CONGO" not in text and "이름이 비어" not in text
+
+
 def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
     f = filers.get("BF")
     code, out = _main(tmp_path, "BF", f)
@@ -901,14 +922,14 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
         md = fh.read()
     for doc in (notes, md.split("## 확인사항", 1)[1]):
-        assert "감면 없이" in doc and "감면이 적용되면 무신고가산세는 20627400원" in doc and "2026-01-01 부터" in doc
-        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36306400원" in doc and "4273250원" in doc
+        assert "감면 없이" in doc and "감면이 적용되면 무신고가산세는 20,627,400원" in doc and "2026-01-01 부터" in doc
+        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36,306,400원" in doc and "4,273,250원" in doc
         assert "부정행위" in doc and "다루지 않는다" in doc
         assert "납부일(2027-05-20) 기준" in doc
         # 지방소득세 가산세: 금액(국세와 같이 감면 없음, 20,627,400 × 20% = 4,125,480), 감면을 적용하지 않은 까닭과 대안 금액, 두 가지 가정
-        assert "지방소득세에도 예정신고 무신고가산세 4125480원과 납부지연가산세 226901원" in doc
+        assert "지방소득세에도 예정신고 무신고가산세 4,125,480원과 납부지연가산세 226,901원" in doc
         assert "지방소득세 무신고가산세는 감면 없이 계산했다" in doc and "과세관청이 달리 본 예가 있어 적용하지 않았다" in doc
-        assert "감면이 적용되면 지방소득세 무신고가산세는 2062740원" in doc and "경정할 것을 미리 알고 신고한 경우가 아니" in doc
+        assert "감면이 적용되면 지방소득세 무신고가산세는 2,062,740원" in doc and "경정할 것을 미리 알고 신고한 경우가 아니" in doc
         assert "감면이 적용되지 않으면" not in doc and "감면 50% 를 적용했다" not in doc
         assert "두 가지를 가정" in doc and "위택스 값을 따른다" in doc
         assert "지방소득세 신고서의 가산세는 계산하지 않아" not in doc
@@ -917,13 +938,14 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert "가산세는 계산하지 않았다" not in body and "46,110,480원" in body and "따로 계산해 더한다" not in md
     # 감면을 적용하지 않았다는 문장은 확인사항 여러 줄에 묻히지 않게 알림 절에도 올리고, 사람이 할 일에 한 줄을 둔다
     alerts = _section(_confirm(out), "## 알림")
-    assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20627400원" in alerts and "세무 전문가" in alerts
+    assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20,627,400원" in alerts and "세무 전문가" in alerts
     # 지방소득세 무신고가산세를 감면 없이 넣었다는 문장과 감면이 적용될 때의 금액도 알림에 올린다
     local_alert = [ln for ln in alerts.splitlines() if "지방소득세 무신고가산세는 감면 없이" in ln]
-    assert len(local_alert) == 1 and "2062740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
+    assert len(local_alert) == 1 and "2,062,740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
-    assert len(late) == 1 and "견주어 본다" in late[0] and "20627400원" in late[0]
+    assert len(late) == 1 and "견주어 본다" in late[0] and "20,627,400원" in late[0]
+    assert "그렇게 내서 감면이 적용되면 무신고가산세가 20,627,400원으로 줄어든다" in late[0]      # 「내 감면」으로 읽히지 않게 적는다
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
     # 지방소득세 신고서에 가산세가 들어 있다. 두 가지를 가정한 값이라 위택스 화면의 값과 다르면 위택스 값을 따르라고 적는다
@@ -1015,7 +1037,7 @@ def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
     else:
         assert res["전자신고"] is None and not [n for n in made if "C116300" in n]
     notes = " ".join(res["확인사항"])
-    assert "감면이 적용되면 무신고가산세는 20627400원" in notes and "부정행위" in notes
+    assert "감면이 적용되면 무신고가산세는 20,627,400원" in notes and "부정행위" in notes
     assert any("감면 없이" in x for x in res["알림"]) and any("기한 후 신고로 내는 방법" in x for x in res["사람이할일"])
     s = json.dumps(res, ensure_ascii=False)
     for v in _personal(f):
@@ -1120,7 +1142,7 @@ def test_full_run_confirm_document_keeps_its_file_sentences(tmp_path):
 
 def test_unsupported_run_has_no_reference_values_sentence(tmp_path, monkeypatch):
     def out_of_scope(*a, **k):
-        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+        raise return_values.Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 아직 다루지 않는다", "미정")
 
     monkeypatch.setattr(MR.return_values, "build", out_of_scope)
     code, out = _main(tmp_path, "S1", s1_filer())
@@ -1161,12 +1183,37 @@ def test_question_run_keeps_its_instruction_and_has_no_reference_values_sentence
 # ---------------------------------------------------------------- 계획 2b G7: 미뤄 둔 지적
 
 def test_prior_return_note_says_the_plan_once(tmp_path):
-    """신고값 모듈의 문장이 이미 「계획 5 에서 다룬다」로 끝나면 같은 말을 한 번 더 붙이지 않는다."""
+    """어느 계획에서 다루는지는 한 번만 말한다. 기신고 합산은 어느 계획에도 없어 「다룰 계획이 정해지지 않았다」가 한 번 나온다.
+    신고값 모듈의 문장이 이미 그 말을 담고 있으면 같은 말을 한 번 더 붙이지 않는다."""
     rep, out = _a_with(tmp_path, 다른양도=True, 기신고=50000000)
     assert rep["종료코드"] == 2
     notes = [x for x in rep["알림"] if "기신고" in x]
-    assert notes and all(x.count("계획 5 에서 다룬다") == 1 for x in notes), notes
-    assert _confirm(out).count("계획 5 에서 다룬다") == 1
+    assert notes and all(x.count("다룰 계획이 정해지지 않았다") == 1 for x in notes), notes
+    assert _confirm(out).count("다룰 계획이 정해지지 않았다") == 1
+    assert "계획 5 에서 다룬다" not in _confirm(out)
+
+
+def test_plan_sentence_for_each_kind_of_plan_value(tmp_path, monkeypatch):
+    """다루지않음을 사람에게 말할 때: 계획 번호면 「계획 n 에서 다룬다」, 「미정」이면 「다룰 계획이 정해지지 않았다」,
+    「없음」이면 「이 스킬이 다루지 않는다」. 「계획 미정 에서 다룬다」 같은 문장을 만들지 않는다."""
+    from yangdo import outputs
+    assert outputs.plan_text("5") == "계획 5 에서 다룬다" and outputs.plan_text("4") == "계획 4 에서 다룬다"
+    assert outputs.plan_text("미정") == "다룰 계획이 정해지지 않았다" and outputs.plan_text("없음") == "이 스킬이 다루지 않는다"
+    res = {"질문": [], "다루지않음": [{"자산": "B", "내용": "교환으로 양도한 자산", "계획": "미정"},
+                                 {"자산": "B", "내용": "분양권 양도", "계획": "5"},
+                                 {"자산": None, "내용": "과세연도가 다른 양도", "계획": "없음"}]}
+    md = outputs.questions_md(res)
+    assert "교환으로 양도한 자산. 다룰 계획이 정해지지 않았다" in md and "분양권 양도. 계획 5 에서 다룬다" in md
+    assert "과세연도가 다른 양도. 이 스킬이 다루지 않는다" in md and "계획 미정" not in md
+
+    for plan, want in (("5", "계획 5 에서 다룬다"), ("미정", "다룰 계획이 정해지지 않았다"), ("없음", "이 스킬이 다루지 않는다")):
+        def out_of_scope(*a, _plan=plan, **k):
+            raise return_values.Unsupported("합성 범위 밖 사유", _plan)
+        monkeypatch.setattr(MR.return_values, "build", out_of_scope)
+        folder = tmp_path / plan
+        folder.mkdir()
+        code, out = _main(folder, "S1", s1_filer())
+        assert code == 2 and "합성 범위 밖 사유. %s" % want in _confirm(out), plan
 
 
 def test_scope_stop_without_plan_still_says_who_handles_it(tmp_path, monkeypatch):
