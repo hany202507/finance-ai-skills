@@ -187,6 +187,75 @@ def test_merged_city_unknown_or_mismatched_district_is_none():
     assert REG.capital(a(통합, "서구")) is False and REG.capital(a("전라남도", "순천시")) is False
 
 
+def test_old_sido_name_without_district_keeps_its_rule_across_the_merger():
+    """옛 시도 이름만 적고 시군구를 비운 주소는 그 시도의 적용(광역시, 도)을 통합 뒤에도 그대로 쓴다."""
+    for on in 통합_전후:
+        assert REG.metro(a("광주광역시", "", ""), on) is True, on
+        assert REG.metro(a("광주", "", "치평동"), on) is True, on
+        assert REG.metro(a("전라남도", "", ""), on) is False, on
+        assert REG.metro(a("전남", "", "조례동"), on) is False, on
+
+
+def test_old_sido_name_with_foreign_district_before_the_merger_is_unchanged():
+    """옛 시도 이름과 시군구가 맞지 않는 주소는 통합 뒤 기준일에는 정하지 않는다. 통합 전 기준일에는 시군구 이름을
+    대조하지 않던 종전 동작(시도 이름만으로 판정) 그대로다. 종전 결과를 바꾸지 않으려고 그대로 두었다."""
+    for on in ("2021-06-01", "2026-06-30"):
+        assert REG.metro(a("광주광역시", "순천시", "조례동"), on) is True, on
+        assert REG.metro(a("전라남도", "서구", "치평동"), on) is False, on
+        assert REG.metro(a("광주광역시", "중구", ""), on) is True, on
+    for on in ("2026-07-01", "2026-10-09"):
+        assert REG.metro(a("광주광역시", "순천시", "조례동"), on) is None, on
+        assert REG.metro(a("전라남도", "서구", "치평동"), on) is None, on
+        assert REG.metro(a("광주광역시", "중구", ""), on) is None, on
+
+
+통합시 = ("목포시", "여수시", "순천시", "나주시", "광양시")
+
+
+@pytest.mark.parametrize("on", ["2026-07-01", "2026-10-09"])
+def test_metro_caveat_marks_merged_city_urban_areas_after_the_merger(on):
+    """통합 뒤 기준일에 시의 동 지역을 광역시가 아닌 지역으로 보는 것은 시·군 관할구역 특례를 적용한 결과다.
+    그 주소를 알려 주어 판정이 확인사항을 달게 한다."""
+    for name in 통합시:
+        for sido in (통합, "전라남도", "전남"):
+            assert REG.metro(a(sido, name, "중앙동"), on) is False
+            assert REG.metro_caveat(a(sido, name, "중앙동"), on) == 통합, (sido, name)
+        assert REG.metro_caveat(a(통합, name, ""), on) == 통합, name
+    assert REG.metro_caveat(a("전라남도", "", "조례동"), on) == 통합       # 시군구를 몰라 시의 동 지역일 수 있다
+
+
+def test_metro_caveat_is_none_where_readings_agree():
+    for name in 통합시:                                                     # 통합 전 기준일
+        for on in ("2021-06-01", "2026-06-30"):
+            assert REG.metro_caveat(a(통합, name, "중앙동"), on) is None
+            assert REG.metro_caveat(a("전라남도", name, "중앙동"), on) is None
+    for on in ("2026-07-01", "2026-10-09"):
+        for gu in 자치구:                                                   # 자치구는 광역시로 본다
+            assert REG.metro_caveat(a(통합, gu, ""), on) is None
+            assert REG.metro_caveat(a("광주광역시", gu, ""), on) is None
+        for name in 시군:
+            if name.endswith("군"):                                         # 군은 광역시에 소속된 군으로 읽어도 같다
+                assert REG.metro_caveat(a(통합, name, ""), on) is None
+                assert REG.metro_caveat(a("전라남도", name, ""), on) is None
+        assert REG.metro_caveat(a(통합, "순천시", "승주읍"), on) is None        # 시의 읍·면도 같다
+        assert REG.metro_caveat(a(통합, "나주시", "남평읍 남평리"), on) is None
+        assert REG.metro_caveat(a(통합, "순천시", "황전면"), on) is None
+        assert REG.metro_caveat(a(통합, "", "조례동"), on) is None             # 정하지 못한 주소(metro None)
+        assert REG.metro_caveat(a("전라남도", "서구", "치평동"), on) is None
+        for other in (a("강원특별자치도", "춘천시", "석사동"), a("서울특별시", "마포구", "공덕동"),
+                      a("부산광역시", "해운대구", "우동"), a("세종특별자치시", "", "조치원읍"), a("서울특별", "마포구", "")):
+            assert REG.metro_caveat(other, on) is None
+
+
+@pytest.mark.parametrize("sido,gu,dong", [("전라남도", "서구", "치평동"), ("전남", "광산구", "수완동"),
+                                         ("광주광역시", "순천시", "조례동"), ("광주", "여수시", "학동")])
+def test_notice_history_does_not_follow_an_old_name_with_a_foreign_district(sido, gu, dong):
+    """옛 시도 이름은 제 시군구일 때만 새 이름으로 바꾼다. 전라남도에 서구는 없었으므로 광주 서구의 지정 이력을 잇지 않는다."""
+    for on in ("2021-06-01", "2026-10-09"):
+        s = REG.status(C, a(sido, gu, dong), on)
+        assert s["지정"] is False and s["주석"] == [], on
+
+
 def test_merged_city_table_matches_bjd_table():
     """행정구역_대응.json 의 통합 표가 법정동코드표의 통합특별시 시군구와 같다. 구는 광역시 규정, 시·군은 도 규정이다."""
     with open(os.path.join(RULES_DIR, "행정구역_대응.json"), encoding="utf-8") as f:

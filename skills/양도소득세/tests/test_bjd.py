@@ -120,17 +120,36 @@ def test_old_sido_name_must_match_its_own_districts():
 
 
 def test_every_merged_city_row_is_reachable_by_an_old_name():
-    """통합특별시의 읍면동·리 행은 모두 옛 시도 이름 하나로 같은 코드에 닿는다(자치구는 광주광역시, 시·군은 전라남도)."""
+    """통합특별시의 읍면동·리 행은 모두 옛 시도 이름 하나로 같은 코드에 닿는다. 옛 시도는 행정구역_대응.json 의 통합 표에서 읽는다."""
+    with open(os.path.join(bjd.RULES_DIR, bjd.RENAME_FILE), encoding="utf-8") as f:
+        (merged,) = json.load(f)["통합"]
+    old_of = {gu: g["시도"] for g in merged["옛"] for gu in g["시군구"]}
+    olds = {g["시도"] for g in merged["옛"]}
+    assert olds == {"광주광역시", "전라남도"} and len(old_of) == 27
     n = 0
     for code, (sido, gu, dong) in B._parts.items():
-        if sido != "전남광주통합특별시" or not dong:
+        if sido != merged["시도"] or not dong:
             continue
-        old = "광주광역시" if gu.endswith("구") else "전라남도"
-        other = "전라남도" if old == "광주광역시" else "광주광역시"
-        assert B.lookup(old, gu, dong, on="2026-10-11") == code, (code, gu, dong)
-        assert B.lookup(other, gu, dong, on="2026-10-11") is None, (code, gu, dong)
+        for old in olds:
+            want = code if old == old_of[gu] else None
+            assert B.lookup(old, gu, dong, on="2026-10-11") == want, (code, old, gu, dong)
         n += 1
     assert n == 3176       # 12 로 시작하는 존재 행 3,204 에서 시도 1, 시군구 27 을 뺀 수
+
+
+def test_sido_short_names_are_resolved_like_regions():
+    """시도 약칭은 지역 판정(regions.SIDO_SHORT)과 같은 표로 푼다. 옛 시도의 약칭도 통합 규칙을 그대로 따른다."""
+    assert B.lookup("서울", "종로구", "청운동") == B.lookup("서울시", "종로구", "청운동") == "1111010100"
+    assert B.lookup("강원", "춘천시", "효자동") == "5111011200"
+    for on in (None, "2026-07-01", "2026-12-20"):
+        assert B.lookup("광주특별시", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("광주", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("전남", "강진군", "강진읍", on=on) == "1278025000"
+        assert B.lookup("전남", "서구", "치평동", on=on) is None
+        assert B.lookup("광주", "강진군", "강진읍", on=on) is None
+    assert B.lookup("광주특별시", "서구", "치평동", on="2026-06-30") == "1224012000"     # 새 이름의 약칭은 날짜와 관계없다
+    assert B.lookup("광주", "서구", "치평동", on="2026-06-30") is None
+    assert B.lookup("서울 ", "종로구", "청운동") == "1111010100"
 
 
 def test_confirmed_renames_apply_from_their_start_date():
