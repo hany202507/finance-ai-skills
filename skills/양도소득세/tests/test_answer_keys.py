@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from yangdo import efile, engine, filing, forms_check, return_values
+from yangdo import efile, engine, filing, forms_check, penalty, return_values, ruleset
 from answer_keys import KEYS, OUT, SKIP
 
 TODAY = "2026-10-11"
@@ -256,6 +256,33 @@ def test_final_return_without_preliminary_return_penalty_amount_matches_source()
     _require(rv["신고"]["구분"] == "확정")
     t = rv["본지"]["열"]["합계"]
     assert t["가산세"] == k["원문가산세"]["계"]
+
+
+def test_final_return_penalty_matches_hand_calculation():
+    """예정신고를 하지 않은 확정신고(사례 09 하위 8)의 가산세. penalty.final_return 이 원문 방식과 규칙세트의 율·세율로 손계산한
+    기대값과 같다. 신고값에 넣는 일은 다음 태스크라 위 xfail(본지 가산세)은 그대로다."""
+    k = KEYS["09-8"]
+    r, _ = _run("09-8")
+    want = k["현행가산세"]
+    _require(want["계"] == want["무신고"] + want["납부지연"] and want["계"] != k["원문가산세"]["계"])
+    got = penalty.final_return(r, k["facts"], k["filer"]["신고"]["작성일"])
+    assert (got["무신고"], got["납부지연"], got["계"]) == (want["무신고"], want["납부지연"], want["계"])
+    assert [{key: c[key] for key in want["건"][0]} for c in got["건"]] == want["건"]
+    assert got["열"] == want["열"]
+
+
+def test_penalty_method_reproduces_source_amounts_to_the_won():
+    """원문이 적은 건별 세액과 일수(2022년 귀속 세율표, 납부일까지 센 일수)를 같은 계산식에 넣으면 원문 서식 ⑮ 의 합계와
+    열별 값이 원 단위까지 나온다. 율(무신고 20% × 50%, 1일 10만분의 22)은 원문과 지금 규칙세트가 같다."""
+    src = KEYS["09-8"]["원문가산세"]
+    rs = ruleset.load()
+    on = KEYS["09-8"]["filer"]["신고"]["작성일"]
+    total, per_case, late = penalty.amounts([c["예정신고세액"] for c in src["건"]], [c["일수"] for c in src["건"]],
+                                            rs.value("가산세.무신고.율", on), rs.value("가산세.무신고.확정신고감면율", on),
+                                            rs.value("가산세.납부지연.일이자율", on))
+    assert (total, sum(late), total + sum(late)) == (src["무신고"], src["납부지연"], src["계"])
+    assert per_case == [c["무신고"] for c in src["건"]] and late == [c["납부지연"] for c in src["건"]]
+    assert src["열"] == {"1-10": {"무신고": per_case[0], "납부지연": late[0]}, "1-20": {"무신고": per_case[1], "납부지연": late[1]}}
 
 
 def test_short_holding_house_gets_no_temporary_exclusion_hint():
