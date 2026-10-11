@@ -1174,7 +1174,7 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert len(local_alert) == 1 and "2,062,740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
-    assert len(late) == 1 and "대조한다" in late[0] and "20,627,400원" in late[0]
+    assert len(late) == 1 and "비교한다" in late[0] and "20,627,400원" in late[0]
     assert "그렇게 내서 감면이 적용되면 무신고가산세가 20,627,400원으로 줄어든다" in late[0]      # 「내 감면」으로 읽히지 않게 적는다
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
