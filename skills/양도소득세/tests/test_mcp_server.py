@@ -3,6 +3,7 @@ import ast
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -47,7 +48,8 @@ def test_initialize_and_list():
     r = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}})
     assert r["result"]["protocolVersion"] == "2025-03-26" and "tools" in r["result"]["capabilities"]
     names = {t["name"] for t in M.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
-    assert names == {"yangdo_next_questions", "yangdo_answer", "yangdo_calculate", "regulated_area", "ruleset_info"}
+    assert names == {"yangdo_next_questions", "yangdo_answer", "yangdo_calculate", "yangdo_forms", "yangdo_efile",
+                     "regulated_area", "ruleset_info"}
     assert M.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     assert M.handle({"jsonrpc": "2.0", "id": 3, "method": "없는메서드"})["error"]["code"] == -32601
 
@@ -55,9 +57,9 @@ def test_initialize_and_list():
 def test_ruleset_info_and_area():
     info = call("ruleset_info", {})
     assert len(info["판"]) == 16 and info["계류"]
-    a = call("regulated_area", {"시도": "서울특별시", "시군구": "마포구", "읍면동": "공덕동", "기준일": "2026-10-09"})
+    a = call("regulated_area", {"sido": "서울특별시", "sigungu": "마포구", "eupmyeondong": "공덕동", "as_of": "2026-10-09"})
     assert a["조정대상지역"]["지정"] is True
-    b = call("regulated_area", {"시도": "경기도", "시군구": "화성시", "읍면동": "반송동", "기준일": "2018-01-01"})
+    b = call("regulated_area", {"sido": "경기도", "sigungu": "화성시", "eupmyeondong": "반송동", "as_of": "2018-01-01"})
     assert b["조정대상지역"]["질문"] == "A02"
 
 
@@ -66,7 +68,7 @@ def test_questions_answer_and_calculate(tmp_path):
     p.write_text(json.dumps({"자산": [{"id": "A"}]}, ensure_ascii=False), encoding="utf-8")
     nq = call("yangdo_next_questions", {"facts_path": str(p)})
     assert nq["다음"][0]["id"] == "P01"
-    call("yangdo_answer", {"facts_path": str(p), "문항": "P01", "값": True})
+    call("yangdo_answer", {"facts_path": str(p), "question": "P01", "value": True})
     assert json.loads(p.read_text(encoding="utf-8"))["신고인"]["거주자"] is True
     q = tmp_path / "a.json"
     q.write_text(json.dumps(CASES["A"], ensure_ascii=False), encoding="utf-8")
@@ -112,7 +114,7 @@ def test_personal_data_messages_do_not_echo_values(tmp_path):
     p = write_json(tmp_path / "p.json", dict(CASES["A"], 신고인={"거주자": True, "주민등록번호": RRN}))
     assert "인적사항" in err("yangdo_calculate", {"facts_path": p})
     assert "인적사항" in err("yangdo_next_questions", {"facts_path": p})
-    assert "인적사항" in err("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert "인적사항" in err("yangdo_answer", {"facts_path": p, "question": "P01", "value": True})
     memo = copy.deepcopy(CASES["A"])
     memo["메모"] = "연락처 " + RRN
     t = err("yangdo_calculate", {"facts": memo})
@@ -128,7 +130,7 @@ def test_answer_with_personal_value_is_an_error_and_leaves_file_alone(tmp_path):
     p = write_json(tmp_path / "f.json", f)
     before = (tmp_path / "f.json").read_text(encoding="utf-8")
     bad = {"시도": "서울특별시", "시군구": "마포구", "읍면동": RRN}
-    t = err("yangdo_answer", {"facts_path": p, "문항": "A01", "값": bad, "자산": "A"})
+    t = err("yangdo_answer", {"facts_path": p, "question": "A01", "value": bad, "asset": "A"})
     assert "주민등록번호" in t and RRN not in t
     assert (tmp_path / "f.json").read_text(encoding="utf-8") == before
 
@@ -143,27 +145,27 @@ def test_malformed_value_comes_back_as_question():
 
 def test_today_is_validated_and_accepted():
     for bad in ("2026-13-01", "26", "오늘", 20261009, "20261009", "2026-W41-5", ""):
-        assert "오늘" in err("yangdo_calculate", {"facts": CASES["A"], "오늘": bad})
-    ok = call("yangdo_calculate", {"facts": CASES["A"], "오늘": "2026-10-09"})
+        assert "오늘" in err("yangdo_calculate", {"facts": CASES["A"], "today": bad})
+    ok = call("yangdo_calculate", {"facts": CASES["A"], "today": "2026-10-09"})
     assert ok["기준정보"]["오늘"] == "2026-10-09"
 
 
 def test_invalid_answers_are_tool_errors():
     f = {"자산": [{"id": "A"}]}
-    assert "P01" in err("yangdo_answer", {"facts": f, "문항": "P01", "값": "예"})
-    assert "ZZZ" in err("yangdo_answer", {"facts": f, "문항": "ZZZ", "값": True})
-    assert "자산 id" in err("yangdo_answer", {"facts": f, "문항": "A11", "값": "2026-11-15"})
-    assert "YYYY-MM-DD" in err("yangdo_answer", {"facts": f, "문항": "A11", "값": "2026/11/15", "자산": "A"})
-    assert "값" in err("yangdo_answer", {"facts": f, "문항": "P01"})
-    assert "문항" in err("yangdo_answer", {"facts": f, "값": True})
-    assert "문자열" in err("yangdo_answer", {"facts": f, "문항": "A11", "값": "2026-11-15", "자산": 1})
+    assert "P01" in err("yangdo_answer", {"facts": f, "question": "P01", "value": "예"})
+    assert "ZZZ" in err("yangdo_answer", {"facts": f, "question": "ZZZ", "value": True})
+    assert "자산 id" in err("yangdo_answer", {"facts": f, "question": "A11", "value": "2026-11-15"})
+    assert "YYYY-MM-DD" in err("yangdo_answer", {"facts": f, "question": "A11", "value": "2026/11/15", "asset": "A"})
+    assert "값" in err("yangdo_answer", {"facts": f, "question": "P01"})
+    assert "문항" in err("yangdo_answer", {"facts": f, "value": True})
+    assert "문자열" in err("yangdo_answer", {"facts": f, "question": "A11", "value": "2026-11-15", "asset": 1})
 
 
 def test_answer_in_memory_and_moreum():
     f = {"자산": [{"id": "A"}]}
-    r = call("yangdo_answer", {"facts": f, "문항": "P01", "값": True})
+    r = call("yangdo_answer", {"facts": f, "question": "P01", "value": True})
     assert r["사실관계"]["신고인"]["거주자"] is True and "신고인" not in f
-    m = call("yangdo_answer", {"facts": f, "문항": "A11", "값": "모름", "자산": "A"})
+    m = call("yangdo_answer", {"facts": f, "question": "A11", "value": "모름", "asset": "A"})
     assert "A11:A" in m["사실관계"]["모름"]
 
 
@@ -175,7 +177,7 @@ def test_next_questions_options():
     assert "limit" in err("yangdo_next_questions", {"facts": f, "limit": -1})
     assert "limit" in err("yangdo_next_questions", {"facts": f, "limit": 0})
     assert "limit" in err("yangdo_next_questions", {"facts": f, "limit": True})
-    assert call("yangdo_next_questions", {"facts": f, "서식": True})["다음"]
+    assert call("yangdo_next_questions", {"facts": f, "forms": True})["다음"]
 
 
 def test_facts_input_errors(tmp_path):
@@ -205,7 +207,7 @@ def test_output_write_failure_names_the_file(tmp_path, monkeypatch):
     def locked(*a, **k):
         raise PermissionError(13, "Permission denied", target)
 
-    monkeypatch.setattr(M.RUN, "write_outputs", locked)
+    monkeypatch.setattr(M.outputs, "write_outputs", locked)
     t = err("yangdo_calculate", {"facts": CASES["A"], "out_dir": str(tmp_path / "out")})
     assert target in t and "닫고" in t
 
@@ -218,7 +220,7 @@ def test_answer_write_failure_keeps_original(tmp_path, monkeypatch):
         raise PermissionError(13, "Permission denied", dst)
 
     monkeypatch.setattr(M.os, "replace", locked)
-    assert p in err("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert p in err("yangdo_answer", {"facts_path": p, "question": "P01", "value": True})
     assert (tmp_path / "f.json").read_text(encoding="utf-8") == before
     assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json"]
 
@@ -236,13 +238,13 @@ def test_rerun_into_same_folder_drops_stale_results(tmp_path):
 
 
 def test_regulated_area_input_errors():
-    base = {"시도": "서울특별시", "시군구": "마포구", "기준일": "2026-10-09"}
-    assert "기준일" in err("regulated_area", dict(base, 기준일="2026-13-01"))
-    assert "기준일" in err("regulated_area", dict(base, 기준일="20261009"))
-    assert "시도" in err("regulated_area", {"시군구": "마포구", "기준일": "2026-10-09"})
-    assert "시군구" in err("regulated_area", {"시도": "서울특별시", "기준일": "2026-10-09"})
-    assert "시도" in err("regulated_area", dict(base, 시도=1))
-    unknown = call("regulated_area", dict(base, 시도="없는도"))
+    base = {"sido": "서울특별시", "sigungu": "마포구", "as_of": "2026-10-09"}
+    assert "기준일" in err("regulated_area", dict(base, as_of="2026-13-01"))
+    assert "as_of" in err("regulated_area", dict(base, as_of="20261009"))
+    assert "시도" in err("regulated_area", {"sigungu": "마포구", "as_of": "2026-10-09"})
+    assert "sigungu" in err("regulated_area", {"sido": "서울특별시", "as_of": "2026-10-09"})
+    assert "sido" in err("regulated_area", dict(base, sido=1))
+    unknown = call("regulated_area", dict(base, sido="없는도"))
     assert {v["질문"] for v in unknown.values()} == {"A01"}
 
 
@@ -342,7 +344,7 @@ def test_stdio_lone_surrogate_in_error_reply_does_not_kill_server():
 
 def test_stdio_lone_surrogate_in_tool_result_does_not_kill_server():
     raw = ('{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"yangdo_answer","arguments":'
-           '{"facts":{"자산":[{"id":"A"}],"메모":"\\ud800"},"문항":"P01","값":true}}}')
+           '{"facts":{"자산":[{"id":"A"}],"메모":"\\ud800"},"question":"P01","value":true}}}')
     lines, _ = _stdio([PING2], raw_lines=[raw])
     by_id = {x["id"]: x for x in lines}
     body = json.loads(by_id[1]["result"]["content"][0]["text"])
@@ -374,7 +376,7 @@ def test_stdio_deeply_nested_line_is_a_parse_error_and_server_stays_alive():
 @pytest.mark.parametrize("name,owner,attr,exc,args", [
     ("yangdo_next_questions", M.questions, "next_questions", KeyError("키"), {"facts": CASES["A"]}),
     ("yangdo_answer", M.questions, "answer", TypeError("형"),
-     {"facts": {"자산": [{"id": "A"}]}, "문항": "P01", "값": True}),
+     {"facts": {"자산": [{"id": "A"}]}, "question": "P01", "value": True}),
     ("yangdo_calculate", M.engine, "calculate", AttributeError("속성"), {"facts": CASES["A"]}),
 ])
 def test_malformed_value_is_logged_to_stderr(monkeypatch, capsys, name, owner, attr, exc, args):
@@ -393,7 +395,7 @@ def test_answer_keeps_unrelated_tmp_sibling(tmp_path):
     p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
     other = tmp_path / "f.json.tmp"
     other.write_text("남의 파일", encoding="utf-8")
-    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    call("yangdo_answer", {"facts_path": p, "question": "P01", "value": True})
     assert other.read_text(encoding="utf-8") == "남의 파일"
     assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json", "f.json.tmp"]
     assert json.loads((tmp_path / "f.json").read_text(encoding="utf-8"))["신고인"]["거주자"] is True
@@ -408,7 +410,7 @@ def test_answer_failure_keeps_unrelated_tmp_sibling(tmp_path, monkeypatch):
         raise PermissionError(13, "Permission denied", dst)
 
     monkeypatch.setattr(M.os, "replace", locked)
-    assert p in err("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    assert p in err("yangdo_answer", {"facts_path": p, "question": "P01", "value": True})
     assert other.read_text(encoding="utf-8") == "남의 파일"
     assert sorted(x.name for x in tmp_path.iterdir()) == ["f.json", "f.json.tmp"]
 
@@ -428,7 +430,7 @@ def test_answer_keeps_file_mode(tmp_path):
     import stat
     p = write_json(tmp_path / "f.json", {"자산": [{"id": "A"}]})
     os.chmod(p, 0o640)
-    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": True})
+    call("yangdo_answer", {"facts_path": p, "question": "P01", "value": True})
     assert stat.S_IMODE(os.stat(p).st_mode) == 0o640
 
 
@@ -453,16 +455,167 @@ def test_instructions_say_how_to_start_a_new_case(tmp_path):
     ins = r["result"]["instructions"]
     assert 'facts: {"자산": [{"id": "A"}]}' in ins and "facts_path" in ins and "사실관계" in ins
     start = {"자산": [{"id": "A"}]}
-    started = call("yangdo_answer", {"facts": start, "문항": "P01", "값": True})
+    started = call("yangdo_answer", {"facts": start, "question": "P01", "value": True})
     assert started["사실관계"] == {"신고인": {"거주자": True}, "자산": [{"id": "A"}]}
     asked = call("yangdo_next_questions", {"facts": started["사실관계"], "limit": 10})["다음"]
     assert any(q["자산"] == "A" and q["id"].startswith("A") for q in asked)
     p = write_json(tmp_path / "new.json", start)
-    call("yangdo_answer", {"facts_path": p, "문항": "P01", "값": False})
+    call("yangdo_answer", {"facts_path": p, "question": "P01", "value": False})
     assert json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))["신고인"]["거주자"] is False
+
+
+# ---- 입력 스키마의 속성 이름은 ASCII, 옛 한글 이름으로 온 인자도 받는다 ----
+
+SCHEMA_KEY = re.compile(r"^[a-zA-Z0-9_.-]{1,64}$")     # Claude 클라이언트가 받는 속성 이름 꼴. 다르면 도구를 통째로 뺀다
+
+
+def _property_keys(node, path):
+    """스키마 어느 깊이에 있든 properties 의 키를 (경로, 키) 로 모은다."""
+    out = []
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            out += [(path, k) for k in props]
+        for k, v in node.items():
+            out += _property_keys(v, "%s.%s" % (path, k))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            out += _property_keys(v, "%s[%d]" % (path, i))
+    return out
+
+
+def test_schema_property_names_are_ascii():
+    tools = M.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+    assert len(tools) == 7
+    seen = set()
+    for t in tools:
+        schema = t["inputSchema"]
+        keys = _property_keys(schema, t["name"])
+        for path, k in keys:
+            assert SCHEMA_KEY.match(k), "%s: %s" % (path, k)
+        seen |= {k for _, k in keys}
+        for k in schema.get("required", []):
+            assert k in schema["properties"], "%s: required %s" % (t["name"], k)
+        assert "properties" not in schema["properties"].get("facts", {})      # 사실관계는 한글 키를 가진 자유 객체다
+        for name, prop in schema["properties"].items():
+            assert prop.get("description"), "%s.%s 에 설명이 없다" % (t["name"], name)
+    assert set(M.ALIASES) <= seen                                              # 옛 이름마다 새 이름이 스키마에 있다
+    for old in M.ALIASES.values():
+        assert not SCHEMA_KEY.match(old)
+
+
+def test_property_key_walk_reaches_nested_schemas():
+    nested = {"type": "object", "properties": {"a": {"type": "array", "items": {"type": "object", "properties": {"한글": {}}}}},
+              "anyOf": [{"properties": {"b-1.c": {}}}]}
+    assert sorted(k for _, k in _property_keys(nested, "t")) == ["a", "b-1.c", "한글"]
+
+
+def test_old_korean_argument_names_still_work(tmp_path):
+    f = {"자산": [{"id": "A"}]}
+    r = call("yangdo_answer", {"facts": f, "문항": "A11", "값": "모름", "자산": "A"})
+    assert "A11:A" in r["사실관계"]["모름"]
+    assert call("yangdo_next_questions", {"facts": f, "서식": True})["다음"]
+    assert call("yangdo_calculate", {"facts": CASES["A"], "오늘": "2026-10-09"})["기준정보"]["오늘"] == "2026-10-09"
+    a = call("regulated_area", {"시도": "서울특별시", "시군구": "마포구", "읍면동": "공덕동", "기준일": "2026-10-09"})
+    assert a["조정대상지역"]["지정"] is True
+    b = call("regulated_area", {"시도": "경기도", "시군구": "화성시", "읍면동": "반송동", "기준일": "2018-01-01", "지구해당": "아니오"})
+    assert "질문" not in b["조정대상지역"]
+    assert "문항" in err("yangdo_answer", {"facts": f, "값": True})
+    assert "기준일" in err("regulated_area", {"시도": "서울특별시", "시군구": "마포구", "기준일": "20261009"})
+
+
+def test_old_and_new_name_together_is_an_error():
+    t = err("yangdo_calculate", {"facts": CASES["A"], "today": "2026-10-09", "오늘": "2026-10-09"})
+    assert "today" in t and "오늘" in t and "하나만" in t
+    t = err("yangdo_answer", {"facts": {"자산": [{"id": "A"}]}, "question": "P01", "문항": "P01", "value": True})
+    assert "question" in t and "하나만" in t
+
+
+def test_arguments_are_not_changed_in_place():
+    args = {"facts": CASES["A"], "오늘": "2026-10-09"}
+    call("yangdo_calculate", args)
+    assert sorted(args) == ["facts", "오늘"]
+
+
+def test_instructions_name_the_return_tools():
+    ins = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]["instructions"]
+    assert "yangdo_forms" in ins and "yangdo_efile" in ins and "filer_path" in ins
+    for old in M.ALIASES.values():
+        assert "%s=" % old not in ins and "`%s`" % old not in ins
 
 
 def test_empty_facts_is_not_a_start():
     ids = [q["id"] for q in call("yangdo_next_questions", {"facts": {}, "limit": 10})["다음"]]
     assert ids == ["P01", "P05"]
     assert call("yangdo_calculate", {"facts": {}})["질문"][0]["문항"] == "P02"
+
+
+# ---- 검토 반영: pymupdf 는 신고서 도구를 부를 때만 읽고, 없어도 계획 1 도구는 뜬다 ----
+
+def _py(code, *argv):
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    return subprocess.run([sys.executable, "-c", code, os.path.join(ROOT, "scripts")] + list(argv), capture_output=True,
+                          text=True, encoding="utf-8", env=env, timeout=240)
+
+
+def test_server_start_does_not_load_pymupdf():
+    p = _py("import sys; sys.path.insert(0, sys.argv[1]); import mcp_server\n"
+            "print(sorted(m for m in ('pymupdf', 'fitz', 'make_return') if m in sys.modules))")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "[]"
+
+
+def test_plan1_tools_work_without_pymupdf(tmp_path):
+    facts = write_json(tmp_path / "a.json", CASES["A"])
+    filer = write_json(tmp_path / "g.json", {})
+    code = ("import sys, json; sys.path.insert(0, sys.argv[1])\n"
+            "sys.modules['pymupdf'] = None\n"                 # import pymupdf 가 ImportError 를 내게 한다
+            "import mcp_server as M\n"
+            "def rpc(name, args):\n"
+            "    return M.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}})['result']\n"
+            "out = {'tools': len(M.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})['result']['tools'])}\n"
+            "out['info'] = 'isError' not in rpc('ruleset_info', {})\n"
+            "out['calc'] = json.loads(rpc('yangdo_calculate', {'facts_path': sys.argv[2]})['content'][0]['text'])['상태']\n"
+            "for name in ('yangdo_forms', 'yangdo_efile'):\n"
+            "    r = rpc(name, {'facts_path': sys.argv[2], 'filer_path': sys.argv[3], 'out_dir': sys.argv[4]})\n"
+            "    out[name] = [r.get('isError'), r['content'][0]['text']]\n"
+            "print(json.dumps(out, ensure_ascii=False))")
+    p = _py(code, facts, filer, str(tmp_path / "o"))
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["tools"] == 7 and out["info"] is True and out["calc"] == "완료"
+    for name in ("yangdo_forms", "yangdo_efile"):
+        is_error, text = out[name]
+        assert is_error is True and "pymupdf" in text and "pip install" in text and "Traceback" not in text
+    assert not os.path.exists(tmp_path / "o")
+
+
+def test_mupdf_messages_go_to_stderr_after_return_tool_loads():
+    code = ("import sys; sys.path.insert(0, sys.argv[1])\n"
+            "import mcp_server as M\n"
+            "M._load_make_return()\n"
+            "import pymupdf\n"
+            "pymupdf.message('MUPDF-표지')")
+    p = _py(code)
+    assert p.returncode == 0, p.stderr
+    assert "MUPDF-표지" not in p.stdout and "MUPDF-표지" in p.stderr
+
+
+def test_stdio_return_tool_keeps_stdout_clean(tmp_path):
+    """pymupdf 가 올라오는 신고서 도구를 stdio 로 불러도 표준출력에는 프로토콜 줄만 나온다(_run_stdio 가 줄마다 JSON 으로 읽는다)."""
+    import filers
+    f = filers.get("A")
+    facts = write_json(tmp_path / "a.json", CASES["A"])
+    filer = write_json(tmp_path / "g.json", f)
+    msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "yangdo_efile", "arguments": {"facts_path": facts, "filer_path": filer, "out_dir": str(tmp_path / "o"),
+                                                              "today": "2026-10-11"}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "ping"}]
+    lines, p = _stdio(msgs)
+    assert [x["id"] for x in lines] == [1, 2, 3]
+    done = json.loads(lines[1]["result"]["content"][0]["text"])
+    assert done["종료코드"] == 0 and done["전자신고"]["파일명"] == "20261220C116300.01"
+    text = lines[1]["result"]["content"][0]["text"]
+    assert f["신고인"]["성명"] not in text and f["신고인"]["주민등록번호"] not in text
+    assert b"\r" not in p.stdout

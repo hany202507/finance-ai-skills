@@ -127,6 +127,38 @@ def test_upcoming_version_is_refetched_but_current_is_not(tmp_path):
     assert b"\r\n" not in (rules / "조문" / "판목록.json").read_bytes()
 
 
+def test_added_watch_article_refetches_saved_versions(tmp_path):
+    """감시 조문을 더하면 그 조문이 없는 옛 판 파일을 다시 받는다. 그대로 두면 build 가 「판에 조문이 없다」로 실패한다."""
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    watch = rules / "감시조문.json"
+    watch.write_text(json.dumps({"기준시작": "2025-01-01", "법령": {"소득세법": ["103"]}}, ensure_ascii=False),
+                     encoding="utf-8")
+    calls = []
+
+    def api(path, params):
+        calls.append((path, params.get("MST")))
+        if path == "lawSearch.do":
+            return {"LawSearch": {"law": [dict(r, 법령ID="001") for r in ROWS[:5]] if params["page"] == 1 else []}}
+        j = json.loads(json.dumps(LAW_JSON))
+        j["법령"]["기본정보"]["시행일자"] = params["efYd"]
+        return j
+
+    td = lambda law, label: "moleg-eflaw:4@20260701#x"
+    fa.fetch(str(rules), api, td, "2026-10-09")
+    watch.write_text(json.dumps({"기준시작": "2025-01-01", "법령": {"소득세법": ["103", "159의4"]}}, ensure_ascii=False),
+                     encoding="utf-8")
+    calls.clear()
+    rep = fa.fetch(str(rules), api, td, "2026-10-09")
+    assert sorted(m for p, m in calls if p == "lawService.do") == ["3", "4", "5"]
+    assert rep["오류"] == [] and rep["새판"] == 0
+    one = json.loads((rules / "조문" / "소득세법" / "3@2025-01-01.json").read_text(encoding="utf-8"))
+    assert set(one["조문"]) == {"103", "159의4"}
+    calls.clear()
+    fa.fetch(str(rules), api, td, "2026-10-09")
+    assert [m for p, m in calls if p == "lawService.do"] == ["5"]  # 다 받은 뒤에는 시행예정 판만 다시 받는다
+
+
 # DRF 가 목내용을 중첩 목록으로 주는 모양을 줄인 시험 자료다. 실제 응답에서 시행령 제167조의3 제1항 제12호가 이렇게 온다.
 NESTED_LAW_JSON = {"법령": {
     "기본정보": {"시행일자": "20260701", "공포번호": "21221", "공포일자": "20251223"},

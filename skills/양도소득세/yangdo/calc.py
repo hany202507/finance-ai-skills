@@ -54,6 +54,16 @@ def ltd_rate(v, rs, on):
     return Decimal(0)
 
 
+def drop_reason(g, it):
+    """필요경비 항목을 넣지 않는 이유 문장. 넣으면 None. expenses 와 신고값(부표3·07 레코드)이 같은 기준을 쓴다."""
+    if g == "자본적지출" and it.get("내용") == "일반수선":
+        return "일반 수선은 필요경비가 아니다"
+    if it.get("증빙종류") not in OK_EVIDENCE:
+        return ("증빙(%s)이 세금계산서·계산서·카드영수증·현금영수증·계좌이체가 아니라 넣지 않았다(시행령 제163조③·⑤)"
+                % it.get("증빙종류"))
+    return None
+
+
 def expenses(a):
     ex = a.get("필요경비") or {}
     sums = {"취득세": int(ex.get("취득세") or 0)}
@@ -62,12 +72,9 @@ def expenses(a):
     for g in GROUPS:
         for it in ex.get(g) or []:
             amt = int(it.get("금액") or 0)
-            if g == "자본적지출" and it.get("내용") == "일반수선":
-                dropped.append("%s %s원: 일반 수선은 필요경비가 아니다" % (it.get("내용"), amt))
-                continue
-            if it.get("증빙종류") not in OK_EVIDENCE:
-                dropped.append("%s %s원: 증빙(%s)이 세금계산서·계산서·카드영수증·현금영수증·계좌이체가 아니라 넣지 않았다(시행령 제163조③·⑤)"
-                               % (it.get("내용"), amt, it.get("증빙종류")))
+            why = drop_reason(g, it)
+            if why:
+                dropped.append("%s %s원: %s" % (it.get("내용"), amt, why))
                 continue
             sums[g] += amt
     sums["합계"] = sums["취득세"] + sum(sums[g] for g in GROUPS)

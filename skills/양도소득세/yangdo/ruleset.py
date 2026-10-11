@@ -10,6 +10,10 @@ from yangdo.dates import to_date
 
 EDITION_FILES = ["ruleset.json", "코드표.json", "행정구역_대응.json",
                  "고시/조정대상지역.json", "고시/투기과열지구.json", "고시/투기지역.json"]
+# 서식 판·전자신고 규격 판(설계 ① 다섯 묶음). rules 폴더 기준 상대 경로. 판 id 에 들어가지만,
+# rules 폴더만 따로 쓰는 경우(시험의 임시 사본, --rules)가 있어 파일이 없을 때는 대조하지 않는다
+EDITION_EXTRA = ["../forms/서식판.json", "../efile/규격판.json", "../efile/법정동코드.json",
+                 "../efile/layout_c116300.json", "../efile/codes_c116300.json"]
 
 
 class RuleError(Exception):
@@ -25,7 +29,7 @@ def canonical_hash(path):
 
 def write_edition(rules_dir, 확인일):
     files = {p: canonical_hash(os.path.join(rules_dir, p))
-             for p in EDITION_FILES if os.path.exists(os.path.join(rules_dir, p))}
+             for p in EDITION_FILES + EDITION_EXTRA if os.path.exists(os.path.join(rules_dir, p))}
     if "ruleset.json" not in files:
         raise RuleError("ruleset.json 이 없어 기준정보 판을 만들 수 없다")
     body = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -47,7 +51,7 @@ def _label(조, 항="", 공포번호=None):
 def _conv(unit, v):
     if unit == "근거" or v is None:
         return None
-    if unit in ("원", "년"):
+    if unit in ("원", "년", "개월", "월", "일"):
         return int(v)
     if unit == "율":
         return Decimal(str(v))
@@ -131,6 +135,8 @@ def load(rules_dir=None):
         ed = json.load(f)
     for p, h in ed["파일"].items():
         fp = os.path.join(rules_dir, p)
+        if p in EDITION_EXTRA and not os.path.exists(fp):
+            continue
         if not os.path.exists(fp) or canonical_hash(fp) != h:
             raise RuleError("%s 가 기준정보 판 %s 과 다르다. python scripts/build_ruleset.py 판 을 다시 돌려라" % (p, ed["id"]))
     with open(os.path.join(rules_dir, "ruleset.json"), encoding="utf-8") as f:

@@ -77,6 +77,7 @@ def check(result, f, rs):
     if 공제합 > rs.value("기본공제", first):
         fails.append("V4: 기본공제 합 %s 이 한도를 넘는다" % 공제합)
     fails += _totals(result)
+    fails += group_totals(result)
     return fails
 
 
@@ -95,6 +96,48 @@ def _totals(result):
         fails.append("V10: 자산별 세액 합이 자산 행의 합과 다르다")
     if t["과세표준"] != sum(r["계산"]["과세표준"] for r in rows):
         fails.append("V10: 합계 과세표준이 자산 행의 합과 다르다")
+    return fails
+
+
+def _progressive(base, table):
+    """누진세율표 [[하한, 기준액, 세율], ...] 를 한 번에 적용한다. 하한을 넘는 마지막 구간의 기준액 + 초과분 × 세율."""
+    row = table[0]
+    for r in table:
+        if base > int(r[0]):
+            row = r
+    return int(row[1]) + (Decimal(base) - int(row[0])) * Decimal(str(row[2]))
+
+
+def _group_tax(base, single, add, table):
+    """묶음 과세표준에 묶음 세율을 적용한 세액(원 미만 버림). 단일세율과 누진세율 + 가산세율 중 큰 쪽이다(제104조⑦, 같으면 단일).
+    미등기는 가산이 없고 단일세율 하나다."""
+    if add is None:
+        return int(Decimal(base) * Decimal(single))
+    prog = _progressive(base, table) + Decimal(base) * Decimal(add)
+    if single is not None and Decimal(base) * Decimal(single) >= prog:
+        prog = Decimal(base) * Decimal(single)
+    return int(prog)
+
+
+def group_totals(result):
+    """호별 합산 세액(제104조⑤2호)을 결과 JSON 의 값만으로 다시 계산한다. 계산 모듈(calc)은 부르지 않는다.
+    같은 합산묶음의 과세표준을 합하고 묶음의 세율(가장 이른 양도일 구성원, 같으면 id 앞선 자산의 적용세율)을 결과의 세율표에 적용해
+    묶음 세액을 구한 뒤 모든 묶음을 더해 합계의 호별합산세액(지방 포함)과 맞춘다."""
+    groups = {}
+    for r in result["자산"]:
+        if r["계산"].get("합산묶음") is not None:
+            groups.setdefault(r["계산"]["합산묶음"], []).append(r)
+    nat = loc = 0
+    for members in groups.values():
+        anchor = min(members, key=lambda m: (m["판정"]["양도일"], m["id"]))["계산"]["적용세율"]
+        base = sum(m["계산"]["과세표준"] for m in members)
+        nat += _group_tax(base, anchor["단일"], anchor["가산"], result["세율표"]["국세"])
+        loc += _group_tax(base, anchor["지방단일"], anchor["지방가산"], result["세율표"]["지방"])
+    t, fails = result["합계"], []
+    if nat != t["호별합산세액"]:
+        fails.append("V11: 호별 합산 세액 %s, 묶음마다 과세표준을 합해 세율표로 다시 계산한 값 %s" % (t["호별합산세액"], nat))
+    if loc != t["지방_호별합산"]:
+        fails.append("V11: 지방소득세 호별 합산 세액 %s, 묶음마다 다시 계산한 값 %s" % (t["지방_호별합산"], loc))
     return fails
 
 

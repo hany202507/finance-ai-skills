@@ -21,16 +21,29 @@ from yangdo import questions as Q
 TODAY = "2026-10-09"
 
 
+# 판정·계산 모듈. 서식·전자신고 모듈(return_values, filing, bjd, forms*, efile*, guide, outputs)은 신고서에 옮겨 적을 뿐
+# 판정·계산에 쓰지 않으니 훑지 않는다(global.md 「범위 계약 시험」, 2026-10-11). questions 는 묻고 검사만 하는 곳이라 뺀다.
+ENGINE_MODULES = ("facts", "judge", "calc", "verify", "engine", "regions", "codes", "dates", "ruleset", "workbook")
+# 훑지 않는 모듈(서식·전자신고, 묻기, 규칙 키 목록). 새 모듈이 생기면 둘 중 어디에 드는지 정해야 test_every_module_is_classified 가 통과한다
+NOT_SCANNED = ("__init__", "questions", "keys", "return_values", "filing", "bjd", "outputs", "guide")
+FORM_PREFIXES = ("forms", "efile")
+
+
 def _engine_source():
-    """questions.py 를 뺀 yangdo/*.py 소스. questions.py 는 키를 묻고 검사할 뿐 엔진이 읽는 곳이 아니다.
-    COLLECT_ONLY 표 자체도 읽는 곳이 아니라 뺀다."""
+    """판정·계산 모듈의 소스. COLLECT_ONLY 표 자체도 읽는 곳이 아니라 뺀다."""
     text = ""
-    for path in sorted(glob.glob(os.path.join(SKILL_DIR, "yangdo", "*.py"))):
-        if os.path.basename(path) == "questions.py":
-            continue
+    for name in ENGINE_MODULES:
+        path = os.path.join(SKILL_DIR, "yangdo", name + ".py")
         with open(path, encoding="utf-8") as fh:
             text += re.sub(r"COLLECT_ONLY = \{.*?\n\}\n", "", fh.read(), flags=re.S)
     return text
+
+
+def test_every_module_is_classified():
+    names = [os.path.basename(p)[:-3] for p in glob.glob(os.path.join(SKILL_DIR, "yangdo", "*.py"))]
+    loose = [n for n in names if n not in ENGINE_MODULES + NOT_SCANNED and not n.startswith(FORM_PREFIXES)]
+    assert not loose, "판정·계산 모듈인지 서식·전자신고 모듈인지 정하지 않은 모듈: %s" % loose
+    assert all(n in names for n in ENGINE_MODULES)
 
 
 def _is_read(key, source):

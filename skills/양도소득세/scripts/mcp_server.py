@@ -4,7 +4,16 @@
   claude mcp add yangdo -- python <스킬 경로>/scripts/mcp_server.py
 
 엔진은 외부를 조회하지 않는다. 신고인 인적사항은 받지 않는다(사실관계에 있으면 오류).
+신고서·전자신고 도구(yangdo_forms, yangdo_efile)는 신고인 JSON 을 파일 경로로만 받고, 응답에 인적사항 값을 싣지 않는다.
 도구가 실패하면 서버는 죽지 않고 isError 결과에 이유를 적어 돌려준다. 프로토콜 줄만 표준출력에 쓴다.
+
+입력 스키마의 속성 이름은 ASCII 로만 쓴다(^[a-zA-Z0-9_.-]{1,64}$). Claude 클라이언트는 이 꼴이 아닌 속성 이름을 가진
+도구를 목록에서 통째로 뺀다. 옛 한글 이름(오늘, 문항, 값, 자산, 주택, 서식, 시도, 시군구, 읍면동, 기준일, 지구해당)으로 온
+인자도 받는다(ALIASES). 사실관계처럼 한글 키를 가진 값은 속성을 나열하지 않는 자유 객체로 둔다.
+
+신고서 도구가 쓰는 make_return(과 pymupdf)은 그 도구를 처음 부를 때 읽는다(_load_make_return). 서버를 띄울 때 읽지 않으므로
+pymupdf 가 없어도 계산 도구는 그대로 뜨고, 신고서 도구 둘만 설치 안내 오류를 낸다. 읽은 뒤에는 MuPDF 메시지를 표준오류로 돌려
+프로토콜 줄에 섞이지 않게 한다.
 """
 import contextlib
 import json
@@ -16,12 +25,11 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
-for p in (SKILL, HERE):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+for _p in (SKILL, HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-import run as RUN  # noqa: E402
-from yangdo import engine, questions, regions, ruleset  # noqa: E402
+from yangdo import engine, outputs, questions, regions, ruleset  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
@@ -30,29 +38,57 @@ INSTRUCTIONS = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민�
                 '새 사건은 facts: {"자산": [{"id": "A"}]} 로 시작한다. 판 자산마다 항목 하나를 두고 id 는 A, B, ... 로 붙인다. '
                 "이 값을 yangdo_answer 의 facts 로 주고(같은 내용의 파일이면 facts_path), 돌려받은 사실관계를 다음 호출에 이어 쓴다. "
                 "yangdo_next_questions 로 다음 문항을 받고, 사용자의 답을 yangdo_answer 로 넣고, "
-                "남은 문항이 없으면 yangdo_calculate 를 부른다. 계산 결과는 검토용이며 신고 전 최종 판단은 세무 전문가가 한다.")
+                "남은 문항이 없으면 yangdo_calculate 를 부른다. 계산 결과는 검토용이며 신고 전 최종 판단은 세무 전문가가 한다. "
+                "신고서 PDF 는 yangdo_forms, 전자신고 파일까지는 yangdo_efile 로 만든다. 신고인 정보(인적사항)는 신고인 JSON 파일의 경로"
+                "(filer_path)로만 주고 내용을 대화나 인자에 옮기지 않는다. 두 도구의 응답과 신고_확인.md 에는 인적사항이 없다. "
+                "홈택스·위택스 로그인과 제출은 사람이 한다.")
 FACTS = {"facts_path": {"type": "string", "description": "사실관계 JSON 파일 경로(로컬)"},
          "facts": {"type": "object", "description": "사실관계 JSON. facts_path 대신 쓴다. 둘을 함께 주지 않는다"}}
+TODAY = {"type": "string", "description": "오늘 날짜 YYYY-MM-DD(오늘). 비우면 오늘(한국 시간)"}
+RETURN = dict(FACTS, filer_path={"type": "string", "description": "신고인 JSON 파일 경로(로컬). 인적사항이 든 파일이라 경로로만 받는다"},
+              out_dir={"type": "string", "description": "출력 폴더. 이 도구들이 쓰는 이름의 이전 결과 파일은 지운다"}, today=TODAY)
+# 스키마가 알리는 이름(ASCII) → 옛 한글 이름. 처리기는 두 이름을 모두 받는다
+ALIASES = {"today": "오늘", "question": "문항", "value": "값", "asset": "자산", "house": "주택", "forms": "서식",
+           "sido": "시도", "sigungu": "시군구", "eupmyeondong": "읍면동", "as_of": "기준일", "in_district": "지구해당"}
 TOOLS = [
     {"name": "yangdo_next_questions", "description": "사실관계에 비어 있는 것 중 다음에 물을 문항(왜 묻는지, 근거 조문, 증빙, 모를 때 확인하는 곳 포함)",
-     "inputSchema": {"type": "object", "properties": dict(FACTS, 서식={"type": "boolean"}, limit={"type": "integer", "minimum": 1})},
-     "annotations": {"readOnlyHint": True, "openWorldHint": False}},
-    {"name": "yangdo_answer", "description": "문항 답을 사실관계에 넣는다. 값에 문자열 「모름」을 주면 모름으로 기록한다. facts_path 를 주면 그 파일을 고쳐 쓴다",
-     "inputSchema": {"type": "object", "required": ["문항", "값"],
-                     "properties": dict(FACTS, 문항={"type": "string"}, 값={}, 자산={"type": "string"}, 주택={"type": "string"})},
-     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
-    {"name": "yangdo_calculate", "description": "판정·세액·근거·규격서 코드. out_dir 를 주면 검토 문서·워크북·결과 JSON 을 쓴다(그 폴더의 이전 결과 파일은 지운다)",
      "inputSchema": {"type": "object",
-                     "properties": dict(FACTS, out_dir={"type": "string"}, 오늘={"type": "string", "description": "YYYY-MM-DD. 비우면 오늘(한국 시간)"})},
+                     "properties": dict(FACTS, forms={"type": "boolean", "description": "서식 단계 문항도 낸다(서식)"},
+                                        limit={"type": "integer", "minimum": 1, "description": "한 번에 받을 문항 수. 기본 1"})},
+     "annotations": {"readOnlyHint": True, "openWorldHint": False}},
+    {"name": "yangdo_answer", "description": "문항 답을 사실관계에 넣는다. value 에 문자열 「모름」을 주면 모름으로 기록한다. facts_path 를 주면 그 파일을 고쳐 쓴다",
+     "inputSchema": {"type": "object", "required": ["question", "value"],
+                     "properties": dict(FACTS, question={"type": "string", "description": "문항 id(문항). 예: P01, A11"},
+                                        value={"description": "답(값). 형식은 문항의 답형식을 따른다. 모르면 문자열 「모름」"},
+                                        asset={"type": "string", "description": "자산마다 묻는 문항이면 자산 id(자산)"},
+                                        house={"type": "string", "description": "주택마다 묻는 문항이면 주택 id(주택)"})},
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
+    {"name": "yangdo_calculate", "description": "판정·세액·근거·규격서 코드. out_dir 를 주면 검토 문서·워크북·결과 JSON 을 쓴다(그 폴더의 이전 계산 결과와 신고서·전자신고 파일·신고값·안내서·신고_확인.md 는 지운다)",
+     "inputSchema": {"type": "object", "properties": dict(FACTS, out_dir={"type": "string", "description": "출력 폴더"}, today=TODAY)},
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
+    {"name": "yangdo_forms", "description": "계산 뒤 신고인 정보를 검사하고 신고값, 서식 검산, 신고서 PDF(양도소득세 별지 제84호, 지방소득세 별지 제40호의11), "
+                                            "홈택스 입력 안내서, 부속서류 목록, 신고_확인.md 를 out_dir 에 만든다. 응답은 상태·파일 경로·검산 문장·확인사항이고 인적사항은 싣지 않는다",
+     "inputSchema": {"type": "object", "required": ["filer_path", "out_dir"], "properties": RETURN},
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
+    {"name": "yangdo_efile", "description": "yangdo_forms 가 만드는 것에 더해 전자신고 변환파일(<작성일자>C116300.01)을 만든다. 독립 검증기를 통과한 파일만 남긴다. "
+                                            "홈택스 로그인·형식검증·제출은 사람이 한다. 응답에 인적사항은 싣지 않는다",
+     "inputSchema": {"type": "object", "required": ["filer_path", "out_dir"], "properties": RETURN},
      "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
     {"name": "regulated_area", "description": "기준일에 조정대상지역·투기과열지구·투기지역인지(공고 이력 재적용)",
-     "inputSchema": {"type": "object", "required": ["시도", "시군구", "기준일"],
-                     "properties": {k: {"type": "string"} for k in ("시도", "시군구", "읍면동", "기준일", "지구해당")}},
+     "inputSchema": {"type": "object", "required": ["sido", "sigungu", "as_of"],
+                     "properties": {"sido": {"type": "string", "description": "시도 이름(시도). 예: 서울특별시"},
+                                    "sigungu": {"type": "string", "description": "시군구 이름(시군구). 예: 마포구"},
+                                    "eupmyeondong": {"type": "string", "description": "읍면동 이름(읍면동). 예: 공덕동"},
+                                    "as_of": {"type": "string", "description": "기준일 YYYY-MM-DD(기준일)"},
+                                    "in_district": {"type": "string", "description": "읍면동 일부만 지정된 지구에 드는지(지구해당). 질문이 돌아왔을 때 그 후보 가운데 하나"}}},
      "annotations": {"readOnlyHint": True, "openWorldHint": False}},
     {"name": "ruleset_info", "description": "기준정보 판 id, 확인일, 시행예정 개정, 계류 개정",
      "inputSchema": {"type": "object", "properties": {}},
      "annotations": {"readOnlyHint": True, "openWorldHint": False}},
 ]
+# yangdo_forms, yangdo_efile 응답에 싣는 보고 키(make_return.make 의 결과에서 고른다). 신고인 값은 없다
+RETURN_KEYS = ("상태", "종료코드", "요약", "단계", "기준정보", "판", "합계", "파일", "질문", "신고인질문", "다루지않음", "검산",
+               "서식검산", "전자신고", "확인사항", "경고", "알림", "사람이할일")
 VERDICT_KEYS = ("비과세", "고가주택", "전액비과세", "미등기", "중과", "단기", "장특공", "보유년", "거주년")
 SUM_NOTE = ("자산별 산출세액은 자산마다 따로 계산한 참고값이다. 산출세액은 같은 세율 자산 합산 세액(호별합산세액)과 "
             "합산 비교 세액 중 큰 값이다")
@@ -76,14 +112,30 @@ def _write_error(e, fallback):
     return ToolError("출력 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (e.filename or fallback, _why(e)))
 
 
+def _label(key):
+    """오류 문장에 쓰는 인자 이름. 옛 한글 이름이 있으면 함께 적는다: today(오늘)."""
+    return "%s(%s)" % (key, ALIASES[key]) if key in ALIASES else key
+
+
+def _normalize(args):
+    """옛 한글 인자 이름을 스키마의 ASCII 이름으로 바꾼 새 dict. 두 이름을 함께 주면 오류."""
+    out = dict(args)
+    for new, old in ALIASES.items():
+        if old in out:
+            if new in out:
+                raise ToolError("%s 와 %s 는 같은 인자다. 하나만 준다" % (new, old))
+            out[new] = out.pop(old)
+    return out
+
+
 def _text(args, key, required=False):
     v = args.get(key)
     if v is None:
         if required:
-            raise ToolError("%s 값이 필요하다" % key)
+            raise ToolError("%s 값이 필요하다" % _label(key))
         return None
     if not isinstance(v, str):
-        raise ToolError("%s 값은 문자열이어야 한다" % key)
+        raise ToolError("%s 값은 문자열이어야 한다" % _label(key))
     return v
 
 
@@ -169,9 +221,9 @@ def _ruleset_info(args):
 
 
 def _regulated_area(args):
-    addr = {"시도": _text(args, "시도", True), "시군구": _text(args, "시군구", True), "읍면동": _text(args, "읍면동") or ""}
-    on = _date(args.get("기준일"), "기준일")
-    district = _text(args, "지구해당")
+    addr = {"시도": _text(args, "sido", True), "시군구": _text(args, "sigungu", True), "읍면동": _text(args, "eupmyeondong") or ""}
+    on = _date(args.get("as_of"), _label("as_of"))
+    district = _text(args, "in_district")
     reg = _load_rules(regions.load)
     out = {}
     for regime in regions.REGIMES:
@@ -189,9 +241,9 @@ def _next_questions(args):
         limit = 1
     elif isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ToolError("limit 값은 1 이상의 정수여야 한다")
-    form = args.get("서식")
+    form = args.get("forms")
     if form is not None and not isinstance(form, bool):
-        raise ToolError("서식 값은 true 또는 false 여야 한다")
+        raise ToolError("%s 값은 true 또는 false 여야 한다" % _label("forms"))
     try:
         r = questions.next_questions(f, 서식=bool(form), limit=limit)
     except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -201,12 +253,12 @@ def _next_questions(args):
 
 def _answer(args):
     f = _facts(args)
-    qid = _text(args, "문항", True)
-    if args.get("값") is None:
-        raise ToolError("값이 필요하다. 모르면 「모름」 으로 답한다")
-    asset, house = _text(args, "자산"), _text(args, "주택")
+    qid = _text(args, "question", True)
+    if args.get("value") is None:
+        raise ToolError("%s 값이 필요하다. 모르면 「모름」 으로 답한다" % _label("value"))
+    asset, house = _text(args, "asset"), _text(args, "house")
     try:
-        f2 = questions.answer(f, qid, args["값"], 자산=asset, 주택=house)
+        f2 = questions.answer(f, qid, args["value"], 자산=asset, 주택=house)
     except ValueError as e:
         raise ToolError(str(e)) from e
     except (TypeError, KeyError, AttributeError) as e:
@@ -217,23 +269,24 @@ def _answer(args):
     return {"사실관계": f2}
 
 
+def _today(args):
+    today = args.get("today")
+    if today is not None:
+        _date(today, _label("today"))
+    return today
+
+
 def _calculate(args):
     f = _facts(args)
-    today = args.get("오늘")
-    if today is not None:
-        _date(today, "오늘")
+    today = _today(args)
     out_dir = _text(args, "out_dir")
-    wb = None
-    if out_dir:
-        out_dir = os.path.expanduser(out_dir)
-        try:
-            os.makedirs(out_dir, exist_ok=True)
-            RUN.clear_previous(out_dir)  # 이전 완료 결과가 이번 질문 결과 옆에 남지 않게 한다
-        except OSError as e:
-            raise _write_error(e, out_dir) from e
-        wb = os.path.join(out_dir, RUN.WORKBOOK)
     try:
-        res = engine.calculate(f, today=today, workbook_path=wb)
+        if out_dir:
+            # 이전 결과 지움 → 계산 → 파일 쓰기는 run.py, make_return.py 와 같은 outputs.calculate_to 가 한다
+            out_dir = os.path.expanduser(out_dir)
+            res, files = outputs.calculate_to(f, out_dir, today=today)
+        else:
+            res, files = engine.calculate(f, today=today), []
     except OSError as e:
         if not out_dir:
             raise
@@ -241,10 +294,7 @@ def _calculate(args):
     except (ValueError, TypeError, KeyError, AttributeError) as e:
         raise _malformed(e) from e
     s = {k: res[k] for k in ("상태", "기준정보", "질문", "다루지않음", "확인사항", "경고", "검산")}
-    try:
-        s["파일"] = RUN.write_outputs(res, out_dir) if out_dir else []
-    except OSError as e:
-        raise _write_error(e, out_dir) from e
+    s["파일"] = files
     cal = res["계산"]
     if cal:
         s["합계"] = cal["합계"]
@@ -256,8 +306,57 @@ def _calculate(args):
     return s
 
 
+_RETURN_MODULE = []
+
+
+def _load_make_return():
+    """make_return 모듈. 처음 부를 때 읽는다(pymupdf 가 이때 올라온다). 읽지 못하면 설치 안내를 든 ToolError.
+
+    pymupdf 는 메시지를 읽을 때의 표준출력에 쓰도록 잡아 두므로, 읽은 뒤 표준오류로 돌린다(set_messages 가 없는 판은 건너뛴다).
+    """
+    if not _RETURN_MODULE:
+        try:
+            import make_return
+        except ImportError as e:
+            raise ToolError("신고서·전자신고 도구에 필요한 모듈(%s)을 읽지 못했다. pymupdf 가 없으면 스킬 폴더에서 "
+                            "pip install -r requirements.txt 를 돌린 뒤 서버를 다시 띄운다. 계산 도구는 그대로 쓸 수 있다"
+                            % (e.name or "pymupdf")) from e
+        pymupdf = sys.modules.get("pymupdf")
+        redirect = getattr(pymupdf, "set_messages", None)
+        if callable(redirect):
+            try:
+                redirect(stream=sys.__stderr__ or sys.stderr)
+            except Exception:      # 메시지 설정 방법이 다른 판. 건너뛴다
+                traceback.print_exc(file=sys.stderr)
+        _RETURN_MODULE.append(make_return)
+    return _RETURN_MODULE[0]
+
+
+def _make_return(args, upto):
+    """신고서(와 전자신고 파일)를 만든다. 신고인 정보는 파일 경로로만 받고, 응답에는 보고 가운데 RETURN_KEYS 만 싣는다."""
+    make_return = _load_make_return()      # 모듈을 읽지 못하면 인자를 보거나 출력 폴더를 건드리기 전에 알린다
+    f = _facts(args)
+    filer_path = _text(args, "filer_path", True)
+    out_dir = _text(args, "out_dir", True)
+    today = _today(args)
+    if not filer_path or not out_dir:
+        raise ToolError("filer_path 와 out_dir 는 빈 글자일 수 없다")
+    rep = make_return.make(f, os.path.expanduser(filer_path), os.path.expanduser(out_dir), today=today, upto=upto)
+    if rep["종료코드"] == 4:
+        raise ToolError(" ".join(rep["알림"]) or rep["요약"])
+    return {k: rep[k] for k in RETURN_KEYS}
+
+
+def _forms(args):
+    return _make_return(args, "forms")      # make_return.FORMS
+
+
+def _efile(args):
+    return _make_return(args, "efile")      # make_return.EFILE
+
+
 HANDLERS = {"yangdo_next_questions": _next_questions, "yangdo_answer": _answer, "yangdo_calculate": _calculate,
-            "regulated_area": _regulated_area, "ruleset_info": _ruleset_info}
+            "yangdo_forms": _forms, "yangdo_efile": _efile, "regulated_area": _regulated_area, "ruleset_info": _ruleset_info}
 
 
 def call_tool(name, args):
@@ -265,7 +364,7 @@ def call_tool(name, args):
         raise ToolError("없는 도구: %s" % name)
     if not isinstance(args, dict):
         raise ToolError("arguments 값은 JSON 객체여야 한다")
-    return HANDLERS[name](args)
+    return HANDLERS[name](_normalize(args))
 
 
 def _error(rid, code, message):
