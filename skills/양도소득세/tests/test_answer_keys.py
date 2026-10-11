@@ -265,18 +265,18 @@ def test_short_holding_house_gets_no_temporary_exclusion_hint():
     assert not any("한시배제" in m for m in r["확인사항"])
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "신고기한이 지난 작성일로도 예정신고 정기 신고값이 만들어진다. 사례 01 은 1월 양도라 예정신고 기한이 2026-03-31 인데 "
-    "작성일 2026-06-30 을 넣어도 Unsupported 가 아니고 확인사항에도 기한 안내가 없다. 가산세 0, 전자신고세액공제 20,000 이 그대로다. "
-    "기한후 신고는 신고 범위가 아니다(계약 문서 「신고 범위」). 의심 위치: return_values.filing_section"))
 def test_late_preliminary_return_is_not_built_as_regular_return():
+    """1월 양도분의 예정신고 기한(2026-03-31, 화요일)을 지난 작성일은 기한후신고라 Unsupported 다. 기한 당일은 정기신고다."""
     k = KEYS["01"]
     r, _ = _run("01")
     _require(r["계산"]["자산"][0]["판정"]["양도일"] == "2026-01-15")
+    on_time = copy.deepcopy(k["filer"])
+    on_time["신고"]["작성일"] = "2026-03-31"
+    assert return_values.build(r, k["facts"], filing.load(on_time))["신고"]["상세코드"] == "01"
     late = copy.deepcopy(k["filer"])
+    late["신고"]["작성일"] = "2026-04-01"
+    with pytest.raises(return_values.Unsupported, match="2026-03-31"):
+        return_values.build(r, k["facts"], filing.load(late))
     late["신고"]["작성일"] = "2026-06-30"
-    try:
-        rv = return_values.build(r, k["facts"], filing.load(late))
-    except return_values.Unsupported:
-        return
-    assert any("기한" in m for m in rv["확인사항"])
+    with pytest.raises(return_values.Unsupported, match="기한후신고"):
+        return_values.build(r, k["facts"], filing.load(late))

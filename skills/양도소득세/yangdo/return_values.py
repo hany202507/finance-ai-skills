@@ -26,7 +26,7 @@ import re
 from collections import namedtuple
 from decimal import ROUND_DOWN, Decimal
 
-from yangdo import SKILL_DIR, calc, filing, ruleset
+from yangdo import SKILL_DIR, calc, dates, filing, ruleset
 from yangdo import bjd as bjd_mod
 from yangdo.dates import to_date
 
@@ -260,6 +260,7 @@ class _Builder:
         if kind == "예정" and any((self.assets.get(r["id"]) or {}).get("토지거래허가대상") == "예" for r in rows):
             self.note("토지거래허가대상 자산이 있다. 허가 전에 대금을 청산했으면 예정신고 유형이 3(토지거래허가구역 안 토지)이고 "
                       "신고기한이 허가일 기준이다. 신고유형 1 로 두었으니 확인한다(규격서 p26)")
+        self.check_deadline(kind, rows, to_date(made))
         if kind == "확정":    # 기신고가 있으면 위에서 Unsupported 이므로 여기 오는 확정신고는 예정신고를 하지 않은 것이다
             self.note("예정신고를 하지 않은 확정신고에는 예정신고 무신고가산세와 납부지연가산세가 붙는다. 이 신고값은 가산세를 "
                       "계산하지 않아 0 으로 두었으므로 납부할 세액이 실제보다 적다. 가산세는 신고 전에 따로 계산해 더한다")
@@ -268,6 +269,51 @@ class _Builder:
                 "유형": cd["신고유형"][kind]["코드"], "과세기간": last[:4] + "01", "귀속연도": last[:4],
                 "서식종류": cd["서식종류"][kind]["코드"], "작성일": _ymd(made), "제출년월": _ymd(made)[:6],
                 "양도일자": _ymd(last), "홈택스ID": s.get("홈택스ID"), "분납신청": s.get("분납신청") is True}
+
+    def deadline_base(self, row):
+        """신고기한을 세는 기준일. 토지거래허가 대상 자산이 허가 전에 대금을 청산했으면 허가일이다(소득세법 제105조①1호 단서,
+        제110조① 괄호). 허가일 값이 없으면 단서에 해당하는지 알 수 없어 None 이다."""
+        sold = to_date(row["판정"]["양도일"])
+        a = self.assets.get(row["id"]) or {}
+        if a.get("토지거래허가대상") != "예":
+            return sold
+        try:
+            permit = to_date((a.get("토지거래허가") or {}).get("허가일"))
+        except ValueError:
+            permit = None
+        if permit is None:
+            self.note("%s: 토지거래허가 대상 자산이라 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이다. 허가일 값이 없어 "
+                      "허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다" % row["id"])
+            return None
+        if permit > sold:
+            self.note("%s: 토지거래허가 전에 대금을 청산해 허가일(%s) 기준으로 신고기한을 셌다. 허가 전에 허가구역 지정이 해제됐으면 "
+                      "해제일 기준이라 기한이 다르다" % (row["id"], permit.isoformat()))
+            return permit
+        return sold
+
+    def check_deadline(self, kind, rows, made):
+        """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한의 끝이 토요일·일요일이면 다음 월요일까지로 본다.
+        공휴일 표가 없어 공휴일·대체공휴일·노동절은 옮기지 못한다(소득세법 제105조①, 제110조①, 국세기본법 제5조①)."""
+        due = []
+        for r in rows:
+            base = self.deadline_base(r)
+            if base is not None:
+                due.append(dates.filing_deadline(kind, base, self.rs))
+        if not due:
+            return
+        nominal, adjusted = min(due, key=lambda x: x[1])
+        if made > adjusted:
+            raise Unsupported(
+                "작성일 %s 이 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 예정신고를 하지 "
+                "않은 확정신고 정기만 다룬다). 기한의 끝이 공휴일·대체공휴일·노동절이면 그 다음날까지인데 이 도구는 공휴일을 알지 못한다. "
+                "그런 경우라면 기한 안일 수 있으니 달력으로 확인한다%s"
+                % (made.isoformat(), adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()],
+                   "" if nominal == adjusted else "(기한 말일 %s 이 %s요일이라 다음 월요일로 보았다)"
+                   % (nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()])), "없음")
+        if made > nominal:
+            self.note("신고기한 말일 %s 이 %s요일이라 다음 월요일 %s 까지로 보고 정기신고로 만들었다. 작성일 %s 은 말일 다음 날부터 그 "
+                      "월요일 사이다. 월요일이 공휴일이어도 기한 안이다"
+                      % (nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()], adjusted.isoformat(), made.isoformat()))
 
     # ------------------------------------------------------------ 신고인·양수인
 
