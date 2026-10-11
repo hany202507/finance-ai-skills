@@ -149,29 +149,33 @@ def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law, toda
     assert "서식 검산" in text and "전자신고 검증" in text and "통과" in text
 
 
-# 예정신고의 전자신고 파일 바이트(sha256). 기대 해시는 통합 브랜치(계획 2b, 공휴일과 확정신고 가산세 병합 뒤)가 만든 파일의 값이다.
+# 전자신고 파일 바이트(sha256). 예정신고 S1·A·K 의 기대 해시는 통합 브랜치(계획 2b, 공휴일과 확정신고 가산세 병합 뒤)가 만든
+# 파일의 값이고, 확정신고 BF 의 기대 해시는 전액 비과세 자산 처리까지 병합한 뒤(가산세 감면 미적용)의 파일 값이다.
 # 레코드 레이아웃이나 합성 신고인 값, 사례의 사실관계를 일부러 바꾸면 이 값도 새 파일에서 다시 얻는다.
 # K 의 작성일은 2026-08-20 이라 오늘을 그 날로 준다
 PINNED = [
     ("S1", S1_FILE, TODAY, "d82dff1e2fb66add08a8699c3c8c43a3cc0308581177786b52600992809f85b2"),
     ("A", "20261220C116300.01", TODAY, "713f3b5d3e115737df257157da810b2034c8cf33acfdd5fd7cfdcd93fdc3de13"),
     ("K", "20260820C116300.01", "2026-08-20", "9e05b7c3e1f3bd3eaeec9399da53b50c310c47b2962dd5a23980d746987f30a7"),
+    ("BF", "20270520C116300.01", TODAY, "446e14bcfac6293ade138847fe25446bbc1e1e0d865e2897c31d3f1d0eeece12"),
 ]
 
 
 @pytest.mark.parametrize("name,file_name,today,digest", PINNED)
-def test_preliminary_efile_bytes_are_pinned(tmp_path, name, file_name, today, digest):
-    """예정신고 S1·A·K 의 전자신고 파일 바이트를 고정한다. 확정신고 가산세, 지방소득세, 서식 열 규칙, 전액 비과세 자산 처리를
-    고치는 동안 과세 자산만 있는 예정신고의 국세 파일이 바뀌지 않았다는 것을 본다."""
+def test_efile_bytes_are_pinned(tmp_path, name, file_name, today, digest):
+    """예정신고 S1·A·K 와 확정신고 BF 의 전자신고 파일 바이트를 고정한다. 신고값·서식·검산을 고치는 동안 정상 사례의
+    국세 파일이 바뀌지 않았다는 것을 본다. BF 는 가산세(03 레코드 15·16·17·19)가 들어간 확정신고 파일이다."""
     import hashlib
-    code, out = _main(tmp_path, name, s1_filer() if name == "S1" else filers.get(name), today=today)
+    filer = s1_filer() if name == "S1" else filers.get(name)
+    code, out = _main(tmp_path, name, filer, today=today)
     assert code == 0
     with open(out / file_name, "rb") as fh:
         data = fh.read()
     assert hashlib.sha256(data).hexdigest() == digest
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
-    assert "신고기한 안에 국세와 지방소득세를 납부한다" in todo        # 예정신고의 납부 안내는 그대로다
     assert "값은 지방소득세_신고서.pdf 에 있다" in todo
+    # 예정신고의 납부 안내는 그대로다. 확정신고에는 그 줄이 없다(가산세를 넣은 납부 안내가 따로 나온다)
+    assert ("신고기한 안에 국세와 지방소득세를 납부한다" in todo) == (filer["신고"]["구분"] == "예정")
 
 
 def test_confirm_document_lists_what_people_do(tmp_path):
