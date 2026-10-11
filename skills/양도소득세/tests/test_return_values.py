@@ -152,19 +152,21 @@ def test_expense_business_number_and_counterparty_names():
     rows = rv["부표3"][0]["행"]
     ex = rv["전자신고"]["필요경비명세"]
     # 사실관계 필요경비 항목의 사업자번호(계약 보강 2026-10-11). 07 은 필수 구분코드 행에만 쓴다(규격서 p60 7번)
-    assert [x["사업자번호"] for x in rows] == ["", "", "2118104565", "1018101238", "3149007897", "1018101238"]
-    assert [x["사업자번호"] for x in ex] == ["", "", "2118104565", "1018101238", "3149007897", "1018101238"]
+    assert [x["사업자번호"] for x in rows] == ["", "", "0000000034", "0000000015", "0000000048", "0000000015"]
+    assert [x["사업자번호"] for x in ex] == ["", "", "0000000034", "0000000015", "0000000048", "0000000015"]
     assert all("사업자등록번호" not in x for x in ex)
     # 07-6 상호(Not Null): 취득세 행은 취득세 납세지(부동산 소재지) 시군구, 매입가액 행은 신고인 JSON 취득상대방
     assert ex[1]["상호"] == rows[1]["상호"] == "서울특별시 성동구"
-    assert ex[0]["상호"] == "" and any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
+    assert ex[0]["상호"] == rows[0]["상호"] == "최합성"          # 합성 신고인(tests/filers.py)에 취득상대방이 있다
+    assert not any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
     assert not any("사업자번호가 필수" in x for x in rv["확인사항"])
-    r, rv = _rv("S1")
     f = filers.get("S1")
     f["자산"]["S1"].update(법정동코드="1120011400", 취득상대방="합성건설")
     rv = return_values.build(r, CASES["S1"], filing.load(f))
     assert rv["전자신고"]["필요경비명세"][0]["상호"] == rv["부표3"][0]["행"][0]["상호"] == "합성건설"
-    assert not any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
+    del f["자산"]["S1"]["취득상대방"]                             # 빠지면 상호를 비우고 확인사항으로 남긴다(질문 F08)
+    rv = return_values.build(r, CASES["S1"], filing.load(f))
+    assert rv["전자신고"]["필요경비명세"][0]["상호"] == "" and any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
 
 
 def test_missing_payment_date_is_a_check_item():
@@ -374,3 +376,36 @@ def test_dropped_expense_is_listed_not_written():
     rv = return_values.build(r, facts, filing.load(f))
     assert all(x["금액"] != 1000000 for x in rv["부표3"][0]["행"])
     assert any("일반 수선" in x for x in rv["확인사항"])
+
+
+def test_expense_lines_decide_which_expenses_become_07_rows():
+    """부표3·07 행이 어떤 지출에서 생기는지는 expense_lines 한 곳이 정한다(filing 의 질문 F07·F08 도 이것을 쓴다)."""
+    r, rv = _rv("S1")
+    a, c = CASES["S1"]["자산"][0], r["계산"]["자산"][0]["계산"]
+    lines = return_values.expense_lines(a, c)
+    assert [(ln.group, ln.key) for ln in lines] == [
+        ("매입가액", "매입가액"), ("취득세", "취득세"), ("취득부대", "취득중개수수료"), ("취득부대", "법무사비용"),
+        ("자본적지출", "자본적지출_용도변경개량"), ("양도비", "양도중개수수료등")]
+    assert [(ln.no, ln.item) for ln in lines if ln.item] == [
+        (1, a["필요경비"]["취득부대"][0]), (2, a["필요경비"]["취득부대"][1]),
+        (1, a["필요경비"]["자본적지출"][0]), (1, a["필요경비"]["양도비"][0])]
+    assert all(ln.item is None for ln in lines if ln.group in ("매입가액", "취득세", "감가상각비"))
+    codes = return_values.load_codes()
+    assert sorted(codes["필요경비구분"][ln.key]["전자코드"] for ln in lines) == [x["전자코드"] for x in rv["전자신고"]["필요경비명세"]]
+    assert [x["구분"] for x in rv["부표3"][0]["행"]] == [codes["필요경비구분"][ln.key]["이름"] for ln in sorted(
+        lines, key=lambda ln: codes["필요경비구분"][ln.key]["전자코드"])]
+
+
+def test_expense_lines_follow_the_acquisition_method():
+    a = copy.deepcopy(CASES["S1"]["자산"][0])
+    a["감가상각비"] = 1_000_000
+    a["필요경비"]["취득세"] = 0
+    a["필요경비"]["양도비"][0]["증빙종류"] = "간이영수증"            # 엔진이 빼는 지출은 줄이 되지 않는다
+    real = {"취득가액": 600_000_000, "취득가액방법": "실지거래가액"}
+    assert [ln.group for ln in return_values.expense_lines(a, real)] == [
+        "매입가액", "취득부대", "취득부대", "감가상각비", "자본적지출"]
+    # 환산취득가액이면 줄이 없다. 자본적지출·양도비를 필요경비로 쓰는 경우(취득가액 0)만 그 둘이 줄이 된다(소득세법 제97조②2호 단서)
+    assert return_values.expense_lines(a, {"취득가액": 5_000_000, "취득가액방법": "환산가액"}) == []
+    assert [ln.group for ln in return_values.expense_lines(a, {"취득가액": 0, "취득가액방법": "환산가액"})] == ["자본적지출"]
+    assert return_values.expense_lines(a, {"취득가액": None, "취득가액방법": None}) == []        # 전액 비과세
+

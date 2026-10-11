@@ -338,6 +338,41 @@ def test_html_blocks_wrong_inputs_and_keeps_empty_ones_out():
     assert "기타" not in fa.get("필요경비", {})
 
 
+def test_expense_rows_have_an_optional_business_number_cell():
+    """M08~M11 의 지출 줄에 지급처 사업자번호 칸이 있다. 전자신고 07 레코드의 필수 구분코드 지출에 쓰이고(질문 F07), 비워도 된다."""
+    defs, _ = mq.build(_doc())
+    seen = []
+    for q in defs["questions"]:
+        if q["id"] not in ("M08", "M09", "M10", "M11"):
+            continue
+        row = q["spec"]["row"]
+        cell = next(f for f in row["fields"] if f["n"] == "사업자번호")
+        assert cell["s"]["t"] == "text" and cell["s"]["digits"] == 10 and "사업자번호" not in row["req"], q["id"]
+        seen.append(q["id"])
+    assert seen == ["M08", "M09", "M10", "M11"]
+    assert '"n":"사업자번호"' in open(HTML, encoding="utf-8").read()
+
+
+@needs_node
+def test_html_business_number_cell_drops_hyphens_and_blocks_wrong_input():
+    defs, conds = mq.build(_doc())
+
+    def run(number):
+        store = _store_from_facts(CASES["S1"], defs)
+        store["assets"][0]["ans"]["M08"]["rows"][0]["사업자번호"] = number
+        out = _node({"mode": "facts", "defs": defs, "conds": conds, "stores": [store]})["results"][0]
+        return out, store["assets"][0]["id"]
+
+    out, sid = run("000-00-00015 ")
+    assert out["errors"] == [] and out["facts"]["자산"][0]["필요경비"]["취득부대"][0]["사업자번호"] == "0000000015"
+    out, sid = run("")                                           # 비워도 된다
+    assert out["errors"] == [] and "사업자번호" not in out["facts"]["자산"][0]["필요경비"]["취득부대"][0]
+    for bad in ("12345", "00000000150", "0000000015".replace("0", chr(0xFF10)), "abcdefghij"):
+        out, sid = run(bad)
+        assert [(e["qid"], e["unit"]) for e in out["errors"]] == [("M08", sid)], bad
+        assert "숫자 10자리" in out["errors"][0]["msg"]
+
+
 @needs_node
 def test_html_marks_unknown_answers_and_drops_hidden_ones():
     doc = _doc()
