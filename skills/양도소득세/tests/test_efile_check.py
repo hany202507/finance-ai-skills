@@ -37,6 +37,15 @@ def test_does_not_import_generator():
     assert "import efile" not in src and "from . import efile" not in src
 
 
+def test_import_does_not_load_generator_modules():
+    # 정적 시험은 「from yangdo import calc」 꼴을 못 잡으므로 실제로 import 한 뒤 불러온 모듈을 본다
+    code = ("import sys, yangdo.efile_check; "
+            "print(','.join(m for m in ('yangdo.efile', 'yangdo.return_values', 'yangdo.calc') if m in sys.modules))")
+    p = subprocess.run([sys.executable, "-c", code], cwd=SKILL, capture_output=True, timeout=120)
+    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
+    assert p.stdout.decode("ascii").strip() == ""
+
+
 def test_detects_bad_line_endings(tmp_path):
     p = tmp_path / "20261215C116300.01"
     p.write_bytes(_blank("01") + b"\n")
@@ -119,6 +128,7 @@ BASIC = {"주소_법정동코드": "1144010200", "주소_특수지코드": "0", 
          "내외국인여부": "Y", "거주구분": "N", "거주지국코드": "KR", "거주지국명": "한국", "국적코드": "KR"}
 RATE = {"양도소득금액": 155893334, "양도소득기본공제": 2500000, "과세표준": 153393334, "산출세액": 38349466,
         "전자신고세액공제": 20000, "자진납부할세액": 38329466}
+LOCAL_RATE = {"주민세_세율": 10}          # 03-31 은 모든 행에서 01000(레이아웃 점검값, 컨트롤러 결정)
 BUYER_REC = {"일련번호": "000001", "양수인_주민사업자구분": "1", "양수인_내외국인_구분코드": "1",
              "양수인_주민등록번호": BUYER, "양수인_성명": "이합성", "양수인_지분(분자)": 1, "양수인_지분(분모)": 1,
              "양수인_양도자와의관계": "ZA"}
@@ -151,8 +161,8 @@ def _s1_lines():
                        "사업자등록번호": biz, "지급일자": day, "지급금액": amt, "증빙종류코드": proof})
            for i, (c, who, biz, day, amt, proof) in enumerate(EXPENSES, 1)]
     return [_rec("01", HEADER), _rec("02", BASIC),
-            _rec("03", dict(RATE, 국내외분="1", 세율구분="10")),
-            _rec("03", dict(RATE, 국내외분="Z", 세율구분="00", 자진납부세액=38329466)),
+            _rec("03", dict(RATE, 국내외분="1", 세율구분="10", **LOCAL_RATE)),
+            _rec("03", dict(RATE, 국내외분="Z", 세율구분="00", 자진납부세액=38329466, **LOCAL_RATE)),
             _rec("04", BUYER_REC), _rec("05", ASSET)] + exp
 
 
@@ -207,8 +217,8 @@ def test_file_without_expense_detail_passes(tmp_path):
                  **{"1세대1주택비과세_보유기간": "ZZ", "1세대1주택_비과세_거주기간": "ZZ"})
     rate = {"양도소득금액": 100000000, "양도소득기본공제": 2500000, "과세표준": 97500000, "산출세액": 19710000,
             "전자신고세액공제": 20000, "자진납부할세액": 19690000}
-    lines = [_rec("01", HEADER), _rec("02", BASIC), _rec("03", dict(rate, 국내외분="1", 세율구분="10")),
-             _rec("03", dict(rate, 국내외분="Z", 세율구분="00", 자진납부세액=19690000)),
+    lines = [_rec("01", HEADER), _rec("02", BASIC), _rec("03", dict(rate, 국내외분="1", 세율구분="10", **LOCAL_RATE)),
+             _rec("03", dict(rate, 국내외분="Z", 세율구분="00", 자진납부세액=19690000, **LOCAL_RATE)),
              _rec("04", BUYER_REC), _rec("05", asset)]
     assert _check(tmp_path, lines) == []
 
@@ -396,9 +406,56 @@ def test_duplicate_basic_record(tmp_path):
     assert _has(_check(tmp_path, lines), "02", "한 줄")
 
 
-def test_local_tax_fields_are_zero(tmp_path):
-    msgs = _check(tmp_path, _put(_lines(), "03", "주민세_세율", 10, nth=1))
-    assert _has(msgs, "4줄(03) 31 주민세_세율")
+@pytest.mark.parametrize("nth", [0, 1])
+def test_local_tax_rate_is_fixed_01000(tmp_path, nth):
+    # 03-31 주민세_세율은 레이아웃 점검값 01000 이 고정값이다. 00000 이면 실패, 01000(픽스처)이면 통과
+    f = _field("03", "주민세_세율")
+    lines = _lines()
+    assert all(x[f["start"] - 1:f["end"]] == b"01000" for x in lines if x[:2] == b"03")
+    msgs = _check(tmp_path, _put(lines, "03", "주민세_세율", 0, nth=nth))
+    assert _has(msgs, "%d줄(03) 31 주민세_세율" % (3 + nth), "01000")
+
+
+@pytest.mark.parametrize("name", ["주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"])
+def test_local_tax_amounts_are_zero(tmp_path, name):
+    msgs = _check(tmp_path, _put(_lines(), "03", name, 1000, nth=1))
+    assert _has(msgs, "4줄(03)", name, "0")
+
+
+def test_credit_caps(tmp_path):
+    msgs = _check(tmp_path, _put(_lines(), "03", "전자신고세액공제", 20001, nth=1))
+    assert _has(msgs, "4줄(03) 36 전자신고세액공제", "20000")
+    msgs = _check(tmp_path, _put(_lines(), "03", "전자신고세액공제", 20001, nth=0))
+    assert _has(msgs, "3줄(03) 36 전자신고세액공제", "세율별")
+    msgs = _check(tmp_path, _put(_lines(), "03", "연금계좌세액공제", 10000001, nth=1))
+    assert _has(msgs, "4줄(03) 37 연금계좌세액공제", "10000000")
+
+
+@pytest.mark.parametrize("proof,ok", [("05", True), ("10", True), ("06", False)])
+def test_contract_proof_code_05_is_accepted(tmp_path, proof, ok):
+    # p61 표: 01 현금영수증, 02 신용카드 영수증, 03 세금계산서, 04 계산서, 05 계약서, 10 기타
+    msgs = _check(tmp_path, _put(_lines(), "07", "증빙종류코드", proof, nth=2))
+    assert (msgs == []) == ok
+    if not ok:
+        assert _has(msgs, "9줄(07) 10 증빙종류코드")
+
+
+def test_ksx_empty_cell_is_a_sentence_not_an_exception(tmp_path):
+    # 0xA2E8 은 바이트 범위로는 기호 행이지만 표의 빈 자리라 CP949 로 읽히지 않는다
+    lines = _lines()
+    i = _idx(lines, "04")
+    f = _field("04", "양수인_성명")
+    x = lines[i]
+    lines[i] = x[:f["start"] - 1] + bytes([0xA2, 0xE8]) + x[f["start"] + 1:]
+    msgs = _check(tmp_path, lines)
+    assert _has(msgs, "5줄(04) 7 양수인_성명", "완성형에 없는 글자")
+
+
+def test_page_basis_in_row_formula_sentences(tmp_path):
+    msgs = _check(tmp_path, _put(_lines(), "05", "거래금액_양도가액", 1800000001))
+    assert _has(msgs, "6줄(05) 38", "(브리프)")
+    msgs = _check(tmp_path, _put(_lines(), "05", "양도차익_비과세양도차익", 779466668))
+    assert _has(msgs, "6줄(05) 40", "p50")
 
 
 def test_messages_do_not_carry_personal_values(tmp_path):
@@ -455,6 +512,13 @@ def test_return_values_missing_key_is_a_sentence(tmp_path):
     del rv["신고인"]["성명"]
     msgs = efile_check.check_file(_write(tmp_path, _join(_lines())), rv=rv)
     assert _has(msgs, "신고값에", "기타필요경비", "없음") and _has(msgs, "신고값에", "신고인.성명", "없음")
+
+
+def test_return_values_buyer_asset_missing(tmp_path):
+    rv = _rv()
+    del rv["양수인"][0]["자산"]
+    msgs = efile_check.check_file(_write(tmp_path, _join(_lines())), rv=rv)
+    assert "신고값에 양수인[0].자산 없음" in msgs
 
 
 def test_return_values_personal_mismatch_hides_value(tmp_path):

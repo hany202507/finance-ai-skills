@@ -6,8 +6,10 @@
 값 목록만 읽고 파일 바이트를 처음부터 다시 읽는다. 레코드 길이와 서식코드는 이 파일에도 따로 적어 두고 레이아웃이
 이 표와 다르면 검사 전에 실패한다. 레이아웃이 틀려 생성기와 함께 틀리는 것을 막으려는 것이다.
 
-규칙의 근거는 「양도소득세 전자신고 파일설명서 V5.17」 쪽 번호(p, 규격서 쪽별 추출본 기준)와 global.md 「실행 중
-정한 것」이다. 문장마다 붙인 (pNN) 이 그 쪽이다.
+문장 끝 괄호가 근거다. (pNN) 은 「양도소득세 전자신고 파일설명서 V5.17」 원문 쪽(쪽별 추출본 120쪽 기준),
+(브리프) 는 계획서 T11 브리프가 정한 검사로 원문에 그 문장이 없는 것, (서식 ⑱) 은 신고서 작성요령(p19 「언급이
+없는 한 신고서-첨부서류 작성요령에 준함」), (결정) 은 global.md 「실행 중 정한 것」과 컨트롤러 결정, (추론) 은
+원문을 근거로 한 추론이다.
 
     python -m yangdo.efile_check <파일> [--신고값 신고값.json]
 
@@ -56,11 +58,14 @@ RATES_03 = frozenset("10 15 20 40 23 39 46 30 11 35 36 31 37 38 71 73 21 51 53 5
 # 05 계산명세 국내 세율구분: 03 표에서 주식·파생상품·국외전출(06 레코드 몫)을 빼고 p47 의 '09 특례 코드를 더한다
 RATES_05 = (RATES_03 - frozenset("61 62 70 63 80 81 94".split())) | frozenset("25 26 27 28".split())
 
-# 03 금액 칸 번호. 합계 행 = 세율구분 행 합(p37~43). 36 전자신고세액공제는 합산 문장이 없다(p43)
+# 03 금액 칸 번호. 합계 행 = 세율구분 행 합(p37~43). 36 전자신고세액공제는 합산 문장이 없고 상한만 있다(p43)
 SUM_03 = (5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 24, 25, 26, 27, 34, 35, 37)
-TOTAL_ONLY_03 = (20, 21, 28, 29)                       # 합계 행 이외 0(p42)
-LOCAL_03 = (30, 31, 32, 33)                            # 주민세 칸 0(p32, global.md 지방소득세)
+TOTAL_ONLY_03 = (20, 21, 28, 29)                       # 합계 행 이외 0(p42~43)
+# 주민세 금액 칸 0(global.md 지방소득세 결정). 31 주민세_세율은 레이아웃 점검값 01000 을 고정값으로 본다(컨트롤러 결정)
+LOCAL_03 = (30, 32, 33)
 LOCAL_ROW_ZERO_03 = (8, 10, 11, 12, 14, 15, 16, 17, 18, 19, 21, 35)   # 지방소득세 행(Z/98) 금액 0(p32)
+E_FILING_CREDIT_CAP = 20000          # 03-36 세율별·소계·합계 최대 20,000원(p43)
+PENSION_CREDIT_CAP = 10000000        # 03-37 소계·합계 최대 1,000만원(p43)
 
 _NUM = re.compile(rb"-?\d+")
 _RRN_W = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
@@ -83,8 +88,15 @@ def _ym_ok(s):
     return bool(isinstance(s, str) and re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", s))
 
 
-def _ksx_ok(b):
-    """ASCII(0x20~0x7E)와 KS X 1001 완성형 2바이트(한글 0xB0~0xC8, 기호 0xA1~0xAC 행, 둘째 0xA1~0xFE)만인지."""
+KSX_BYTES = "KS X 1001 완성형이나 ASCII 가 아닌 바이트가 있음(p15)"
+KSX_EMPTY = "KS X 1001 완성형에 없는 글자(표의 빈 자리)가 있음(p15)"
+
+
+def _ksx_problem(b):
+    """ASCII(0x20~0x7E)와 KS X 1001 완성형 2바이트(한글 0xB0~0xC8, 기호 0xA1~0xAC 행, 둘째 0xA1~0xFE)만이면 None.
+
+    바이트 범위가 맞아도 0xA2E8 처럼 표의 빈 자리는 CP949 로 읽히지 않으므로 따로 실패로 센다.
+    """
     i, n = 0, len(b)
     while i < n:
         x = b[i]
@@ -93,8 +105,12 @@ def _ksx_ok(b):
         elif (0xB0 <= x <= 0xC8 or 0xA1 <= x <= 0xAC) and i + 1 < n and 0xA1 <= b[i + 1] <= 0xFE:
             i += 2
         else:
-            return False
-    return True
+            return KSX_BYTES
+    try:
+        b.decode("cp949")
+    except UnicodeDecodeError:
+        return KSX_EMPTY
+    return None
 
 
 def _rrn_shape(s):
@@ -266,7 +282,7 @@ class _Checker:
         if re.search(rb"\r(?!\n)|(?<!\r)\n", data):
             self.fail("파일: CRLF 가 아닌 줄바꿈(홀로 된 CR 또는 LF)이 있음(p15)")
         if not data.endswith(CRLF):
-            self.fail("파일: 마지막 줄 뒤에 CRLF 가 없음(p15)")
+            self.fail("파일: 마지막 줄 뒤에 CRLF 가 없음(p15 「각 레코드마다 CR/LF」)")
         lines = re.split(rb"\r\n|\r|\n", data)
         if lines and lines[-1] == b"":
             lines.pop()
@@ -292,8 +308,9 @@ class _Checker:
             if len(x) != LENGTHS[kind]:
                 self.broken = True
                 self.fail("%d줄(%s): 길이 %d 바이트, 규격 %d 바이트(p17~18)" % (i, kind, len(x), LENGTHS[kind]))
-                if not _ksx_ok(x):
-                    self.fail("%d줄(%s): KS X 1001 완성형이나 ASCII 가 아닌 바이트가 있음(p15)" % (i, kind))
+                problem = _ksx_problem(x)
+                if problem:
+                    self.fail("%d줄(%s): %s" % (i, kind, problem))
                 continue
             recs.append(_Rec(i, kind, x, self.F[kind]))
         return recs, kinds
@@ -327,9 +344,13 @@ class _Checker:
                     self.fail(r.where(no) + ": 숫자가 아님")
                 elif x.startswith(b"-") and "양의" in chk:
                     self.fail(r.where(no) + ": 음수가 올 수 없음(양의실수형식점검)")
+                elif re.fullmatch(r"\d+", chk) and len(chk) == f["len"] and x.decode("ascii") != chk:
+                    # 점검내용이 칸 길이와 같은 숫자열이면 고정값이다(03-31 주민세_세율 01000, p43)
+                    self.fail(r.where(no) + ": 고정값 %s 와 다름(레이아웃 점검값)" % chk)
                 continue
-            if not _ksx_ok(x):
-                self.fail(r.where(no) + ": KS X 1001 완성형이나 ASCII 가 아닌 바이트가 있음(p15)")
+            problem = _ksx_problem(x)
+            if problem:
+                self.fail(r.where(no) + ": " + problem)
                 continue
             v = x.decode("cp949").rstrip(" ")
             if f["class"] == "SPACE":
@@ -371,9 +392,9 @@ class _Checker:
         if not re.fullmatch(r"\d{10}", v):
             self.fail(r.where(no) + ": 법정동코드 숫자 10자리가 아님(p24)")
         elif v[5:8] == "000":
-            self.fail(r.where(no) + ": 읍면동 단계 코드가 아님(시도·시군구 단계 코드)")
+            self.fail(r.where(no) + ": 읍면동 단계 코드가 아님(시도·시군구 단계 코드, 결정)")
         elif not _load_bjd(self.dir).exists(v):
-            self.fail(r.where(no) + ": 법정동코드 표에 없음(없거나 폐지된 코드)")
+            self.fail(r.where(no) + ": 법정동코드 표에 없음(없거나 폐지된 코드, 결정)")
 
     def _lot(self, r, sp_no, lot_no, ho_no):
         """번지·호는 ASCII 숫자, 번지 0 은 특수지코드 9(무번지)일 때만(p30, p48)."""
@@ -401,23 +422,23 @@ class _Checker:
         if form not in ("D01", "D03"):
             self.fail(h.where(10) + ": D01(확정신고서)·D03(예정신고서)이 아님(p26)")
         elif kind in ("01", "03") and {"01": "D01", "03": "D03"}[kind] != form:
-            self.fail(h.where(10) + ": 6 신고구분코드 %s 와 맞지 않음(확정 01 은 D01, 예정 03 은 D03)" % kind)
+            self.fail(h.where(10) + ": 6 신고구분코드 %s 와 맞지 않음(확정 01 은 D01, 예정 03 은 D03, p26 코드 뜻에서 추론)" % kind)
         if typ and ((typ in "1234" and kind == "01") or (typ in "56" and kind == "03")):
-            self.fail(h.where(7) + ": 6 신고구분코드 %s 와 맞지 않음(예정 1~4, 확정 5·6, p26)" % kind)
+            self.fail(h.where(7) + ": 6 신고구분코드 %s 와 맞지 않음(예정 1~4, 확정 5·6, p26 코드 뜻에서 추론)" % kind)
         period, sold, wrote = h.t(8), h.t(25), h.t(24)
         if _ym_ok(period) and not period.endswith("01"):
             self.fail(h.where(8) + ": 양도연도 + 01 이 아님(p26)")
         elif _ym_ok(period) and _ymd(sold) and period != sold[:4] + "01":
             self.fail(h.where(8) + ": 25 양도일자의 연도 + 01 이 아님(p26)")
         if fdate and _ymd(wrote) and wrote != fdate:
-            self.fail("파일명 %s: 앞 8자리가 1줄(01) 24 작성일자 %s 와 다름" % (name, wrote))
+            self.fail("파일명 %s: 앞 8자리가 1줄(01) 24 작성일자 %s 와 다름(결정)" % (name, wrote))
         if fext and h.t(9) in ("01", "03") and h.t(9) != fext:
             self.fail("파일명 %s: 확장자가 1줄(01) 9 신고구분상세코드 %s 와 다름(p20)" % (name, h.t(9)))
         if h.t(23) and h.t(23) not in PROGRAM_CODES:
             self.fail(h.where(23) + ": 「%s」 는 세무프로그램코드 목록(p27~28)에 없음" % h.t(23))
         bank, acct = h.t(15), h.t(16)
         if bool(bank.strip()) != bool(acct.strip()):
-            self.fail(h.where(16) + ": 15 은행코드와 함께 쓰거나 함께 비운다")
+            self.fail(h.where(16) + ": 15 은행코드와 함께 쓰거나 함께 비운다(추론)")
         if bank.strip() and not (self.codes["은행"].get(bank) or {}).get("환급계좌"):
             self.fail(h.where(15) + ": 「%s」 는 환급계좌 은행코드(p113)가 아님" % bank)
         if len(acct) > 16:
@@ -436,9 +457,9 @@ class _Checker:
             if not _ymd(d):
                 continue
             if _ym_ok(period) and d[:4] != period[:4]:
-                self.fail(a.where(17) + ": 1줄(01) 8 과세기간의 연도와 다름")
+                self.fail(a.where(17) + ": 1줄(01) 8 과세기간의 연도와 다름(추론)")
             if _ymd(wrote) and d > wrote:
-                self.fail(a.where(17) + ": 1줄(01) 24 작성일자 %s 보다 늦음" % wrote)
+                self.fail(a.where(17) + ": 1줄(01) 24 작성일자 %s 보다 늦음(추론)" % wrote)
 
     # 02 기본사항
     def _basic(self, b):
@@ -505,11 +526,11 @@ class _Checker:
                 continue
             for no in LOCAL_03:
                 if v[no]:
-                    self.fail(r.where(no) + ": 주민세 칸은 0(국세 파일의 지방소득세 란, p32·p43)")
+                    self.fail(r.where(no) + ": 주민세 금액 칸은 0(국세 파일의 지방소득세 란, 결정)")
             if (d, c) != ("Z", "00"):
                 for no in TOTAL_ONLY_03:
                     if v[no]:
-                        self.fail(r.where(no) + ": 합계 행(Z/00)에만 쓰고 다른 행은 0(p42)")
+                        self.fail(r.where(no) + ": 합계 행(Z/00)에만 쓰고 다른 행은 0(p42~43)")
             if c == "00":
                 for no in (9, 23):
                     if v[no]:
@@ -517,9 +538,14 @@ class _Checker:
             if v[12]:
                 self.fail(r.where(12) + ": 국내분에는 외국납부세액공제가 없음(p40)")
             if v[13]:
-                self.fail(r.where(13) + ": 예정신고납부세액공제는 2011년 이후 양도분에 쓰지 않음(p41)")
+                self.fail(r.where(13) + ": 예정신고납부세액공제는 쓰지 않음(p41 「2011년 양도분은 입력불가」에서 추론)")
             if v[11] and v[34]:
                 self.fail(r.where(34) + ": 11 감면세액과 함께 쓸 수 없음(p43)")
+            if v[36] is not None and v[36] > E_FILING_CREDIT_CAP:
+                self.fail(r.where(36) + ": %s 최대 %d원(p43)"
+                          % ("세율별로" if c != "00" else "소계·합계는", E_FILING_CREDIT_CAP))
+            if c == "00" and v[37] is not None and v[37] > PENSION_CREDIT_CAP:
+                self.fail(r.where(37) + ": 소계·합계는 최대 %d원(p43)" % PENSION_CREDIT_CAP)
             if None not in (v[5], v[6], v[7], v[8], v[34]):
                 want = v[5] + v[6] - v[34] - v[7]
                 if v[8] != want:
@@ -556,13 +582,13 @@ class _Checker:
             if not g:
                 self.fail(r.where(4) + ": 05 에 세율구분 %s 인 자산이 없음" % c)
                 continue
-            for no3, no5 in ((5, 42), (34, 60)):
+            for no3, no5, basis in ((5, 42, "p37"), (34, 60, "추론")):
                 vals = [a.n(no5) for a in g]
                 if r.n(no3) is None or None in vals:
                     continue
                 if r.n(no3) != sum(vals):
-                    self.fail(r.where(no3) + ": 05 세율구분 %s 자산의 %d %s 합 %d 과 다름(p37)"
-                              % (c, no5, g[0].f[no5]["name"], sum(vals)))
+                    self.fail(r.where(no3) + ": 05 세율구분 %s 자산의 %d %s 합 %d 과 다름(%s)"
+                              % (c, no5, g[0].f[no5]["name"], sum(vals), basis))
         present = {c for _, c in rate_rows}
         for c, g in groups.items():
             if c not in present:
@@ -600,24 +626,29 @@ class _Checker:
                 if entry is None:
                     self.fail(r.where(11) + ": 「%s」 는 코드표에 없음(양도자와의관계, p107~109)" % rel)
                 elif entry.get("무효"):
-                    self.fail(r.where(11) + ": 「%s」 는 무효 코드(%s)" % (rel, entry.get("이름", "")))
+                    self.fail(r.where(11) + ": 「%s」 는 무효 코드(%s, 결정)" % (rel, entry.get("이름", "")))
             num, den = r.n(9), r.n(10)
             if num is None or den is None:
                 continue
             if den <= 0:
                 self.fail(r.where(10) + ": 지분 분모가 0")
             elif num <= 0 or num > den:
-                self.fail(r.where(9) + ": 지분이 0 초과 1 이하가 아님")
+                self.fail(r.where(9) + ": 지분이 0 초과 1 이하가 아님(추론)")
             else:
                 shares.append((r, Fraction(num, den)))
+        groups = None
+        if isinstance(rv, dict) and isinstance(rv.get("양수인"), list):
+            groups = []
+            for i, x in enumerate(rv["양수인"]):
+                if not isinstance(x, dict) or x.get("자산") is None or not str(x["자산"]).strip():
+                    self.fail("신고값에 양수인[%d].자산 없음" % i)
+                    groups = None
+                elif groups is not None:
+                    groups.append(str(x["자산"]))
+            if groups is not None and len(groups) != len(rows):
+                groups = None            # 줄 수가 다른 것은 신고값 대사가 따로 알린다
         if not shares or len(shares) != len(rows):
             return
-        groups = None
-        if isinstance(rv, dict) and isinstance(rv.get("양수인"), list) and len(rv["양수인"]) == len(rows):
-            try:
-                groups = [str(x["자산"]) for x in rv["양수인"]]
-            except (KeyError, TypeError):
-                groups = None
         if groups:
             agg = {}
             for (r, s), g in zip(shares, groups):
@@ -625,12 +656,12 @@ class _Checker:
             for g, items in agg.items():
                 tot = sum(s for _, s in items)
                 if tot != 1:
-                    self.fail("%d줄(04) 9 양수인_지분(분자): 신고값 자산 %s 의 양수인 지분 합 %s 이 1 이 아님" % (items[0][0].line, g, tot))
+                    self.fail("%d줄(04) 9 양수인_지분(분자): 신고값 자산 %s 의 양수인 지분 합 %s 이 1 이 아님(브리프)" % (items[0][0].line, g, tot))
         else:
             tot = sum(s for _, s in shares)
             if n_assets and tot != n_assets:
                 self.fail("04 양수인 지분 합 %s 이 05 자산 %d건과 맞지 않음. 자산마다 양수인 지분 합은 1 이다"
-                          "(04 에는 자산을 잇는 칸이 없어 합으로 본다)" % (tot, n_assets))
+                          "(04 에는 자산을 잇는 칸이 없어 합으로 본다, 브리프)" % (tot, n_assets))
 
     # 05 계산명세 (7·8·11)
     def _assets(self, assets, exps):
@@ -665,20 +696,20 @@ class _Checker:
                 elif purpose and cause.strip() and cause not in causes.get(purpose, {}):
                     self.fail(a.where(c_no) + ": 「%s」 는 등기목적 %s 의 등기원인 코드(p109~110)가 아님" % (cause, purpose))
             if _ymd(a.t(20)) and _ymd(a.t(17)) and a.t(20) > a.t(17):
-                self.fail(a.where(20) + ": 17 양도일자보다 늦음")
+                self.fail(a.where(20) + ": 17 양도일자보다 늦음(추론)")
             acq = a.t(35)
             if acq and acq not in ("01", "02", "03", "04", "05"):
                 self.fail(a.where(35) + ": 국내 자산 취득가액종류(01~05, p49)가 아님")
             v = {no: a.n(no) for no, f in a.f.items() if f["type"] == "N"}
-            for target, want, text in (
-                    (38, (v[33], v[34], v[36], v[37]), "33 - 34 - 36 - 37"),
-                    (40, (v[38], v[39]), "38 - 39"),
-                    (42, (v[40], v[41]), "40 - 41")):
+            for target, want, text, basis in (
+                    (38, (v[33], v[34], v[36], v[37]), "33 - 34 - 36 - 37", "브리프"),
+                    (40, (v[38], v[39]), "38 - 39", "p50 「38 = 39 + 40」"),
+                    (42, (v[40], v[41]), "40 - 41", "브리프")):
                 if v[target] is None or None in want:
                     continue
                 w = want[0] - sum(want[1:])
                 if v[target] != w:
-                    self.fail(a.where(target) + ": %s (%d)와 다름(p50)" % (text, w))
+                    self.fail(a.where(target) + ": %s (%d)와 다름(%s)" % (text, w, basis))
             if a.t(4) == "05" and v[40]:
                 self.fail(a.where(40) + ": 과세구분 05(전체비과세)이면 0(p50)")
             if v[41] and code != "10":
@@ -718,14 +749,14 @@ class _Checker:
             if n61 is not None and n61 > 0 and n61 not in serials07:
                 self.fail(a.where(61) + ": 07 에 같은 필요경비신고자료일련번호가 없음(p53·p59)")
             if n61 == 0 and acq == "01" and v[37]:
-                self.fail(a.where(61) + ": 37 기타필요경비가 있으면 07 필요경비신고자료일련번호를 적는다(p53)")
+                self.fail(a.where(61) + ": 37 기타필요경비가 있으면 07 필요경비신고자료일련번호를 적는다(p53 에서 추론)")
 
     # 07 필요경비 상세 (12)
     def _expenses(self, exps, assets):
         by_code = {v["전자코드"]: v for v in self.codes["필요경비구분"].values()}
         banned = set(self.codes["메타"]["필요경비_쓰지않는코드"]["코드"])
         blank_proof = self.codes["메타"]["증빙_필수아닌행"]["코드"]
-        proofs = {v["코드"] for v in self.codes["증빙종류"].values() if v.get("코드")}
+        proofs = set(self.codes["증빙종류목록"])          # p61 표: 01 02 03 04 05(계약서) 10
         serials05 = {a.n(61) for a in assets if a.n(61)}
         counters, groups, prev = {}, {}, None
         for r in exps:
@@ -783,7 +814,7 @@ class _Checker:
         for s, items in groups.items():
             dep = _part(items, "14")
             if dep > max(_part(items, "11"), _part(items, "12")) + _part(items, "13"):
-                self.fail("07 필요경비신고자료일련번호 %d: 감가상각비(14xxx) %d 이 취득가액(11xxx 또는 12001) + 가산항목(13xxx)보다 큼(p60)" % (s, dep))
+                self.fail("07 필요경비신고자료일련번호 %d: 감가상각비(14xxx) %d 이 취득가액(11xxx 또는 12001) + 가산항목(13xxx)보다 큼(p60 에서 추론)" % (s, dep))
             g = by_serial.get(s) or []
             if not g or any(a.t(35) != "01" for a in g):
                 continue        # 실지거래가액이 아니면 05-34 가 07 합과 같다는 근거가 없다
@@ -791,10 +822,10 @@ class _Checker:
             other = _part(items, "2")
             v34, v37 = [a.n(34) for a in g], [a.n(37) for a in g]
             if None not in v34 and acq != sum(v34):
-                self.fail("%d줄(05) 34 %s: 07 필요경비신고자료일련번호 %d 의 취득가액 구분코드(11xxx·12xxx·13xxx - 14xxx) 합 %d 과 다름"
+                self.fail("%d줄(05) 34 %s: 07 필요경비신고자료일련번호 %d 의 취득가액 구분코드(11xxx·12xxx·13xxx - 14xxx) 합 %d 과 다름(브리프)"
                           % (g[0].line, g[0].f[34]["name"], s, acq))
             if None not in v37 and other != sum(v37):
-                self.fail("%d줄(05) 37 %s: 07 필요경비신고자료일련번호 %d 의 기타필요경비 구분코드(2xxxx) 합 %d 과 다름"
+                self.fail("%d줄(05) 37 %s: 07 필요경비신고자료일련번호 %d 의 기타필요경비 구분코드(2xxxx) 합 %d 과 다름(브리프)"
                           % (g[0].line, g[0].f[37]["name"], s, other))
 
     # 14. 신고값 대사
