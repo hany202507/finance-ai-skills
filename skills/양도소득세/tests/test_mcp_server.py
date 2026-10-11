@@ -319,13 +319,22 @@ def test_both_facts_and_path_is_rejected(tmp_path):
     assert "하나만" in err("yangdo_calculate", {"facts": CASES["A"], "facts_path": p})
 
 
-def test_unexpected_error_is_still_a_tool_error(monkeypatch):
+SECRET = "김합성 %s" % RRN       # 예외 문장에는 사실관계나 신고인 값이 실릴 수 있다
+
+
+def test_unexpected_error_is_still_a_tool_error(monkeypatch, capsys):
     def boom(*a, **k):
-        raise RuntimeError("터짐")
+        raise RuntimeError(SECRET)
 
     monkeypatch.setattr(M.engine, "calculate", boom)
     t = err("yangdo_calculate", {"facts": CASES["A"]})
     assert "예상하지 못한" in t and "RuntimeError" in t
+    logged = capsys.readouterr().err
+    # 응답에도 표준오류에도 예외 문장은 없다. 표준오류에는 예외 형 이름과 호출 위치(파일, 줄, 함수)만 남는다
+    assert "김합성" not in t and RRN not in t
+    assert "김합성" not in logged.replace('RuntimeError(SECRET)', "") and RRN not in logged
+    assert "RuntimeError" in logged and "호출 위치" in logged and "mcp_server.py" in logged and "in boom" in logged
+    assert "Traceback (most recent call last)" not in logged
 
 
 # ---- Fix 1: 깨진 입력에도 서버가 살아 있다, 임시 파일은 mkstemp, 오류 기록 ----
@@ -374,12 +383,13 @@ def test_stdio_deeply_nested_line_is_a_parse_error_and_server_stays_alive():
 
 
 @pytest.mark.parametrize("name,owner,attr,exc,args", [
-    ("yangdo_next_questions", M.questions, "next_questions", KeyError("키"), {"facts": CASES["A"]}),
-    ("yangdo_answer", M.questions, "answer", TypeError("형"),
+    ("yangdo_next_questions", M.questions, "next_questions", KeyError(SECRET), {"facts": CASES["A"]}),
+    ("yangdo_answer", M.questions, "answer", TypeError(SECRET),
      {"facts": {"자산": [{"id": "A"}]}, "question": "P01", "value": True}),
-    ("yangdo_calculate", M.engine, "calculate", AttributeError("속성"), {"facts": CASES["A"]}),
+    ("yangdo_calculate", M.engine, "calculate", AttributeError(SECRET), {"facts": CASES["A"]}),
 ])
 def test_malformed_value_is_logged_to_stderr(monkeypatch, capsys, name, owner, attr, exc, args):
+    """표준오류에는 예외 형 이름과 호출 위치만 남기고, 오류 응답에는 형 이름만 싣는다. 예외 문장은 어디에도 싣지 않는다."""
     def boom(*a, **k):
         raise exc
 
@@ -388,7 +398,77 @@ def test_malformed_value_is_logged_to_stderr(monkeypatch, capsys, name, owner, a
     kind = type(exc).__name__
     assert "사실관계의 값을 처리하지 못했다" in t and kind in t
     logged = capsys.readouterr().err
-    assert "Traceback" in logged and kind in logged
+    assert kind in logged and "호출 위치" in logged and "in boom" in logged
+    for text in (t, logged):
+        assert "김합성" not in text and RRN not in text
+    assert "Traceback (most recent call last)" not in logged
+
+
+def test_validation_sentences_made_as_tool_errors_are_kept():
+    """사실관계 검사 문장처럼 값이 실리지 않게 지은 문장은 그대로 낸다."""
+    t = err("yangdo_answer", {"facts": {"자산": [{"id": "A"}]}, "question": "없는문항", "value": True})
+    assert "없는문항" in t or "문항" in t
+    t = err("yangdo_calculate", {"facts": dict(CASES["A"], 메모=RRN)})
+    assert "주민등록번호" in t and RRN not in t
+
+
+# ---- 스키마에 없는 인자 ----
+
+def test_unknown_argument_is_an_error_naming_only_the_argument(tmp_path):
+    """스키마에 없는 인자가 오면 조용히 버리지 않고 오류로 답한다. 문장에는 인자 이름만 싣고 값은 싣지 않는다."""
+    t = err("yangdo_calculate", {"facts": CASES["A"], "outdir": str(tmp_path / "o"), "today": "2026-10-09"})
+    assert "outdir" in t and "out_dir" in t and "받지 않는 인자" in t
+    assert str(tmp_path) not in t and not os.path.exists(tmp_path / "o")
+    t = err("ruleset_info", {"verbose": "김합성"})
+    assert "verbose" in t and "김합성" not in t
+    t = err("yangdo_next_questions", {"facts": {"자산": [{"id": "A"}]}, "filer_path": RRN})
+    assert "filer_path" in t and RRN not in t
+    # 다른 도구의 인자를 옛 한글 이름으로 줘도 걸린다. 문장에는 받은 이름을 적는다
+    t = err("yangdo_calculate", {"facts": CASES["A"], "문항": "P01"})
+    assert "문항" in t and "받지 않는 인자" in t
+    # 긴 이름은 잘라 적는다
+    t = err("ruleset_info", {"x" * 300: 1})
+    assert "x" * 41 not in t
+
+
+def test_every_schema_property_and_old_name_is_accepted():
+    """스키마가 알리는 이름과 그 옛 한글 이름은 모두 받는다(모르는 인자 검사에 걸리지 않는다)."""
+    for tool in M.TOOLS:
+        props = set(tool["inputSchema"]["properties"])
+        assert M._unknown_arguments(tool["name"], {k: None for k in props}) == []
+        old = {M.ALIASES[k]: None for k in props if k in M.ALIASES}
+        assert M._unknown_arguments(tool["name"], old) == []
+    assert M._unknown_arguments("ruleset_info", {}) == []
+
+
+# ---- serverInfo.version ----
+
+def test_server_version_matches_plugin_version():
+    """serverInfo.version 은 플러그인 버전(.claude-plugin/plugin.json)과 같다. 플러그인 버전을 올리면 이 값도 올린다."""
+    r = M.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    assert r["result"]["serverInfo"] == {"name": "yangdo", "version": M.SERVER_VERSION}
+    assert re.fullmatch(r"\d+\.\d+\.\d+", M.SERVER_VERSION)
+    plugin = os.path.join(os.path.dirname(os.path.dirname(ROOT)), ".claude-plugin", "plugin.json")
+    if not os.path.exists(plugin):
+        pytest.skip("플러그인 저장소 없이 스킬 폴더만 있다")
+    with open(plugin, encoding="utf-8") as fh:
+        assert json.load(fh)["version"] == M.SERVER_VERSION
+
+
+def test_return_tools_pass_make_return_constants(monkeypatch, tmp_path):
+    """yangdo_forms, yangdo_efile 은 어디까지 만들지를 make_return 의 상수로 넘긴다."""
+    mr = M._load_make_return()
+    seen = []
+
+    def fake(facts, filer, out, today=None, upto=None):
+        seen.append(upto)
+        return dict(mr._report(out, upto), 종료코드=0)
+
+    monkeypatch.setattr(mr, "make", fake)
+    args = {"facts": CASES["A"], "filer_path": str(tmp_path / "g.json"), "out_dir": str(tmp_path / "o")}
+    call("yangdo_forms", args)
+    call("yangdo_efile", args)
+    assert seen == [mr.FORMS, mr.EFILE] and mr.FORMS != mr.EFILE
 
 
 def test_answer_keeps_unrelated_tmp_sibling(tmp_path):

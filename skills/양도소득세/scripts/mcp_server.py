@@ -6,10 +6,15 @@
 엔진은 외부를 조회하지 않는다. 신고인 인적사항은 받지 않는다(사실관계에 있으면 오류).
 신고서·전자신고 도구(yangdo_forms, yangdo_efile)는 신고인 JSON 을 파일 경로로만 받고, 응답에 인적사항 값을 싣지 않는다.
 도구가 실패하면 서버는 죽지 않고 isError 결과에 이유를 적어 돌려준다. 프로토콜 줄만 표준출력에 쓴다.
+예상하지 못한 예외는 표준오류에 예외 형 이름과 호출 위치만 남기고 오류 응답에는 형 이름만 싣는다. 예외 문장에는 사실관계나
+신고인의 값이 실릴 수 있어 어디에도 싣지 않는다(make_return.py 와 같다). 검사 문장처럼 값이 실리지 않게 지은 문장
+(ToolError, 사실관계 검사 FactsError)은 그대로 낸다.
 
 입력 스키마의 속성 이름은 ASCII 로만 쓴다(^[a-zA-Z0-9_.-]{1,64}$). Claude 클라이언트는 이 꼴이 아닌 속성 이름을 가진
 도구를 목록에서 통째로 뺀다. 옛 한글 이름(오늘, 문항, 값, 자산, 주택, 서식, 시도, 시군구, 읍면동, 기준일, 지구해당)으로 온
 인자도 받는다(ALIASES). 사실관계처럼 한글 키를 가진 값은 속성을 나열하지 않는 자유 객체로 둔다.
+스키마에 없는 인자가 오면 버리지 않고 오류로 답한다(문장에는 인자 이름만 싣는다). 이름을 잘못 적은 인자가 조용히 빠져
+out_dir 없이 계산만 되는 일을 막는다.
 
 신고서 도구가 쓰는 make_return(과 pymupdf)은 그 도구를 처음 부를 때 읽는다(_load_make_return). 서버를 띄울 때 읽지 않으므로
 pymupdf 가 없어도 계산 도구는 그대로 뜨고, 신고서 도구 둘만 설치 안내 오류를 낸다. 읽은 뒤에는 MuPDF 메시지를 표준오류로 돌려
@@ -21,7 +26,6 @@ import os
 import shutil
 import sys
 import tempfile
-import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
@@ -34,6 +38,8 @@ from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
 PROTOCOL = "2025-03-26"
+SERVER_VERSION = "0.8.0"       # 플러그인 버전(.claude-plugin/plugin.json)과 같은 값. 어긋나면 시험이 실패한다
+NAME_SHOWN = 40                # 오류 문장에 적는 인자 이름의 최대 길이
 INSTRUCTIONS = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민등록번호, 주소, 전화번호, 계좌)을 넣지 않는다. "
                 '새 사건은 facts: {"자산": [{"id": "A"}]} 로 시작한다. 판 자산마다 항목 하나를 두고 id 는 A, B, ... 로 붙인다. '
                 "이 값을 yangdo_answer 의 facts 로 주고(같은 내용의 파일이면 facts_path), 돌려받은 사실관계를 다음 호출에 이어 쓴다. "
@@ -98,14 +104,14 @@ class ToolError(Exception):
     """클라이언트에 그대로 보여 줄 문장을 든 오류."""
 
 
-def _why(e):
-    return " ".join(str(getattr(e, "strerror", None) or e).split())
+_why = outputs.why
 
 
 def _malformed(e):
-    traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)  # 엔진 버그인지 입력 탓인지 운영자가 가를 수 있게 남긴다
-    return ToolError("사실관계의 값을 처리하지 못했다(%s: %s). 날짜는 YYYY-MM-DD, 금액은 원 단위 정수, 목록 모양은 질문지 문항.json 의 facts키 대로인지 확인한다"
-                     % (type(e).__name__, e))
+    # 엔진 버그인지 입력 탓인지 운영자가 가를 수 있게 표준오류에 남긴다. 예외 문장은 응답에도 표준오류에도 싣지 않는다
+    outputs.log_call_sites(e, "사실관계의 값을 처리하지 못했다")
+    return ToolError("사실관계의 값을 처리하지 못했다(%s). 날짜는 YYYY-MM-DD, 금액은 원 단위 정수, 목록 모양은 질문지 문항.json 의 facts키 대로인지 확인한다"
+                     % type(e).__name__)
 
 
 def _write_error(e, fallback):
@@ -329,15 +335,16 @@ def _load_make_return():
         if callable(redirect):
             try:
                 redirect(stream=sys.__stderr__ or sys.stderr)
-            except Exception:      # 메시지 설정 방법이 다른 판. 건너뛴다
-                traceback.print_exc(file=sys.stderr)
+            except Exception as e:      # 메시지 설정 방법이 다른 판. 건너뛴다
+                outputs.log_call_sites(e, "MuPDF 메시지를 표준오류로 돌리지 못했다")
         _RETURN_MODULE.append(make_return)
     return _RETURN_MODULE[0]
 
 
-def _make_return(args, upto):
-    """신고서(와 전자신고 파일)를 만든다. 신고인 정보는 파일 경로로만 받고, 응답에는 보고 가운데 RETURN_KEYS 만 싣는다."""
+def _make_return(args, with_efile):
+    """신고서(with_efile 이 참이면 전자신고 파일까지)를 만든다. 신고인 정보는 파일 경로로만 받고, 응답에는 보고 가운데 RETURN_KEYS 만 싣는다."""
     make_return = _load_make_return()      # 모듈을 읽지 못하면 인자를 보거나 출력 폴더를 건드리기 전에 알린다
+    upto = make_return.EFILE if with_efile else make_return.FORMS
     f = _facts(args)
     filer_path = _text(args, "filer_path", True)
     out_dir = _text(args, "out_dir", True)
@@ -351,15 +358,25 @@ def _make_return(args, upto):
 
 
 def _forms(args):
-    return _make_return(args, "forms")      # make_return.FORMS
+    return _make_return(args, with_efile=False)
 
 
 def _efile(args):
-    return _make_return(args, "efile")      # make_return.EFILE
+    return _make_return(args, with_efile=True)
 
 
 HANDLERS = {"yangdo_next_questions": _next_questions, "yangdo_answer": _answer, "yangdo_calculate": _calculate,
             "yangdo_forms": _forms, "yangdo_efile": _efile, "regulated_area": _regulated_area, "ruleset_info": _ruleset_info}
+
+
+PROPERTIES = {t["name"]: tuple(t["inputSchema"]["properties"]) for t in TOOLS}
+
+
+def _unknown_arguments(name, args):
+    """도구 name 의 입력 스키마에 없는 인자 이름(받은 이름 그대로, 이름순). 옛 한글 이름은 스키마 이름으로 바꿔서 본다."""
+    known = set(PROPERTIES[name])
+    old = {v: k for k, v in ALIASES.items()}
+    return sorted(k for k in args if old.get(k, k) not in known)
 
 
 def call_tool(name, args):
@@ -367,6 +384,11 @@ def call_tool(name, args):
         raise ToolError("없는 도구: %s" % name)
     if not isinstance(args, dict):
         raise ToolError("arguments 값은 JSON 객체여야 한다")
+    unknown = _unknown_arguments(name, args)
+    if unknown:     # 인자 이름만 싣는다(값은 싣지 않는다). 이름이 길면 잘라 적는다
+        raise ToolError("%s 가 받지 않는 인자: %s. 받는 인자: %s" % (
+            name, ", ".join(str(k)[:NAME_SHOWN] for k in unknown[:10]),
+            ", ".join(_label(k) for k in PROPERTIES[name]) or "없음"))
     return HANDLERS[name](_normalize(args))
 
 
@@ -382,8 +404,10 @@ def _tool_failure(e):
         return "기준정보 오류: %s" % e
     if isinstance(e, OSError):
         return "파일을 처리하지 못했다: %s (%s)" % (e.filename or "", _why(e))
-    traceback.print_exc(file=sys.stderr)  # 예상하지 못한 오류는 운영자가 볼 수 있게 표준오류에 남긴다
-    return "도구 실행 중 예상하지 못한 오류가 났다(%s: %s)" % (type(e).__name__, e)
+    # 예상하지 못한 오류는 운영자가 볼 수 있게 표준오류에 남긴다. 예외 문장에는 사실관계나 신고인의 값이 실릴 수 있어
+    # 표준오류에는 형 이름과 호출 위치만, 응답에는 형 이름만 싣는다
+    outputs.log_call_sites(e, "도구 실행 중 예상하지 못한 오류")
+    return "도구 실행 중 예상하지 못한 오류가 났다(%s). 오류 기록은 서버의 표준오류에 있다" % type(e).__name__
 
 
 def handle(req):
@@ -397,7 +421,7 @@ def handle(req):
     if method == "initialize":
         version = params.get("protocolVersion")
         result = {"protocolVersion": version if isinstance(version, str) and version else PROTOCOL,
-                  "capabilities": {"tools": {}}, "serverInfo": {"name": "yangdo", "version": "0.1.0"},
+                  "capabilities": {"tools": {}}, "serverInfo": {"name": "yangdo", "version": SERVER_VERSION},
                   "instructions": INSTRUCTIONS}
     elif method == "tools/list":
         result = {"tools": TOOLS}
@@ -445,7 +469,7 @@ def main():
                 with contextlib.redirect_stdout(sys.stderr):  # 라이브러리가 표준출력에 쓴 글이 프로토콜 줄에 섞이지 않게 한다
                     resp = handle(req)
             except Exception as e:  # handle 은 던지지 않게 짜여 있다. 그래도 서버는 죽지 않는다
-                traceback.print_exc(file=sys.stderr)
+                outputs.log_call_sites(e, "요청을 처리하다 예상하지 못한 오류")
                 resp = _error(req.get("id") if isinstance(req, dict) else None, -32603, "내부 오류(%s)" % type(e).__name__)
         if resp is not None:
             try:

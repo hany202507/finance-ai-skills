@@ -11,6 +11,8 @@
 import json
 import os
 import re
+import sys
+import traceback
 
 from yangdo import QUESTIONS_PATH, efile_tmp, engine
 
@@ -139,6 +141,16 @@ def review_md(res):
 def why(e):
     """OSError 를 한 줄 까닭으로. 운영체제 문장이 있으면 그것만 쓴다."""
     return " ".join(str(getattr(e, "strerror", None) or e).split())
+
+
+def log_call_sites(e, head, stream=None):
+    """예상하지 못한 예외를 운영자가 볼 수 있게 표준오류에 남긴다. head 뒤에 예외 형 이름을 붙이고 호출 위치(파일, 줄, 함수)만 찍는다.
+
+    예외 문장에는 사실관계나 신고인의 값이 실릴 수 있어 싣지 않는다. make_return.py 와 MCP 서버가 같은 꼴로 남긴다.
+    """
+    stream = stream or sys.stderr
+    print("%s(%s). 예외 문장은 싣지 않는다. 호출 위치:" % (head, type(e).__name__), file=stream)
+    traceback.print_tb(e.__traceback__, file=stream)
 
 
 def question_counts(res):

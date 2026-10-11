@@ -59,7 +59,6 @@ import argparse
 import json
 import os
 import sys
-import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
@@ -101,7 +100,7 @@ UNCONFIRMED = (
     "01-18~22·26·27 세무대리인 칸: 본인 신고라 공란으로 두었다",
     "03-31 주민세_세율: 합계 행만 10.00, 나머지 행은 0. 03-30·32·33 주민세 금액 칸은 0 이다",
 )
-TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
+TAIL = outputs.TAIL                                         # 검토 문서와 같은 맺음말
 
 
 def _dedupe(xs):
@@ -112,8 +111,7 @@ def _dedupe(xs):
     return out
 
 
-def _why(e):
-    return " ".join(str(getattr(e, "strerror", None) or e).split())
+_why = outputs.why
 
 
 def _inside(path, folder):
@@ -581,9 +579,8 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
             rep["알림"].append("기준 파일을 읽지 못했다: %s (%s)" % (name, _why(e)))
     except Exception as e:      # 예상하지 못한 오류. 확인 문서 없이 제출용 파일만 남지 않게 한다
         kind = type(e).__name__                  # 예외 문장에는 인적사항이 실릴 수 있어 형 이름만 적는다
-        # 운영자가 볼 수 있게 표준오류에 남긴다. 예외 문장은 빼고 형 이름과 호출 위치만 찍는다
-        print("예상하지 못한 오류(%s). 예외 문장은 싣지 않는다. 호출 위치:" % kind, file=sys.stderr)
-        traceback.print_tb(e.__traceback__, file=sys.stderr)
+        # 운영자가 볼 수 있게 표준오류에 남긴다. 예외 문장은 빼고 형 이름과 호출 위치만 찍는다(MCP 서버도 같은 함수를 쓴다)
+        outputs.log_call_sites(e, "예상하지 못한 오류")
         left = _drop_submittable(rep, out)
         rep.update(종료코드=1, 상태="오류", 요약="예상하지 못한 오류(%s)로 멈췄다. 이 실행의 결과로 신고하지 않는다" % kind)
         rep["알림"].append("예상하지 못한 오류(%s)로 멈췄다. 이번 실행이 만든 신고서 PDF 와 전자신고 파일은 지웠다. "
