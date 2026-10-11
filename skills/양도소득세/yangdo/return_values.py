@@ -63,7 +63,7 @@ EXPENSE_RENAMES = {"필요경비신고자료일련번호": "일련번호", "구�
 
 
 class Unsupported(Exception):
-    """신고 범위가 아니다(기신고 합산, 신고기한이 다른 예정신고 등). 계획은 그 범위를 다룰 계획 번호, 「없음」은 계획 없음."""
+    """신고 범위가 아니다(예정·확정신고의 기신고 합산, 신고기한이 다른 예정신고 등). 계획은 그 범위를 다룰 계획 번호, 「없음」은 계획 없음."""
 
     def __init__(self, message, 계획="5"):
         super().__init__(message)
@@ -250,8 +250,11 @@ class _Builder:
         last = max(sold)
         if to_date(made) < to_date(last):
             raise ValueError("신고.작성일 %s 이 양도일 %s 보다 앞선다" % (made, last))
-        if kind == "확정" and (self.facts.get("연간") or {}).get("기신고"):    # 수집 전용 키(facts.COLLECT_ONLY)
-            raise Unsupported("확정신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다", "5")
+        if (self.facts.get("연간") or {}).get("기신고"):    # 수집 전용 키(facts.COLLECT_ONLY). 신고 구분과 상관없이 막는다
+            # 먼저 신고한 양도가 있으면 기본공제를 이미 썼을 수 있고 누진세율 자산은 본지 ⑤ 기신고 양도소득금액을 합산해야 한다.
+            # 엔진이 기신고분을 합산하지 않으므로 예정신고도 기신고가 없는 신고서와 같은 값으로 나간다
+            more = "" if kind == "확정" else ". 먼저 신고한 양도가 있으면 기본공제를 다시 쓸 수 없고 누진세율 자산은 기신고 양도소득금액을 합산한다"
+            raise Unsupported("%s신고에 같은 해 예정신고분(기신고)을 합산하는 신고는 계획 5 에서 다룬다%s" % (kind, more), "5")
         if kind == "예정" and len({d[:7] for d in sold}) > 1:
             raise Unsupported("예정신고는 신고기한(양도월 말일부터 2개월)이 같은 양도건끼리 한다. 양도월이 다른 자산(%s)은 따로 신고한다"
                               % ", ".join("%s %s" % (r["id"], r["판정"]["양도일"]) for r in rows), "없음")

@@ -230,6 +230,38 @@ def test_unsupported_scope_is_code_2(tmp_path, monkeypatch):
     assert not (PDFS | GUIDES | {"신고값.json"}) & set(os.listdir(out))
 
 
+def _a_with(tmp_path, **annual):
+    """사례 A 의 연간 답을 바꿔 돌린다. (보고, 출력 폴더)."""
+    facts = copy.deepcopy(CASES["A"])
+    facts["연간"].update(annual)
+    out = tmp_path / "out"
+    return MR.make(facts, filers.get("A"), str(out), today=TODAY), out
+
+
+def test_preliminary_return_with_prior_return_is_code_2(tmp_path):
+    """같은 해 기신고가 있는 예정신고는 정상 신고서로 내지 않는다."""
+    rep, out = _a_with(tmp_path, 다른양도=True, 기신고=50000000)
+    assert rep["종료코드"] == 2 and rep["상태"] == "다루지않음"
+    names = set(os.listdir(out))
+    assert CALC | {"신고_확인.md"} <= names
+    assert not (PDFS | GUIDES | {"신고값.json"}) & names and _efiles(out) == []
+    text = _confirm(out)
+    assert "기신고" in text and "계획 5" in text and "| 신고값 | 다루지않음 |" in text
+    assert any(x["계획"] == "5" and "기신고" in x["내용"] for x in rep["다루지않음"])
+
+
+def test_other_sale_answer_is_raised_in_notes_and_todo(tmp_path):
+    """다른 양도가 있다고만 답한 건은 신고서를 만들되, 먼저 신고한 건이 있으면 세액이 달라진다고 알림과 사람이 할 일에 올린다."""
+    rep, out = _a_with(tmp_path, 다른양도=True)
+    assert rep["종료코드"] == 0 and _efiles(out) == ["20261220C116300.01"]
+    text = _confirm(out)
+    for part in (text.split("## 알림", 1)[1].split("##")[0], _todo_part(text), " ".join(rep["알림"]), " ".join(rep["사람이할일"])):
+        assert "같은 해 다른 양도" in part and "기본공제" in part and "먼저 신고" in part
+    assert DASH not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
+    plain, out2 = _a_with(tmp_path / "plain")
+    assert plain["종료코드"] == 0 and plain["알림"] == [] and "같은 해 다른 양도" not in _confirm(out2)
+
+
 # ---------------------------------------------------------------- 종료코드 1
 
 def test_forms_check_failure_makes_no_pdf_and_no_file(tmp_path, monkeypatch):

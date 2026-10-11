@@ -95,6 +95,28 @@ def test_prior_return_merge_is_unsupported():
         return_values.build(r, facts, filing.load(f))
 
 
+def test_prior_return_blocks_preliminary_return_too():
+    """같은 해에 먼저 예정신고한 양도가 있으면 기본공제를 다시 쓸 수 없고 누진세율 자산은 기신고 양도소득금액을 합산해야 한다.
+    예정신고도 확정신고와 같이 신고값을 만들지 않는다."""
+    r = engine.calculate(CASES["A"], today="2026-10-11")
+    f = filers.get("A")
+    assert f["신고"]["구분"] == "예정"
+    facts = dict(CASES["A"], 연간=dict(CASES["A"]["연간"], 다른양도=True, 기신고=50000000))
+    with pytest.raises(return_values.Unsupported, match="기신고") as e:
+        return_values.build(r, facts, filing.load(f))
+    assert e.value.계획 == "5" and "예정신고" in str(e.value)
+    assert "제1" not in str(e.value)                      # 조문 번호는 적지 않는다
+
+
+def test_other_sale_without_prior_return_is_not_blocked():
+    """다른 양도가 있다고만 답하고 기신고 금액이 없으면 막지 않는다(문항 P05 는 팔 예정인 건도 받는다)."""
+    r = engine.calculate(CASES["A"], today="2026-10-11")
+    for prior in (None, 0):
+        facts = dict(CASES["A"], 연간=dict(CASES["A"]["연간"], 다른양도=True, 기신고=prior))
+        rv = return_values.build(r, facts, filing.load(filers.get("A")))
+        assert rv["본지"]["열"]["합계"]["산출세액"] == 2565000
+
+
 # ---- 브리프에 없는 시험(구현 중 더함) ----
 
 def test_preliminary_return_spanning_two_deadlines_is_unsupported():
