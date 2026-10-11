@@ -548,3 +548,74 @@ def test_empty_facts_is_not_a_start():
     ids = [q["id"] for q in call("yangdo_next_questions", {"facts": {}, "limit": 10})["다음"]]
     assert ids == ["P01", "P05"]
     assert call("yangdo_calculate", {"facts": {}})["질문"][0]["문항"] == "P02"
+
+
+# ---- 검토 반영: pymupdf 는 신고서 도구를 부를 때만 읽고, 없어도 계획 1 도구는 뜬다 ----
+
+def _py(code, *argv):
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    return subprocess.run([sys.executable, "-c", code, os.path.join(ROOT, "scripts")] + list(argv), capture_output=True,
+                          text=True, encoding="utf-8", env=env, timeout=240)
+
+
+def test_server_start_does_not_load_pymupdf():
+    p = _py("import sys; sys.path.insert(0, sys.argv[1]); import mcp_server\n"
+            "print(sorted(m for m in ('pymupdf', 'fitz', 'make_return') if m in sys.modules))")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip() == "[]"
+
+
+def test_plan1_tools_work_without_pymupdf(tmp_path):
+    facts = write_json(tmp_path / "a.json", CASES["A"])
+    filer = write_json(tmp_path / "g.json", {})
+    code = ("import sys, json; sys.path.insert(0, sys.argv[1])\n"
+            "sys.modules['pymupdf'] = None\n"                 # import pymupdf 가 ImportError 를 내게 한다
+            "import mcp_server as M\n"
+            "def rpc(name, args):\n"
+            "    return M.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': name, 'arguments': args}})['result']\n"
+            "out = {'tools': len(M.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'})['result']['tools'])}\n"
+            "out['info'] = 'isError' not in rpc('ruleset_info', {})\n"
+            "out['calc'] = json.loads(rpc('yangdo_calculate', {'facts_path': sys.argv[2]})['content'][0]['text'])['상태']\n"
+            "for name in ('yangdo_forms', 'yangdo_efile'):\n"
+            "    r = rpc(name, {'facts_path': sys.argv[2], 'filer_path': sys.argv[3], 'out_dir': sys.argv[4]})\n"
+            "    out[name] = [r.get('isError'), r['content'][0]['text']]\n"
+            "print(json.dumps(out, ensure_ascii=False))")
+    p = _py(code, facts, filer, str(tmp_path / "o"))
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert out["tools"] == 7 and out["info"] is True and out["calc"] == "완료"
+    for name in ("yangdo_forms", "yangdo_efile"):
+        is_error, text = out[name]
+        assert is_error is True and "pymupdf" in text and "pip install" in text and "Traceback" not in text
+    assert not os.path.exists(tmp_path / "o")
+
+
+def test_mupdf_messages_go_to_stderr_after_return_tool_loads():
+    code = ("import sys; sys.path.insert(0, sys.argv[1])\n"
+            "import mcp_server as M\n"
+            "M._load_make_return()\n"
+            "import pymupdf\n"
+            "pymupdf.message('MUPDF-표지')")
+    p = _py(code)
+    assert p.returncode == 0, p.stderr
+    assert "MUPDF-표지" not in p.stdout and "MUPDF-표지" in p.stderr
+
+
+def test_stdio_return_tool_keeps_stdout_clean(tmp_path):
+    """pymupdf 가 올라오는 신고서 도구를 stdio 로 불러도 표준출력에는 프로토콜 줄만 나온다(_run_stdio 가 줄마다 JSON 으로 읽는다)."""
+    import filers
+    f = filers.get("A")
+    facts = write_json(tmp_path / "a.json", CASES["A"])
+    filer = write_json(tmp_path / "g.json", f)
+    msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "yangdo_efile", "arguments": {"facts_path": facts, "filer_path": filer, "out_dir": str(tmp_path / "o"),
+                                                              "today": "2026-10-11"}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "ping"}]
+    lines, p = _stdio(msgs)
+    assert [x["id"] for x in lines] == [1, 2, 3]
+    done = json.loads(lines[1]["result"]["content"][0]["text"])
+    assert done["종료코드"] == 0 and done["전자신고"]["파일명"] == "20261220C116300.01"
+    text = lines[1]["result"]["content"][0]["text"]
+    assert f["신고인"]["성명"] not in text and f["신고인"]["주민등록번호"] not in text
+    assert b"\r" not in p.stdout

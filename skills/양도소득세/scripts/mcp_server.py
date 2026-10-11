@@ -10,6 +10,10 @@
 입력 스키마의 속성 이름은 ASCII 로만 쓴다(^[a-zA-Z0-9_.-]{1,64}$). Claude 클라이언트는 이 꼴이 아닌 속성 이름을 가진
 도구를 목록에서 통째로 뺀다. 옛 한글 이름(오늘, 문항, 값, 자산, 주택, 서식, 시도, 시군구, 읍면동, 기준일, 지구해당)으로 온
 인자도 받는다(ALIASES). 사실관계처럼 한글 키를 가진 값은 속성을 나열하지 않는 자유 객체로 둔다.
+
+신고서 도구가 쓰는 make_return(과 pymupdf)은 그 도구를 처음 부를 때 읽는다(_load_make_return). 서버를 띄울 때 읽지 않으므로
+pymupdf 가 없어도 계산 도구는 그대로 뜨고, 신고서 도구 둘만 설치 안내 오류를 낸다. 읽은 뒤에는 MuPDF 메시지를 표준오류로 돌려
+프로토콜 줄에 섞이지 않게 한다.
 """
 import contextlib
 import json
@@ -28,7 +32,6 @@ for _p in (SKILL, HERE):
 from yangdo import engine, outputs, questions, regions, ruleset  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
-import make_return  # noqa: E402
 
 PROTOCOL = "2025-03-26"
 INSTRUCTIONS = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민등록번호, 주소, 전화번호, 계좌)을 넣지 않는다. "
@@ -303,8 +306,35 @@ def _calculate(args):
     return s
 
 
+_RETURN_MODULE = []
+
+
+def _load_make_return():
+    """make_return 모듈. 처음 부를 때 읽는다(pymupdf 가 이때 올라온다). 읽지 못하면 설치 안내를 든 ToolError.
+
+    pymupdf 는 메시지를 읽을 때의 표준출력에 쓰도록 잡아 두므로, 읽은 뒤 표준오류로 돌린다(set_messages 가 없는 판은 건너뛴다).
+    """
+    if not _RETURN_MODULE:
+        try:
+            import make_return
+        except ImportError as e:
+            raise ToolError("신고서·전자신고 도구에 필요한 모듈(%s)을 읽지 못했다. pymupdf 가 없으면 스킬 폴더에서 "
+                            "pip install -r requirements.txt 를 돌린 뒤 서버를 다시 띄운다. 계산 도구는 그대로 쓸 수 있다"
+                            % (e.name or "pymupdf")) from e
+        pymupdf = sys.modules.get("pymupdf")
+        redirect = getattr(pymupdf, "set_messages", None)
+        if callable(redirect):
+            try:
+                redirect(stream=sys.__stderr__ or sys.stderr)
+            except Exception:      # 메시지 설정 방법이 다른 판. 건너뛴다
+                traceback.print_exc(file=sys.stderr)
+        _RETURN_MODULE.append(make_return)
+    return _RETURN_MODULE[0]
+
+
 def _make_return(args, upto):
     """신고서(와 전자신고 파일)를 만든다. 신고인 정보는 파일 경로로만 받고, 응답에는 보고 가운데 RETURN_KEYS 만 싣는다."""
+    make_return = _load_make_return()      # 모듈을 읽지 못하면 인자를 보거나 출력 폴더를 건드리기 전에 알린다
     f = _facts(args)
     filer_path = _text(args, "filer_path", True)
     out_dir = _text(args, "out_dir", True)
@@ -318,11 +348,11 @@ def _make_return(args, upto):
 
 
 def _forms(args):
-    return _make_return(args, make_return.FORMS)
+    return _make_return(args, "forms")      # make_return.FORMS
 
 
 def _efile(args):
-    return _make_return(args, make_return.EFILE)
+    return _make_return(args, "efile")      # make_return.EFILE
 
 
 HANDLERS = {"yangdo_next_questions": _next_questions, "yangdo_answer": _answer, "yangdo_calculate": _calculate,

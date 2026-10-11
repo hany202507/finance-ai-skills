@@ -436,3 +436,133 @@ def test_source_style_rules():
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             assert "?" not in node.value, node.value
+
+
+# ---------------------------------------------------------------- 검토 반영 1차
+
+def _lock(monkeypatch, *names):
+    """이름이 names 인 파일은 지워지지 않게 한다(다른 프로그램이 열어 둔 것처럼)."""
+    real = os.remove
+
+    def remove(path, *a, **k):
+        if os.path.basename(os.fspath(path)) in names:
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(os, "remove", remove)
+
+
+def test_rerun_with_locked_workbook_leaves_no_submittable_file(tmp_path, monkeypatch, capsys):
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0 and _efiles(out) == [S1_FILE]
+    _lock(monkeypatch, "양도소득세_계산근거.xlsx")             # 엑셀이 계산근거를 열어 둔 채 다시 실행
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 4
+    names = set(os.listdir(out))
+    assert _efiles(out) == []                                  # 옛 전자신고 파일이 제출용 이름으로 남지 않는다
+    assert not (PDFS | GUIDES | {"신고값.json"}) & names
+    assert "양도소득세_계산근거.xlsx" in names
+    text = _confirm(out)
+    assert "양도소득세_계산근거.xlsx" in text and "이전 실행" in text
+    assert "양도소득세_계산근거.xlsx" in capsys.readouterr().err
+
+
+def test_rerun_with_locked_pdf_leaves_no_submittable_file(tmp_path, monkeypatch):
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    (out / ".efile-old").mkdir()
+    _lock(monkeypatch, "양도소득세_신고서.pdf")                 # PDF 보기 프로그램이 국세 신고서를 열어 둔 채 다시 실행
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 4
+    names = set(os.listdir(out))
+    assert _efiles(out) == []
+    assert not (GUIDES | CALC | {"신고값.json", "지방소득세_신고서.pdf", ".efile-old"}) & names   # 막힌 파일 말고는 끝까지 지운다
+    assert "양도소득세_신고서.pdf" in names
+    text = _confirm(out)
+    assert "양도소득세_신고서.pdf" in text and "이전 실행" in text
+
+
+def test_unexpected_error_still_writes_confirm_and_drops_submittable_files(tmp_path, monkeypatch, capsys):
+    def boom(rv):
+        raise KeyError("김합성 비밀")                           # 예외 문장에는 인적사항이 실릴 수 있다
+
+    monkeypatch.setattr(MR.guide, "hometax_input", boom)
+    code, out = _main(tmp_path, "S1", s1_filer())
+    shown = capsys.readouterr()
+    assert code == 1
+    names = set(os.listdir(out))
+    assert "신고_확인.md" in names
+    assert _efiles(out) == [] and not PDFS & names             # 확인 문서 없이 제출용 파일만 남지 않게 지운다
+    assert not [n for n in names if n.startswith(".efile-")]
+    text = _confirm(out)
+    assert "KeyError" in text and "예상하지 못한" in text
+    assert "김합성" not in text and "김합성" not in shown.out
+    assert "Traceback" in shown.err
+    made = text.split("## 만든 파일", 1)[1].split("## 사람이 할 일")[0]
+    assert S1_FILE not in made and "신고서.pdf" not in made
+
+
+def test_unexpected_error_in_render_is_reported_too(tmp_path, monkeypatch, capsys):
+    def boom(rv, out_dir, **k):
+        raise RuntimeError("code=2: cannot open document")     # pymupdf 가 내는 꼴
+
+    monkeypatch.setattr(MR.forms, "render", boom)
+    res = MR.make(CASES["S1"], s1_filer(), str(tmp_path / "o"), today=TODAY)
+    assert res["종료코드"] == 1 and any("RuntimeError" in x for x in res["알림"])
+    assert not any("cannot open" in x for x in res["알림"])
+    assert "신고_확인.md" in os.listdir(tmp_path / "o")
+    assert "Traceback" in capsys.readouterr().err
+
+
+def _first_line(out, name):
+    with open(os.path.join(str(out), name), encoding="utf-8") as fh:
+        return fh.readline()
+
+
+def test_guide_head_says_what_really_happened(tmp_path, monkeypatch):
+    def rejected(rv, out_dir, **k):
+        return {"경로": None, "검증": ["03 레코드: 합계가 다르다"], "파일명": S1_FILE, "경고": []}
+
+    monkeypatch.setattr(MR.efile, "write", rejected)
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 1 and PDFS <= set(os.listdir(out))
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert "전자신고 검증" in head and "신고_확인.md" in head and "신고하지 않는다" in head
+        assert "신고서를 만들지 못" not in head                 # 신고서 PDF 는 만들었다
+
+
+def test_guide_head_for_fully_exempt_asset(tmp_path):
+    code, out = _main(tmp_path, "G", g_filer())
+    assert code == 2
+    for g in GUIDES:
+        head = _first_line(out, g)
+        assert "전액 비과세" in head and "참고용" in head
+
+
+@pytest.mark.parametrize("exc,want", [
+    (efile.BuildError("신고.작성일(YYYYMMDD)과 신고.상세코드(2자리)로 파일명을 만들 수 없다"), "파일명을 만들 수 없다"),
+    (KeyError("신고값 전자신고 05 행에 없는 키: 과세구분"), "신고값 전자신고 05 행에 없는 키: 과세구분"),
+])
+def test_efile_build_errors_are_code_1(tmp_path, monkeypatch, exc, want):
+    def broken(rv, out_dir, **k):
+        raise exc
+
+    monkeypatch.setattr(MR.efile, "write", broken)
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 1 and _efiles(out) == []
+    assert PDFS <= set(os.listdir(out))
+    text = _confirm(out)
+    section = text.split("## 전자신고 검증", 1)[1].split("##")[0]
+    assert "전자신고 레코드를 만들지 못했다. " in section and want in section
+    assert "통과" not in section and "'" not in section
+
+
+def test_no_path_and_no_sentence_is_not_a_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(MR.efile, "write", lambda rv, out_dir, **k: {"경로": None, "검증": [], "파일명": S1_FILE, "경고": []})
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 1 and _efiles(out) == []
+    text = _confirm(out)
+    section = text.split("## 전자신고 검증", 1)[1].split("##")[0]
+    assert "통과" not in section and "파일을 만들지 못했다" in section
+    assert "규격서 미확인 칸" not in text
