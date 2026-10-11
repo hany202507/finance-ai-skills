@@ -413,7 +413,8 @@ def test_deadline_notes_with_january_to_july_dates_reach_input_guide():
     cases = [
         ("주말 보정", _deadline_rv("S1", "2027-02-01"), "정기신고로 만들었다", "2027-01-31"),   # 말일 2027-01-31 일요일
         ("허가일 기준", _deadline_rv("S1", "2027-02-01", _permit_facts("2027-01-10")), "허가일(2027-01-10)", "2027-01-10"),
-        ("허가일 없음", _deadline_rv("S1", "2030-01-01", _permit_facts(None)), "신고기한을 판정하지 않았다", None),
+        # 허가일이 없어도 작성일이 양도일 기준 기한(2027-02-01) 안이면 신고값을 만들고 그 날짜를 담은 확인사항을 남긴다
+        ("허가일 없음", _deadline_rv("S1", "2027-02-01", _permit_facts(None)), "허가구역 단서에 해당하는지 알 수 없다", "2027-02-01"),
     ]
     for label, rv, key, date_text in cases:
         notes = [m for m in rv["확인사항"] if key in m]
@@ -435,8 +436,11 @@ def test_file_only_pattern_ignores_every_iso_date():
 
 def test_file_only_pattern_still_catches_record_field_numbers():
     for text in ("03-31 주민세_세율은 합계 행만 10.00 이다", "일반건물 칸(05-46)에 넣었다", "05-10·11 칸에 적었다",
-                 "02-21 칸은 비웠다", "03-30~33 칸은 0 이다", "07 레코드 상호는 Not Null 이다", "01 레코드 길이"):
+                 "02-21 칸은 비웠다", "03-30~33 칸은 0 이다", "07 레코드 상호는 Not Null 이다", "01 레코드 길이",
+                 "03-31-32 칸은 0 이다", "주민세 칸(03-30-33)", "05-64-65 코드"):      # 칸 번호 뒤에 - 로 이은 꼴
         assert guide.FILE_ONLY.search(text), text
+    for text in ("2027-01-31", "2027-03-01-2027-03-02 사이", "기한 2026-07-31 까지", "1-10 열", "제167조의3", "10-20 구간"):
+        assert not guide.FILE_ONLY.search(text), text
 
 
 # ---- T18: 매입가액 행의 지급일자 ----

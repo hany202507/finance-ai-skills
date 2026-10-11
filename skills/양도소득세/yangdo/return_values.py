@@ -22,7 +22,10 @@ NoTaxableAsset(Unsupported)로 멈춘다. 규격서(V5.17 p47·p50)에는 05 레
 인적사항(성명, 주민등록번호, 주소, 전화, 양수인)은 신고인·양수인·신고 절에만 둔다. 예외는 부표1·05 소재지(지번)와 부표3·07
 매입가액 행 상호(신고인 JSON 자산[id].취득상대방, 매도인 성명)다. 이 값은 검토 문서·신고_확인.md·MCP 응답·화면 출력에 옮기지
 않는다. 입력 안내서와 부속서류 목록은 출력 폴더의 로컬 파일이라 소재지와 상호를 적는다(주민등록번호와 전화는 적지 않는다,
-guide 머리말, global.md 「신고값 인적 성격 값」). 신고값 파일은 통째로 인적사항 파일로 다룬다(C8). 확인사항에는 값을 싣지 않는다.
+guide 머리말). 신고값 파일은 통째로 인적사항 파일로 다룬다. 확인사항에는 값을 싣지 않는다.
+부표3 행의 「지급일」은 부표3 서식에 실제로 적는 값이다. 서식에서 지급일 칸이 음영인 행(매입가액, 취득세 등)은 빈 글자이고
+매입가액 행에 취득일을 넣지 않는다. 07 행의 「지급일자」는 필수 구분코드 행에만 적는다(규격서 p60). 두 규칙의 출처는
+forms/필드목록의 음영_열과 efile/codes_c116300.json 의 필수다(form_writes_date, schedule3_row).
 
 전자신고 행의 키는 efile/layout_c116300.json 필드 name 그대로다(자료구분·서식코드·공란 제외). 다른 점은 아래뿐이다.
   05 계산명세: 「자산」(자산 id)을 더 싣는다.
@@ -244,6 +247,8 @@ class _Builder:
         self._bjd = None
         self._dated = None
         self.special = self.codes["세율별특수행"]           # 03 국내 소계·합계 행의 (국내외분, 세율구분)
+        # 지번 앞에 「산」을 붙이는 특수지 코드(규격서 p107 의 「산」). 코드 글자를 코드에 박지 않고 코드표의 이름으로 찾는다
+        self.mountain = next((v["코드"] for v in self.codes["특수지"].values() if v.get("이름") == "산"), None)
 
     # ------------------------------------------------------------ 공통
 
@@ -321,37 +326,50 @@ class _Builder:
                 "양도일자": _ymd(last), "홈택스ID": s.get("홈택스ID"), "분납신청": s.get("분납신청") is True}
 
     def deadline_base(self, row):
-        """신고기한을 세는 기준일. 토지거래허가 대상 자산이 허가 전에 대금을 청산했으면 허가일이다(소득세법 제105조①1호 단서,
-        제110조① 괄호). 허가일 값이 없으면 단서에 해당하는지 알 수 없어 None 이다."""
+        """(신고기한을 세는 기준일, 기준일을 정하지 못한 까닭). 토지거래허가 대상 자산이 허가 전에 대금을 청산했으면 기준일은
+        허가일이다(소득세법 제105조①1호 단서, 제110조① 괄호). 허가일 값이 없거나 읽지 못하면 단서에 해당하는지 알 수 없어
+        기준일이 None 이고 까닭은 「이 없어」 또는 「을 읽지 못해」다(check_deadline 이 양도일 기준 기한으로 가른다)."""
         sold = to_date(row["판정"]["양도일"])
         a = self.assets.get(row["id"]) or {}
         if a.get("토지거래허가대상") != "예":
-            return sold
+            return sold, None
         unreadable = False
         try:
             permit = to_date((a.get("토지거래허가") or {}).get("허가일"))
         except ValueError:
             permit, unreadable = None, True
         if permit is None:
-            self.note("%s: 토지거래허가 대상 자산이라 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이다. 허가일 값%s "
-                      "허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다"
-                      % (row["id"], "을 읽지 못해" if unreadable else "이 없어"))
-            return None
+            return None, "을 읽지 못해" if unreadable else "이 없어"
         if permit > sold:
             self.note("%s: 토지거래허가 전에 대금을 청산해 허가일(%s) 기준으로 신고기한을 셌다. 허가 전에 허가구역 지정이 해제됐으면 "
                       "해제일 기준이라 기한이 다르다" % (row["id"], permit.isoformat()))
-            return permit
-        return sold
+            return permit, None
+        return sold, None
 
     def check_deadline(self, kind, rows, made):
         """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날로
         옮긴 기한으로 본다(dates.filing_deadline, 소득세법 제105조①, 제110조①, 국세기본법 제5조①). 문장에는 건너뛴 날을
-        그대로 적고, 기한이 끝나는 해가 공휴일 표에 없으면 그 해의 연휴와 대체공휴일을 모른다고 적는다."""
+        그대로 적고, 기한이 끝나는 해가 공휴일 표에 없으면 그 해의 연휴와 대체공휴일을 모른다고 적는다.
+
+        허가 대상인데 허가일을 모르는 자산은 기준일이 양도일이거나 그보다 늦은 허가일이라, 기한이 양도일 기준 기한보다 이르지
+        않다. 작성일이 양도일 기준 기한 안이면 어느 쪽이든 기한 안이므로 확인사항만 남기고, 그 기한을 지났으면 기한 안인지
+        판정할 수 없어 신고값을 만들지 않고 허가일을 받는다(그런 자산뿐일 때 기한 판정이 통째로 빠지지 않게 자산마다 본다)."""
         due = []
         for r in rows:
-            base = self.deadline_base(r)
+            base, why = self.deadline_base(r)
             if base is not None:
                 due.append((dates.filing_deadline(kind, base, self.rs), r["id"]))
+                continue
+            by_sale = dates.filing_deadline(kind, to_date(r["판정"]["양도일"]), self.rs)[1]
+            if made > by_sale:
+                raise Unsupported(
+                    "자산 %s: 토지거래허가 대상 자산인데 허가일 값%s 신고기한을 정할 수 없다. 작성일 %s 이 양도일 기준 신고기한 %s 을 "
+                    "지났다. 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이라 기한 안일 수 있다. 사실관계의 이 자산 "
+                    "토지거래허가의 허가일을 YYYY-MM-DD 로 적은 뒤 다시 만든다"
+                    % (r["id"], why, made.isoformat(), by_sale.isoformat()), "없음")
+            self.note("%s: 토지거래허가 대상 자산이라 허가 전에 대금을 청산했으면 신고기한이 허가일 기준이다. 허가일 값%s "
+                      "허가구역 단서에 해당하는지 알 수 없다. 작성일이 양도일 기준 신고기한 %s 을 지나지 않아 어느 쪽이든 신고기한 안이다"
+                      % (r["id"], why, by_sale.isoformat()))
         if not due:
             return
         deadline, aid = min(due, key=lambda x: x[0][1])
@@ -366,6 +384,10 @@ class _Builder:
             if not deadline.공휴일표:
                 text += (". 기한이 끝나는 해가 공휴일 표에 없어 그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 알지 못한다. "
                          "기한이 그런 날이면 기한 안일 수 있으니 달력으로 확인한다")
+            if (self.assets.get(aid) or {}).get("토지거래허가대상") == "모름":
+                text += (". 이 자산의 토지거래허가대상이 「모름」이라 양도일 기준으로 기한을 셌다. 토지거래허가구역 안의 토지이고 "
+                         "허가 전에 대금을 청산했으면 신고기한이 허가일 기준이라 기한 안일 수 있다. 허가 대상인지와 허가일을 확인해 "
+                         "사실관계에 적은 뒤 다시 만든다")
             raise Unsupported(text, "없음")
         if made > nominal:
             self.note("신고기한 말일 %s 뒤의 작성일 %s 을 정기신고로 만들었다. 신고기한을 %s 까지로 보았고 건너뛴 날은 %s 이다"
@@ -424,7 +446,7 @@ class _Builder:
         parts = [name]
         no = lot.get("번지")
         if no and no != "0":
-            no = ("산 " if lot.get("특수지") == "1" else "") + no
+            no = ("산 " if self.mountain and lot.get("특수지") == self.mountain else "") + no
             if lot.get("호") and lot["호"] != "0":
                 no += "-" + lot["호"]
             parts.append(no)
@@ -518,7 +540,8 @@ class _Builder:
         return v
 
     def tax_office(self, a):
-        """취득세(112·11201) 행의 거래상대방. 취득세 납세지는 부동산 소재지다(지방세법 제8조①1호). 취득 당시 소재지가 있으면 그것."""
+        """취득세(112·11201) 행의 거래상대방. 취득세 납세지는 부동산 소재지다. 취득 당시 소재지가 있으면 그것.
+        납세지를 정한 지방세법 조문은 규칙세트에 싣지 않은 조문이라 확인사항 문장에 조문 번호를 적지 않는다."""
         loc = a.get("취득당시소재지") or a.get("소재지") or {}
         return " ".join(loc.get(k) for k in ("시도", "시군구") if loc.get(k))
 
@@ -539,7 +562,7 @@ class _Builder:
             elif ln.group == "취득세":
                 rows.append(self.schedule3_row("취득세", _int(ex.get("취득세")), partner=self.tax_office(a)))
                 self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지의 시도와 시군구 이름으로 적었다"
-                          "(지방세법 제8조①1호, 규격서 p60 「거래상대방의 상호」)" % aid)
+                          "(규격서 p60 「거래상대방의 상호」)" % aid)
             elif ln.group == "감가상각비":
                 rows.append(self.schedule3_row("감가상각비", _int(a.get("감가상각비"))))
             else:
@@ -560,9 +583,10 @@ class _Builder:
         return rows, c["취득가액"], c["필요경비"]
 
     def years_text(self, n):
-        """햇수 n → 「n년 이상 n+1년 미만」. 0 은 「1년 미만」, 10 이상은 「10년 이상」(05-64·65 코드와 같은 눈금)."""
+        """햇수 n → 「n년 이상 n+1년 미만」. 0 은 「1년 미만」, 끝 눈금 이상은 「10년 이상」. 끝 눈금(끝햇수 10)과 그 글자는
+        forms/서식판.json 「부표1_기간표기」에 있다(05-64·65 코드와 같은 눈금, ⑰ 도 같은 눈금을 쓰는 근거가 거기 있다)."""
         rule = self.form_reg["부표1_기간표기"]
-        if n >= 10:
+        if n >= rule["끝햇수"]:
             return rule["끝"]
         if n <= 0:
             return rule["처음"]
@@ -781,7 +805,12 @@ class _Builder:
 
     def installment(self, due):
         """분납할 세액(소득세법 제112조, 시행령 제175조). 신고.분납신청이 참일 때만. due 는 가산세를 뺀 납부할 세액이다
-        (제112조가 가리키는 제106조·제111조의 납부할 세액은 산출세액에서 감면세액과 세액공제액을 뺀 금액, 규칙 판정.분납대상세액)."""
+        (제112조가 가리키는 제106조·제111조의 납부할 세액은 산출세액에서 감면세액과 세액공제액을 뺀 금액, 규칙 판정.분납대상세액).
+
+        분납 규칙(기준금액, 상한기준, 상한율)은 신고서에 넣은 자산의 마지막 양도일(self.last_sold)에 시행 중인 값으로 읽는다.
+        한 신고서의 자산은 같은 과세기간에 양도한 것이라 양도일마다 값이 갈릴 일이 지금은 없다. 과세기간 중에 규칙이 바뀌는
+        개정이 생기면 부칙의 적용례(양도분부터인지 신고분부터인지)를 보고 이 기준일을 다시 정한다. 서식 검산(forms_check)도
+        신고 절의 양도일자(같은 날)로 읽는다."""
         req = (self.filer.get("신고") or {}).get("분납신청")
         if req is None:
             self.note("신고.분납신청이 비어 있어 분납하지 않는 것으로 했다(질문 F03)")

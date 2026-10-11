@@ -243,6 +243,45 @@ def test_form_guide_and_file_follow_the_payment_date_in_the_values():
     assert "2018-03-20" in md
 
 
+def test_years_text_cap_and_mountain_code_come_from_tables(tmp_path):
+    """⑨·⑩·⑰ 기간 글자의 「10년 이상」 눈금은 forms/서식판.json, 소재지의 「산」 표기는 코드표 특수지에서 읽는다."""
+    import os
+    import shutil
+    from yangdo import SKILL_DIR
+    r, rv = _rv("A")
+    assert rv["부표1"][0]["보유기간"] == "10년 이상"               # A 는 2014 취득, 2026 양도(보유 12년)
+    forms_dir, efile_dir = tmp_path / "forms", tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL_DIR, "forms"), str(forms_dir))
+    shutil.copytree(os.path.join(SKILL_DIR, "efile"), str(efile_dir))
+    reg = json.loads((forms_dir / "서식판.json").read_text(encoding="utf-8"))
+    assert reg["부표1_기간표기"]["끝햇수"] == 10
+    reg["부표1_기간표기"].update(끝햇수=8, 끝="8년 이상")
+    (forms_dir / "서식판.json").write_text(json.dumps(reg, ensure_ascii=False), encoding="utf-8")
+    codes = json.loads((efile_dir / "codes_c116300.json").read_text(encoding="utf-8"))
+    codes["특수지"]["1"]["이름"], codes["특수지"]["2"]["이름"] = codes["특수지"]["2"]["이름"], "산"
+    (efile_dir / "codes_c116300.json").write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    f = filers.get("S1")
+    f["자산"]["S1"].update(법정동코드="1120011400", 특수지="2", 번지="12", 호="3")
+    f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    r = engine.calculate(CASES["S1"], today="2026-10-11")
+    b = return_values._Builder(r, CASES["S1"], filing.load(f), None, str(forms_dir), str(efile_dir))
+    assert (b.years_text(7), b.years_text(8), b.years_text(12)) == ("7년 이상 8년 미만", "8년 이상", "8년 이상")
+    assert "산 12-3" in b.place(CASES["S1"]["자산"][0], f["자산"]["S1"], "1120011400")
+    f["자산"]["S1"]["특수지"] = "1"                               # 바꾼 표에서는 1 이 산이 아니다
+    assert "산 " not in b.place(CASES["S1"]["자산"][0], f["자산"]["S1"], "1120011400")
+
+
+def test_acquisition_tax_row_note_cites_no_article_outside_the_ruleset():
+    """확인사항 문장에 적는 조문은 규칙세트에 근거가 실린 것뿐이다. 취득세 납세지 조문(지방세법 제8조)은 규칙세트에 없다."""
+    r, rv = _rv("S1")
+    notes = [m for m in rv["확인사항"] if "취득세(11201) 행 상호" in m]
+    assert len(notes) == 1 and "부동산 소재지" in notes[0] and "규격서 p60" in notes[0]
+    assert "지방세법" not in notes[0] and "제8조" not in notes[0]
+    laws = {g["법령"] + " " + ruleset.label(g["조"]) for v in ruleset.load().data["규칙"].values()
+            for e in v["이력"] for g in e["근거"] if g["조"] != "부칙"}
+    assert "지방세법 제8조" not in laws
+
+
 def test_missing_payment_date_is_a_check_item():
     facts = copy.deepcopy(CASES["S1"])
     facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = None
@@ -759,15 +798,53 @@ def test_permit_zone_ignores_permit_date_when_permit_came_first():
         _late("S1", "2027-02-02", _permit("2026-10-15"))
 
 
-def test_permit_zone_without_permit_date_skips_deadline_check():
-    rv = _late("S1", "2030-01-01", _permit(None))
-    assert any("허가구역 단서에 해당할 수 있어 신고기한을 판정하지 않았다" in m for m in rv["확인사항"])
+def test_permit_zone_without_permit_date_passes_only_inside_the_sale_based_deadline():
+    """허가일이 없으면 허가구역 단서(허가일 기준 기한)에 해당하는지 알 수 없다. 허가일 기준 기한은 양도일 기준 기한보다
+    이르지 않으므로, 작성일이 양도일 기준 기한 안이면 어느 쪽이든 기한 안이다. 그 기한을 지났으면 판정할 수 없어 신고값을
+    만들지 않고 허가일을 받는다. S1 양도 2026-11-20: 양도일 기준 기한 말일 2027-01-31(일요일) → 2027-02-01(월요일)."""
+    rv = _late("S1", "2027-02-01", _permit(None))
     assert rv["신고"]["상세코드"] == "01"
+    notes = [m for m in rv["확인사항"] if "허가일 값이 없어" in m]
+    assert len(notes) == 1 and "양도일 기준 신고기한 2027-02-01" in notes[0] and "어느 쪽이든 신고기한 안" in notes[0]
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("S1", "2027-02-02", _permit(None))
+    msg = str(e.value)
+    assert "자산 S1" in msg and "허가일 값이 없어" in msg and "양도일 기준 신고기한 2027-02-01" in msg
+    assert "토지거래허가의 허가일" in msg and "YYYY-MM-DD" in msg and e.value.계획 == "없음"
+    with pytest.raises(return_values.Unsupported, match="허가일 값이 없어"):       # 기한을 한참 넘긴 작성일도 통과시키지 않는다
+        _late("S1", "2030-01-01", _permit(None))
+
+
+def test_permit_zone_without_permit_date_is_judged_asset_by_asset():
+    """허가일이 있는 자산이 기한 안이어도 허가일이 없는 자산은 따로 본다. BF 확정신고: B 는 허가일 2027-01-10(허가 전 대금
+    청산)이라 기한이 2028-05-31, F 는 허가 대상인데 허가일이 없어 양도일 기준 기한 2027-05-31 까지만 판정할 수 있다."""
+    def mutate(f):
+        f["자산"][0].update(토지거래허가대상="예", 토지거래허가={"신청일": "2026-10-01", "허가일": "2027-01-10"})
+        f["자산"][1].update(토지거래허가대상="예", 토지거래허가=None)
+    assert [a["id"] for a in CASES["BF"]["자산"]] == ["B", "F"]
+    assert _late("BF", "2027-05-31", mutate, 구분="확정")["신고"]["구분"] == "확정"
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("BF", "2027-06-15", mutate, 구분="확정")
+    assert "자산 F" in str(e.value) and "허가일 값이 없어" in str(e.value) and "2027-05-31" in str(e.value)
+
+
+def test_unknown_permit_zone_answer_gets_the_proviso_in_the_deadline_message():
+    """토지거래허가대상이 「모름」이면 양도일 기준으로 기한을 본다. 기한을 넘겨 멈출 때 허가구역 단서로 기한이 달라질 수 있다고 알린다."""
+    def unknown(f):
+        f["자산"][0]["토지거래허가대상"] = "모름"
+    assert _late("S1", "2027-02-01", unknown)["신고"]["상세코드"] == "01"
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("S1", "2027-02-02", unknown)
+    msg = str(e.value)
+    assert "2027-02-01" in msg and "토지거래허가대상이 「모름」" in msg and "허가일 기준" in msg
+    with pytest.raises(return_values.Unsupported) as e:        # 「아니오」인 자산에는 붙이지 않는다
+        _late("S1", "2027-02-02")
+    assert "모름" not in str(e.value)
 
 
 def test_non_permit_asset_has_no_skip_note():
     rv = _late("S1", "2027-01-31")
-    assert not any("신고기한을 판정하지 않았다" in m for m in rv["확인사항"])
+    assert not any("허가구역 단서" in m for m in rv["확인사항"])
 
 
 def _sold_on(date_text):
@@ -812,12 +889,15 @@ def test_unreadable_permit_date_is_reported_as_unreadable_not_missing():
         a = f["자산"][0]
         a["토지거래허가대상"] = "예"
         a["토지거래허가"] = {"신청일": "2026-10-01", "허가일": "미정"}
-    rv = _late("S1", "2030-01-01", mutate)
-    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    rv = _late("S1", "2027-02-01", mutate)                       # 양도일 기준 기한 안이라 통과하고 확인사항으로 남는다
+    notes = [m for m in rv["확인사항"] if "허가구역 단서에 해당하는지 알 수 없다" in m]
     assert len(notes) == 1 and "읽지 못해" in notes[0] and "값이 없어" not in notes[0]
-    rv = _late("S1", "2030-01-01", _permit(None))
-    notes = [m for m in rv["확인사항"] if "신고기한을 판정하지 않았다" in m]
+    rv = _late("S1", "2027-02-01", _permit(None))
+    notes = [m for m in rv["확인사항"] if "허가구역 단서에 해당하는지 알 수 없다" in m]
     assert len(notes) == 1 and "값이 없어" in notes[0] and "읽지 못해" not in notes[0]
+    with pytest.raises(return_values.Unsupported) as e:          # 기한을 지났으면 멈추는 문장도 읽지 못한 것과 없는 것을 가른다
+        _late("S1", "2027-02-02", mutate)
+    assert "읽지 못해" in str(e.value) and "값이 없어" not in str(e.value) and "미정" not in str(e.value)
 
 
 def test_unsupported_names_the_asset_whose_deadline_was_missed():
