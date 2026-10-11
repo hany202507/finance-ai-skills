@@ -497,7 +497,7 @@ def attachments(rv, facts, result):
         temp = _temporary_two_house(result, aid)
         if temp:
             out += title("신규 주택 취득 계약서 (일시적 2주택)")
-            limit = " (엔진이 정한 처분기한 %s)" % temp["처분기한"] if temp.get("처분기한") else ""
+            limit = " (처분기한 %s)" % temp["처분기한"] if temp.get("처분기한") else ""
             out += ["- [ ] 신규 주택(일시적 2주택의 다른 집) 취득 계약서 사본" + limit, ""]
         # 환산이면 기준시가
         if method == "환산취득가액":

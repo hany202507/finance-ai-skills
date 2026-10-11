@@ -9,11 +9,14 @@ import filers
 SCREENS = ["기본정보", "양수인", "양도자산", "취득가액", "필요경비", "세액계산", "납부"]
 
 
-def _rv(name, **over):
+def _rv(name, 취득상대방_비움=False, **over):
+    """취득상대방_비움: 신고인 사본에서 취득상대방을 지워 매입가액 행의 거래상대방이 빈 신고값을 만든다."""
     r = engine.calculate(CASES[name], today="2026-10-11")
     f = filers.get(name)
     for aid in f["자산"]:
         f["자산"][aid]["법정동코드"] = "1120011400"
+        if 취득상대방_비움:
+            f["자산"][aid].pop("취득상대방", None)
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
     f["신고"].update(over)
     return return_values.build(r, CASES[name], filing.load(f))
@@ -82,7 +85,8 @@ def test_input_guide_s1_values():
               "38,329,466", "서울특별시 성동구"):
         assert s in md, s
     assert "이합성" in md                              # 양수인 성명은 화면에 직접 입력하는 값이다
-    assert "합성법무사" in md and "2118104565" in md   # 필요경비 상세의 거래상대방
+    assert "합성법무사" in md and "0000000034" in md   # 필요경비 상세의 거래상대방과 사업자번호
+    assert "입력 필요" not in md                       # 합성 자료가 필수 칸을 다 채워서 빈 칸 표시가 나오지 않는다
 
 
 def test_input_guide_local_income_tax_via_wetax():
@@ -125,7 +129,8 @@ def test_input_guide_warns_about_prior_filings():
 
 
 def test_input_guide_marks_blank_required_values():
-    md = guide.hometax_input(_rv("BF"))
+    assert "입력 필요" not in guide.hometax_input(_rv("BF"))              # 값이 다 있으면 표시하지 않는다
+    md = guide.hometax_input(_rv("BF", 취득상대방_비움=True))
     assert "입력 필요" in md                            # 매입가액 행 거래상대방이 신고인 JSON 에 없다
 
 
@@ -236,7 +241,7 @@ def test_comparable_sale_and_appraisal_attachments():
 def test_converted_price_with_actual_costs_exception():
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["필요경비"]["자본적지출"] = [{"내용": "기타가치증가", "지급일": "2010-01-01", "금액": 500_000_000,
-                                         "증빙종류": "세금계산서", "상대방": "합성", "사업자번호": "2118104565"}]
+                                         "증빙종류": "세금계산서", "상대방": "합성", "사업자번호": "0000000034"}]
     rv, res = _rv_facts(f)
     md = guide.hometax_input(rv)
     assert "제97조②2호 단서" in md and "500,000,000" in md
@@ -299,7 +304,7 @@ def test_attachment_list_head_does_not_tell_to_type_on_screen():
 
 def test_blank_marker_is_explained_once_in_head():
     for name in ("S1", "BF"):
-        md = guide.hometax_input(_rv(name))
+        md = guide.hometax_input(_rv(name, 취득상대방_비움=True))
         assert "입력 필요" in md
         assert md.count("신고값에 값이 없는 항목이다") == 1
         assert md.index("신고값에 값이 없는 항목이다") < md.index("## 화면 순서")
