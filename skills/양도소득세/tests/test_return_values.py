@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import copy
 import json
+import re
 
 import pytest
 
@@ -409,3 +410,28 @@ def test_expense_lines_follow_the_acquisition_method():
     assert [ln.group for ln in return_values.expense_lines(a, {"취득가액": 0, "취득가액방법": "환산가액"})] == ["자본적지출"]
     assert return_values.expense_lines(a, {"취득가액": None, "취득가액방법": None}) == []        # 전액 비과세
 
+
+
+# ---- 예정신고를 하지 않은 확정신고의 가산세 확인사항(정답지 사례 09-8) ----
+
+PENALTY_PARTS = ("예정신고를 하지 않은 확정신고", "무신고가산세", "납부지연가산세", "계산하지 않")
+
+
+def _penalty_notes(rv):
+    return [m for m in rv["확인사항"] if all(p in m for p in PENALTY_PARTS)]
+
+
+def test_final_return_notes_that_penalties_are_not_computed():
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    notes = _penalty_notes(rv)
+    assert len(notes) == 1
+    t = rv["본지"]["열"]["합계"]
+    assert t["가산세"] == 0                                   # 금액은 계산하지 않는다
+    assert "납부할 세액이 실제보다 적" in notes[0]
+    assert not re.search(r"제\s*\d|\d+조", notes[0])           # 조문 번호는 적지 않는다(규칙세트에 근거가 없다)
+    assert "\u2014" not in notes[0] and not notes[0].rstrip().endswith("?")
+
+
+def test_preliminary_return_has_no_penalty_note():
+    r, rv = _rv("S1")
+    assert _penalty_notes(rv) == []

@@ -353,3 +353,13 @@ def test_file_only_notes_are_left_out_and_screen_notes_are_kept():
     for x in kept:
         assert x in md, x
     assert "전자신고 파일에만 쓰는 확인사항은 신고값의 확인사항에 있다" in md
+
+
+def test_final_return_penalty_note_reaches_input_guide():
+    """확정신고 가산세 확인사항은 FILE_ONLY 에 걸리지 않아 입력 안내서에도 나간다."""
+    rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    notes = [m for m in rv["확인사항"] if "무신고가산세" in m and "납부지연가산세" in m]
+    assert len(notes) == 1
+    assert not guide.FILE_ONLY.search(notes[0])
+    md = guide.hometax_input(rv)
+    assert notes[0] in md

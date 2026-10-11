@@ -749,3 +749,45 @@ def test_sold_local_cheap_house_removes_heavy(가격, 중과):
     assert r["질문"] == [] and r["다루지않음"] == [], r
     v = r["자산"][0]
     assert v["중과"] == 중과 and bool(_note(v, "판 집이 지방 저가주택이거나")) is (중과 is None)
+
+
+# ---- 한시배제 나목·다목 안내는 보유 2년 이상일 때만(시행령 제167조의3①12호의2 본문, 정답지 사례 08) ----
+
+def _hint_sale(양도, 취득, 계약, 허가대상=False):
+    """송파 주택 둘 중 하나를 판다. 양도는 한시배제 가목 양도기한(2026-05-09) 뒤라 가목에는 걸리지 않는다."""
+    a = asset("T", "주택", 송파, 취득, 양도, 900_000_000, 600_000_000, 양도__계약일=계약, 양도__계약금수령일=계약,
+              기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}},
+              토지거래허가대상="예" if 허가대상 else "아니오")
+    return facts([a], [house("H1", 송파, 취득, 자산id="T"), house("H8", 송파, "2010-01-01")])
+
+
+def _hint(v, 목):
+    return [m for m in v["확인사항"] if "한시배제 %s" % 목 in m]
+
+
+def test_temporary_exclusion_da_hint_only_when_held_two_years():
+    v = _verdict(_hint_sale("2026-06-05", "2021-03-01", "2026-05-06"))
+    assert v["보유년"] >= 2 and v["중과"] == "중과2" and _hint(v, "다목")
+    v = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
+    assert v["보유년"] < 2 and v["중과"] == "중과2" and not _hint(v, "다목")
+    assert not any("한시배제" in m for m in v["확인사항"])
+
+
+def test_temporary_exclusion_na_hint_only_when_held_two_years():
+    v = _verdict(_hint_sale("2026-06-05", "2021-03-01", "2026-05-06", 허가대상=True))
+    assert v["보유년"] >= 2 and _hint(v, "나목")
+    v = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06", 허가대상=True))
+    assert v["보유년"] < 2 and not any("한시배제" in m for m in v["확인사항"])
+
+
+def test_temporary_exclusion_hint_holding_boundary_is_two_years_exactly():
+    """가목과 같은 값(보유년)과 같은 기준(중과.한시배제.보유)을 쓴다. 만 2년이 되는 날은 안내가 붙는다."""
+    v = _verdict(_hint_sale("2026-06-05", "2024-06-05", "2026-05-06"))
+    assert v["보유년"] == 2 and _hint(v, "다목")
+    v = _verdict(_hint_sale("2026-06-05", "2024-06-06", "2026-05-06"))
+    assert v["보유년"] == 1 and not _hint(v, "다목")
+
+
+def test_hint_condition_does_not_change_tax_verdict():
+    short = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
+    assert short["중과"] == "중과2" and short["단기"] is not None

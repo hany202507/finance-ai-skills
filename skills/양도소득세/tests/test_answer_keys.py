@@ -9,7 +9,7 @@
   납부 행       전자신고세액공제·납부할 세액·분납·납부세액(원문 2022-03 서식 ⑭·⑰·⑱·⑲, 지금 서식 ⑮·⑱·⑲·⑳)
   전자신고 파일 efile.write 가 검증기를 통과해 경로를 돌려준다
   범위 아님     엔진의 다루지않음이나 신고값의 Unsupported 로 멈춘다(틀린 세액이나 신고서를 내지 않는다)
-결함으로 보이는 것은 고치지 않고 xfail(strict=True)로 남겼다(파일 끝).
+아직 고치지 않은 결함은 xfail(strict=True)로 남겼다(파일 끝).
 """
 import copy
 import os
@@ -227,7 +227,7 @@ def test_out_of_scope_case_stops(name):
             return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
 
 
-# ---------------------------------------------------------------- 결함으로 보이는 것(고치지 않고 남긴다)
+# ---------------------------------------------------------------- 정답지 대조에서 나온 결함(고친 것은 일반 시험, 남은 것은 xfail)
 
 def _require(ok):
     """xfail 시험의 전제. 전제가 틀리면 예상한 실패(AssertionError)가 아니라 오류로 드러나게 한다."""
@@ -235,23 +235,31 @@ def _require(ok):
         raise RuntimeError("xfail 시험의 전제가 맞지 않는다")
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "예정신고를 하지 않은 확정신고에 원문은 무신고·납부지연 가산세를 적는다(확정신고 작성 사례 09 하위 8: 847,869 + 335,360 = "
-    "1,183,229원, 납부할 세액 9,661,921원). 신고값은 가산세를 0 으로 두고 확인사항으로도 알리지 않는다. "
-    "의심 위치: return_values.nat_column, 계약 문서 「세액 단계」"))
 def test_final_return_without_preliminary_return_mentions_penalty():
+    """예정신고를 하지 않은 확정신고 신고값은 가산세를 계산하지 않는다는 확인사항을 싣는다(가산세 금액은 아래 xfail)."""
     k = KEYS["09-8"]
     r, rv = _run("09-8")
     _require(k["원문가산세"]["계"] == k["원문가산세"]["무신고"] + k["원문가산세"]["납부지연"] > 0)
     _require(rv["신고"]["구분"] == "확정")
     notes = r["확인사항"] + rv["확인사항"]
-    assert rv["본지"]["열"]["합계"]["가산세"] > 0 or any("가산세" in m for m in notes)
+    assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세" in m and "납부지연가산세" in m and "계산하지 않" in m
+               for m in notes)
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "보유 2년 미만 주택(사례 08)에 「한시배제 다목에 해당할 수 있다」 확인사항이 붙는다. 시행령 제167조의3①12호의2 는 "
-    "본문이 보유기간 2년 이상인 주택을 요건으로 하므로 가·나·다목 모두 해당하지 않는다. 세액은 맞다. 의심 위치: judge._heavy"))
+    "가산세 계산은 다음 계획. 예정신고를 하지 않은 확정신고에 원문은 무신고·납부지연 가산세를 적는다(확정신고 작성 사례 09 하위 8: "
+    "847,869 + 335,360 = 1,183,229원, 납부할 세액 9,661,921원). 신고값은 가산세를 0 으로 두고 확인사항으로 알린다. "
+    "의심 위치: return_values.nat_column, 계약 문서 「세액 단계」"))
+def test_final_return_without_preliminary_return_penalty_amount_matches_source():
+    k = KEYS["09-8"]
+    r, rv = _run("09-8")
+    _require(rv["신고"]["구분"] == "확정")
+    t = rv["본지"]["열"]["합계"]
+    assert t["가산세"] == k["원문가산세"]["계"]
+
+
 def test_short_holding_house_gets_no_temporary_exclusion_hint():
+    """보유 2년 미만 주택(사례 08)에는 한시배제 안내가 붙지 않는다(시행령 제167조의3①12호의2 본문: 보유 2년 이상)."""
     r, _ = _run("08")
     _require(r["계산"]["자산"][0]["판정"]["보유년"] < 2)
     assert not any("한시배제" in m for m in r["확인사항"])
