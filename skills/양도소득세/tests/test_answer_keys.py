@@ -269,6 +269,10 @@ def test_final_return_penalty_matches_hand_calculation():
     assert (got["무신고"], got["납부지연"], got["계"]) == (want["무신고"], want["납부지연"], want["계"])
     assert [{key: c[key] for key in want["건"][0]} for c in got["건"]] == want["건"]
     assert got["열"] == want["열"]
+    # 감면이 적용되지 않는 쪽으로 해석되면 무신고가산세는 감면 전 금액이다. 결과와 확인사항이 그 금액을 싣는다
+    assert got["무신고_감면전"] == want["무신고_감면전"]
+    assert any("감면이 적용되지 않으면" in m and "%s원" % want["무신고_감면전"] in m for m in got["확인사항"])
+    assert got["양도일별"] is None                      # A·B 는 같은 날 양도라 대안 계산이 없다
 
 
 def test_penalty_method_reproduces_source_amounts_to_the_won():

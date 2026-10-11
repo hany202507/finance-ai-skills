@@ -75,6 +75,7 @@ def test_rule_citations(rs):
     이 = rs.cite("가산세.납부지연.일이자율", on)
     assert [c["법령"] for c in 이] == ["국세기본법", "국세기본법", "국세기본법 시행령"]
     assert any("1일 10만분의 22의 율" in x for x in 이[2]["발췌"])
+    assert [c["조항"] for c in 이] == ["제47조의4①1호", "제47조의4⑤", "제27조의4①"]      # 조항 글자에 설명을 섞지 않는다
     for k in KEYS4:
         assert all(c["URL"].startswith("https://www.law.go.kr/법령/") and c["시행일"] for c in rs.cite(k, on)), k
 
@@ -297,6 +298,90 @@ def test_rates_come_from_the_ruleset(tmp_path):
     out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20", rules_dir=d)
     # 무신고 206,274,000 × 40% × 75% = 61,882,200. 납부지연 206,274,000 × 108 × 44/100,000 = 9,802,140.48 → 9,802,140
     assert (out["무신고"], out["납부지연"], out["건"][0]["일수"]) == (61_882_200, 9_802_140, 108)
+
+
+# ---------------------------------------------------------------- 감면 전제와 대안 금액(검토 반영)
+
+def test_result_carries_pre_relief_amount_and_rates():
+    """감면이 적용되지 않는 쪽으로 해석되면 무신고가산세는 감면 전 금액이다. 결과가 그 금액과 율을 싣는다.
+    BF: 206,274,000 × 20% = 41,254,800(감면 뒤 20,627,400)"""
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    assert (out["무신고_감면전"], out["무신고"]) == (41_254_800, 20_627_400)
+    assert (out["율"], out["감면율"], out["일이자율"]) == ("0.20", "0.50", "0.00022")
+    assert [c["무신고_감면전"] for c in out["건"]] == [41_254_800]
+    json.dumps(out, ensure_ascii=False)                       # 신고값에 그대로 실을 수 있다
+
+
+def test_pre_relief_amount_splits_like_the_relieved_amount():
+    """토지 둘(다른 달): 152,740,000 × 20% = 30,548,000. 건별 12,360,000 × 20% = 2,472,000, 140,380,000 × 20% = 28,076,000.
+    기한이 지나지 않은 건은 감면 전 금액도 0 이다."""
+    f = _two_lots()
+    r = _calc(f)
+    out = penalty.final_return(r, f, "2027-05-20")
+    assert out["무신고_감면전"] == 30_548_000 and [c["무신고_감면전"] for c in out["건"]] == [2_472_000, 28_076_000]
+    out = penalty.final_return(r, f, "2027-01-15")
+    assert out["무신고_감면전"] == 2_472_000 and [c["무신고_감면전"] for c in out["건"]] == [2_472_000, 0]
+
+
+def test_note_states_the_relief_premise_and_the_amount_without_relief():
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    hit = [m for m in out["확인사항"] if "감면이 적용되지 않으면" in m]
+    assert len(hit) == 1
+    m = hit[0]
+    assert "국세기본법 제48조" in m and "50%" in m
+    assert "2026-01-01" in m and "「기한 후 신고를 한 경우」" in m and "확정하지 못했다" in m
+    assert "41254800원" in m and "세무 전문가" in m
+
+
+def test_relief_note_before_the_2026_wording_change():
+    """2025년 양도를 2025-12-20 에 신고·납부: 감면 조문은 옛 문구 구간이라 문구 개정 문장이 없다. 일수는 납부일까지 센다.
+    F 를 2025-08-01 양도로 옮김: 세액 139,380,000, 기한 2025-10-31(금), 일수 2025-11-01 ~ 2025-12-20 = 30 + 20 = 50
+    납부지연 139,380,000 × 50 × 22/100,000 = 1,533,180"""
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2025-08-01"
+    out = penalty.final_return(_calc(f), f, "2025-12-20")
+    assert _lines(out) == [(["F"], 139_380_000, "2025-10-31", 50, 13_938_000, 1_533_180)]
+    hit = [m for m in out["확인사항"] if "감면이 적용되지 않으면" in m]
+    assert len(hit) == 1 and "바뀌었" not in hit[0] and "27876000원" in hit[0]
+
+
+def test_bf_alternative_when_each_sale_date_is_filed_separately():
+    """같은 달 다른 날 양도를 양도일마다 따로 신고하는 것으로 보면(BF):
+    F(2026-11-01) 413,300,000 → 94,060,000 + 113,300,000 × 40% = 139,380,000
+    B(2026-11-20) 163,400,000 → 37,060,000 + 13,400,000 × 38% = 42,152,000, 합 181,532,000
+    무신고 = 181,532,000 × 10% = 18,153,200
+    납부지연 = 139,380,000 × 107 × 22/100,000 = 3,281,005.2 → 3,281,000, 42,152,000 × 107 × 22/100,000 = 992,258.08 → 992,250, 합 4,273,250"""
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    alt = out["양도일별"]
+    assert (alt["예정신고세액"], alt["무신고"], alt["납부지연"], alt["계"]) == (181_532_000, 18_153_200, 4_273_250, 22_426_450)
+    assert alt["무신고_감면전"] == 36_306_400
+    assert [(c["자산"], c["양도일"], c["예정신고세액"], c["납부기한"], c["일수"], c["무신고"], c["납부지연"]) for c in alt["건"]] == [
+        (["F"], "2026-11-01", 139_380_000, "2027-02-01", 107, 13_938_000, 3_281_000),
+        (["B"], "2026-11-20", 42_152_000, "2027-02-01", 107, 4_215_200, 992_250)]
+    hit = [m for m in out["확인사항"] if "같은 달" in m]
+    assert len(hit) == 1
+    assert "양도일마다 따로 신고하는 것으로 보면" in hit[0]
+    assert "181532000원" in hit[0] and "18153200원" in hit[0] and "4273250원" in hit[0]
+    assert (out["무신고"], out["납부지연"]) == (20_627_400, 4_855_680)           # 계산에 쓴 값은 합산한 쪽이다
+
+
+def test_no_alternative_when_no_case_has_two_sale_dates():
+    for name in ("BC",):
+        assert penalty.final_return(_calc(CASES[name]), CASES[name], "2027-05-20")["양도일별"] is None
+    f = _two_lots()
+    assert penalty.final_return(_calc(f), f, "2027-05-20")["양도일별"] is None
+
+
+def test_alternative_is_zero_for_a_case_not_yet_due():
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-02-01")
+    alt = out["양도일별"]
+    assert (alt["예정신고세액"], alt["무신고"], alt["납부지연"], alt["계"]) == (181_532_000, 0, 0, 0)
+
+
+def test_penalty_uses_public_ruleset_names_only():
+    import inspect
+    assert R.label("47의2", "①2호") == "제47조의2①2호" and R.label("부칙", 공포번호="21212") == "부칙(제21212호)"
+    assert "ruleset._" not in inspect.getsource(penalty)
 
 
 # ---------------------------------------------------------------- 다루지 않는 경우
