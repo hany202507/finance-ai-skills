@@ -162,6 +162,29 @@ def test_schedule1_bracket_cells_keep_clear_of_printed_marks():
         assert s in text
 
 
+def test_plain_cell_refuses_dict_or_list_value():
+    """기준점이 없는 칸에 묶음 값을 주면 글자로 바꿔 쓰지 않고 막는다(「{'a': 1}」 이 서식에 찍히지 않게)."""
+    doc = pymupdf.open(PDF84)
+    page = doc[4]
+    f = _field(F1, "양도가액")
+    for bad in ({"금액": "1,000"}, ["1,000"], ("1,000",)):
+        with pytest.raises(ValueError):
+            forms_pdf.put_field(page, f, bad, col="자산1")
+    assert "1,000" not in page.get_text()
+
+
+def test_put_field_passes_padding_to_narrow_cells():
+    doc = pymupdf.open(PDF84)
+    page = doc[13]
+    f = _field(F3, "부표3.법무사비용")
+    rect = pymupdf.Rect(f["좌표"]["값_칸_해석"]["지급일"])
+    wide = forms_pdf.put_field(page, f, "2018.03.15", col="지급일", pad=0.5)[0]
+    assert rect.contains(wide)
+    doc2 = pymupdf.open(PDF84)
+    narrow = forms_pdf.put_field(doc2[13], f, "2018.03.15", col="지급일")[0]
+    assert wide.height > narrow.height                  # 여백을 줄이면 글자를 덜 줄인다
+
+
 def test_schedule3_detail_amount_uses_amount_column():
     total = _field(F3, "부표3.⑤계")["좌표"]["값_칸_해석"]["지급금액"]
     for f in F3["fields"]:
@@ -283,3 +306,19 @@ def test_refetch_keeps_file_when_a_new_edition_appears(tmp_path):
     assert mod.run(str(tmp_path), 교체=True, fetch=lambda seq: new, out=lines.append) == 0
     assert (tmp_path / "원본" / "a.pdf").read_bytes() == new
     assert any("새 판" in s for s in lines)
+
+
+def test_put_overflow_is_its_own_value_error_subclass():
+    page = pymupdf.open().new_page(width=200, height=100)
+    with pytest.raises(forms_pdf.Overflow) as e:
+        forms_pdf.put(page, [10, 10, 40, 24], "합성" * 30)
+    assert isinstance(e.value, ValueError)
+
+
+def test_put_field_non_overflow_errors_are_not_overflow():
+    page = pymupdf.open().new_page(width=200, height=100)
+    shaded = {"id": "X", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}, "음영_열": ["a"]}
+    for field, col in ((shaded, "a"), ({"id": "X", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}}, "zz")):
+        with pytest.raises(ValueError) as e:
+            forms_pdf.put_field(page, field, "가", col=col)
+        assert not isinstance(e.value, forms_pdf.Overflow)

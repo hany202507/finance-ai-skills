@@ -34,6 +34,11 @@ GAP = 1.0           # 인쇄 글자에서 띄우는 여백
 _FONTS = {}
 _BUFFERS = {}
 _ALIGN = {"앞": "right", "뒤": "left", "사이": "center"}
+
+
+class Overflow(ValueError):
+    """글자가 칸에 들어가지 않는다(5pt 까지 줄이고 줄을 나눠도 넘친다). 다른 ValueError(음영 칸·없는 열·기준점 못 찾음)와 구분한다."""
+
 # 오른쪽 맞춤 자료형. 한 문자열로 둔다(키 이름을 따옴표로 쓰면 test_scope_contract 가 엔진이 읽는 키로 본다)
 _RIGHT_KINDS = "금액 비율 면적".split()
 
@@ -162,7 +167,7 @@ def put(page, rect, text, align="right", size=7.5, font=None, lines=1, pad=None)
     """칸(rect) 안에 글자를 쓰고 실제로 쓴 상자를 돌려준다. 빈 글자는 쓰지 않고 None.
 
     세로는 칸 가운데. 폭이나 높이가 넘치면 5pt 까지 0.5pt 씩 줄이고, lines 가 2 이상이면 줄을 나눠 본다.
-    그래도 넘치면 ValueError. 좌우 여백은 기본 3pt(가운데 맞춤은 1pt)."""
+    그래도 넘치면 Overflow(ValueError). 좌우 여백은 기본 3pt(가운데 맞춤은 1pt)."""
     text = "" if text is None else str(text).strip()
     if not text:
         return None
@@ -182,7 +187,7 @@ def put(page, rect, text, align="right", size=7.5, font=None, lines=1, pad=None)
             if rows is not None:
                 return _draw(page, rect, rows, s, align, pad, font)
         s = round(s - STEP, 2)
-    raise ValueError("칸에 들어가지 않는다: %r (칸 폭 %.1fpt, 높이 %.1fpt, %.1fpt 까지 줄여도 넘친다)"
+    raise Overflow("칸에 들어가지 않는다: %r (칸 폭 %.1fpt, 높이 %.1fpt, %.1fpt 까지 줄여도 넘친다)"
                      % (text, rect.width, rect.height, MIN_SIZE))
 
 
@@ -287,11 +292,12 @@ def _default_align(field, col=None):
     return "left"
 
 
-def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1):
+def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1, pad=None):
     """필드목록의 필드 하나에 값을 쓴다. 쓴 상자 목록.
 
     기준점이 그 열에 걸리면 put_anchored, 아니면 put 으로 쓴다. 음영 칸, 쓰지않음 필드,
-    없는 열은 ValueError."""
+    없는 열은 ValueError. 기준점이 없는 칸에 dict·list 값을 주어도 ValueError(묶음 값을 글자로 바꿔 찍지 않는다).
+    pad 는 기준점이 없는 칸의 좌우 여백(put 과 같다). 좁은 칸에서 글자를 덜 줄이려고 줄여 쓴다."""
     fid = field.get("id")
     if field.get("쓰지않음"):
         raise ValueError("%s: 적지 않는 칸이다(%s)" % (fid, field["쓰지않음"]))
@@ -314,7 +320,10 @@ def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lin
     slots = [s for s in _slots(field.get("기준점")) if not s.get("열") or col in s["열"]]
     if slots:
         return put_anchored(page, rect, slots, value, size=size, font=font)
-    used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines)
+    if isinstance(value, (dict, list, tuple)):
+        raise ValueError("%s %s: 기준점이 없는 칸이라 값 하나만 쓴다(묶음 값을 받았다)" % (fid, col))
+    used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines,
+               pad=pad)
     return [used] if used is not None else []
 
 
