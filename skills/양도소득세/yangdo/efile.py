@@ -170,7 +170,8 @@ def _lock_reason(efile_dir=None):
     except (OSError, ValueError, KeyError, TypeError):
         return "규격판(efile/%s)이나 레이아웃을 읽을 수 없다" % SPEC_FILE
     if not isinstance(spec, dict) or spec.get("잠금") is not False:
-        return "규격판이 잠겨 있다(efile/%s 의 잠금). 새 규격서 판을 확인하고 레이아웃을 맞춘 뒤에 푼다" % SPEC_FILE
+        return ("규격판이 잠겨 있다(efile/%s 의 잠금). 새 규격서 판을 확인하고 레이아웃을 맞춘 뒤에 푼다. 잠금을 바꾼 뒤에는 "
+                "python scripts/build_ruleset.py 판 을 함께 돌린다(이 파일이 기준정보 판에 들어 있다)" % SPEC_FILE)
     if (spec.get("판"), spec.get("sha256")) != (base.get("판"), base.get("sha256")):
         return "규격판 %s 과 레이아웃의 규격서 판 %s 이 다르다" % (spec.get("판"), base.get("판"))
     return None

@@ -463,7 +463,7 @@ class _Builder:
                                                self.seller(aid, self.lots.get(aid))))
             elif ln.group == "취득세":
                 rows.append(self.schedule3_row("취득세", _int(ex.get("취득세")), partner=self.tax_office(a)))
-                self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지 시군구 이름으로 적었다"
+                self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지의 시도와 시군구 이름으로 적었다"
                           "(지방세법 제8조①1호, 규격서 p60 「거래상대방의 상호」)" % aid)
             elif ln.group == "감가상각비":
                 rows.append(self.schedule3_row("감가상각비", _int(a.get("감가상각비"))))
