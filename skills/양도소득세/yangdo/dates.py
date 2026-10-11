@@ -204,6 +204,11 @@ def filing_deadline(kind, base, rs):
         nominal = date(b.year + 1, rs.value("신고기한.확정.월", b), rs.value("신고기한.확정.일", b))
     else:
         raise ValueError("신고 구분은 예정 또는 확정이어야 합니다: %r" % (kind,))
+    return _moved(nominal, rs)
+
+
+def _moved(nominal, rs):
+    """명목 기한을 토요일·일요일·공휴일·대체공휴일·노동절이 아닌 첫 날로 옮겨 Deadline 으로 돌려준다."""
     table = getattr(rs, "공휴일", None)
     adjusted, moved = nominal, []
     while True:
@@ -217,3 +222,27 @@ def filing_deadline(kind, base, rs):
         adjusted += timedelta(days=1)
     covered = table is not None and all(table.covers(y) for y in range(nominal.year, adjusted.year + 1))
     return Deadline(nominal, adjusted, covered, moved)
+
+
+def add_months(day, months):
+    """기한에 개월 수를 더한 날. 민법의 기간 계산을 따른다: 기한 다음 날이 기산일이고, 마지막 달에서 기산일에 해당하는 날의
+    전날에 끝난다. 그 달에 해당하는 날이 없으면 그 달의 말일에 끝난다. 말일인 기한에 더하면 다시 말일이 된다."""
+    start = to_date(day) + timedelta(days=1)
+    n = start.year * 12 + (start.month - 1) + int(months)
+    year, month = n // 12, n % 12 + 1
+    last = calendar.monthrange(year, month)[1]
+    if start.day > last:
+        return date(year, month, last)
+    return date(year, month, start.day) - timedelta(days=1)
+
+
+def local_filing_deadline(kind, base, rs):
+    """양도소득에 대한 개인지방소득세의 신고기한(명목 기한, 옮긴 기한). Deadline 을 돌려준다.
+
+    소득세법이 정한 신고기한(filing_deadline 의 명목 기한, 토·일·공휴일이라 옮기기 전)에 `지방.신고기한.가산개월` 을 더한 날이다
+    (지방세법 제103조의5①, 제103조의7①). 달 계산은 add_months(지방세기본법 제23조가 민법을 따르게 한다).
+    더한 날이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날이 기한이다(지방세기본법 제24조①). 국세와 같은 공휴일 표를 쓴다.
+    국세 기한이 쉬는 날이라 옮겨진 경우 어느 날에 더하는지는 조문에 없다. 옮기기 전의 기한에 더하는 것으로 정했다(확인사항으로 알린다).
+    """
+    national = filing_deadline(kind, base, rs)[0]
+    return _moved(add_months(national, rs.value("지방.신고기한.가산개월", to_date(base))), rs)

@@ -28,6 +28,18 @@
 
 납부일이 납부기한 이전인 건은 예정신고 기한 안이라 가산세가 없다.
 건별 세액이나 납부기한을 조문과 원문 사례로 정할 수 없으면 Unsupported 로 멈춘다.
+
+지방소득세(양도소득에 대한 개인지방소득세)의 가산세도 같은 건으로 계산해 결과의 「지방」 에 싣는다.
+  예정신고세액  건의 과세표준에 지방소득세 세율을 적용한 세액(합산 묶음마다)
+  납부기한      소득세법이 정한 예정신고기한(옮기기 전)에 지방.신고기한.가산개월 을 더한 날, 쉬는 날이면 다음 날
+                (dates.local_filing_deadline, 지방세법 제103조의5①, 지방세기본법 제23조·제24조①)
+  무신고        세액의 합 × 지방.가산세.무신고.율 × (1 − 지방.가산세.무신고.확정신고감면율). 지방세기본법 제57조②4호가목의 문언은
+                「확정신고기한까지 과세표준 신고를 한 경우」라 확정신고서에 감면을 적용한다(문언이 기한 후 신고를 요구하게 바뀌면
+                국세처럼 적용하지 않는다)
+  납부지연      건마다 세액 × 일수 × 지방.가산세.납부지연.일이자율. 일수는 납부기한 다음 날부터 납부일까지(지방.가산세.납부지연.납부일산입)
+  끝수          무신고도 납부지연도 원 미만을 버린다(LOCAL_UNIT)
+조문으로 정해지지 않아 정한 가정이 둘이다(국세 기한이 쉬는 날이라 옮겨졌을 때 더하는 기준일, 가산세 금액의 끝수).
+결과의 「지방.가정안내」 와 확인사항이 그 가정을 적고 위택스 화면의 값과 다르면 위택스 값을 따르라고 알린다.
 """
 from decimal import Decimal
 
@@ -41,6 +53,14 @@ PAID_DAY_KEY = "가산세.납부지연.납부일산입"
 RULE_KEYS = (RATE_KEY, RELIEF_KEY, DAILY_KEY, PAID_DAY_KEY)
 # 납부지연가산세의 끝수 단위(원). 법령 값이 아니라 국세청 작성 사례의 계산 근거가 쓴 끝수 처리다(references/규칙세트_스키마.md)
 LATE_UNIT = 10
+# 지방소득세 가산세의 규칙 키와 끝수 단위(원). 지방소득세는 국세청 작성 사례 같은 대조할 원문이 없어 원 미만을 버리는 것으로 정했다
+LOCAL_RATE_KEY = "지방.가산세.무신고.율"
+LOCAL_RELIEF_KEY = "지방.가산세.무신고.확정신고감면율"
+LOCAL_DAILY_KEY = "지방.가산세.납부지연.일이자율"
+LOCAL_PAID_DAY_KEY = "지방.가산세.납부지연.납부일산입"
+LOCAL_MONTHS_KEY = "지방.신고기한.가산개월"
+LOCAL_RULE_KEYS = (LOCAL_RATE_KEY, LOCAL_RELIEF_KEY, LOCAL_DAILY_KEY, LOCAL_PAID_DAY_KEY, LOCAL_MONTHS_KEY)
+LOCAL_UNIT = 1
 # 감면 조문의 근거 발췌에 이 글자가 있으면 문구가 바뀐 뒤의 구간이다(그 전 구간은 「과세표준신고를 한 경우」)
 RELIEF_NEW_WORDING = "기한 후 신고를 한 경우"
 
@@ -73,8 +93,8 @@ def _split(total, weights):
     return parts
 
 
-def amounts(taxes, day_counts, rate, relief, daily):
-    """건별 예정신고세액과 일수 → (무신고 합계, 건별 무신고, 건별 납부지연).
+def amounts(taxes, day_counts, rate, relief, daily, unit=LATE_UNIT):
+    """건별 예정신고세액과 일수 → (무신고 합계, 건별 무신고, 건별 납부지연). unit 은 납부지연의 끝수 단위(원)다.
 
     일수가 None 인 건은 납부기한이 지나지 않은 건이라 0 이고 합계의 세액에도 넣지 않는다.
     무신고 합계는 세액의 합에 율을 곱해 원 미만을 버린다. 건별 값은 건마다 버린 뒤 모자라는 원을 세액이 가장 큰 건에 더한다.
@@ -87,7 +107,7 @@ def amounts(taxes, day_counts, rate, relief, daily):
     late = [0] * len(taxes)
     for i in due:
         per_case[i] = calc.floor(Decimal(taxes[i]) * factor)
-        late[i] = calc.floor(Decimal(taxes[i]) * day_counts[i] * Decimal(daily)) // LATE_UNIT * LATE_UNIT
+        late[i] = calc.floor(Decimal(taxes[i]) * day_counts[i] * Decimal(daily)) // unit * unit
     if due:
         top = max(due, key=lambda i: (taxes[i], -i))
         per_case[top] += total - sum(per_case)
@@ -114,8 +134,8 @@ def _deadline_base(row, asset, notes):
     return sold
 
 
-def _tax(members, rs):
-    """한 번에 예정신고하는 자산들의 세액. (세율구분 표기별 세액, 합).
+def _tax(members, rs, local=False):
+    """한 번에 예정신고하는 자산들의 세액. (세율구분 표기별 세액, 합). local 이면 지방소득세 세율로 구한다.
     같은 세율로 합산하는 자산끼리 과세표준을 더해 세율을 적용한다. 세율이 다른 자산이 섞였고 합산 비교세액이 더 크면 정하지 않는다."""
     merged = {}
     for m in members:
@@ -125,19 +145,19 @@ def _tax(members, rs):
         anchor = calc.group_anchor(group)
         code = anchor["계산"]["코드"]
         base = sum(m["계산"]["과세표준"] for m in group)
-        tax, _ = calc.rate_tax(anchor["판정"], base, rs, to_date(anchor["판정"]["양도일"]))
+        tax, _ = calc.rate_tax(anchor["판정"], base, rs, to_date(anchor["판정"]["양도일"]), local=local)
         name = "%s-%s" % (code["국내외분"], code["세율구분"])
         cols[name] = cols.get(name, 0) + tax
     tax = sum(cols.values())
     if len(merged) >= 2:
         first = min(to_date(m["판정"]["양도일"]) for m in members)
         whole = sum(m["계산"]["과세표준"] for m in members)
-        compare = calc.floor(calc.progressive(whole, rs.value("기본세율", first)))
+        compare = calc.floor(calc.progressive(whole, rs.value("지방.기본세율" if local else "기본세율", first)))
         if compare > tax:
             raise Unsupported(
-                "자산 %s: 예정신고 기한이 같은 자산의 합산 비교세액 %s원이 세율별 세액의 합 %s원보다 크다. 이 경우의 예정신고 세액과 "
+                "자산 %s: 예정신고 기한이 같은 자산의 %s합산 비교세액 %s원이 세율별 세액의 합 %s원보다 크다. 이 경우의 예정신고 세액과 "
                 "세율구분 열별 가산세는 국세청 작성 사례에 계산 방식이 없어 정하지 않았다"
-                % (", ".join(m["id"] for m in members), compare, tax))
+                % (", ".join(m["id"] for m in members), "지방소득세 " if local else "", compare, tax))
     return cols, tax
 
 
@@ -160,8 +180,10 @@ def cases(rows, facts, rs):
     """과세 자산을 예정신고 건으로 묶고 건별 예정신고세액을 구한다. (건 목록, 확인사항).
 
     건 = {"자산": [id], "예정신고세액": int, "기한말일": date, "납부기한": date, "열": {세율구분 표기: 세액},
-          "양도일별": [{"자산", "양도일", "예정신고세액"}] 또는 None, "공휴일표": bool}.
+          "양도일별": [{"자산", "양도일", "예정신고세액"}] 또는 None, "공휴일표": bool,
+          "지방": {"예정신고세액", "열", "기한말일", "납부기한", "공휴일표", "건너뛴날"}}.
     공휴일표는 그 건의 납부기한이 끝나는 해가 공휴일 표에 있는지다(dates.Deadline).
+    지방은 같은 건의 지방소득세 예정신고 세액과 지방 납부기한이다(dates.local_filing_deadline).
     양도일별은 건을 양도일마다 따로 신고하는 것으로 볼 때의 세액이다(양도일이 하나면 항목도 하나).
     rows 는 엔진 결과의 계산.자산이다. 과세표준과 합산 묶음, 세율구분 코드를 그대로 쓴다.
     """
@@ -170,11 +192,13 @@ def cases(rows, facts, rs):
     for r in sorted(rows, key=lambda r: (r["판정"]["양도일"], r["id"])):
         if r["판정"]["전액비과세"]:
             continue
-        deadline = dates.filing_deadline("예정", _deadline_base(r, assets.get(r["id"]) or {}, notes), rs)
-        grouped.setdefault(deadline[0], (deadline, []))[1].append(r)
+        base = _deadline_base(r, assets.get(r["id"]) or {}, notes)
+        deadline = dates.filing_deadline("예정", base, rs)
+        grouped.setdefault(deadline[0], (deadline, [], dates.local_filing_deadline("예정", base, rs)))[1].append(r)
     out = []
     for nominal in sorted(grouped):
-        deadline, members = grouped[nominal]
+        deadline, members, local_deadline = grouped[nominal]
+        local_cols, local_tax = _tax(members, rs, local=True)
         adjusted = deadline[1]
         ids = [m["id"] for m in members]
         cols, tax = _tax(members, rs)
@@ -182,7 +206,10 @@ def cases(rows, facts, rs):
             notes.append("자산 %s: 예정신고 기한 말일은 %s 이고 납부기한은 %s 로 보았다. 건너뛴 날은 %s 이다"
                          % (", ".join(ids), nominal.isoformat(), adjusted.isoformat(), dates.skipped_text(deadline)))
         out.append({"자산": ids, "예정신고세액": tax, "기한말일": nominal, "납부기한": adjusted, "열": cols,
-                    "양도일별": _by_sale_date(members, rs), "공휴일표": deadline.공휴일표})
+                    "양도일별": _by_sale_date(members, rs), "공휴일표": deadline.공휴일표,
+                    "지방": {"예정신고세액": local_tax, "열": local_cols, "기한말일": local_deadline[0],
+                           "납부기한": local_deadline[1], "공휴일표": local_deadline.공휴일표,
+                           "건너뛴날": dates.skipped_text(local_deadline)}})
     return out, notes
 
 
@@ -204,9 +231,76 @@ def _pct(rate):
     return format((Decimal(rate) * 100).normalize(), "f") + "%"
 
 
-def relief_needs_late_return(rs, on):
-    """감면 조문의 문언이 기한 후 신고를 요구하는 구간인지. 규칙세트의 근거 발췌로 가른다."""
-    return any(RELIEF_NEW_WORDING in x for g in rs.entry(RELIEF_KEY, on)["근거"] for x in g["발췌"])
+def relief_needs_late_return(rs, on, key=RELIEF_KEY):
+    """감면 조문의 문언이 기한 후 신고를 요구하는 구간인지. 규칙세트의 근거 발췌로 가른다. key 는 감면율 규칙 키다."""
+    return any(RELIEF_NEW_WORDING in x for g in rs.entry(key, on)["근거"] for x in g["발췌"])
+
+
+def local(found, rs, paid, names):
+    """지방소득세 가산세. found 는 cases 의 건 목록, names 는 세율구분 표기 목록. (결과 dict, 확인사항).
+
+    결과 키: 무신고·납부지연·계, 감면적용, 무신고_감면적용, 무신고_감면없음, 율·감면율·일이자율(문자열), 건(자산·예정신고세액·
+    기한말일·납부기한·기한경과·일수·무신고·무신고_감면적용·무신고_감면없음·납부지연), 열, 가정안내, 근거.
+    """
+    rate, relief = rs.value(LOCAL_RATE_KEY, paid), rs.value(LOCAL_RELIEF_KEY, paid)
+    daily, paid_day = rs.value(LOCAL_DAILY_KEY, paid), rs.value(LOCAL_PAID_DAY_KEY, paid)
+    relieved = not relief_needs_late_return(rs, paid, LOCAL_RELIEF_KEY)
+    applied = relief if relieved else Decimal(0)
+    out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": relieved, "납부지연": 0, "계": 0,
+           "율": str(rate), "감면율": str(relief), "일이자율": str(daily), "건": [],
+           "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "가정안내": None, "근거": []}
+    if not found:
+        return out, []
+    taxes = [c["지방"]["예정신고세액"] for c in found]
+    counts = [days(c["지방"]["납부기한"], paid, paid_day) for c in found]
+    total, per_case, late = amounts(taxes, counts, rate, applied, daily, LOCAL_UNIT)
+    with_relief, with_relief_per_case, _ = amounts(taxes, counts, rate, relief, daily, LOCAL_UNIT)
+    without, without_per_case, _ = amounts(taxes, counts, rate, 0, daily, LOCAL_UNIT)
+    notes = []
+    for c, n, nonfiling, reduced, full, delay in zip(found, counts, per_case, with_relief_per_case, without_per_case, late):
+        loc = c["지방"]
+        labels, weights = list(loc["열"]), list(loc["열"].values())
+        for kind, amount in (("무신고", nonfiling), ("납부지연", delay)):
+            for name, part in zip(labels, _split(amount, weights)):
+                out["열"].setdefault(name, {"무신고": 0, "납부지연": 0})[kind] += part
+        out["건"].append({"자산": c["자산"], "예정신고세액": loc["예정신고세액"], "기한말일": loc["기한말일"].isoformat(),
+                         "납부기한": loc["납부기한"].isoformat(), "기한경과": n is not None, "일수": n or 0,
+                         "무신고": nonfiling, "무신고_감면적용": reduced, "무신고_감면없음": full, "납부지연": delay})
+        text = ("자산 %s: 지방소득세 예정신고 세액은 %s원이고 지방소득세 예정신고기한은 %s, 납부기한은 %s 로 보았다"
+                % (", ".join(c["자산"]), loc["예정신고세액"], loc["기한말일"].isoformat(), loc["납부기한"].isoformat()))
+        if loc["건너뛴날"]:
+            text += ". 건너뛴 날은 %s 이다" % loc["건너뛴날"]
+        if n is None:
+            text += ". 납부일(%s)이 이 납부기한을 지나지 않아 이 건에는 지방소득세 가산세를 계산하지 않았다" % paid.isoformat()
+        notes.append(text)
+    due_tax = sum(t for t, n in zip(taxes, counts) if n is not None)
+    head = [
+        "지방소득세에도 예정신고 무신고가산세 %s원과 납부지연가산세 %s원을 계산했다. 무신고가산세는 기한이 지난 건의 지방소득세 "
+        "예정신고 세액 합계 %s원 × %s%s, 납부지연가산세는 건마다 지방소득세 예정신고 세액 × 일수 × 1일 10만분의 %s 이다(%s). "
+        "일수는 지방소득세 납부기한 다음 날부터 납부일(%s)%s까지 셌다. 지방소득세도 이 날 위택스에서 신고하고 내는 것으로 보았다"
+        % (total, sum(late), due_tax, _pct(rate), " × (1 − %s)" % _pct(relief) if relieved else "",
+           format((Decimal(daily) * 100000).normalize(), "f"),
+           _articles(rs, (LOCAL_RATE_KEY, LOCAL_RELIEF_KEY, LOCAL_DAILY_KEY), paid), paid.isoformat(), "" if paid_day else " 전날"),
+    ]
+    article = _articles(rs, (LOCAL_RELIEF_KEY,), paid)
+    if relieved:
+        head.append("지방소득세 무신고가산세에는 확정신고기한까지 과세표준 신고를 한 경우의 감면 %s 를 적용했다(%s). 감면이 적용되지 않으면 "
+                    "지방소득세 무신고가산세는 %s원이다" % (_pct(relief), article, without))
+    else:
+        head.append("지방소득세 무신고가산세는 감면 없이 계산했다. 감면 규정(%s)은 기한 후 신고를 한 경우에 감면한다고 정해 확정신고서에는 적용하지 "
+                    "않았다. 감면이 적용되면 지방소득세 무신고가산세는 %s원이다" % (article, with_relief))
+    assume = ("지방소득세 가산세는 두 가지를 가정해 계산했다. 지방소득세 예정신고기한은 소득세법이 정한 예정신고기한(토요일·일요일·공휴일이라 "
+              "옮기기 전)에 %s개월을 더한 날로 보았고(%s), 가산세 금액은 건마다 원 미만을 버렸다. 위택스 화면이 계산한 가산세와 다르면 "
+              "위택스 값을 따른다" % (rs.value(LOCAL_MONTHS_KEY, paid), _articles(rs, (LOCAL_MONTHS_KEY,), paid)))
+    head.append(assume)
+    unknown = [c for c in found if not c["지방"]["공휴일표"]]
+    if unknown:
+        head.append("자산 %s: 지방소득세 납부기한이 끝나는 해가 공휴일 표에 없다. 그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 "
+                    "건너뛰지 못했다. 납부기한이 그런 날이면 실제 기한은 더 늦고 일수가 줄어든다"
+                    % ", ".join(i for c in unknown for i in c["자산"]))
+    out.update(무신고=total, 무신고_감면적용=with_relief, 무신고_감면없음=without, 납부지연=sum(late), 계=total + sum(late),
+               가정안내=assume, 근거=[c for key in LOCAL_RULE_KEYS for c in rs.cite(key, paid)])
+    return out, head + notes
 
 
 def _relief_note(rs, paid, rate, relief, without, with_relief):
@@ -274,6 +368,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
       열                     본지 세율구분 열마다 무신고·납부지연
       양도일별               같은 달에 다른 날 양도한 자산이 있을 때, 양도일마다 따로 신고하는 것으로 본 금액
                              (예정신고세액·무신고·무신고_감면적용·납부지연·계·건). 그런 건이 없으면 None. 계산에는 쓰지 않는다
+      지방                   지방소득세 가산세(local 의 결과). 무신고·납부지연·계·건·열과 가정안내를 싣는다
       확인사항, 근거         문장과 규칙세트 인용
     결과가 끝나지 않았거나 납부일이 없으면 ValueError, 정할 수 없는 경우는 Unsupported.
     """
@@ -295,7 +390,8 @@ def final_return(result, facts, paid_on, rules_dir=None):
     applied = relief if relieved else Decimal(0)
     out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": relieved, "감면안내": None, "납부지연": 0, "계": 0,
            "율": str(rate), "감면율": str(relief), "일이자율": str(daily),
-           "건": [], "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "양도일별": None, "확인사항": [], "근거": []}
+           "건": [], "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "양도일별": None,
+           "지방": local([], rs, paid, names)[0], "확인사항": [], "근거": []}
     if not found:
         return out
 
@@ -347,9 +443,11 @@ def final_return(result, facts, paid_on, rules_dir=None):
         head.append("자산 %s: 예정신고 납부기한이 끝나는 해가 공휴일 표에 없다. 토요일·일요일과 날짜가 고정된 공휴일·노동절만 건너뛰었고 "
                     "그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 건너뛰지 못했다. 납부기한이 그런 날이면 실제 기한은 "
                     "더 늦고 일수가 줄어든다" % ", ".join(i for c in unknown for i in c["자산"]))
-    for m in head + notes:
+    local_result, local_notes = local(found, rs, paid, names)
+    for m in head + notes + local_notes:
         if m not in out["확인사항"]:
             out["확인사항"].append(m)
+    out.update(지방=local_result)
     out.update(무신고=total, 무신고_감면적용=with_relief, 무신고_감면없음=without, 감면안내=relief_note, 납부지연=sum(late),
                계=total + sum(late), 양도일별=_alternative(found, counts, rate, applied, relief, daily),
                근거=[c for key in RULE_KEYS for c in rs.cite(key, paid)])

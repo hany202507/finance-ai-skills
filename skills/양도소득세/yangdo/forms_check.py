@@ -51,7 +51,9 @@
   열            건의 금액을 그 건의 세율구분별 세액 비율로 나눔(원 미만 버리고 남는 원은 세액이 가장 큰 열에)
   한 건 안에 합산 묶음이 둘 이상이고 합산 비교세액이 더 크거나, 허가구역 토지의 허가일을 읽지 못하면 정할 수 없다. 그때는 가산세 칸이
   0 이어야 하고 신고값 「가산세」 절이 계산하지 못했다고 적어야 한다. 허가일은 사실관계(facts)에서 읽는다.
-  지방소득세 신고서의 가산세는 신고값이 계산하지 않는다(0). 세 칸 합만 본다.
+  지방소득세 가산세도 같은 건으로 다시 계산한다. 세액은 지방소득세 세율, 납부기한은 dates.local_filing_deadline(소득세법 기한에
+  지방.신고기한.가산개월 을 더한 날), 일수는 납부일까지, 끝수는 원 미만 버림이다. 지방 서식 ⑬ 과 「가산세.지방」 을 대조한다.
+  국세와 지방 가운데 한쪽이라도 정할 수 없으면 둘 다 0 이어야 한다.
 
 검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인, 신고 절의 코드와 날짜,
 전자신고 절의 세율·코드·날짜·면적·법정동코드·지번 칸과 필요경비명세(07), 합산 비교세액이 이길 때 세율구분 행마다 나눈 산출세액.
@@ -110,6 +112,12 @@ PENALTY_DAILY, PENALTY_PAID_DAY = "가산세.납부지연.일이자율", "가산
 PENALTY_LATE_UNIT = 10
 # 감면 조문의 근거 발췌에 이 글자가 있으면 기한 후 신고를 해야 감면하는 문언 구간이다. 확정신고서의 무신고가산세에는 감면을 넣지 않는다
 PENALTY_LATE_RETURN_WORDING = "기한 후 신고를 한 경우"
+# 지방 서식 ⑬ 가산세 네 줄과 지방소득세 가산세 규칙 키(무신고 율, 감면율, 일이자율, 납부일산입). 지방은 원 미만을 버린다
+LOCAL_PENALTY_ROWS = (("가산세_신고", "⑬", "가산세 무(과소)신고"), ("가산세_납부", "⑬", "가산세 납부지연"),
+                      ("가산세_기타", "⑬", "가산세 기타"))
+LOCAL_PENALTY_KEYS = ("지방.가산세.무신고.율", "지방.가산세.무신고.확정신고감면율", "지방.가산세.납부지연.일이자율",
+                      "지방.가산세.납부지연.납부일산입")
+LOCAL_PENALTY_UNIT = 1
 # 신고값 전자신고.세율별 행(03 레코드)의 가산세 칸 → 다시 계산한 값의 자리(0 무신고, 1 납부지연, 2 계)
 EFILE_PENALTY = (("가산세-신고불성실", 0), ("가산세-납부불성실", 1), ("가산세-계", 2))
 EFILE_PENALTY_OTHER = "가산세-기장불성실등"
@@ -224,7 +232,7 @@ class _Undetermined(Exception):
 class _Check:
     def __init__(self, rv, result, rules_dir, efile_dir, forms_dir, facts=None):
         self.rv, self.result, self.facts = rv, result, facts
-        self._penalty = None
+        self._penalty = None          # {False: 국세 가산세 기대값, True: 지방소득세 가산세 기대값}
         self.rules_dir = rules_dir
         self.efile_dir = efile_dir or EFILE_DIR
         self.forms_dir = forms_dir or FORMS_DIR
@@ -593,8 +601,10 @@ class _Check:
             raise _Undetermined("%s 의 허가일 값이 없거나 읽을 수 없어 예정신고 납부기한을 정할 수 없다" % row["id"])
         return permit if permit > sold else sold
 
-    def case_tax(self, members, rs):
-        """한 건(한 번에 예정신고하는 자산들)의 세율구분 표기별 세액. 합산 묶음마다 과세표준을 더해 세율을 적용한다."""
+    def case_tax(self, members, rs, local=False):
+        """한 건(한 번에 예정신고하는 자산들)의 세율구분 표기별 세액. 합산 묶음마다 과세표준을 더해 세율을 적용한다.
+        local 이면 엔진 결과의 지방 적용세율과 규칙세트의 지방소득세 세율표를 쓴다."""
+        single_key, extra_key, table_key = (("지방단일", "지방가산", "지방.기본세율") if local else ("단일", "가산", "기본세율"))
         groups = {}
         for m in members:
             groups.setdefault(m["계산"]["합산묶음"], []).append(m)
@@ -603,11 +613,11 @@ class _Check:
             anchor = min(g, key=lambda m: (m["판정"]["양도일"], m["id"]))
             base = sum(_i(m["계산"]["과세표준"]) for m in g)
             rate = anchor["계산"]["적용세율"]
-            single, extra = rate.get("단일"), rate.get("가산")
+            single, extra = rate.get(single_key), rate.get(extra_key)
             if extra is None:
                 tax = _floor(Decimal(base) * Decimal(single))
             else:
-                table = rs.value("기본세율", anchor["판정"]["양도일"])
+                table = rs.value(table_key, anchor["판정"]["양도일"])
                 tax = _progressive(base, table) + Decimal(base) * Decimal(extra)
                 if single is not None and Decimal(base) * Decimal(single) >= tax:
                     tax = Decimal(base) * Decimal(single)
@@ -618,27 +628,32 @@ class _Check:
         if len(groups) >= 2:
             first = min(m["판정"]["양도일"] for m in members)
             whole = sum(_i(m["계산"]["과세표준"]) for m in members)
-            if _floor(_progressive(whole, rs.value("기본세율", first))) > sum(cols.values()):
-                raise _Undetermined("자산 %s 의 합산 비교세액이 세율별 세액의 합보다 커서 예정신고 세액을 정할 수 없다"
-                                    % ", ".join(m["id"] for m in members))
+            if _floor(_progressive(whole, rs.value(table_key, first))) > sum(cols.values()):
+                raise _Undetermined("자산 %s 의 %s합산 비교세액이 세율별 세액의 합보다 커서 예정신고 세액을 정할 수 없다"
+                                    % (", ".join(m["id"] for m in members), "지방소득세 " if local else ""))
         return cols
 
-    def expected_penalty(self):
+    def expected_penalty(self, local=False):
         """다시 계산한 가산세. {"합계": (무신고, 납부지연), "열": {표기: (무신고, 납부지연)}} 또는 {"불가": 까닭}.
-        예정신고와 과세 자산이 없는 신고는 모두 0 이다. 한 번만 계산한다."""
+        local 이면 지방소득세 가산세다. 예정신고와 과세 자산이 없는 신고는 모두 0 이다. 한 번만 계산한다.
+        국세와 지방 가운데 한쪽이라도 정할 수 없으면 신고값이 둘 다 0 으로 두므로 둘 다 「불가」다."""
         if self._penalty is None:
             labels = ["%s-%s" % (x["국내외분"], x["세율구분"]) for x in self.calc.get("세율별") or []]
-            try:
-                total, cols = self._recalculate(labels)
-                self._penalty = {"합계": total, "열": cols}
-            except _Undetermined as e:
-                self._penalty = {"불가": str(e)}
-            except ruleset.RuleError as e:          # 기한·세율표 규칙이 그 날짜에 없다. 검산을 건너뛰지 않고 실패로 알린다
-                self.fail("규칙세트에서 가산세를 다시 계산할 값을 읽지 못했다(%s)" % e)
-                self._penalty = {"불가": "규칙세트 값을 읽지 못했다"}
-        return self._penalty
+            both = {}
+            for side in (False, True):
+                try:
+                    total, cols = self._recalculate(labels, side)
+                    both[side] = {"합계": total, "열": cols}
+                except _Undetermined as e:
+                    both[side] = {"불가": str(e)}
+                except ruleset.RuleError as e:      # 기한·세율표 규칙이 그 날짜에 없다. 검산을 건너뛰지 않고 실패로 알린다
+                    self.fail("규칙세트에서 %s가산세를 다시 계산할 값을 읽지 못했다(%s)" % ("지방소득세 " if side else "", e))
+                    both[side] = {"불가": "규칙세트 값을 읽지 못했다"}
+            blocked = next((both[side] for side in (False, True) if "불가" in both[side]), None)
+            self._penalty = {False: blocked or both[False], True: blocked or both[True]}
+        return self._penalty[local]
 
-    def _recalculate(self, labels):
+    def _recalculate(self, labels, local=False):
         cols = {name: [0, 0] for name in labels}
         sin = self.rv["신고"]
         taxed = [r for r in self.calc["자산"] if not r["판정"].get("전액비과세")]
@@ -648,26 +663,31 @@ class _Check:
         if rs is None:
             raise _Undetermined("규칙세트를 읽지 못했다")
         paid = dates.to_date(_iso(sin["작성일"]))
-        rate, relief = Decimal(str(self.penalty_rule(PENALTY_RATE, paid))), Decimal(str(self.penalty_rule(PENALTY_RELIEF, paid)))
-        daily, paid_day = Decimal(str(self.penalty_rule(PENALTY_DAILY, paid))), int(self.penalty_rule(PENALTY_PAID_DAY, paid))
+        rate_key, relief_key, daily_key, paid_day_key, unit = (LOCAL_PENALTY_KEYS + (LOCAL_PENALTY_UNIT,) if local else
+                                                               (PENALTY_RATE, PENALTY_RELIEF, PENALTY_DAILY, PENALTY_PAID_DAY,
+                                                                PENALTY_LATE_UNIT))
+        rate, relief = Decimal(str(self.penalty_rule(rate_key, paid))), Decimal(str(self.penalty_rule(relief_key, paid)))
+        daily, paid_day = Decimal(str(self.penalty_rule(daily_key, paid))), int(self.penalty_rule(paid_day_key, paid))
+        deadline = dates.local_filing_deadline if local else dates.filing_deadline
         grouped = {}
         for r in sorted(taxed, key=lambda r: (r["판정"]["양도일"], r["id"])):
-            nominal, adjusted = dates.filing_deadline("예정", self.deadline_base(r), rs)
-            grouped.setdefault(nominal, (adjusted, []))[1].append(r)
+            base = self.deadline_base(r)
+            # 건은 국세 예정신고 기한의 말일이 같은 자산의 묶음이다. 지방소득세도 같은 묶음으로 세고 납부기한만 지방 기한을 쓴다
+            grouped.setdefault(dates.filing_deadline("예정", base, rs)[0], (deadline("예정", base, rs)[1], []))[1].append(r)
         cases = []
         for nominal in sorted(grouped):
             adjusted, members = grouped[nominal]
-            by_col = self.case_tax(members, rs)
+            by_col = self.case_tax(members, rs, local)
             days = None if paid <= adjusted else (paid - adjusted).days - 1 + paid_day
             cases.append((by_col, sum(by_col.values()), days))
-        needs_late_return = any(PENALTY_LATE_RETURN_WORDING in x for g in rs.entry(PENALTY_RELIEF, paid)["근거"] for x in g["발췌"])
+        needs_late_return = any(PENALTY_LATE_RETURN_WORDING in x for g in rs.entry(relief_key, paid)["근거"] for x in g["발췌"])
         factor = rate if needs_late_return else rate * (1 - relief)
         due = [i for i, c in enumerate(cases) if c[2] is not None]
         total = _floor(Decimal(sum(cases[i][1] for i in due)) * factor)
         nonfiling, late = [0] * len(cases), [0] * len(cases)
         for i in due:
             nonfiling[i] = _floor(Decimal(cases[i][1]) * factor)
-            late[i] = _floor(Decimal(cases[i][1]) * cases[i][2] * daily) // PENALTY_LATE_UNIT * PENALTY_LATE_UNIT
+            late[i] = _floor(Decimal(cases[i][1]) * cases[i][2] * daily) // unit * unit
         if due:
             top = max(due, key=lambda i: (cases[i][1], -i))
             nonfiling[top] += total - sum(nonfiling)
@@ -679,21 +699,29 @@ class _Check:
         return (total, sum(late)), {k: tuple(v) for k, v in cols.items()}
 
     def penalty(self):
-        """본지 ⑯ 가산세 네 줄과 신고값 「가산세」 절을 다시 계산한 값과 대조한다."""
-        cols = self.rv["본지"]["열"]
-        labels = [x["표기"] for x in self.rv["본지"]["세율구분"]]
-        exp = self.expected_penalty()
+        """본지 ⑯ 가산세 네 줄과 신고값 「가산세」 절을 다시 계산한 값과 대조한다. 지방 서식 ⑬ 과 「가산세.지방」 도 같다."""
         section = self.rv.get("가산세")
+        self.penalty_cells("본지", self.rv["본지"], self.expected_penalty(False), section, self.nat_win, "⑯",
+                           NAT_PENALTY_ROWS, "신고값 가산세 절")
+        local_section = section.get("지방") if isinstance(section, dict) else None
+        self.penalty_cells("지방", self.rv["지방"], self.expected_penalty(True), local_section, self.local_win, "⑬",
+                           LOCAL_PENALTY_ROWS, "신고값 가산세 절 지방")
+
+    def penalty_cells(self, form_name, form, exp, section, win, no, rows, section_name):
+        cols = form["열"]
+        labels = [x["표기"] for x in form["세율구분"]]
         kind = self.rv["신고"]["구분"]
         why = "예정신고에는 예정신고 무신고·납부지연 가산세가 없다" if kind != "확정" else "다시 계산한 값"
+        other = rows[2]
         if "불가" in exp:
             for n in ["합계", "국내소계"] + labels:
                 c = cols.get(n) or {}
-                for key, no, name in NAT_PENALTY_ROWS + (("가산세", "⑯", "가산세 계"),):
+                for key, _, name in rows + (("가산세", no, "가산세 계"),):
                     if _i(c.get(key)):
-                        self.fail("본지 %s %s %s %s ≠ 0 (가산세를 정할 수 없는 건이라 0 이어야 한다. %s)"
-                                  % (_col(n), no, name, _w(c.get(key)), exp["불가"]))
-            if not isinstance(section, dict) or section.get("계산") is not False:
+                        self.fail("%s %s %s %s %s ≠ 0 (가산세를 정할 수 없는 건이라 0 이어야 한다. %s)"
+                                  % (form_name, _col(n), no, name, _w(c.get(key)), exp["불가"]))
+            whole = self.rv.get("가산세")
+            if rows is NAT_PENALTY_ROWS and (not isinstance(whole, dict) or whole.get("계산") is not False):
                 self.fail("신고값 가산세 절이 계산하지 못했다고 적지 않았다(가산세를 정할 수 없는 건이다. %s)" % exp["불가"])
             return
         total = exp["합계"]
@@ -706,28 +734,35 @@ class _Check:
             if c is None:
                 continue
             a, b = want[n]
-            for key, no, name, value in (("가산세_신고", "⑯", "가산세 무(과소)신고", a), ("가산세_납부", "⑯", "가산세 납부지연", b),
-                                         ("가산세_기장", "⑯", "가산세 기장불성실 등", 0)):
+            for (key, _, name), value in zip(rows, (a, b, 0)):
                 got = c.get(key)
                 if got is None and n != "합계":
                     # 합산 비교세액이 이긴 신고서는 가산세를 합계 열에만 적는다. 이기지 않았는데 비어 있으면 열 합 검사가 건너뛴다
-                    if value and not self.nat_win:
-                        self.fail("본지 %s %s %s 칸이 비어 있다(%s %s)" % (_col(n), no, name, why, _w(value)))
+                    if value and not win:
+                        self.fail("%s %s %s %s 칸이 비어 있다(%s %s)" % (form_name, _col(n), no, name, why, _w(value)))
                     continue
                 if _i(got) != value:
-                    self.fail("본지 %s %s %s %s ≠ %s %s" % (_col(n), no, name, _w(got), why, _w(value)))
+                    self.fail("%s %s %s %s %s ≠ %s %s" % (form_name, _col(n), no, name, _w(got), why, _w(value)))
+        whole = self.rv.get("가산세")
         if kind != "확정":
-            if section is not None:
-                self.fail("신고값 가산세 절이 예정신고인데 비어 있지 않다")
+            if whole is not None and rows is NAT_PENALTY_ROWS:
+                self.fail("%s이 예정신고인데 비어 있지 않다" % section_name)
             return
-        if not isinstance(section, dict) or section.get("계산") is not True:
-            if sum(total) or not isinstance(section, dict):
-                self.fail("신고값 가산세 절이 계산하지 못했다고 적었는데 다시 계산한 가산세는 무신고 %s, 납부지연 %s, 계 %s 이다"
+        if rows is not NAT_PENALTY_ROWS:
+            if not isinstance(whole, dict) or whole.get("계산") is not True:
+                return                      # 국세 쪽 검사가 이미 알렸다
+            if not isinstance(section, dict):
+                self.fail("신고값 가산세 절에 지방이 없다(다시 계산한 지방소득세 가산세는 무신고 %s, 납부지연 %s, 계 %s 이다)"
                           % (_w(total[0]), _w(total[1]), _w(sum(total))))
+                return
+        elif not isinstance(section, dict) or section.get("계산") is not True:
+            if sum(total) or not isinstance(section, dict):
+                self.fail("%s이 계산하지 못했다고 적었는데 다시 계산한 가산세는 무신고 %s, 납부지연 %s, 계 %s 이다"
+                          % (section_name, _w(total[0]), _w(total[1]), _w(sum(total))))
             return
         for key, value in (("무신고", total[0]), ("납부지연", total[1]), ("계", sum(total))):
             if _i(section.get(key)) != value:
-                self.fail("신고값 가산세 절 %s %s ≠ 다시 계산한 값 %s" % (key, _w(section.get(key)), _w(value)))
+                self.fail("%s %s %s ≠ 다시 계산한 값 %s" % (section_name, key, _w(section.get(key)), _w(value)))
 
     # ------------------------------------------------------------ 지방
 
@@ -758,7 +793,7 @@ class _Check:
                 self.same(c.get("납부할세액"), due, cn + " ⑮ 납부할 총세액", "⑦-⑧-⑨-⑩-⑪-⑫+⑬-⑭")
                 if c.get("신고기한내납부") is not None:
                     self.same(c.get("신고기한내납부"), c.get("납부할세액"), cn + " 신고기한내 납부", "⑮ 납부할 총세액")
-        self.sums("지방", cols, labels, LOCAL, LOCAL_WIN, self.local_win)
+        self.sums("지방", cols, labels, LOCAL + LOCAL_PENALTY_ROWS, LOCAL_WIN, self.local_win)
         self.column_due_filled("지방", cols, labels, self.local_win, "⑮ 납부할 총세액")
         self.local_filing_credit(cols, [n for n in names if n in cols])
 
@@ -956,7 +991,7 @@ class _Check:
         """03 행의 가산세 칸(15 신고불성실, 16 납부불성실, 17 계, 35 기장불성실등)을 다시 계산한 값과 대조한다.
         합계·국내소계 행은 합계, 세율구분 행은 그 열의 값이다. 본지 열이 비어 있어도(합산 비교세액이 이긴 신고서) 03 행은 적는다.
         행 안의 산식 19 자진납부할세액 = 10 산출세액 - 36 전자신고세액공제 + 17 가산세-계 도 본다."""
-        exp = self.expected_penalty()
+        exp = self.expected_penalty(False)
         zero = "불가" in exp
         rows = [("합계 행", total, (0, 0) if zero else exp["합계"]), ("국내소계 행", sub, (0, 0) if zero else exp["합계"])]
         rows += [(label + " 행", x, (0, 0) if zero else exp["열"].get(label, (0, 0))) for label, x in rate.items()]

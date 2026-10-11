@@ -12,7 +12,7 @@
   확정신고 가산세: 예정신고를 하지 않은 확정신고의 예정신고 무신고가산세와 납부지연가산세. yangdo.penalty 가 계산한 값을
     본지 ⑯ 과 ⑱, 전자신고 03 행에 옮긴다. 납부일은 작성일로 본다. 결과는 신고값 「가산세」 절에도 싣는다(예정신고는 None).
     penalty.Unsupported 면 가산세를 0 으로 두고 「가산세」 절에 {"계산": False, "사유", "계획"} 을 실어 진입점이 신고서와
-    전자신고 파일을 만들지 않게 한다. 지방소득세 신고서의 가산세는 계산하지 않고 0 으로 두며 확인사항으로 알린다.
+    전자신고 파일을 만들지 않게 한다. 지방소득세 가산세(「가산세.지방」)는 지방 서식 ⑬ 과 ⑮ 에 옮긴다.
 인적사항(성명, 주민등록번호, 주소, 전화, 양수인)은 신고인·양수인·신고 절에만 둔다. 예외는 부표1·05 소재지(지번)와 부표3·07
 매입가액 행 상호(신고인 JSON 자산[id].취득상대방, 매도인 성명)다. 이 값은 검토 문서·신고_확인.md·MCP 응답·화면 출력에 옮기지
 않는다. 입력 안내서와 부속서류 목록은 출력 폴더의 로컬 파일이라 소재지와 상호를 적는다(주민등록번호와 전화는 적지 않는다,
@@ -43,7 +43,7 @@ SHORT = ("1년미만", "2년미만")
 
 # 신고값 「가산세」 절에 옮기는 penalty.final_return 결과의 키(확인사항은 신고값 확인사항으로 옮긴다)
 PENALTY_KEYS = ("무신고", "무신고_감면적용", "무신고_감면없음", "감면적용", "감면안내", "납부지연", "계", "율", "감면율", "일이자율",
-                "건", "열", "양도일별", "근거")
+                "건", "열", "양도일별", "지방", "근거")
 
 ACQ_LABEL = {"실지거래가액": "실지거래가액", "매매사례가액": "매매사례가액", "감정가액": "감정가액", "환산가액": "환산취득가액"}
 
@@ -682,10 +682,13 @@ class _Builder:
                 "가산세_기장": 0, "기신고세액": 0, "납부할세액": due, "분납": inst, "신고기한내납부": due - inst}
 
     @staticmethod
-    def local_column(base, rate, tax, credit=0):
+    def local_column(base, rate, tax, credit=0, pen=(0, 0)):
+        """지방 서식 한 열. pen 은 (무신고가산세, 납부지연가산세). ⑮ 납부할 총세액 = ⑦-⑧-⑨-⑩-⑪-⑫+⑬-⑭."""
+        nonfiling, delay = pen
+        due = tax - credit + nonfiling + delay
         return {"과세표준": base, "세율": rate, "산출세액": tax, "감면세액": 0, "외국납부": 0, "원천징수": 0, "연금계좌": 0,
-                "전자신고공제": credit, "가산세": 0, "가산세_신고": 0, "가산세_납부": 0, "가산세_기타": 0, "기신고세액": 0,
-                "납부할세액": tax - credit, "신고기한내납부": tax - credit}
+                "전자신고공제": credit, "가산세": nonfiling + delay, "가산세_신고": nonfiling, "가산세_납부": delay,
+                "가산세_기타": 0, "기신고세액": 0, "납부할세액": due, "신고기한내납부": due}
 
     @staticmethod
     def split_credit(credit, cols, taxes):
@@ -787,11 +790,20 @@ class _Builder:
         pen_col = {k: ((pen["열"]["%s-%s" % k]["무신고"], pen["열"]["%s-%s" % k]["납부지연"]) if done else (0, 0)) for k in cols}
         if sum(pen_total) and (sum(v[0] for v in pen_col.values()), sum(v[1] for v in pen_col.values())) != pen_total:
             raise ValueError("가산세의 세율구분 열 합이 합계와 다르다")
+        # 지방소득세 가산세(penalty 의 「지방」). 지방 서식 ⑬ 과 ⑮ 에 적는다
+        loc_pen = pen["지방"] if done else None
+        loc_pen_total = (loc_pen["무신고"], loc_pen["납부지연"]) if done else (0, 0)
+        loc_pen_col = {k: ((loc_pen["열"]["%s-%s" % k]["무신고"], loc_pen["열"]["%s-%s" % k]["납부지연"]) if done else (0, 0))
+                       for k in cols}
+        if sum(loc_pen_total) and (sum(v[0] for v in loc_pen_col.values()),
+                                   sum(v[1] for v in loc_pen_col.values())) != loc_pen_total:
+            raise ValueError("지방소득세 가산세의 세율구분 열 합이 합계와 다르다")
 
         nat_cols = {k: self.nat_column(sum(r["계산"]["양도소득금액"] for r in members[k]),
                                        sum(r["계산"]["기본공제"] for r in members[k]), bases[k], _pct(nat_rate[k]),
                                        nat_tax[k], col_credit[k], pen=pen_col[k]) for k in cols}
-        loc_cols = {k: self.local_column(bases[k], _pct(loc_rate[k]), loc_tax[k], loc_col_credit[k]) for k in cols}
+        loc_cols = {k: self.local_column(bases[k], _pct(loc_rate[k]), loc_tax[k], loc_col_credit[k], loc_pen_col[k])
+                    for k in cols}
         nat_total_rate = nat_cols[cols[0]]["세율"] if single and not merged_win else ""
         loc_total_rate = loc_cols[cols[0]]["세율"] if single and not local_win else ""
         sum_nat = self.nat_column(sum(r["계산"]["양도소득금액"] for r in taxed), sum(r["계산"]["기본공제"] for r in taxed),
@@ -799,8 +811,9 @@ class _Builder:
         sub_nat = self.nat_column(sum(c["양도소득금액"] for c in nat_cols.values()), sum(c["기본공제"] for c in nat_cols.values()),
                                   sum(bases.values()), nat_total_rate, sum(nat_tax.values()), sum(col_credit.values()),
                                   pen=pen_total)
-        sum_loc = self.local_column(total["과세표준"], loc_total_rate, total["지방소득세"], loc_credit)
-        sub_loc = self.local_column(sum(bases.values()), loc_total_rate, sum(loc_tax.values()), sum(loc_col_credit.values()))
+        sum_loc = self.local_column(total["과세표준"], loc_total_rate, total["지방소득세"], loc_credit, loc_pen_total)
+        sub_loc = self.local_column(sum(bases.values()), loc_total_rate, sum(loc_tax.values()), sum(loc_col_credit.values()),
+                                    loc_pen_total)
         nat_pay = ("기신고세액", "납부할세액", "분납", "신고기한내납부")
         loc_pay = ("기신고세액", "납부할세액", "신고기한내납부")
         if merged_win and sum(pen_total):
@@ -808,6 +821,10 @@ class _Builder:
             # 20,831,700 · 14,255,520 · 35,087,220). 이기지 않으면 합계·국내분 소계·세율구분 열에 모두 적는다(하위 8)
             for c in list(nat_cols.values()) + [sub_nat]:
                 for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기장"):
+                    c[k] = None
+        if local_win and sum(loc_pen_total):          # 지방 서식도 지방소득세 합산 비교세액이 크면 가산세를 합계 열에만 적는다
+            for c in list(loc_cols.values()) + [sub_loc]:
+                for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기타"):
                     c[k] = None
         for c in list(nat_cols.values()) + [sub_nat]:
             self.blank_payment(c, not merged_win, nat_pay)
@@ -833,10 +850,11 @@ class _Builder:
                 # 국세청 작성 사례에 가산세와 분납이 함께 있는 서식이 없다. 금액은 바꾸지 않고 전제를 알린다
                 self.note("납부지연가산세는 납부할 세액 전부를 작성일 %s 에 내는 것으로 셌다. 분납할 세액 %s원은 그 뒤에 내므로 "
                           "그 세액의 납부지연가산세가 더 붙을 수 있다. 세무 전문가와 확인한다" % (self.made, inst))
-            if total["지방소득세"]:
-                self.note("지방소득세 신고서의 가산세는 계산하지 않아 0 으로 두었다. 예정신고를 하지 않은 확정신고에는 지방소득세에도 "
-                          "무신고가산세와 납부지연가산세가 붙으므로 지방소득세 신고서의 납부할 세액은 실제보다 적다. 지방소득세는 "
-                          "신고기한과 납부일이 국세와 달라 이 도구가 일수를 정하지 못했다. 위택스에서 신고할 때 가산세를 확인한다")
+        if done and sum(loc_pen_total):
+            self.note("지방소득세 무신고가산세 %s원과 납부지연가산세 %s원을 지방소득세 신고서 ⑬ 가산세와 ⑮ 납부할 총세액에 넣었다"
+                      "(가산세 계 %s원). %s" % (loc_pen_total[0], loc_pen_total[1], sum(loc_pen_total),
+                                           "지방소득세 합산 비교 세액이 큰 신고서라 가산세와 납부할 총세액은 합계 열에만 적었다" if local_win
+                                           else "합계 열과 국내분 소계 열, 세율구분 열에 나눠 적었다"))
         if loc_credit:
             self.note("지방소득세 전자신고세액공제 %s원을 지방소득세 신고서 ⑫ 에 넣었다(%s). 위택스에서 직접 전자신고할 때의 공제다. "
                       "서면으로 내거나 세무대리인이 신고하면 공제가 없다"

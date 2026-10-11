@@ -867,7 +867,11 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
         assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36306400원" in doc and "4273250원" in doc
         assert "부정행위" in doc and "다루지 않는다" in doc
         assert "납부일(2027-05-20) 기준" in doc
-        assert "지방소득세 신고서의 가산세는 계산하지 않아" in doc
+        # 지방소득세 가산세: 금액, 감면을 적용했다는 것과 대안 금액, 두 가지 가정
+        assert "지방소득세에도 예정신고 무신고가산세 2062740원과 납부지연가산세 226901원" in doc
+        assert "감면이 적용되지 않으면 지방소득세 무신고가산세는 4125480원" in doc
+        assert "두 가지를 가정" in doc and "위택스 값을 따른다" in doc
+        assert "지방소득세 신고서의 가산세는 계산하지 않아" not in doc
     assert not md.startswith(">")                              # 끝까지 간 실행이라 맨 위 경고 줄이 없다
     body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
     assert "가산세는 계산하지 않았다" not in body and "46,110,480원" in body and "따로 계산해 더한다" not in md
@@ -879,14 +883,16 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert len(late) == 1 and "견주어 본다" in late[0] and "20627400원" in late[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
-    # 지방소득세 신고서는 가산세가 빠진 값이다. 값의 출처로 가리키지 않고 가산세를 더하라고 적는다
+    # 지방소득세 신고서에 가산세가 들어 있다. 두 가지를 가정한 값이라 위택스 화면의 값과 다르면 위택스 값을 따르라고 적는다
     local = [ln for ln in todo.splitlines() if "위택스" in ln and "지방소득세" in ln][0]
-    assert "가산세가 빠진 값" in local and "가산세를 더" in local and "값은 지방소득세_신고서.pdf 에 있다" not in local
-    alerts = _confirm(out).split("## 알림", 1)[1].split("##")[0]
-    assert "지방소득세 신고서" in alerts and "가산세" in alerts and "실제보다 적다" in alerts
+    assert "값은 지방소득세_신고서.pdf 에 있다" in local and "가정" in local and "위택스 값을 따른다" in local
+    assert "가산세가 빠진 값" not in _confirm(out) and "실제보다 적다" not in _confirm(out)
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        loc = json.load(fh)["지방"]["열"]["합계"]
+    assert (loc["가산세_신고"], loc["가산세_납부"], loc["가산세"], loc["납부할세액"]) == (2062740, 226901, 2289641, 22917041)
     # 납부지연가산세를 작성일에 내는 것으로 셌다. 「신고기한 안에 납부」가 아니라 작성일에 납부하라고 적는다
     pay = [ln for ln in todo.splitlines() if "납부한다" in ln][0]
-    assert "작성일 2027-05-20 에 납부한다" in pay and "작성일을 그 날로 바꿔 다시 만든다" in pay
+    assert "국세와 지방소득세는 작성일 2027-05-20 에 납부한다" in pay and "작성일을 그 날로 바꿔 다시 만든다" in pay
     assert "신고기한 안에 국세와 지방소득세를 납부한다" not in todo
     assert DASH not in _confirm(out) and not [ln for ln in _confirm(out).splitlines() if ln.rstrip().endswith("?")]
 
