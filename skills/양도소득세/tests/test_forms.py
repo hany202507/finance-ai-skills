@@ -418,6 +418,20 @@ def test_shortened_note_matches_the_kind_of_cell(tmp_path):
         assert "아파트 이름 등을 빼고" in forms.shortened_note({"이름": "X", "형식": kind})
 
 
+def test_blank_note_says_which_forms_left_the_cell_blank():
+    a = {"서식": "별지84 본지"}
+    b = {"서식": "별지40의11"}
+    both = forms.blank_note("신고인.국적", [a, b], 2)
+    assert both.count("국적") == 1 and "별지84 본지·별지40의11 칸에 들어가지 않아 비워 두었다" in both and "나머지" not in both
+    one = forms.blank_note("신고인.국적", [b], 2)
+    assert "별지84" not in one and one.endswith("나머지 서식에는 영문 이름을 적었다")
+
+
+def test_cell_name_does_not_repeat_a_column_named_like_the_field():
+    assert forms._cell_name("별지84 본지", "신고인.국적", "국적") == "별지84 본지 신고인.국적"
+    assert forms._cell_name("별지84 부표1", "자산1", "자산종류") == "별지84 부표1 자산1 자산종류"
+
+
 def test_schedule3_totals_follow_the_mapping_table(tmp_path):
     """부표3 ⑤·⑬ 계의 0 적음과 소계·합계액을 적는 열은 매핑 표가 정한다. 읽지 않는 「칸」 항목은 두지 않는다."""
     m = _mappings()["부표3.json"]
@@ -476,8 +490,11 @@ def test_code_without_a_korean_name_uses_the_english_name_or_stays_blank(tmp_pat
     paths = forms.render(rv, str(tmp_path / "cd"))
     for p in paths:
         assert "CONGO" not in pymupdf.open(p)[0].get_text()
-    blank = [s for s in rv["확인사항"] if "국적" in s and "비워 두었다" in s]
-    assert len(blank) == 2 and all("CD" not in s and "CONGO" not in s for s in blank)       # 본지와 지방 서식에 한 줄씩
+    # 국적 칸의 확인사항은 한 줄이다. 본지와 지방 서식을 한 문장에 묶고, 「영문 이름을 적는다」는 미리 알림은 비웠다는 문장으로 바뀐다
+    blank = [s for s in rv["확인사항"] if "국적" in s]
+    assert len(blank) == 1 and "비워 두었다" in blank[0] and blank[0].count("국적") == 1
+    assert "별지84 본지" in blank[0] and "별지40의11" in blank[0] and "CD" not in blank[0] and "CONGO" not in blank[0]
+    assert not any(s.endswith(forms.forms_fmt.ENGLISH_NOTE_TAIL) for s in rv["확인사항"])
     # 2) 영문 이름이 짧으면 칸에 적는다
     e = tmp_path / "efile"
     shutil.copytree(os.path.join(SKILL, "efile"), str(e))

@@ -86,8 +86,12 @@ def test_converted_falls_back_to_actual_costs():
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["필요경비"]["자본적지출"] = [{"내용": "기타가치증가", "지급일": "2010-01-01", "금액": 500_000_000,
                                          "증빙종류": "세금계산서", "상대방": "합성"}]
-    c = run("F", f)["자산"][0]["계산"]
+    r = run("F", f)
+    c = r["자산"][0]["계산"]
     assert (c["취득가액"], c["필요경비"]) == (0, 500_000_000)
+    notes = [x for x in r["확인사항"] if "자본적지출·양도비" in x]
+    assert notes == ["F: 환산취득가액과 개산공제 합(406,000,000원)보다 자본적지출·양도비(500,000,000원)가 커서 "
+                     "그것을 필요경비로 했다(소득세법 제97조②2호 단서)"]
 
 
 def test_comparable_sale_price_first():
@@ -104,6 +108,8 @@ def test_expense_evidence_and_repairs_dropped():
         {"내용": "일반수선", "지급일": "2021-01-01", "금액": 1_000_000, "증빙종류": "카드영수증", "상대방": "합성"}]
     c = run("B", f)["자산"][0]["계산"]
     assert c["필요경비"] == 10_000_000 and len(c["필요경비_제외"]) == 2
+    assert any(x.startswith("샷시 3,000,000원: ") for x in c["필요경비_제외"])      # 금액 문장에는 천 단위 쉼표가 있다
+    assert any(x.startswith("일반수선 1,000,000원: ") for x in c["필요경비_제외"])
 
 
 def test_joint_ownership():
@@ -116,8 +122,9 @@ def test_joint_ownership():
 def test_loss_and_mixed_years_unsupported():
     f = copy.deepcopy(CASES["B"])
     f["자산"][0]["전체양도가액"] = 400_000_000
-    with pytest.raises(C.Unsupported):
+    with pytest.raises(C.Unsupported) as e:
         run("B", f)
+    assert "양도차손 -" in str(e.value) and "," in str(e.value).split("양도차손 ")[1].split("원.")[0]
     with pytest.raises(C.Unsupported):
         C.annual(CASES["BC"], [VERDICTS["B"], dict(VERDICTS["C"], 양도일="2025-12-01")], RS, CD)
 

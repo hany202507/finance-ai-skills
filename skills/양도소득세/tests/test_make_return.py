@@ -886,6 +886,8 @@ def test_foreign_filer_whose_nationality_has_no_korean_name_still_finishes(tmp_p
     text = _confirm(out)
     assert "| 신고서 PDF | 만듦 |" in text and "국적" in text and "비워 두었다" in text
     assert "CONGO" not in text and "이름이 비어" not in text
+    nat = [ln for ln in text.splitlines() if "국적" in ln]
+    assert len(nat) == 1 and nat[0].count("국적") == 1, nat            # 국적 칸의 확인사항은 한 줄이다
 
 
 def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
@@ -944,7 +946,7 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert len(local_alert) == 1 and "2,062,740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
-    assert len(late) == 1 and "견주어 본다" in late[0] and "20,627,400원" in late[0]
+    assert len(late) == 1 and "대조한다" in late[0] and "20,627,400원" in late[0]
     assert "그렇게 내서 감면이 적용되면 무신고가산세가 20,627,400원으로 줄어든다" in late[0]      # 「내 감면」으로 읽히지 않게 적는다
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
@@ -1467,6 +1469,8 @@ def test_make_return_tells_about_mixed_temp_folders_it_did_not_remove(tmp_path):
     _mixed_told(rep["알림"], names)
     _mixed_told(_section(_confirm(out), "## 알림").splitlines(), names)
     _mixed_told(rep["전자신고"]["경고"], names)               # efile.write 의 경고에도 실린다
+    for n in names:                                         # 확인 문서에는 알림에만 한 번 적는다
+        assert sum(n in ln for ln in _confirm(out).splitlines()) == 1, n
     res = mcp_server.call_tool("yangdo_efile", {"facts": CASES["S1"], "filer_path": _filer_file(tmp_path, s1_filer()),
                                                 "out_dir": str(out), "today": TODAY})
     _mixed_told(res["알림"], names)

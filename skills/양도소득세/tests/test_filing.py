@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import copy
 import json
+import os
 
 import pytest
 
@@ -979,3 +980,60 @@ def test_questions_read_the_code_table_of_the_given_efile_dir(tmp_path):
     assert ids(filing.questions(loaded, facts, res, bjd=FakeBjd())) == [("F07", "S1")]
     assert filing.questions(loaded, facts, res, bjd=FakeBjd(), efile_dir=str(efile_dir)) == []
 
+
+# ---- 신고인_양식.json: 사용자가 복사해 채우는 파일이라 코드가 읽는 모양과 어긋나면 안 된다 ----
+FORM_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "신고인_양식.json")
+
+
+def _form():
+    with open(FORM_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_filer_form_loads_and_its_blanks_become_questions():
+    """빈 양식은 오류로 멈추지 않고 읽힌다. 빈 값은 질문이 된다(신고인 F01, 양수인 F02, 분납 F03 과 주소·서류 문항)."""
+    f = filing.load(FORM_PATH)
+    assert f["_경고"] == [] and f["세무대리인"] is None and f["환급계좌"] is None
+    assert f["신고인"]["주소"]["특수지"] == "0" and f["자산"]["A"]["특수지"] == "0"
+    qs = filing.questions(f, {"자산": [{"id": "A"}]}, None, bjd=FakeBjd())
+    assert {"F01", "F02", "F03"} <= {q["문항"] for q in qs}
+    for name in filing.FIELD_NAMES:
+        assert name in qs[0]["내용"]
+
+
+def test_filer_form_has_the_same_keys_as_a_valid_filer():
+    """양식의 구역과 칸 이름은 시험이 쓰는 합성 신고인(코드가 받아들이는 모양)과 같다. 합성 신고인에 없는 칸은 선택 칸이다."""
+    form, ok = _form(), filers.get("S1")
+    assert set(form) - {"_설명"} == set(ok)
+    for sec in ("신고", "신고인"):
+        assert set(form[sec]) == set(ok[sec]), sec
+    assert set(form["신고인"]) - {"주소", "전자메일"} == set(filing.FIELD_NAMES)      # 전자메일은 선택 칸이라 필수 목록에 없다
+    assert set(form["신고인"]["주소"]) == set(ok["신고인"]["주소"])
+    assert set(form["양수인"][0]) - set(ok["양수인"][0]) == {"관계코드"} and set(ok["양수인"][0]) <= set(form["양수인"][0])
+    lot, mine = next(iter(ok["자산"].values())), form["자산"]["A"]
+    assert set(lot) <= set(mine) and set(mine) - set(lot) <= {"등기원인", "등기목적"}
+
+
+def test_filer_form_filled_with_valid_values_loads_without_questions():
+    """양식의 칸에 합성 값을 채우면 읽히고 질문이 없다(양식이 코드가 요구하는 칸을 빠뜨리지 않았다)."""
+    ok, form = filers.get("A"), _form()
+    ok["자산"]["A"]["법정동코드"] = "1171010100"
+    for sec in ("신고", "신고인"):
+        for k in form[sec]:
+            form[sec][k] = ok[sec][k]
+    form["양수인"] = ok["양수인"]
+    form["자산"] = {"A": {**form["자산"]["A"], **ok["자산"]["A"]}}
+    f = filing.load(form)
+    assert filing.questions(f, CASES["A"], None, bjd=FakeBjd()) == []
+
+
+def test_filer_form_describes_every_section():
+    """_설명에 구역마다 풀이가 있다. 줄표와 물음표로 끝나는 문장은 없다."""
+    form = _form()
+    text = form["_설명"]
+    for sec in ("신고", "신고인"):
+        for k in form[sec]:
+            assert "%s.%s" % (sec, k) in text, (sec, k)
+    for sec in ("양수인", "자산", "환급계좌", "세무대리인"):
+        assert sec in text
+    assert chr(0x2014) not in json.dumps(form, ensure_ascii=False)

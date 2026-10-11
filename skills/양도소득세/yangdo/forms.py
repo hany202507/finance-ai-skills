@@ -41,7 +41,7 @@ import re
 
 import pymupdf
 
-from yangdo import SKILL_DIR, forms_pdf
+from yangdo import SKILL_DIR, forms_fmt, forms_pdf
 from yangdo.forms_fmt import SIDO_SHORT, _Fmt  # noqa: F401  SIDO_SHORT 는 예전부터 이 모듈의 이름으로도 읽는다
 
 FORMS_DIR = os.path.join(SKILL_DIR, "forms")
@@ -166,7 +166,7 @@ class _Planner:
         kind = e.get("형식", "글")
         return {"쪽": page, "필드": fid, "목록": lst, "열": col, "칸": self.rect(f, col), "값": value, "신고값": paths,
                 "맞춤": e.get("맞춤") or _ALIGN.get(kind), "줄": e.get("줄", 1), "pad": e.get("pad"),
-                "이름": e.get("이름") or "%s %s %s" % (m["이름"], fid, col), "형식": kind}
+                "이름": e.get("이름") or _cell_name(m["이름"], fid, col), "형식": kind, "서식": m["이름"]}
 
     # ---- 일반 매핑(본지·부표1·지방)
 
@@ -337,7 +337,7 @@ def plan(rv, forms_dir=None, efile_dir=None):
     """서식에 쓸 것. {"국세": {"원본", "쪽", "칸"}, "지방": {...}, "확인사항": [...], "서식별": {...}, "사용": [...], "안씀": {...}}.
 
     「쪽」 은 새 문서의 쪽마다 원본 쪽 번호(1부터), 「칸」 은 {"쪽"(새 문서 0부터), "필드", "목록", "열", "칸"(좌표),
-    "값", "신고값", "맞춤", "줄", "pad", "이름", "형식"} 목록이다. 「값」 이 목록이면 앞에서부터 칸에 들어가는 것을 쓴다.
+    "값", "신고값", "맞춤", "줄", "pad", "이름", "형식", "서식"} 목록이다. 「값」 이 목록이면 앞에서부터 칸에 들어가는 것을 쓴다.
     「서식별」 은 {"국세": {"사용", "안씀"}, "지방": {...}} 로, 그 서식의 매핑이 놓은 신고값 경로와 「안씀」 표다.
     「사용」·「안씀」 은 두 서식의 것을 합친 것이다."""
     return _Planner(rv, forms_dir, efile_dir).build()
@@ -397,12 +397,22 @@ _SHORT_NOTES["소재지"] = _SHORT_NOTES["자산소재지"] = _SHORT_NOTES["주�
 _SHORT_NOTE_OTHER = "줄인 값으로 적었다. 전체 글자는 신고값에 있다"
 
 
-def shortened_note(c, written=None):
-    """칸 c(plan 의 칸 항목)를 첫 후보가 아닌 뒤 후보로 썼다는 확인사항 문장. written 은 쓴 후보다.
-    쓴 후보가 빈 글자면 앞 후보가 들어가지 않아 칸을 비운 것이다(한글 이름이 없는 코드의 영문 이름)."""
-    if written == "":
-        return "%s 칸에 적을 글자가 칸에 들어가지 않아 비워 두었다. 서면으로 낼 때 직접 적는다" % c["이름"]
+def _cell_name(form, fid, col):
+    """칸 이름. 열 이름이 필드 이름의 끝과 같으면(신고인.국적 의 국적 열) 한 번만 적는다."""
+    return "%s %s" % (form, fid) if fid.rsplit(".", 1)[-1] == col else "%s %s %s" % (form, fid, col)
+
+
+def shortened_note(c):
+    """칸 c(plan 의 칸 항목)를 첫 후보가 아닌 뒤 후보로 썼다는 확인사항 문장."""
     return "%s 칸이 좁아 %s" % (c["이름"], _SHORT_NOTES.get(c.get("형식"), _SHORT_NOTE_OTHER))
+
+
+def blank_note(field, cells, total):
+    """영문 이름 후보 [영문, ""] 가 칸에 들어가지 않아 칸을 비운 사실을 필드마다 한 문장으로 쓴다.
+    cells 는 비운 칸 항목, total 은 그 필드에서 영문 이름 후보를 가진 칸의 수다(일부 서식에만 들어갔으면 그렇게 밝힌다)."""
+    forms = "·".join(dict.fromkeys(c["서식"] for c in cells))
+    s = "%s 칸: 코드표에 한글 이름이 없어 영문 이름을 적으려 했으나 %s 칸에 들어가지 않아 비워 두었다. 서면으로 낼 때 직접 적는다" % (field, forms)
+    return s + ("" if len(cells) == total else ". 나머지 서식에는 영문 이름을 적었다")
 
 
 def render(rv, out_dir, forms_dir=None):
@@ -415,6 +425,7 @@ def render(rv, out_dir, forms_dir=None):
     font = forms_pdf.load_font()
     os.makedirs(out_dir, exist_ok=True)
     notes = list(p["확인사항"])
+    english = {}            # 필드 -> [영문 이름 후보를 가진 칸 수, 칸에 들어가지 않아 비운 칸 목록]
     built = []              # (임시 경로, 최종 경로). 두 문서를 모두 임시 이름으로 만든 뒤에 한꺼번에 바꾼다
     try:
         for which, name in (("국세", OUT_NATIONAL), ("지방", OUT_LOCAL)):
@@ -428,8 +439,12 @@ def render(rv, out_dir, forms_dir=None):
                         fields[c["목록"]] = {f["id"]: f
                                              for f in _read(os.path.join(root, "필드목록", c["목록"]))["fields"]}
                     n = _write(doc[c["쪽"]], fields[c["목록"]][c["필드"]], c, font)
-                    if n:
-                        notes.append(shortened_note(c, c["값"][n]))
+                    if isinstance(c["값"], list) and c["값"][-1] == "" and len(c["값"]) > 1:
+                        english.setdefault(c["필드"], [0, []])[0] += 1
+                    if n and c["값"][n] == "":
+                        english[c["필드"]][1].append(c)
+                    elif n:
+                        notes.append(shortened_note(c))
                 built.append((path + ".tmp", path))     # 저장 도중 실패해도 finally 가 지우도록 먼저 적는다
                 forms_pdf.save(doc, path + ".tmp")
         for tmp, path in built:
@@ -439,6 +454,10 @@ def render(rv, out_dir, forms_dir=None):
         for tmp, _ in built:                # 중간에 실패하면 새로 만든 임시 파일을 지우고 이전 파일은 그대로 둔다
             if os.path.exists(tmp):
                 os.remove(tmp)
+    for field, (total, blank) in english.items():
+        if blank:       # 「영문 이름을 적는다. 칸에 들어가지 않으면 비워 둔다」 는 비웠다는 문장으로 바꾼다
+            notes = [x for x in notes if not (x.startswith("%s 칸: " % field) and x.endswith(forms_fmt.ENGLISH_NOTE_TAIL))]
+            notes.append(blank_note(field, blank, total))
     paths = [os.path.join(out_dir, n) for n in (OUT_NATIONAL, OUT_LOCAL)]
     have = rv.setdefault("확인사항", [])
     for s in notes:
