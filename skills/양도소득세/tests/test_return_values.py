@@ -670,12 +670,14 @@ def _permit(permit_date):
 
 
 def test_permit_zone_uses_permit_date_when_paid_before_permit():
-    # S1 양도 2026-11-20, 허가일 2026-12-10(대금 청산이 허가보다 먼저): 기한은 12월 말일부터 2개월 = 2027-02-28(일요일) -> 2027-03-01
+    # S1 양도 2026-11-20, 허가일 2026-12-10(대금 청산이 허가보다 먼저): 기한은 12월 말일부터 2개월 = 2027-02-28(일요일).
+    # 다음 날 2027-03-01(월)이 3·1절이라 2027-03-02(화)까지다(공휴일 표)
     rv = _late("S1", "2027-03-01", _permit("2026-12-10"))
     assert any("허가일" in m and "2026-12-10" in m for m in rv["확인사항"]) and len(_weekend_notes(rv)) == 1
+    assert _late("S1", "2027-03-02", _permit("2026-12-10"))["신고"]["상세코드"] == "01"      # 3·1절 다음 날은 기한 안이다
     with pytest.raises(return_values.Unsupported) as e:
-        _late("S1", "2027-03-02", _permit("2026-12-10"))
-    assert "2027-03-01" in str(e.value)
+        _late("S1", "2027-03-03", _permit("2026-12-10"))
+    assert "2027-03-02" in str(e.value)
 
 
 def test_permit_zone_ignores_permit_date_when_permit_came_first():
