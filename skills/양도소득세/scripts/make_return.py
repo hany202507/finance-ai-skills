@@ -25,6 +25,7 @@
 
 같은 출력 폴더에 다시 실행하면 이 스크립트와 run.py 가 쓰는 이름만 먼저 지운다. 옛 전자신고 파일(<8자리>C116300.<2자리>)과
 앞선 실행이 남긴 임시 폴더(.efile-*)도 지운다. 이번에 새 파일을 만들지 못했을 때 옛 파일이 새 결과처럼 남지 않게 하려는 것이다.
+지울 이름과 차례는 yangdo/outputs.py 한 곳에 있고(clear_all), run.py 와 MCP 계산 도구도 같은 것을 지운다.
 지우는 차례는 전자신고 파일, 임시 폴더, 신고서 PDF, 나머지 이 스크립트의 파일, 마지막이 run.py 의 파일(통합 문서부터)이다.
 하나가 다른 프로그램에 잡혀 지워지지 않아도 나머지를 끝까지 지운 뒤 종료코드 4 로 멈추고, 남은 파일 이름을 신고_확인.md 에
 이전 실행의 것이라고 적는다. 엑셀이 계산근거를 열어 둔 채 다시 돌려도 옛 전자신고 파일은 남지 않는다. 다른 파일은 건드리지 않는다.
@@ -45,7 +46,6 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 import traceback
@@ -60,11 +60,11 @@ from yangdo import bjd, efile, filing, forms, forms_check, guide, outputs, retur
 from yangdo import facts as F  # noqa: E402
 from run import iso_date, read_facts  # noqa: E402
 
-RV_FILE, GUIDE_FILE, ATTACH_FILE, CONFIRM_FILE = "신고값.json", "홈택스_입력안내.md", "부속서류.md", "신고_확인.md"
-# 이 스크립트가 쓰는 파일 이름. 신고서 PDF 는 forms 가 임시 이름(.tmp)으로 만든 뒤 바꾸므로 그 이름도 지운다
-OWN_NAMES = (RV_FILE, forms.OUT_NATIONAL, forms.OUT_LOCAL, forms.OUT_NATIONAL + ".tmp", forms.OUT_LOCAL + ".tmp",
-             GUIDE_FILE, ATTACH_FILE, CONFIRM_FILE)
-EFILE_NAME = re.compile(r"^[0-9]{8}C116300\.[0-9]{2}$")     # 양도소득세 전자신고 파일 이름 꼴(규격서 p20). 다른 세목 파일은 건드리지 않는다
+# 이 스크립트가 쓰는 파일 이름과 옛 전자신고 파일 이름 꼴. 지울 이름 목록은 yangdo/outputs.py 한 곳에 있고 여기서는 가져다 쓴다
+# (run.py 와 MCP 계산 도구도 같은 이름을 지운다)
+RV_FILE, GUIDE_FILE, ATTACH_FILE, CONFIRM_FILE = outputs.RETURN_VALUES, outputs.GUIDE, outputs.ATTACHMENTS, outputs.CONFIRM
+OWN_NAMES = outputs.RETURN_NAMES
+EFILE_NAME = outputs.EFILE_NAME
 FORMS, EFILE = "forms", "efile"                             # 어디까지 만드는지. forms 는 신고서 PDF 까지, efile 은 전자신고 파일까지
 NOT_DONE = "하지 않음"
 STEPS = ("계산", "신고인 정보", "신고값", "서식 검산", "신고서 PDF", "전자신고 파일", "입력 안내서·부속서류")
@@ -112,39 +112,19 @@ def _inside(path, folder):
         return True
 
 
-def _is_tmp_dir(out, name):
-    path = os.path.join(out, name)
-    return name.startswith(efile.TMP_PREFIX) and os.path.isdir(path) and not os.path.islink(path)
-
-
-def _clear_order(name):
-    """지우는 차례. 제출용 이름의 전자신고 파일, 임시 폴더, 신고서 PDF 를 다른 파일보다 먼저 지운다."""
-    if EFILE_NAME.match(name):
-        return 0
-    if name.startswith(efile.TMP_PREFIX):
-        return 1
-    return 2 if name.startswith((forms.OUT_NATIONAL, forms.OUT_LOCAL)) else 3
+_is_tmp_dir, _clear_order = outputs.is_tmp_dir, outputs.clear_order
 
 
 def clear_previous(out):
-    """이 스크립트가 쓰는 이름과 옛 전자신고 파일, 앞선 실행의 임시 폴더만 지운다. (알릴 문장 목록, 첫 OSError 또는 None).
+    """이전 실행이 남긴 파일을 지운다. (알릴 문장 목록, 첫 OSError 또는 None).
 
-    하나가 막혀도 나머지를 끝까지 지운다. 지우지 못한 파일이 있으면 처음 난 OSError 를 돌려주고, 부른 쪽이 종료코드 4 로 멈춘다.
-    지우지 못한 임시 폴더는 문장으로 알린다. 폴더 안의 다른 파일은 그대로 둔다.
+    지울 이름과 차례는 outputs.clear_all 에 있다. 이 스크립트가 쓰는 이름, 옛 전자신고 파일, 앞선 실행의 임시 폴더를 먼저 지우고
+    run.py 의 파일(통합 문서부터)을 마지막에 지운다. 하나가 막혀도 나머지를 끝까지 지운다. 지우지 못한 파일이 있으면 처음 난
+    OSError 를 돌려주고, 부른 쪽이 종료코드 4 로 멈춘다. 지우지 못한 임시 폴더는 문장으로 알린다. 폴더 안의 다른 파일은 그대로 둔다.
     """
-    left, first = [], None
-    for name in sorted(os.listdir(out), key=lambda n: (_clear_order(n), n)):
-        path = os.path.join(out, name)
-        if _is_tmp_dir(out, name):
-            shutil.rmtree(path, ignore_errors=True)
-            if os.path.lexists(path):
-                left.append("앞선 실행이 남긴 임시 폴더 %s 를 지우지 못했다. 인적사항이 든 임시 파일이 남아 있을 수 있으니 직접 지운다" % name)
-        elif (name in OWN_NAMES or EFILE_NAME.match(name)) and (os.path.isfile(path) or os.path.islink(path)):
-            try:
-                os.remove(path)
-            except OSError as e:
-                first = first or e
-    return left, first
+    left, first = outputs.clear_all(out)
+    return ["앞선 실행이 남긴 임시 폴더 %s 를 지우지 못했다. 인적사항이 든 임시 파일이 남아 있을 수 있으니 직접 지운다" % name
+            for name in left], first
 
 
 def _leftovers(out):
@@ -161,12 +141,8 @@ def _clear_all(rep, out):
 
     지우지 못한 것이 있으면 남은 파일 이름을 이전 실행의 것이라고 알림에 적고 처음 난 OSError 를 다시 낸다(종료코드 4).
     """
-    notes, first = clear_previous(out)
+    notes, first = clear_previous(out)   # 계산 결과는 통합 문서부터 지운다. 엑셀이 열어 두었으면 계산 결과 파일은 그대로 남는다
     rep["알림"] += notes
-    try:
-        outputs.clear_previous(out)      # 통합 문서부터 지운다. 엑셀이 열어 두었으면 계산 결과 파일은 그대로 남는다
-    except OSError as e:
-        first = first or e
     if first is not None:
         stale = _leftovers(out)
         if stale:

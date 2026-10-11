@@ -50,7 +50,7 @@ claude mcp add yangdo -- python <스킬 경로>/scripts/mcp_server.py
 |---|---|
 | `yangdo_next_questions` | 사실관계에 비어 있는 것 중 다음에 물을 문항을 돌려준다. 인자는 `facts_path`(파일 경로)나 `facts`(JSON 객체) 중 하나, `limit`(한 번에 받을 문항 수, 기본 1). `forms`(서식 단계 문항도 낸다)는 계산용 문항을 모을 때는 쓰지 않는다 |
 | `yangdo_answer` | 문항 답을 사실관계에 넣는다. 인자는 `facts_path` 나 `facts`, `question`(문항 id), `value`(답), 자산이나 주택마다 묻는 문항이면 `asset`(자산 id), `house`(주택 id). `value` 에 문자열 「모름」을 주면 모름으로 기록한다. `facts_path` 를 주면 그 파일을 고쳐 쓰고, `facts` 를 주면 고친 사실관계를 `사실관계` 로 돌려준다 |
-| `yangdo_calculate` | 판정, 세액, 근거, 파일설명서 코드를 낸다. 인자는 `facts_path` 나 `facts`, `today`(YYYY-MM-DD, 비우면 한국 시간 오늘), `out_dir`. `out_dir` 를 주면 그 폴더의 이전 결과 파일을 지우고 검토 문서, 워크북, 결과 JSON 을 쓴다 |
+| `yangdo_calculate` | 판정, 세액, 근거, 파일설명서 코드를 낸다. 인자는 `facts_path` 나 `facts`, `today`(YYYY-MM-DD, 비우면 한국 시간 오늘), `out_dir`. `out_dir` 를 주면 그 폴더의 이전 결과 파일(계산 결과 파일과 3절의 신고서 PDF, 전자신고 파일, `신고값.json`, 안내서, `신고_확인.md`)을 지우고 검토 문서, 워크북, 결과 JSON 을 쓴다 |
 | `yangdo_forms` | 계산에 이어 신고인 정보 검사, 신고값, 서식 검산, 신고서 PDF 두 벌, 홈택스 입력 안내서, 부속서류 목록, `신고_확인.md` 를 만든다. 인자는 `facts_path` 나 `facts`, `filer_path`(신고인 JSON 파일 경로, 필수), `out_dir`(필수), `today` |
 | `yangdo_efile` | `yangdo_forms` 가 만드는 것에 더해 전자신고 변환파일을 만든다. 인자는 같다. 독립 검증기를 통과한 파일만 남긴다 |
 | `regulated_area` | 기준일에 조정대상지역·투기과열지구·투기지역인지 공고 이력으로 판정한다. 필수 인자 `sido`(시도), `sigungu`(시군구), `as_of`(기준일), 선택 인자 `eupmyeondong`(읍면동), `in_district`(지구해당) |
@@ -102,7 +102,7 @@ python -c "import sys,json; sys.path.insert(0, r'{skill}'); from yangdo import q
 python "{skill}/scripts/run.py" --사실관계 <facts.json> --출력 <폴더>
 ```
 
-선택 인자는 `--오늘 YYYY-MM-DD`(기준정보가 7일 넘게 지났는지 가리는 데 쓰는 날짜), `--rules <폴더>`(다른 기준정보 폴더)입니다. 같은 출력 폴더에 다시 실행하면 이 스크립트가 쓰는 파일 네 개만 지우고 시작합니다.
+선택 인자는 `--오늘 YYYY-MM-DD`(기준정보가 7일 넘게 지났는지 가리는 데 쓰는 날짜), `--rules <폴더>`(다른 기준정보 폴더)입니다. 같은 출력 폴더에 다시 실행하면 이전 결과를 지우고 시작합니다. 이 스크립트가 쓰는 파일 네 개와 3절의 `make_return.py` 가 만든 신고서 PDF, 전자신고 파일, `신고값.json`, 입력 안내서, 부속서류 목록, `신고_확인.md` 가 지워집니다. 계산을 다시 하면 옛 신고서가 새 계산 결과와 맞지 않기 때문입니다. 다른 파일은 그대로 둡니다.
 
 | 종료코드 | 뜻 | 다음 |
 |---|---|---|

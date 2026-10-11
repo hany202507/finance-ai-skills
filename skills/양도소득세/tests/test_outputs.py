@@ -70,6 +70,73 @@ def test_clear_previous_removes_only_own_files(tmp_path):
     assert os.listdir(tmp_path) == ["내메모.txt"]
 
 
+def _stage_files(folder):
+    names = outputs.OUTPUT_NAMES + outputs.RETURN_NAMES + ("20261220C116300.01", "내메모.txt", "20261215A103900.01")
+    for n in names:
+        (folder / n).write_text("x", encoding="utf-8")
+    (folder / ".efile-old").mkdir()
+    (folder / ".efile-old" / "신고값.json").write_text("{}", encoding="utf-8")
+    (folder / "보관").mkdir()
+    return names
+
+
+def test_clear_previous_removes_return_stage_files_too(tmp_path):
+    """계산만 다시 돌려도 신고서 단계 파일(신고값, 신고서 PDF, 안내서, 확인 문서, 전자신고 파일, 임시 폴더)을 지운다."""
+    _stage_files(tmp_path)
+    assert outputs.clear_previous(str(tmp_path)) == []
+    assert sorted(os.listdir(tmp_path)) == ["20261215A103900.01", "내메모.txt", "보관"]
+
+
+def test_clear_previous_order_and_first_error(tmp_path, monkeypatch):
+    """제출용 전자신고 파일, 임시 폴더, 신고서 PDF 를 먼저 지우고 통합 문서와 계산 결과는 마지막이다.
+    하나가 막혀도 끝까지 지우고 처음 난 OSError 를 다시 낸다."""
+    _stage_files(tmp_path)
+    seen, real = [], os.remove
+
+    def remove(path):
+        name = os.path.basename(os.fspath(path))
+        seen.append(name)
+        if name in ("20261220C116300.01", outputs.GUIDE):
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        real(path)
+
+    monkeypatch.setattr(os, "remove", remove)
+    with pytest.raises(PermissionError) as e:
+        outputs.clear_previous(str(tmp_path))
+    monkeypatch.undo()
+    assert os.path.basename(e.value.filename) == "20261220C116300.01"        # 처음 난 오류
+    assert seen[0] == "20261220C116300.01"
+    pdfs = [i for i, n in enumerate(seen) if n.startswith((outputs.FORM_NATIONAL, outputs.FORM_LOCAL))]
+    rest = [i for i, n in enumerate(seen) if n in (outputs.RETURN_VALUES, outputs.GUIDE, outputs.ATTACHMENTS, outputs.CONFIRM)]
+    calc_files = [i for i, n in enumerate(seen) if n in outputs.OUTPUT_NAMES]
+    assert len(pdfs) == 4 and max(pdfs) < min(rest) and max(rest) < min(calc_files)
+    assert seen[min(calc_files)] == outputs.WORKBOOK                         # 계산 결과 가운데서는 통합 문서부터
+    assert sorted(os.listdir(tmp_path)) == sorted(["20261220C116300.01", outputs.GUIDE, "20261215A103900.01", "내메모.txt", "보관"])
+
+
+def test_clear_previous_stops_calculation_files_when_workbook_is_locked(tmp_path, monkeypatch):
+    """엑셀이 통합 문서를 열어 두었으면 신고서 단계 파일은 지우고 계산 결과 파일은 그대로 둔다."""
+    _stage_files(tmp_path)
+    real = os.remove
+
+    def remove(path):
+        if os.path.basename(os.fspath(path)) == outputs.WORKBOOK:
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        real(path)
+
+    monkeypatch.setattr(os, "remove", remove)
+    with pytest.raises(PermissionError):
+        outputs.clear_previous(str(tmp_path))
+    monkeypatch.undo()
+    assert sorted(os.listdir(tmp_path)) == sorted(outputs.OUTPUT_NAMES + ("20261215A103900.01", "내메모.txt", "보관"))
+
+
+def test_clear_previous_reports_temp_folder_it_could_not_remove(tmp_path, monkeypatch):
+    (tmp_path / ".efile-stuck").mkdir()
+    monkeypatch.setattr(outputs.shutil, "rmtree", lambda *a, **k: None)
+    assert outputs.clear_previous(str(tmp_path)) == [".efile-stuck"]
+
+
 def test_regulated_area_row_only_for_houses():
     r = calc_result("BF")   # 주택 B + 토지 F
     kinds = {a["id"]: a["판정"]["종류"] for a in r["계산"]["자산"]}

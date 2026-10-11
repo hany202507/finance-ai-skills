@@ -392,6 +392,88 @@ def test_rerun_drops_stale_results_and_keeps_other_files(tmp_path):
     assert "F04" in _confirm(out)
 
 
+# ---------------------------------------------------------------- 계산만 다시 돌렸을 때(run.py, yangdo_calculate)
+
+RETURN_STAGE = PDFS | GUIDES | {"신고값.json", "신고_확인.md"}
+KEEP = {"메모.txt": "내 파일", "20261215A103900.01": "다른 세목 파일", "고객자료.pdf": "pdf"}
+
+
+def _changed(name):
+    """양도가액을 바꾼 사실관계. 세액이 달라져 옛 신고서 단계 파일은 새 계산과 맞지 않는다."""
+    f = copy.deepcopy(CASES[name])
+    f["자산"][0]["전체양도가액"] += 100_000_000
+    return f
+
+
+def _plant(out):
+    for n, body in KEEP.items():
+        (out / n).write_text(body, encoding="utf-8")
+    (out / "20251130C116300.01").write_text("옛 전자신고 파일", encoding="utf-8")
+    (out / "양도소득세_신고서.pdf.tmp").write_text("쓰다 만 PDF", encoding="utf-8")
+    stale = out / ".efile-old"
+    stale.mkdir()
+    (stale / "신고값.json").write_text("{}", encoding="utf-8")
+
+
+def _only_calculation_left(out):
+    names = set(os.listdir(out))
+    assert CALC <= names
+    assert not RETURN_STAGE & names, sorted(RETURN_STAGE & names)
+    assert _efiles(out) == [] and not [n for n in names if n.startswith(".efile-") or n.endswith(".tmp")]
+    for n, body in KEEP.items():
+        assert (out / n).read_text(encoding="utf-8") == body
+
+
+def test_mcp_calculate_after_efile_drops_the_old_return_files(tmp_path):
+    f = filers.get("A")
+    out = tmp_path / "o"
+    done = mcp_server.call_tool("yangdo_efile", {"facts": CASES["A"], "filer_path": _filer_file(tmp_path, f),
+                                                 "out_dir": str(out), "today": TODAY})
+    assert done["종료코드"] == 0 and RETURN_STAGE | {"20261220C116300.01"} <= set(os.listdir(out))
+    _plant(out)
+    again = mcp_server.call_tool("yangdo_calculate", {"facts": _changed("A"), "out_dir": str(out), "today": TODAY})
+    assert again["상태"] == "완료" and again["합계"]["산출세액"] != done["합계"]["산출세액"]
+    _only_calculation_left(out)
+
+
+def test_run_after_make_return_drops_the_old_return_files(tmp_path, capsys):
+    import run
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0 and RETURN_STAGE | {S1_FILE} <= set(os.listdir(out))
+    _plant(out)
+    fp = tmp_path / "f2.json"
+    fp.write_text(json.dumps(_changed("S1"), ensure_ascii=False), encoding="utf-8")
+    assert run.main(["--사실관계", str(fp), "--출력", str(out), "--오늘", TODAY]) == 0
+    _only_calculation_left(out)
+
+
+def test_run_with_locked_pdf_still_drops_the_other_return_files(tmp_path, monkeypatch, capsys):
+    """PDF 보기 프로그램이 옛 신고서를 열어 두었다. 나머지는 끝까지 지우고 종료코드 4 로 멈춘다."""
+    import run
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    fp, _, _ = _write(tmp_path, "S1", s1_filer())
+    capsys.readouterr()
+    _lock(monkeypatch, "양도소득세_신고서.pdf")
+    assert run.main(["--사실관계", str(fp), "--출력", str(out), "--오늘", TODAY]) == 4
+    names = set(os.listdir(out))
+    assert "양도소득세_신고서.pdf" in names and _efiles(out) == []
+    assert not (GUIDES | CALC | {"신고값.json", "신고_확인.md", "지방소득세_신고서.pdf"}) & names
+    assert "양도소득세_신고서.pdf" in capsys.readouterr().err
+
+
+def test_return_stage_names_live_in_outputs():
+    """지울 이름 목록은 yangdo/outputs.py 한 곳에 있다. 서식·전자신고 모듈의 이름과 같아야 한다."""
+    from yangdo import outputs
+    assert (outputs.FORM_NATIONAL, outputs.FORM_LOCAL) == (forms.OUT_NATIONAL, forms.OUT_LOCAL)
+    assert outputs.EFILE_TMP_PREFIX == efile.TMP_PREFIX
+    assert set(outputs.RETURN_NAMES) == RETURN_STAGE | {n + ".tmp" for n in PDFS}
+    assert MR.OWN_NAMES is outputs.RETURN_NAMES and MR.EFILE_NAME is outputs.EFILE_NAME
+    assert (MR.RV_FILE, MR.GUIDE_FILE, MR.ATTACH_FILE, MR.CONFIRM_FILE) == (
+        outputs.RETURN_VALUES, outputs.GUIDE, outputs.ATTACHMENTS, outputs.CONFIRM)
+    assert outputs.EFILE_NAME.match("20261220C116300.01") and not outputs.EFILE_NAME.match("20261215A103900.01")
+
+
 # ---------------------------------------------------------------- MCP
 
 def _filer_file(tmp_path, filer):
