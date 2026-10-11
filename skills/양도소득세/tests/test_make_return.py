@@ -920,14 +920,14 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     with open(out / "홈택스_입력안내.md", encoding="utf-8") as fh:
         md = fh.read()
     for doc in (notes, md.split("## 확인사항", 1)[1]):
-        assert "감면 없이" in doc and "감면이 적용되면 무신고가산세는 20627400원" in doc and "2026-01-01 부터" in doc
-        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36306400원" in doc and "4273250원" in doc
+        assert "감면 없이" in doc and "감면이 적용되면 무신고가산세는 20,627,400원" in doc and "2026-01-01 부터" in doc
+        assert "양도일마다 따로 신고하는 것으로 보면" in doc and "36,306,400원" in doc and "4,273,250원" in doc
         assert "부정행위" in doc and "다루지 않는다" in doc
         assert "납부일(2027-05-20) 기준" in doc
         # 지방소득세 가산세: 금액(국세와 같이 감면 없음, 20,627,400 × 20% = 4,125,480), 감면을 적용하지 않은 까닭과 대안 금액, 두 가지 가정
-        assert "지방소득세에도 예정신고 무신고가산세 4125480원과 납부지연가산세 226901원" in doc
+        assert "지방소득세에도 예정신고 무신고가산세 4,125,480원과 납부지연가산세 226,901원" in doc
         assert "지방소득세 무신고가산세는 감면 없이 계산했다" in doc and "과세관청이 달리 본 예가 있어 적용하지 않았다" in doc
-        assert "감면이 적용되면 지방소득세 무신고가산세는 2062740원" in doc and "경정할 것을 미리 알고 신고한 경우가 아니" in doc
+        assert "감면이 적용되면 지방소득세 무신고가산세는 2,062,740원" in doc and "경정할 것을 미리 알고 신고한 경우가 아니" in doc
         assert "감면이 적용되지 않으면" not in doc and "감면 50% 를 적용했다" not in doc
         assert "두 가지를 가정" in doc and "위택스 값을 따른다" in doc
         assert "지방소득세 신고서의 가산세는 계산하지 않아" not in doc
@@ -936,13 +936,14 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert "가산세는 계산하지 않았다" not in body and "46,110,480원" in body and "따로 계산해 더한다" not in md
     # 감면을 적용하지 않았다는 문장은 확인사항 여러 줄에 묻히지 않게 알림 절에도 올리고, 사람이 할 일에 한 줄을 둔다
     alerts = _section(_confirm(out), "## 알림")
-    assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20627400원" in alerts and "세무 전문가" in alerts
+    assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20,627,400원" in alerts and "세무 전문가" in alerts
     # 지방소득세 무신고가산세를 감면 없이 넣었다는 문장과 감면이 적용될 때의 금액도 알림에 올린다
     local_alert = [ln for ln in alerts.splitlines() if "지방소득세 무신고가산세는 감면 없이" in ln]
-    assert len(local_alert) == 1 and "2062740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
+    assert len(local_alert) == 1 and "2,062,740원" in local_alert[0] and "위택스 값을 따른다" in local_alert[0]
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
-    assert len(late) == 1 and "견주어 본다" in late[0] and "20627400원" in late[0]
+    assert len(late) == 1 and "견주어 본다" in late[0] and "20,627,400원" in late[0]
+    assert "그렇게 내서 감면이 적용되면 무신고가산세가 20,627,400원으로 줄어든다" in late[0]      # 「내 감면」으로 읽히지 않게 적는다
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
     # 지방소득세 신고서에 가산세가 들어 있다. 두 가지를 가정한 값이라 위택스 화면의 값과 다르면 위택스 값을 따르라고 적는다
@@ -1034,7 +1035,7 @@ def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
     else:
         assert res["전자신고"] is None and not [n for n in made if "C116300" in n]
     notes = " ".join(res["확인사항"])
-    assert "감면이 적용되면 무신고가산세는 20627400원" in notes and "부정행위" in notes
+    assert "감면이 적용되면 무신고가산세는 20,627,400원" in notes and "부정행위" in notes
     assert any("감면 없이" in x for x in res["알림"]) and any("기한 후 신고로 내는 방법" in x for x in res["사람이할일"])
     s = json.dumps(res, ensure_ascii=False)
     for v in _personal(f):

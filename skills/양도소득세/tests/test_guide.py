@@ -380,8 +380,8 @@ def test_final_return_penalty_note_reaches_input_guide():
         assert not guide.is_file_only_note(m), m
         assert m in md, m
     part = md.split("## 확인사항", 1)[1]
-    assert "감면 없이" in part and "감면이 적용되면 무신고가산세는 20627400원" in part
-    assert "양도일마다 따로 신고하는 것으로 보면" in part and "36306400원" in part
+    assert "감면 없이" in part and "감면이 적용되면 무신고가산세는 20,627,400원" in part
+    assert "양도일마다 따로 신고하는 것으로 보면" in part and "36,306,400원" in part
     assert "부정행위" in part and "다루지 않는다" in part
 
 

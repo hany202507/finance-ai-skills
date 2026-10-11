@@ -306,11 +306,13 @@ def test_final_return_without_preliminary_return_notes_the_penalty():
     want = k["현행가산세"]
     _require(rv["신고"]["구분"] == "확정")
     notes = rv["확인사항"]
-    assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세 %d원" % want["무신고"] in m
-               and "납부지연가산세 %d원" % want["납부지연"] in m for m in notes)
-    assert any("본지 ⑯" in m and "%d원" % want["계"] in m for m in notes)
-    assert any("감면 없이" in m and "감면이 적용되면" in m and "%d원" % want["무신고_감면적용"] in m and "2026-01-01" in m
-               for m in notes)
+    # 문장의 금액은 천 단위 쉼표로 적는다(1,587,738원)
+    assert any("예정신고를 하지 않은 확정신고" in m and "무신고가산세 %s원" % format(want["무신고"], ",") in m
+               and "납부지연가산세 %s원" % format(want["납부지연"], ",") in m for m in notes)
+    assert any("본지 ⑯" in m and "%s원" % format(want["계"], ",") in m for m in notes)
+    assert any("감면 없이" in m and "감면이 적용되면" in m and "%s원" % format(want["무신고_감면적용"], ",") in m
+               and "2026-01-01" in m for m in notes)
+    assert "1,587,738원" in " ".join(notes) and "1587738" not in " ".join(notes)
     assert any("부정행위" in m and "다루지 않는다" in m for m in notes)
     assert not any("계산하지 않아 0 으로 두었으므로" in m for m in notes)
 
@@ -377,7 +379,7 @@ def test_final_return_penalty_matches_hand_calculation():
     assert got["열"] == want["열"]
     # 예정신고분을 기한 후 신고로 내 감면이 적용되면 무신고가산세는 절반이다. 결과와 확인사항이 그 금액을 싣는다
     assert got["감면적용"] is False and got["무신고_감면적용"] == want["무신고_감면적용"]
-    assert any("감면이 적용되면" in m and "%s원" % want["무신고_감면적용"] in m for m in got["확인사항"])
+    assert any("감면이 적용되면" in m and "%s원" % format(want["무신고_감면적용"], ",") in m for m in got["확인사항"])
     assert got["양도일별"] is None                      # A·B 는 같은 날 양도라 대안 계산이 없다
 
 

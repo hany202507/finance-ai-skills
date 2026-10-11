@@ -282,6 +282,23 @@ def test_acquisition_tax_row_note_cites_no_article_outside_the_ruleset():
     assert "지방세법 제8조" not in laws
 
 
+def test_amounts_in_check_items_use_thousands_separators():
+    """신고값 확인사항의 금액은 천 단위 쉼표로 적는다(가산세, 분납, 합산 비교세액, 지방소득세 전자신고세액공제)."""
+    import re
+    raw = re.compile(r"(?<![\d,])\d{4,}원")
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
+    text = "\n".join(rv["확인사항"])
+    assert "가산세를 뺀 세액 206,274,000원" in text and "분납할 세액 103,137,000원" in text
+    assert raw.findall(text) == []
+    r, rv = _rv("S1")                                     # 예정신고: 지방소득세 전자신고세액공제 2,000원
+    assert any("지방소득세 전자신고세액공제 2,000원" in m for m in rv["확인사항"])
+    assert raw.findall("\n".join(rv["확인사항"])) == []
+    r, rv = _bf_merged()                                  # 합산 비교세액이 큰 신고서: 281,118,000 과 열 합 278,752,000
+    notes = [m for m in rv["확인사항"] if "합산 비교 세액이 커서" in m]
+    assert any("합계 산출세액 281,118,000원이 세율구분 열의 합 278,752,000원과 다르다" in m for m in notes)
+    assert raw.findall("\n".join(rv["확인사항"])) == []
+
+
 def test_missing_payment_date_is_a_check_item():
     facts = copy.deepcopy(CASES["S1"])
     facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = None
@@ -576,7 +593,7 @@ def test_installment_limit_excludes_penalty():
     z = [x for x in rv["전자신고"]["세율별"] if x["국내외분"] == "Z"][0]
     assert (z["자진납부할세액"], z["분납할세액"], z["자진납부세액"]) == (252384480, 103137000, 149247480)
     note = [m for m in rv["확인사항"] if "분납할 세액의 한도" in m]
-    assert len(note) == 1 and "가산세를 뺀 세액 206274000원" in note[0]
+    assert len(note) == 1 and "가산세를 뺀 세액 206,274,000원" in note[0]
     assert "소득세법 제112조·제106조①·제111조①" in note[0]     # 규칙세트(판정.분납대상세액)에 실린 조문만 적는다
 
 
@@ -598,16 +615,16 @@ def test_final_return_penalty_section_and_notes():
         assert len(hit) == 1, parts
         return hit[0]
 
-    one("본지 ⑯", "41254800원", "4855680원", "46110480원")
+    one("본지 ⑯", "41,254,800원", "4,855,680원", "46,110,480원")
     # 세액이 달라질 수 있는 해석 둘은 penalty 의 문장을 그대로 옮긴다
-    assert one("감면 없이", "감면이 적용되면", "20627400원", "세무 전문가") == p["감면안내"]
-    one("양도일마다 따로 신고하는 것으로 보면", "36306400원", "4273250원")
+    assert one("감면 없이", "감면이 적용되면", "20,627,400원", "세무 전문가") == p["감면안내"]
+    one("양도일마다 따로 신고하는 것으로 보면", "36,306,400원", "4,273,250원")
     one("부정행위", "다루지 않는다")
     one("납부일(2027-05-20) 기준")
-    one("지방소득세 신고서 ⑬", "4125480원", "226901원", "4352381원")
+    one("지방소득세 신고서 ⑬", "4,125,480원", "226,901원", "4,352,381원")
     assert one("두 가지를 가정", "옮기기 전", "원 미만을 버렸다", "위택스 값을 따른다") == p["지방"]["가정안내"]
     # 지방도 감면을 적용하지 않았다. 감면이 적용될 때의 금액은 대안으로 싣는다
-    assert one("지방소득세 무신고가산세는 감면 없이", "감면이 적용되면", "2062740원", "위택스 값을 따른다") == p["지방"]["감면안내"]
+    assert one("지방소득세 무신고가산세는 감면 없이", "감면이 적용되면", "2,062,740원", "위택스 값을 따른다") == p["지방"]["감면안내"]
     assert (p["지방"]["무신고"], p["지방"]["납부지연"], p["지방"]["계"]) == (4125480, 226901, 4352381)
     assert p["지방"]["감면적용"] is False and p["지방"]["무신고_감면적용"] == 2062740
     assert not [m for m in notes if "가산세는 계산하지 않아" in m or "가산세가 빠진" in m]
@@ -683,7 +700,7 @@ def test_local_efile_credit_on_preliminary_return():
         assert loc[name]["전자신고공제"] == 2000, name
     assert loc["합계"]["산출세액"] == 3834946 and loc["합계"]["납부할세액"] == 3834946 - 2000
     note = [m for m in rv["확인사항"] if "지방소득세 전자신고세액공제" in m]
-    assert len(note) == 1 and "2000원" in note[0] and "지방세특례제한법 제167조의3①" in note[0]
+    assert len(note) == 1 and "2,000원" in note[0] and "지방세특례제한법 제167조의3①" in note[0]
     assert "규칙세트에 값이 없어" not in " ".join(rv["확인사항"])
     assert all(x[k] == 0 for x in rv["전자신고"]["세율별"]            # 국세 파일의 주민세 칸은 그대로 0 이다
                for k in ("주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"))
@@ -966,7 +983,7 @@ def test_single_column_with_merged_comparison_win_blanks_penalty_and_tax_due_tog
 
 def test_installment_on_final_return_notes_delay_penalty_on_the_deferred_part():
     r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
-    note = [m for m in rv["확인사항"] if "분납할 세액 103137000원" in m and "납부지연가산세" in m]
+    note = [m for m in rv["확인사항"] if "분납할 세액 103,137,000원" in m and "납부지연가산세" in m]
     assert len(note) == 1
     assert "작성일 2027-05-20" in note[0] and "더 붙을 수 있다" in note[0] and "세무 전문가" in note[0]
     assert rv["본지"]["열"]["합계"]["분납"] == 103137000 and rv["본지"]["열"]["합계"]["가산세_납부"] == 4855680   # 금액은 그대로

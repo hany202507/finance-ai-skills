@@ -126,6 +126,11 @@ def _int(x):
     return int(x or 0)
 
 
+def _won(amount):
+    """확인사항과 오류 문장에 적는 금액. 천 단위 쉼표를 넣는다(20,627,400). 신고값의 숫자 값은 정수 그대로 둔다."""
+    return format(int(amount), ",")
+
+
 def _bracket(base, table):
     """누진세율표에서 과세표준이 속한 구간의 세율. calc.progressive 와 같은 구간 고르기."""
     row = table[0]
@@ -577,10 +582,10 @@ class _Builder:
         if method == "실지거래가액":
             if acq + other != c["취득가액"] + c["필요경비"]:
                 raise ValueError("%s: 부표3 합계 %s원이 엔진 취득가액·필요경비 합 %s원과 다르다"
-                                 % (aid, acq + other, c["취득가액"] + c["필요경비"]))
+                                 % (aid, _won(acq + other), _won(c["취득가액"] + c["필요경비"])))
             return rows, acq, other
         if rows and other != c["필요경비"]:
-            raise ValueError("%s: 부표3 기타필요경비 %s원이 엔진 필요경비 %s원과 다르다" % (aid, other, c["필요경비"]))
+            raise ValueError("%s: 부표3 기타필요경비 %s원이 엔진 필요경비 %s원과 다르다" % (aid, _won(other), _won(c["필요경비"])))
         return rows, c["취득가액"], c["필요경비"]
 
     def years_text(self, n):
@@ -756,7 +761,7 @@ class _Builder:
             out[k] = out.get(k, 0) + tax
         if sum(out.values()) != self.calc["합계"]["지방_호별합산"]:
             raise ValueError("지방소득세 세율구분별 합 %s원이 엔진 호별합산 %s원과 다르다"
-                             % (sum(out.values()), self.calc["합계"]["지방_호별합산"]))
+                             % (_won(sum(out.values())), _won(self.calc["합계"]["지방_호별합산"])))
         return out
 
     @staticmethod
@@ -863,10 +868,10 @@ class _Builder:
         local_win = total["지방_합산비교"] > total["지방_호별합산"]
         if merged_win:
             self.note("합산 비교 세액이 커서 합계 산출세액 %s원이 세율구분 열의 합 %s원과 다르다(소득세법 제104조⑤, 서식 작성방법 8)"
-                      % (total["산출세액"], sum(nat_tax.values())))
+                      % (_won(total["산출세액"]), _won(sum(nat_tax.values()))))
         if local_win:
             self.note("지방소득세도 합산 비교 세액이 커서 합계 산출세액 %s원이 세율구분 열의 합 %s원과 다르다(별지40의11 작성방법 7)"
-                      % (total["지방소득세"], sum(loc_tax.values())))
+                      % (_won(total["지방소득세"]), _won(sum(loc_tax.values()))))
 
         # 전자신고세액공제(예정신고만, 기준일 신고일 = 작성일)와 분납. 지방소득세 전자신고세액공제도 예정신고만이다
         rule = self.rs.value("전자신고세액공제.예정", self.made) if self.kind == "예정" else 0
@@ -935,24 +940,24 @@ class _Builder:
                            + [("국외소계", zero_loc)])}
         if done and sum(pen_total):
             self.note("예정신고 무신고가산세 %s원과 납부지연가산세 %s원을 본지 ⑯ 가산세와 ⑱ 납부할 세액에 넣었다(가산세 계 %s원). %s"
-                      % (pen_total[0], pen_total[1], sum(pen_total),
+                      % (_won(pen_total[0]), _won(pen_total[1]), _won(sum(pen_total)),
                          "합산 비교 세액이 큰 신고서라 가산세와 납부할 세액은 합계 열에만 적었다" if merged_win
                          else "합계 열과 국내분 소계 열, 세율구분 열에 나눠 적었다"))
             if inst:
                 self.note("분납할 세액의 한도는 가산세를 뺀 세액 %s원으로 셌다(%s). 가산세는 신고기한 안에 내는 세액에 넣었다"
-                          % (total["산출세액"] - credit, self.articles("판정.분납대상세액", self.last_sold)))
+                          % (_won(total["산출세액"] - credit), self.articles("판정.분납대상세액", self.last_sold)))
                 # 국세청 작성 사례에 가산세와 분납이 함께 있는 서식이 없다. 금액은 바꾸지 않고 전제를 알린다
                 self.note("납부지연가산세는 납부할 세액 전부를 작성일 %s 에 내는 것으로 셌다. 분납할 세액 %s원은 그 뒤에 내므로 "
-                          "그 세액의 납부지연가산세가 더 붙을 수 있다. 세무 전문가와 확인한다" % (self.made, inst))
+                          "그 세액의 납부지연가산세가 더 붙을 수 있다. 세무 전문가와 확인한다" % (self.made, _won(inst)))
         if done and sum(loc_pen_total):
             self.note("지방소득세 무신고가산세 %s원과 납부지연가산세 %s원을 지방소득세 신고서 ⑬ 가산세와 ⑮ 납부할 총세액에 넣었다"
-                      "(가산세 계 %s원). %s" % (loc_pen_total[0], loc_pen_total[1], sum(loc_pen_total),
+                      "(가산세 계 %s원). %s" % (_won(loc_pen_total[0]), _won(loc_pen_total[1]), _won(sum(loc_pen_total)),
                                            "지방소득세 합산 비교 세액이 큰 신고서라 가산세와 납부할 총세액은 합계 열에만 적었다" if local_win
                                            else "합계 열과 국내분 소계 열, 세율구분 열에 나눠 적었다"))
         if loc_credit:
             self.note("지방소득세 전자신고세액공제 %s원을 지방소득세 신고서 ⑫ 에 넣었다(%s). 위택스에서 직접 전자신고할 때의 공제다. "
                       "서면으로 내거나 세무대리인이 신고하면 공제가 없다"
-                      % (loc_credit, self.articles("지방.전자신고세액공제.예정", self.made)))
+                      % (_won(loc_credit), self.articles("지방.전자신고세액공제.예정", self.made)))
         return main, local, pen, self.efile_rates(total, taxed, cols, bases, nat_rate, nat_tax, credit, inst, merged_win,
                                                   pen_col, pen_total)
 

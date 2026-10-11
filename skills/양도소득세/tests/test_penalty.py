@@ -305,7 +305,7 @@ def test_same_month_note_lists_the_sale_dates_even_when_the_alternative_is_undet
     assert len(hit) == 1 and out["양도일별"] is None
     assert hit[0].startswith("자산 A, B, C: 같은 달에 양도해(A 2026-05-15, B 2026-05-15, C 2026-05-20) 예정신고 기한이 같다.")
     assert hit[0].endswith("양도일마다 따로 신고하는 것으로 볼 때의 세액은 정하지 못했다")
-    assert "양도일이 둘 이상" not in hit[0] and "493042000원" in hit[0]
+    assert "양도일이 둘 이상" not in hit[0] and "493,042,000원" in hit[0]
 
 
 def test_bf_same_month_note_lists_both_sale_dates():
@@ -322,7 +322,7 @@ def test_relief_note_follows_the_wording_of_the_interval(tmp_path):
     old = penalty.final_return(_calc(f), f, "2025-12-20")["감면안내"]
     assert "확정신고기한까지 신고하면 무신고가산세의 50% 를 감면하는 규정이 있다(국세기본법 제48조)" in old
     assert "기한 후 신고로 내면" not in old and "이 규정의 문구는" not in old
-    assert "확정신고서를 만들므로" in old and "적용하지 않았다" in old and "13938000원" in old
+    assert "확정신고서를 만들므로" in old and "적용하지 않았다" in old and "13,938,000원" in old
     new = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")["감면안내"]
     assert "확정신고기한까지 예정신고분을 기한 후 신고로 내면 무신고가산세의 50% 를 감면하는 규정이 있다(국세기본법 제48조)" in new
     assert "이 규정의 문구는 2026-01-01 부터 「기한 후 신고를 한 경우」다. " in new
@@ -344,6 +344,29 @@ def test_relief_wording_constant_matches_the_ruleset_excerpts(rs):
     assert [e["시작"] for e in history] == ["2025-01-01", "2026-01-01"]
     has = [any(penalty.RELIEF_NEW_WORDING in x for g in e["근거"] for x in g["발췌"]) for e in history]
     assert has == [False, True]
+
+
+def test_amounts_in_notes_use_thousands_separators():
+    """확인사항 문장의 금액은 「20,627,400원」처럼 천 단위 쉼표로 적는다. 결과의 숫자 값은 정수 그대로다.
+    BF 손계산: 무신고 41,254,800, 납부지연 4,855,680, 세액 206,274,000, 감면이 적용되면 20,627,400. 지방 4,125,480 · 226,901"""
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    text = "\n".join(out["확인사항"])
+    for amount in ("41,254,800원", "4,855,680원", "206,274,000원", "20,627,400원", "181,532,000원", "36,306,400원", "4,273,250원",
+                   "4,125,480원", "226,901원", "2,062,740원"):
+        assert amount in text, amount
+    import re
+    assert re.findall(r"(?<![\d,])\d{4,}원", text) == []          # 쉼표 없이 적은 네 자리 이상 금액이 없다
+    assert out["무신고"] == 41_254_800 and isinstance(out["무신고"], int) and out["지방"]["납부지연"] == 226_901
+
+
+def test_undetermined_case_message_uses_thousands_separators(rs):
+    """정하지 못한 건의 문장도 금액에 쉼표를 넣는다. 건을 만들 때 지방소득세 세액을 먼저 구하므로 지방 쪽 문장이 나온다.
+    지방 합산 비교세액 17,406,000 + 89,100,000 × 4.2% = 21,148,200, 세율별 합 1,186,500 + 19,573,200 = 20,759,700"""
+    rows = [_row("A", "2026-05-15", 37_500_000, "47", 묶음="중과2", 중과="중과2", 종류="주택"),
+            _row("B", "2026-05-29", 551_600_000, "10", 종류="주택")]
+    with pytest.raises(penalty.Unsupported) as e:
+        penalty.cases(rows, _facts_for(rows), rs)
+    assert "지방소득세 합산 비교세액 21,148,200원이 세율별 세액의 합 20,759,700원보다 크다" in str(e.value)
 
 
 def test_notes_say_what_was_assumed():
@@ -420,7 +443,7 @@ def test_note_says_relief_was_not_applied_and_gives_the_relieved_amount():
     assert "기한 후 신고로 내면" in m and "50%" in m and "국세기본법 제48조" in m
     assert "2026-01-01" in m and "「기한 후 신고를 한 경우」" in m
     assert "기한 후 신고서를 만들지 않고 확정신고서를 만들므로" in m and "적용하지 않았다" in m
-    assert "20627400원" in m and "세무 전문가" in m
+    assert "20,627,400원" in m and "세무 전문가" in m
     assert "경정할 것을 미리 알고 신고한 경우가 아니" in m      # 감면 규정의 괄호는 대안 금액 문장의 조건으로 붙인다
     assert "기준-" not in m and "법규" not in m               # 해석례 번호는 적지 않는다(규칙세트에 없다)
     first = out["확인사항"][0]
@@ -439,7 +462,7 @@ def test_no_relief_before_the_2026_wording_change_either():
     assert out["감면적용"] is False and (out["무신고_감면없음"], out["무신고_감면적용"]) == (27_876_000, 13_938_000)
     hit = [m for m in out["확인사항"] if "감면이 적용되면" in m and not m.startswith("지방소득세")]
     assert len(hit) == 1 and hit[0] == out["감면안내"]
-    assert "감면 없이" in hit[0] and "13938000원" in hit[0] and "확정신고서를 만들므로" in hit[0]
+    assert "감면 없이" in hit[0] and "13,938,000원" in hit[0] and "확정신고서를 만들므로" in hit[0]
     assert "2026-01-01" not in hit[0] and "「기한 후 신고를 한 경우」" not in hit[0]     # 이 구간의 문구가 아니다
     assert "(1 − 50%)" not in out["확인사항"][0] and "× 20%" in out["확인사항"][0]
     assert not any("감면 50% 를 적용했다" in m or "감면하는 규정(국세기본법 제48조)을 적용했다" in m for m in out["확인사항"])
@@ -493,7 +516,7 @@ def test_bf_alternative_when_each_sale_date_is_filed_separately():
     hit = [m for m in out["확인사항"] if "같은 달" in m]
     assert len(hit) == 1
     assert "양도일마다 따로 신고하는 것으로 보면" in hit[0]
-    assert "181532000원" in hit[0] and "36306400원" in hit[0] and "4273250원" in hit[0]
+    assert "181,532,000원" in hit[0] and "36,306,400원" in hit[0] and "4,273,250원" in hit[0]
     assert (out["무신고"], out["납부지연"]) == (41_254_800, 4_855_680)           # 계산에 쓴 값은 합산한 쪽이다
 
 
@@ -746,7 +769,7 @@ def test_local_penalty_with_one_case_due_keeps_the_case_sentences():
     out = penalty.final_return(_calc(k["facts"]), k["facts"], "2027-02-20")
     assert out["지방"]["무신고"] == 146_711 and [c["기한경과"] for c in out["지방"]["건"]] == [True, False]
     notes = out["확인사항"]
-    assert any(m.startswith("지방소득세에도") and "146711원" in m for m in notes)
+    assert any(m.startswith("지방소득세에도") and "146,711원" in m for m in notes)
     assert any("자산 C" in m and "지방소득세 가산세를 계산하지 않았다" in m for m in notes)
     assert not any("가산세가 없다" in m for m in notes)
 
@@ -755,13 +778,13 @@ def test_local_penalty_notes_state_the_two_assumptions():
     out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
     notes = out["확인사항"]
     first = [m for m in notes if m.startswith("지방소득세에도")]
-    assert len(first) == 1 and "4125480원" in first[0] and "226901원" in first[0] and "납부일(2027-05-20)까지" in first[0]
+    assert len(first) == 1 and "4,125,480원" in first[0] and "226,901원" in first[0] and "납부일(2027-05-20)까지" in first[0]
     assert "지방세기본법 제53조·제55조" in first[0] and "지방세기본법 시행령 제34조" in first[0]      # 계산식에 감면 조문이 없다
     relief = [m for m in notes if "지방소득세 무신고가산세" in m and "감면 없이" in m]
     assert len(relief) == 1 and relief[0] == out["지방"]["감면안내"]
     m = relief[0]
     assert "지방세기본법 제57조" in m and "확정신고기한까지 신고한 경우" in m and "과세관청이 달리 본 예" in m
-    assert "적용하지 않았다" in m and "감면이 적용되면 지방소득세 무신고가산세는 2062740원" in m
+    assert "적용하지 않았다" in m and "감면이 적용되면 지방소득세 무신고가산세는 2,062,740원" in m
     assert "경정할 것을 미리 알고 신고한 경우가 아니" in m
     assert "위택스 화면의 가산세와 다르면 위택스 값을 따른다" in m and "세무 전문가와 확인한다" in m
     assert "기준-" not in m and "법규" not in m and "적용되지 않으면" not in m
