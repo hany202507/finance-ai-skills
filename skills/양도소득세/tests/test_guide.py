@@ -109,7 +109,7 @@ def test_input_guide_installment():
 def test_input_guide_confirmed_return_has_no_electronic_credit():
     md = guide.hometax_input(_rv("BF"))
     assert "확정신고" in md
-    assert "206,274,000" in md                         # 납부할 세액 = 산출세액
+    assert "206,274,000" in md and "252,384,480" in md  # 산출세액, 납부할 세액 = 산출세액 + 가산세 46,110,480
     assert "20,000" not in " ".join(l for l in md.splitlines() if "전자신고세액공제" in l)   # 확정신고에는 공제가 없다
 
 
@@ -356,13 +356,19 @@ def test_file_only_notes_are_left_out_and_screen_notes_are_kept():
 
 
 def test_final_return_penalty_note_reaches_input_guide():
-    """확정신고 가산세 확인사항은 FILE_ONLY 에 걸리지 않아 입력 안내서에도 나간다."""
+    """확정신고 가산세 확인사항은 FILE_ONLY 에 걸리지 않아 입력 안내서에도 나간다. 날짜 글자(2027-02-01)를 레코드 칸 번호로
+    읽어 거르지 않는다. 세액이 달라질 수 있는 해석 둘(감면 전 금액, 같은 달 양도의 대안 금액)이 빠지면 안 된다."""
     rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
-    notes = [m for m in rv["확인사항"] if "무신고가산세" in m and "납부지연가산세" in m]
-    assert len(notes) == 1
-    assert not guide.FILE_ONLY.search(notes[0])
+    notes = [m for m in rv["확인사항"] if "가산세" in m]
+    assert len(notes) >= 8
     md = guide.hometax_input(rv)
-    assert notes[0] in md
+    for m in notes:
+        assert not guide.is_file_only_note(m), m
+        assert m in md, m
+    part = md.split("## 확인사항", 1)[1]
+    assert "감면 없이" in part and "감면이 적용되면 무신고가산세는 20627400원" in part
+    assert "양도일마다 따로 신고하는 것으로 보면" in part and "36306400원" in part
+    assert "부정행위" in part and "다루지 않는다" in part
 
 
 # ---- 날짜 글자(YYYY-01-dd ~ YYYY-07-dd)를 레코드 칸 번호로 읽어 확인사항을 거르지 않는다 ----
@@ -391,7 +397,7 @@ def _permit_facts(permit_date):
 
 def test_deadline_notes_with_january_to_july_dates_reach_input_guide():
     cases = [
-        ("주말 보정", _deadline_rv("S1", "2027-02-01"), "다음 월요일", "2027-01-31"),           # 말일 2027-01-31 일요일
+        ("주말 보정", _deadline_rv("S1", "2027-02-01"), "정기신고로 만들었다", "2027-01-31"),   # 말일 2027-01-31 일요일
         ("허가일 기준", _deadline_rv("S1", "2027-02-01", _permit_facts("2027-01-10")), "허가일(2027-01-10)", "2027-01-10"),
         ("허가일 없음", _deadline_rv("S1", "2030-01-01", _permit_facts(None)), "신고기한을 판정하지 않았다", None),
     ]
@@ -473,26 +479,76 @@ def test_purchase_price_note_has_no_banned_style():
 
 
 # ---- 확정신고 안내서의 가산세 문장 ----
-# 확정신고는 신고서 PDF 와 전자신고 파일을 만들지 않아 입력 안내서가 사람 손에 남는 유일한 지침이다.
-# 맨 위 줄, 세액계산 본문, 확인사항이 가산세를 같은 뜻으로 말해야 한다.
+# 확정신고 안내서는 가산세를 넣은 납부할 세액과, 가산세를 어떻게 셌는지를 화면에 넣을 값과 함께 적는다.
+# BF 손계산: 무신고 41,254,800(감면 없음. 감면이 적용되면 20,627,400), 납부지연 4,855,680, 계 46,110,480, 납부할 세액 252,384,480
 
-ZERO_PENALTY = re.compile(r"가산세[^.\n]{0,20}0원")
+# 「가산세는 0원」 꼴의 문장. 금액의 끝자리 0(25,483,080원)은 걸리지 않게 사이 글자에서 숫자를 뺀다
+ZERO_PENALTY = re.compile(r"가산세[^.\n0-9]{0,20}0원")
 
 
-def test_final_return_guide_does_not_say_penalty_is_zero():
+def test_final_return_guide_shows_the_penalty_amounts():
     md = guide.hometax_input(_rv("BF"))
     assert "확정신고" in md
     assert not ZERO_PENALTY.search(md), ZERO_PENALTY.search(md).group(0)
     body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
-    assert "가산세는 계산하지 않았다" in body and "무신고가산세" in body and "납부지연가산세" in body
-    assert "입력하지 않는다" in body and "감면세액, 외국납부세액공제, 원천징수세액은 0원이라 입력하지 않는다" in body
-    notes = md.split("## 확인사항", 1)[1]
-    line = [ln for ln in notes.splitlines() if "무신고가산세" in ln]
-    assert len(line) == 1 and "이 값으로 신고하지 않는다" in line[0]
+    rows = {ln.split("|")[1].strip(): ln for ln in body.splitlines() if ln.startswith("|")}
+    assert "41,254,800" in rows["가산세(무신고)"] and "4,855,680" in rows["가산세(납부지연)"]
+    assert "46,110,480" in rows["가산세 계"] and "252,384,480" in rows["납부할 세액"]
+    assert "감면세액, 외국납부세액공제, 원천징수세액은 0원이라 입력하지 않는다" in body
+    assert "가산세는 계산하지 않았다" not in body and "이 값으로 입력하지 않는다" not in md
+    # 건별 계산: 예정신고 세액, 납부기한, 일수
+    calc = md.split("### 가산세 계산", 1)[1].split("##", 1)[0]
+    assert "206,274,000" in calc and "2027-02-01" in calc and "107" in calc and "F, B" in calc
+    assert "2027-05-20" in calc and "납부일" in calc           # 납부일은 작성일로 보았다
+    assert "예정신고 세액 × 20%," in calc and "(1 - 50%)" not in calc      # 계산식에 감면이 없다
+    assert "감면 없이 계산했다" in calc and "감면이 적용되면 무신고가산세는 20,627,400원" in calc
     assert "따로 계산해 더한다" not in md
+    top = md.split("## 신고 요약", 1)[1].split("##", 1)[0]
+    assert "가산세 46,110,480원" in top and "납부할 세액 252,384,480원" in top
+    pay = md.split("## 7.", 1)[1]
+    assert "252,384,480" in pay
+    # 지방소득세: 산출세액 20,627,400 + 가산세 2,289,641(무신고 2,062,740, 납부지연 226,901) = 22,917,041
+    local = pay.split("### 지방소득세", 1)[1]
+    rows = {ln.split("|")[1].strip(): ln for ln in local.splitlines() if ln.startswith("|")}
+    assert "2,062,740" in rows["가산세(무신고)"] and "226,901" in rows["가산세(납부지연)"]
+    assert "22,917,041" in rows["납부할 세액(지방소득세)"]
+    assert "2027-03-31" in local and "50" in local               # 지방소득세 납부기한과 일수
+    assert "두 가지를 가정" in local and "위택스 값을 따른다" in local
+    assert "지방소득세 가산세는 계산하지 않았다" not in md and "가산세가 빠진" not in md
+
+
+def test_final_return_guide_with_installment_says_the_limit_excludes_penalty():
+    md = guide.hometax_input(_rv("BF", 분납신청=True))
+    pay = md.split("## 7.", 1)[1].split("### 지방소득세", 1)[0]
+    assert "103,137,000" in pay and "149,247,480" in pay
+    assert "가산세를 뺀 세액" in md.split("## 확인사항", 1)[1]
+
+
+def test_final_return_guide_when_penalty_could_not_be_determined():
+    """가산세를 계산하지 못한 확정신고(같은 달에 양도한 두 자산의 합산 비교세액이 이긴 경우)는 0원이라고 적지 않는다."""
+    facts = copy.deepcopy(CASES["BF"])
+    facts["자산"][1]["취득"]["잔금일"] = "2025-06-01"
+    r = engine.calculate(facts, today="2026-10-11")
+    f = filers.get("BF")
+    for aid in f["자산"]:
+        f["자산"][aid]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, facts, filing.load(f))
+    assert rv["가산세"]["계산"] is False
+    md = guide.hometax_input(rv)
+    assert not ZERO_PENALTY.search(md)
+    body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
+    assert "가산세는 계산하지 못했다" in body and "이 값으로 입력하지 않는다" in body and "합산 비교세액" in body
+    assert "### 가산세 계산" not in md
 
 
 def test_preliminary_return_guide_still_says_penalty_is_zero():
     md = guide.hometax_input(_rv("S1"))
     assert "감면세액, 외국납부세액공제, 원천징수세액, 가산세는 0원이라 입력하지 않는다." in md
-    assert "가산세는 계산하지 않았다" not in md
+    assert "가산세(무신고)" not in md and "### 가산세 계산" not in md
+
+
+def test_guide_shows_local_efile_credit():
+    md = guide.hometax_input(_rv("S1"))
+    pay = md.split("### 지방소득세", 1)[1]
+    assert "3,832,946원" in pay and "전자신고세액공제는 2,000원" in pay      # 3,834,946 - 2,000
+    assert "지방소득세 가산세" not in pay
