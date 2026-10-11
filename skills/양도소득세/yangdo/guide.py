@@ -13,6 +13,9 @@
 확정신고(예정신고를 하지 않은 정기신고)는 신고값 「가산세」 절을 읽어 예정신고 무신고가산세와 납부지연가산세를 세액계산 표와
 건별 계산 표로 적는다. 감면을 적용하지 않았다는 것과 감면이 적용될 때의 금액, 같은 달 양도의 대안 금액은 확인사항 절에 신고값의 문장 그대로 나간다.
 가산세를 계산하지 못한 건(「가산세」 절의 계산이 거짓)은 0원이라고 적지 않고 이 값으로 입력하지 말라고 적는다.
+
+엔진이 전액 비과세로 판정한 자산은 신고값에 없다(신고값 「제외자산」 절에 id 와 사유만 있다). 입력 안내서는 그 자산을 화면에
+입력하지 않는다고 적고, 부속서류 목록은 그 자산을 신고서에 넣지 않았다는 것과 보관할 비과세 요건 증빙을 따로 적는다.
 """
 import json
 import os
@@ -240,12 +243,9 @@ def _sec_acquisition(rv):
     sheet3 = _sheet3(rv)
     for a in rv["부표1"]:
         sh = sheet3.get(a["자산"])
-        rows = [["양도가액", _won(a["양도가액"]) + (" (공동소유라 본인 지분 금액)" if a.get("지분분모", 1) != 1 else "")]]
-        if a["취득가액종류"]:
-            rows += [["취득가액 종류", a["취득가액종류"]], ["취득가액", _won(a["취득가액"])]]
+        rows = [["양도가액", _won(a["양도가액"]) + (" (공동소유라 본인 지분 금액)" if a.get("지분분모", 1) != 1 else "")],
+                ["취득가액 종류", a["취득가액종류"]], ["취득가액", _won(a["취득가액"])]]
         out += ["### 자산 %s" % a["자산"], ""] + _pairs(rows) + [""]
-        if not a["취득가액종류"]:
-            out += ["전액 비과세 자산이라 취득가액을 입력하지 않는다.", ""]
         if sh:
             acq = [r for r in sh["행"] if _is_acq(r)]
             if acq:
@@ -330,8 +330,6 @@ def _sec_tax(rv):
     main = rv["본지"]
     labels = [x["표기"] for x in main["세율구분"]]
     cols = main["열"]
-    if not labels:
-        return out + ["### 세액계산 결과", "", "과세되는 자산이 없다(전액 비과세). 세액을 입력하지 않는다.", ""]
     rows = (("양도소득금액", "양도소득금액"), ("기본공제", "기본공제"), ("과세표준", "과세표준"), ("세율", "세율"),
             ("산출세액", "산출세액"), ("감면세액", "감면세액"), ("전자신고공제", "전자신고세액공제"), ("납부할세액", "납부할 세액"))
     pen = _penalty(rv)
@@ -463,6 +461,21 @@ def _sec_payment(rv):
     return out
 
 
+def _left_out(rv):
+    """신고값 「제외자산」 절. 신고서에 넣지 않은 전액 비과세 자산의 [{"자산", "사유"}]."""
+    return [x for x in rv.get("제외자산") or [] if x.get("자산")]
+
+
+def _sec_left_out(rv):
+    """신고서에 넣지 않은 자산. 화면에 입력하지 않는다는 것을 적는다. 없으면 절을 만들지 않는다."""
+    left = _left_out(rv)
+    if not left:
+        return []
+    out = ["## 신고서에 넣지 않은 자산", ""] + _table(["자산", "사유"], [[x["자산"], x.get("사유")] for x in left]) + [""]
+    return out + ["이 자산은 신고서와 전자신고 파일에 넣지 않았다. 홈택스 화면에 입력하지 않는다. 화면이 이 자산의 양도를 불러오면 "
+                  "입력을 멈추고 확인한다. 보관할 비과세 요건 증빙은 부속서류 목록 파일에 있다.", ""]
+
+
 def _sec_notes(rv):
     notes = [x for x in rv.get("확인사항") or [] if not is_file_only_note(x)]
     if not notes:
@@ -474,7 +487,8 @@ def _sec_notes(rv):
 def hometax_input(rv):
     """홈택스 「양도소득세 정기신고(일반)」 화면 순서대로 넣을 값. 마크다운."""
     body = []
-    for sec in (_sec_basic, _sec_buyers, _sec_assets, _sec_acquisition, _sec_expenses, _sec_tax, _sec_payment, _sec_notes):
+    for sec in (_sec_basic, _sec_buyers, _sec_assets, _sec_acquisition, _sec_expenses, _sec_tax, _sec_payment, _sec_left_out,
+                _sec_notes):
         body += sec(rv)
     notes = [
         "- 전자신고 파일 형식검증이 통과하면 이 안내서는 필요 없다. 형식검증이 막힐 때 홈택스 화면에 직접 입력하는 용도다.",
@@ -488,7 +502,10 @@ def hometax_input(rv):
     t = rv["본지"]["열"]["합계"]
     loc = rv["지방"]["열"]["합계"]
     out += ["## 신고 요약", "",
-            "- 신고: %s, 양도 자산 %d건" % (KIND_LABEL.get(rv["신고"]["구분"], rv["신고"]["구분"]), len(rv["부표1"])),
+            "- 신고: %s, 양도 자산 %d건%s" % (KIND_LABEL.get(rv["신고"]["구분"], rv["신고"]["구분"]), len(rv["부표1"]),
+                                           ". 전액 비과세로 판정한 자산 %d건(%s)은 신고서에 넣지 않았다"
+                                           % (len(_left_out(rv)), ", ".join(x["자산"] for x in _left_out(rv)))
+                                           if _left_out(rv) else ""),
             "- 국세: 산출세액 %s, %s납부할 세액 %s" % (_won(t.get("산출세액")),
                                              "가산세 %s, " % _won(t["가산세"]) if t.get("가산세") else "",
                                              _won(t.get("납부할세액"))),
@@ -530,6 +547,7 @@ def _expense_line(r, lead=""):
 def attachments(rv, facts, result):
     """신고 부속·증빙서류 목록. 자산마다 매매계약서 사본, 필요경비 증빙(증빙종류별 묶음), 환산이면 기준시가 자료,
     일시적 2주택이면 신규 주택 취득 계약서. 마크다운.
+    신고서에 넣지 않은 전액 비과세 자산(신고값 「제외자산」)은 맨 뒤에 따로 적는다. 올릴 서류가 아니라 보관할 서류다.
 
     일시적 2주택은 엔진 결과 result["계산"]["자산"][i]["판정"]["일시적2주택"] 만 읽는다. 엔진 결과에는 신규 주택 id 가 없어
     신규 주택은 일반 문구로 적는다. facts 는 계약(C9)에 따라 받지만 이 함수는 판정에 쓰지 않는다."""
@@ -561,8 +579,6 @@ def attachments(rv, facts, result):
             out.append("- [ ] 매매사례가액 근거 자료 (유사 매매 계약서나 실거래가 자료)")
         elif method == "감정가액":
             out.append("- [ ] 감정평가서 사본")
-        else:
-            out.append("- 전액 비과세 자산이라 신고값에 취득가액이 없다. 취득 매매계약서와 비과세 요건을 보이는 서류는 이 목록에 넣지 않았다")
         out.append("")
         # 필요경비 증빙
         out += title("필요경비 증빙 (증빙종류별 묶음)")
@@ -591,7 +607,36 @@ def attachments(rv, facts, result):
             out += ["- [ ] 양도 당시 기준시가 확인 자료 (합계 %s)" % _won(b["양도_합계"]),
                     "- [ ] 취득 당시 기준시가 확인 자료 (합계 %s)" % _won(b["취득_합계"]),
                     "", "토지는 개별공시지가 확인원, 주택은 개별주택가격이나 공동주택가격 확인서 같은 서류다.", ""]
+    out += _left_out_attachments(rv, result)
     return "\n".join(out).rstrip() + "\n"
+
+
+def _left_out_attachments(rv, result):
+    """신고서에 넣지 않은 전액 비과세 자산의 보관 서류. 양도일·취득일·양도가액은 엔진 결과에서 읽는다(신고값에는 이 자산이 없다)."""
+    left = _left_out(rv)
+    if not left:
+        return []
+    rows = {r.get("id"): r for r in ((result or {}).get("계산") or {}).get("자산") or []}
+    out = ["## 신고서에 넣지 않은 자산", "",
+           "전액 비과세로 판정해 신고서에 넣지 않았다. 아래 서류는 이 신고서의 부속서류가 아니다. 과세관청이 비과세 요건을 확인할 때 "
+           "낼 수 있게 보관한다. 비과세 요건을 과세관청이 달리 보면 그 자산은 신고하지 않은 것이 된다.", ""]
+    for x in left:
+        aid = x["자산"]
+        row = rows.get(aid) or {}
+        v, c = row.get("판정") or {}, row.get("계산") or {}
+        out += ["### 넣지 않은 자산 %s (%s)" % (aid, x.get("사유") or "-"), ""]
+        sold = " (양도일 %s, 양도가액 %s)" % (v["양도일"], _won(c.get("양도가액"))) if v.get("양도일") else ""
+        got = " (취득일 %s)" % v["취득일"] if v.get("취득일") else ""
+        out += ["- [ ] 양도 매매계약서 사본" + sold,
+                "- [ ] 취득 매매계약서 사본" + got,
+                "- [ ] 비과세 요건을 보이는 서류. 보유 기간, 거주 기간, 세대의 주택 수를 확인할 수 있는 서류다"
+                "(주민등록표 등본·초본, 등기사항전부증명서 등)"]
+        temp = _temporary_two_house(result, aid)
+        if temp:
+            limit = " (처분기한 %s)" % temp["처분기한"] if temp.get("처분기한") else ""
+            out.append("- [ ] 신규 주택(일시적 2주택의 다른 집) 취득 계약서 사본" + limit)
+        out.append("")
+    return out
 
 
 def _purchase(sheet, a):

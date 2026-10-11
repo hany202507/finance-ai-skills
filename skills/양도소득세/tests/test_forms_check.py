@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from yangdo import SKILL_DIR, engine, filing, forms_check, return_values, ruleset
-from cases import CASES
+from cases import CASES, F자산
 import filers
 
 _MEMO = {}
@@ -99,16 +99,15 @@ def _joint_half():
 
 
 @_memo
-def _exempt():
-    # S1 을 12억원 이하로 양도하면 1세대1주택 비과세가 되어 전액비과세 자산이 된다
-    facts = copy.deepcopy(CASES["S1"])
-    facts["자산"][0]["전체양도가액"] = 1100000000
-    facts["자산"][0]["전체취득가액"] = 600000000
+def _mixed():
+    # 전액 비과세 주택 G 와 과세 토지 F 를 같은 달에 양도했다. 신고서에는 F 만 들어간다(전액 비과세 자산은 넣지 않는다)
+    facts = copy.deepcopy(CASES["G"])
+    facts["자산"].append(copy.deepcopy(F자산))
     r = engine.calculate(facts, today="2026-10-11")
-    assert r["계산"]["자산"][0]["판정"]["전액비과세"]
+    assert [(x["id"], x["판정"]["전액비과세"]) for x in r["계산"]["자산"]] == [("G", True), ("F", False)]
     _FACTS[id(r)] = facts
-    f = filers.get("S1")
-    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    f = filers.filer("예정", "2026-12-20", {i: dict(filers.lot("100"), 법정동코드="1120011400") for i in ("G", "F")},
+                     [filers.buyer("G"), filers.buyer("F", "박합성", "45678")])
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
     return r, return_values.build(r, facts, filing.load(f))
 
@@ -174,7 +173,7 @@ def test_clean_variants_pass():
         "BF 두 열, 합산 비교세액이 짐": _bf_two_columns(),
         "S1 분납": _pair("S1", 분납신청=True),
         "BF 예정(두 열, 공제 있음)": _pair("BF", 구분="예정", 작성일="2026-12-20"),
-        "전액비과세 한 건": _exempt(),
+        "전액 비과세 자산과 과세 자산": _mixed(),
         "S1 공동 1/2 지분": _joint_half(),
     }.items():
         assert _fc(rv, r) == [], label
@@ -525,12 +524,14 @@ def test_engine_column_and_total_amounts():
 
 
 def test_exempt_asset_rows():
-    r, rv = _exempt()
-    assert rv["부표1"][0]["양도차익"] is None and rv["본지"]["열"]["합계"]["산출세액"] == 0
+    """전액 비과세 자산은 부표1 에 없다. 본지 합계는 과세 자산 F 의 값이다(산출세액 139,380,000). 부표1 에 넣으면 걸린다."""
+    r, rv = _mixed()
+    assert [x["자산"] for x in rv["부표1"]] == ["F"] and rv["본지"]["열"]["합계"]["산출세액"] == 139380000
     assert _fc(rv, r) == []
     bad = copy.deepcopy(rv)
-    bad["부표1"][0]["양도소득금액"] = 1
-    assert _fc(bad, r)
+    bad["부표1"].insert(0, dict(copy.deepcopy(rv["부표1"][0]), 자산="G", 과세양도차익=0, 장특공=0, 양도소득금액=0))
+    _hit(bad, r, "부표1", "전액 비과세 자산 G")
+    _hit(bad, r, "부표1 자산 [G, F]", "엔진 자산 [F]")
 
 
 def test_form_codes_match_engine():
@@ -670,18 +671,25 @@ def _synthetic(name, kind="확정"):
     _FACTS[id(r)] = facts
     if r["상태"] != "완료":
         return r, None
-    return r, return_values.build(r, facts, filing.load(f))
+    try:
+        return r, return_values.build(r, facts, filing.load(f))
+    except return_values.NoTaxableAsset:               # 전액 비과세 자산뿐인 사례는 신고값을 만들지 않는다
+        return r, None
 
 
 def test_every_finished_case_passes():
-    done = 0
+    done, no_taxable = 0, []
     for name in CASES:
         r, rv = _synthetic(name)
         if rv is None:
+            if r["상태"] == "완료":
+                no_taxable.append(name)
+                assert any("과세 자산이 없다" in m for m in forms_check.check({}, r, facts=CASES[name])), name
             continue
         assert _fc(rv, r) == [], name
         done += 1
-    assert done >= 15                                    # 전액비과세·단기·중과·미등기·두 열 사례를 포함한다
+    assert no_taxable == ["G", "G3", "I"]                # 전액 비과세 자산뿐인 사례
+    assert done >= 15                                    # 단기·중과·미등기·두 열 사례를 포함한다
 
 
 # ---- 문장 모양 ----
@@ -827,14 +835,13 @@ def test_efile_section_asset_rows_are_reconciled_with_schedule1():
     _hit(bad, r, "전자신고", "계산명세 자산", "부표1 자산")
 
 
-def test_efile_section_fully_exempt_asset_has_zero_amounts():
-    """전액 비과세 자산은 부표1 의 취득가액, 기타 필요경비, 양도차익이 비어 있다. 계산명세의 같은 칸은 0 이어야 한다."""
-    r, rv = _exempt()
-    assert rv["부표1"][0]["취득가액"] is None and rv["전자신고"]["계산명세"][0]["거래금액_취득가액"] == 0
-    assert _fc(rv, r) == []
+def test_efile_section_has_no_row_for_the_exempt_asset():
+    """전액 비과세 자산은 계산명세(05)에 행이 없다. 행을 넣으면 걸린다."""
+    r, rv = _mixed()
+    assert [x["자산"] for x in rv["전자신고"]["계산명세"]] == ["F"]
     bad = copy.deepcopy(rv)
-    bad["전자신고"]["계산명세"][0]["거래금액_취득가액"] = 600000000
-    _hit(bad, r, "전자신고", "계산명세 S1", "거래금액_취득가액")
+    bad["전자신고"]["계산명세"].insert(0, dict(copy.deepcopy(rv["전자신고"]["계산명세"][0]), 자산="G"))
+    _hit(bad, r, "전자신고 계산명세", "전액 비과세 자산 G")
 
 
 def test_efile_section_missing_is_reported_not_raised():

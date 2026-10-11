@@ -13,6 +13,12 @@
     본지 ⑯ 과 ⑱, 전자신고 03 행에 옮긴다. 납부일은 작성일로 본다. 결과는 신고값 「가산세」 절에도 싣는다(예정신고는 None).
     penalty.Unsupported 면 가산세를 0 으로 두고 「가산세」 절에 {"계산": False, "사유", "계획"} 을 실어 진입점이 신고서와
     전자신고 파일을 만들지 않게 한다. 지방소득세 가산세(「가산세.지방」)는 지방 서식 ⑬ 과 ⑮ 에 옮긴다.
+전액 비과세 자산: 엔진이 전액 비과세로 판정한 자산은 신고서와 전자신고 파일에 넣지 않는다. 부표1·부표3·양수인(04)·계산명세(05)·
+필요경비명세(07)에서 빼고, 05·07 의 일련번호는 넣은 자산만으로 1 부터 센다. 예정신고 묶음(양도월)과 신고기한, 신고 절의 양도일자도
+넣은 자산으로 정한다. 본지와 지방 서식의 합계·세율구분 열은 엔진이 과세 자산만으로 낸 값이다(전액 비과세 자산은 기본공제를 받지 않고
+세율별·합산 비교에 들지 않는다). 뺀 자산은 신고값 「제외자산」 절([{"자산", "사유"}])과 확인사항에 적는다. 과세 자산이 하나도 없으면
+NoTaxableAsset(Unsupported)로 멈춘다. 규격서(V5.17 p47·p50)에는 05 레코드 과세구분 코드(01 비과세, 05)와 「전체비과세」인 경우의
+점검(40번 과세대상양도차익 0)이 있어 전액 비과세 자산을 적는 방법은 있지만, 적어야 한다는 문장은 규격서에도 서식 작성방법에도 없다.
 인적사항(성명, 주민등록번호, 주소, 전화, 양수인)은 신고인·양수인·신고 절에만 둔다. 예외는 부표1·05 소재지(지번)와 부표3·07
 매입가액 행 상호(신고인 JSON 자산[id].취득상대방, 매도인 성명)다. 이 값은 검토 문서·신고_확인.md·MCP 응답·화면 출력에 옮기지
 않는다. 입력 안내서와 부속서류 목록은 출력 폴더의 로컬 파일이라 소재지와 상호를 적는다(주민등록번호와 전화는 적지 않는다,
@@ -78,6 +84,30 @@ class Unsupported(Exception):
     def __init__(self, message, 계획="5"):
         super().__init__(message)
         self.계획 = 계획
+
+
+class NoTaxableAsset(Unsupported):
+    """전액 비과세 자산뿐이라 신고서를 만들 과세 자산이 없다. 자산은 전액 비과세로 판정한 자산 id 목록."""
+
+    def __init__(self, ids):
+        super().__init__("전액 비과세로 판정한 자산(%s)뿐이라 %s" % (", ".join(ids), NO_TAXABLE), "없음")
+        self.자산 = list(ids)
+
+
+NO_TAXABLE = "신고서를 만들 과세 자산이 없다"
+LEFT_OUT_REASON = "전액 비과세"
+
+
+def exempt_ids(result):
+    """엔진이 전액 비과세로 판정한 자산 id 목록(결과의 자산 순서). 신고서와 전자신고 파일에 넣지 않는 자산이다."""
+    rows = ((result or {}).get("계산") or {}).get("자산") or []
+    return [r["id"] for r in rows if (r.get("판정") or {}).get("전액비과세")]
+
+
+def left_out_note(ids):
+    """신고서에 넣지 않은 전액 비과세 자산을 알리는 문장. 신고값 확인사항과 신고_확인.md 알림이 같은 문장을 쓴다."""
+    return ("전액 비과세로 판정한 자산(%s)은 신고서와 전자신고 파일에 넣지 않았다. 비과세 요건을 과세관청이 달리 보면 그 자산은 "
+            "신고하지 않은 것이 된다. 세무 전문가와 확인한다" % ", ".join(ids))
 
 
 def _read_json(path):
@@ -201,6 +231,9 @@ class _Builder:
         self.form_reg_path = os.path.join(self.forms_dir, "서식판.json")
         self.form_reg = _read_json(self.form_reg_path)
         self.assets = {a["id"]: a for a in facts.get("자산") or []}
+        # 신고서에 넣는 자산(과세 자산)과 넣지 않는 자산(전액 비과세). 서식과 레코드는 rows 만으로 만든다
+        self.left_out = exempt_ids(result)
+        self.rows = [r for r in self.calc["자산"] if r["id"] not in self.left_out]
         self.lots = filer.get("자산") or {}
         self.notes = []
         self._bjd = None
@@ -255,7 +288,7 @@ class _Builder:
         made = s.get("작성일")
         if not made:
             raise ValueError("신고.작성일이 없어 신고값을 만들 수 없다")
-        rows = self.calc["자산"]
+        rows = self.rows                                    # 전액 비과세 자산은 양도월 묶음과 신고기한을 정하지 않는다
         sold = [r["판정"]["양도일"] for r in rows]
         last = max(sold)
         if to_date(made) < to_date(last):
@@ -356,8 +389,10 @@ class _Builder:
         return p
 
     def buyers_section(self):
-        order = {r["id"]: i for i, r in enumerate(self.calc["자산"])}
-        buyers = sorted(self.filer.get("양수인") or [], key=lambda b: order.get(b.get("자산"), len(order)))
+        order = {r["id"]: i for i, r in enumerate(self.rows)}
+        # 신고서에 넣지 않는 자산의 양수인은 신고인 파일에 있어도 옮기지 않는다(본지 ② 와 04 레코드에 싣지 않는다)
+        buyers = sorted((b for b in self.filer.get("양수인") or [] if b.get("자산") not in self.left_out),
+                        key=lambda b: order.get(b.get("자산"), len(order)))
         out = []
         for i, b in enumerate(buyers, 1):
             rel = (self.assets.get(b.get("자산")) or {}).get("매수인관계")
@@ -747,7 +782,7 @@ class _Builder:
 
     def main_forms(self):
         total = self.calc["합계"]
-        taxed = [r for r in self.calc["자산"] if not r["판정"]["전액비과세"]]
+        taxed = self.rows
         rate_rows = self.calc["세율별"]
         cols = [(x["국내외분"], x["세율구분"]) for x in rate_rows]
         bases = {k: x["과세표준"] for k, x in zip(cols, rate_rows)}
@@ -914,6 +949,8 @@ class _Builder:
 
     def build(self):
         out = {}
+        if not self.rows:
+            raise NoTaxableAsset(self.left_out)
         filing_sec = self.filing_section()
         for w in self.filer.get("_경고") or []:
             self.note(w)
@@ -924,7 +961,7 @@ class _Builder:
         out["신고인"] = self.filer_section()
         out["양수인"] = self.buyers_section()
         sheet1, sheet3, calc05, exp07 = [], [], [], []
-        for n, row in enumerate(self.calc["자산"], 1):
+        for n, row in enumerate(self.rows, 1):               # 일련번호는 신고서에 넣는 자산만으로 센다
             s1, s3, c5, e7 = self.asset(n, row)
             sheet1.append(s1)
             if s3:
@@ -932,11 +969,14 @@ class _Builder:
             calc05.append(c5)
             exp07 += e7
         main, local, pen, rates = self.main_forms()
+        if self.left_out:
+            self.note(left_out_note(self.left_out))
         money = ("양도가액", "취득가액", "토초세", "기타필요경비", "양도차익", "비과세양도차익", "과세양도차익", "장특공",
                  "양도소득금액", "감면소득금액")
         totals = {k: sum(_int(s[k]) for s in sheet1) for k in money}
         totals["기준시가"] = {k: sum(s["기준시가"][k] for s in sheet1) for k in sheet1[0]["기준시가"]} if sheet1 else {}
         out.update({"본지": main, "부표1": sheet1, "부표1합계": totals, "부표3": sheet3, "지방": local, "가산세": pen,
+                    "제외자산": [{"자산": a, "사유": LEFT_OUT_REASON} for a in self.left_out],
                     "전자신고": {"세율별": rates, "계산명세": calc05, "필요경비명세": exp07}, "확인사항": list(self.notes)})
         return out
 
@@ -944,6 +984,7 @@ class _Builder:
 def build(result, facts, filer, rules_dir=None, forms_dir=None, efile_dir=None):
     """신고값 JSON(C8). result 는 상태가 완료인 engine.calculate 결과, filer 는 filing.load 를 통과한 신고인 정보.
 
+    엔진이 전액 비과세로 판정한 자산은 넣지 않고 「제외자산」 절에 적는다. 과세 자산이 없으면 NoTaxableAsset.
     신고 범위가 아니면 Unsupported(계획 속성), 결과가 끝나지 않았거나 신고 구분·작성일이 없으면 ValueError,
     신고인 JSON 의 등기목적·등기원인 고쳐 쓰기 값이 틀리면 filing.FilingError.
     """

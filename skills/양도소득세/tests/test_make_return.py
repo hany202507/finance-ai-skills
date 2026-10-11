@@ -202,14 +202,17 @@ def test_return_values_file_carries_notice_and_render_notes(tmp_path):
 
 # ---------------------------------------------------------------- 종료코드 2
 
-def test_fully_exempt_asset_stops_before_forms(tmp_path):
+def test_only_fully_exempt_assets_stop_before_values(tmp_path):
+    """전액 비과세 자산뿐이면 신고서를 만들 과세 자산이 없다. 계산 결과만 내고 종료코드 2 로 끝낸다(신고값과 안내서도 없다).
+    과세 자산과 섞인 건, 문장과 MCP 응답은 tests/test_exempt_excluded.py 가 본다."""
     f = g_filer()
     p, out = _run(tmp_path, "G", f)
     assert p.returncode == 2, p.stdout + p.stderr
     names = set(os.listdir(out))
-    assert CALC | GUIDES | {"신고값.json", "신고_확인.md"} <= names
-    assert not PDFS & names and not _efiles(out)
+    assert CALC | {"신고_확인.md"} <= names
+    assert not (PDFS | GUIDES | {"신고값.json"}) & names and not _efiles(out)
     text = _confirm(out)
+    assert "신고서를 만들 과세 자산이 없다" in text and "신고서를 만들 과세 자산이 없다" in p.stdout
     assert "전액 비과세" in text and "세무 전문가" in text
     for v in _personal(f):
         assert v not in text and v not in p.stdout
@@ -782,14 +785,6 @@ def test_guide_head_says_what_really_happened(tmp_path, monkeypatch):
         assert "신고서를 만들지 못" not in head                 # 신고서 PDF 는 만들었다
 
 
-def test_guide_head_for_fully_exempt_asset(tmp_path):
-    code, out = _main(tmp_path, "G", g_filer())
-    assert code == 2
-    for g in GUIDES:
-        head = _first_line(out, g)
-        assert "전액 비과세" in head and "참고용" in head
-
-
 @pytest.mark.parametrize("exc,want", [
     (efile.BuildError("신고.작성일(YYYYMMDD)과 신고.상세코드(2자리)로 파일명을 만들 수 없다"), "파일명을 만들 수 없다"),
     (KeyError("신고값 전자신고 05 행에 없는 키: 과세구분"), "신고값 전자신고 05 행에 없는 키: 과세구분"),
@@ -973,23 +968,6 @@ def test_final_return_whose_penalty_cannot_be_determined_makes_no_forms(tmp_path
     assert rv["신고"]["구분"] == "확정" and rv["가산세"]["계산"] is False
 
 
-def test_final_return_with_fully_exempt_asset_is_held_for_the_exempt_asset_only(tmp_path):
-    """전액 비과세 자산만 있는 확정신고는 가산세가 없다. 전액 비과세 사유 하나로 막힌다."""
-    f = g_filer()
-    f["신고"].update(구분="확정", 작성일="2027-05-20")
-    code, out = _main(tmp_path, "G", f)
-    assert code == 2
-    names = set(os.listdir(out))
-    assert GUIDES | {"신고값.json"} <= names and not PDFS & names and _efiles(out) == []
-    text = _confirm(out)
-    notes = text.split("## 알림", 1)[1].split("##")[0]
-    assert "전액 비과세 자산(G)" in notes and "가산세" not in notes
-    assert "전액 비과세" in text.splitlines()[2] and "가산세" not in text.splitlines()[2]
-    for g in GUIDES:
-        head = _first_line(out, g)
-        assert "전액 비과세" in head and "참고용" in head and "가산세" not in head
-
-
 @pytest.mark.parametrize("tool", ["yangdo_forms", "yangdo_efile"])
 def test_mcp_final_return_gives_the_same_result(tmp_path, tool):
     f = filers.get("BF")
@@ -1027,7 +1005,8 @@ def test_mcp_final_return_without_determinable_penalty_is_held(tmp_path):
 
 
 def test_withheld_reasons_are_collected_in_one_place():
-    """신고서·파일을 만들지 않는 사유는 한 함수가 모은다. 과세 자산의 예정신고와, 가산세를 계산한 확정신고는 사유가 없다."""
+    """신고서·파일을 만들지 않는 사유는 한 함수가 모은다. 과세 자산의 예정신고와, 가산세를 계산한 확정신고는 사유가 없다.
+    전액 비과세 자산은 사유가 아니다(신고값이 그 자산을 빼고 과세 자산만 싣는다)."""
     def rv(kind, pen=None):
         return {"신고": {"구분": kind}, "가산세": pen}
 
@@ -1038,13 +1017,13 @@ def test_withheld_reasons_are_collected_in_one_place():
     failed = {"계산": False, "사유": "자산 B, F: 정하지 않았다", "계획": "없음"}
     assert MR.withheld(rv("예정"), res(("A", False))) == []
     assert MR.withheld(rv("확정", done), res(("A", False))) == []
-    assert [w["이름"] for w in MR.withheld(rv("예정"), res(("A", False), ("G", True)))] == ["전액 비과세 자산"]
+    assert MR.withheld(rv("예정"), res(("A", False), ("G", True))) == []
     held = MR.withheld(rv("확정", failed), res(("A", False)))
     assert [w["이름"] for w in held] == ["확정신고 가산세"]
     assert "정하지 않았다" in held[0]["알림"] and held[0]["다루지않음"][0]["계획"] == "없음"
-    both = MR.withheld(rv("확정", failed), res(("G", True)))
-    assert [w["이름"] for w in both] == ["전액 비과세 자산", "확정신고 가산세"]
-    for w in both:
+    mixed = MR.withheld(rv("확정", failed), res(("A", False), ("G", True)))
+    assert [w["이름"] for w in mixed] == ["확정신고 가산세"]
+    for w in mixed:
         assert set(w) == {"이름", "까닭", "알림", "안내", "다루지않음"}
 
 
@@ -1066,12 +1045,9 @@ def _made_part(text):
 FILE_FREE_WORDS = ("형식검증", "내용검증", "로그인", "제출", "위택스", "만들어진 뒤")
 
 
-@pytest.mark.parametrize("name,reason", [("BF", "확정신고 가산세"), ("G", "전액 비과세 자산")])
-def test_withheld_run_confirm_document_has_only_sentences_that_fit(tmp_path, name, reason):
-    if name == "BF":                                        # 가산세를 정하지 못하는 확정신고
-        code, out = _main_facts(tmp_path, _bf_merged_facts(), filers.get("BF"))
-    else:
-        code, out = _main(tmp_path, name, g_filer())
+def test_withheld_run_confirm_document_has_only_sentences_that_fit(tmp_path):
+    reason = "확정신고 가산세"                                # 가산세를 정하지 못하는 확정신고
+    code, out = _main_facts(tmp_path, _bf_merged_facts(), filers.get("BF"))
     assert code == 2
     text = _confirm(out)
     todo = _todo_part(text)
