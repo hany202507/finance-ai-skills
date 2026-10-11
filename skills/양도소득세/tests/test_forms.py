@@ -56,8 +56,8 @@ def test_render_writes_two_pdfs_with_values(tmp_path):
     assert os.path.getsize(paths[0]) < 1_500_000
 
 
-def test_pages_are_main_schedule1_schedule3():
-    doc = pymupdf.open(forms.render(_rv("S1"), os.path.join(os.environ.get("TMP", "."), "_t12"))[0])
+def test_pages_are_main_schedule1_schedule3(tmp_path):
+    doc = pymupdf.open(forms.render(_rv("S1"), str(tmp_path))[0])
     assert doc.page_count == 2 + 1 + 1          # 본지 2쪽, 부표1 1쪽, 부표3 1쪽(행이 30 이하)
 
 
@@ -195,7 +195,7 @@ def test_s1_shows_core_cells():
     assert ("양도면적.토지", "합계") not in s1                      # 부표1 면적 합계 칸은 인쇄된 칸이 없다
     s3 = {(p["필드"], p["열"]): p["값"] for p in plan["국세"]["칸"] if p["쪽"] == 3}
     assert s3[("부표3.⑤계", "지급금액")] == "609,800,000"
-    assert s3[("부표3.법무사비용", "거래상대방 사업자등록번호")] == "211-81-04565"
+    assert s3[("부표3.법무사비용", "거래상대방 사업자등록번호")] == "000-00-00034"
     assert ("부표3.매입가액", "지급일") not in s3                   # 음영 칸
 
 
@@ -260,7 +260,7 @@ def test_several_items_of_one_kind_go_to_detail_sheet():
     rv = _rv_cached("S1")
     rows = rv["부표3"][0]["행"]
     law = next(x for x in rows if x["전자코드"] == "11401")
-    second = dict(law, 상호="합성등기사무소", 사업자번호="1018101238", 금액=300000)
+    second = dict(law, 상호="합성등기사무소", 사업자번호="0000000015", 금액=300000)
     law["금액"] -= 300000
     rows.insert(rows.index(law) + 1, second)
     plan = forms.plan(rv)
@@ -338,3 +338,178 @@ def test_local_form_uses_local_values():
     assert by[("기본정보.양도일자", "첫_칸")] == "2026.11.20"
     assert by[("신고인.납세지", "첫_칸")] == ["서울특별시 마포구", "서울 마포구", "마포구"]   # 시ㆍ군ㆍ구 단위까지(작성방법 2)
     assert by[("신고일자", "첫_칸")] == {"년": "2026", "월": "12", "일": "15"}
+
+
+# ------------------------------------------------------------ 검토 뒤 마무리: 오류 원인 안내
+
+def _cell(value, col="a", **kw):
+    c = {"필드": "X", "열": col, "값": value, "맞춤": "left", "줄": 1, "pad": None}
+    c.update(kw)
+    return c
+
+
+def _field(**kw):
+    f = {"id": "X", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}}
+    f.update(kw)
+    return f
+
+
+def _blank_page():
+    return pymupdf.open().new_page(width=200, height=100)
+
+
+SENTINEL = "합성비밀값"
+
+
+def test_write_overflow_says_value_does_not_fit_without_echoing_it():
+    font = forms.forms_pdf.load_font()
+    with pytest.raises(forms.forms_pdf.Overflow) as e:
+        forms._write(_blank_page(), _field(), _cell(SENTINEL * 20), font)
+    assert "들어가지 않는다" in str(e.value) and "값을 줄인다" in str(e.value)
+    assert SENTINEL not in str(e.value)
+    assert e.value.__cause__ is None and e.value.__suppress_context__
+
+
+def test_write_uses_next_candidate_only_on_overflow():
+    font = forms.forms_pdf.load_font()
+    assert forms._write(_blank_page(), _field(), _cell([SENTINEL * 20, "짧다"]), font) == 1
+
+
+@pytest.mark.parametrize("field, col, want", [
+    (_field(쓰지않음="관리번호"), "a", "적지 않는 칸"),
+    (_field(음영_열=["a"]), "a", "음영"),
+    (_field(), "zz", "열"),
+    (_field(기준점=[{"패턴": "@@", "쓰는곳": "뒤"}]), "a", "기준점"),
+])
+def test_write_other_value_errors_keep_their_own_reason(field, col, want):
+    """기준점을 못 찾음·음영 칸·없는 열은 「칸에 값이 들어가지 않는다」 로 바뀌지 않고, 값도 싣지 않는다."""
+    font = forms.forms_pdf.load_font()
+    with pytest.raises(ValueError) as e:
+        forms._write(_blank_page(), field, _cell(SENTINEL, col=col), font)
+    msg = str(e.value)
+    assert want in msg and "들어가지 않는다" not in msg and "값을 줄인다" not in msg
+    assert not isinstance(e.value, forms.forms_pdf.Overflow)
+    assert "X" in msg and SENTINEL not in msg
+
+
+def test_write_does_not_try_next_candidate_after_a_non_overflow_error():
+    font = forms.forms_pdf.load_font()
+    with pytest.raises(ValueError) as e:
+        forms._write(_blank_page(), _field(음영_열=["a"]), _cell(["하나", "둘"]), font)
+    assert "음영" in str(e.value)
+
+
+# ------------------------------------------------------------ 검토 뒤 마무리: 말없이 빈칸이 되는 길
+
+@pytest.mark.parametrize("edit, kind", [
+    (lambda rv: rv["양수인"][0].update(관계표기=None, 관계="QQ"), "관계"),
+    (lambda rv: rv["신고인"].update(국적="QQ"), "국가"),
+    (lambda rv: rv.update(환급계좌={"은행코드": "QQ"}), "은행"),
+])
+def test_unknown_code_stops_instead_of_going_blank(edit, kind):
+    rv = _rv_cached("S1")
+    edit(rv)
+    with pytest.raises(ValueError) as e:
+        forms.plan(rv)
+    assert kind in str(e.value) and "코드표" in str(e.value)
+    assert "QQ" not in str(e.value)
+
+
+def test_known_codes_still_resolve():
+    rv = _rv_cached("S1")
+    rv["양수인"][0].update(관계표기=None, 관계="ZA")
+    by = {(p["필드"], p["열"]): p["값"] for p in forms.plan(rv)["국세"]["칸"] if p["쪽"] == 0}
+    assert by[("양수인", "양도인과의 관계")]
+
+
+def test_check_value_not_in_mapping_stops_instead_of_going_blank():
+    rv = _rv_cached("S1")
+    rv["신고"]["구분"] = "수정"
+    with pytest.raises(ValueError) as e:
+        forms.plan(rv)
+    assert "신고구분" in str(e.value) and "선택" in str(e.value)
+    assert "수정" not in str(e.value)
+
+
+def test_empty_check_value_stays_blank():
+    rv = _rv_cached("S1")
+    rv["신고인"]["거주구분"] = None
+    by = {(p["필드"], p["열"]) for p in forms.plan(rv)["국세"]["칸"] if p["쪽"] == 0}
+    assert not any(f == "신고인.거주구분" for f, _ in by)
+
+
+def _slot_names(field, col):
+    slots = field.get("기준점") or []
+    slots = [slots] if isinstance(slots, dict) else slots
+    return [s.get("부분") for s in slots if not s.get("열") or col in s["열"]]
+
+
+_PART_KEYS = {"연월일": {"년", "월", "일"}, "세율구분": {"국내외분", "세율구분"}, "자산종류": {"자산종류", "코드"},
+              "기간": {"이상", "미만"}, "고유번호": {"앞4자리", "가운데4자리", "뒤6자리"}}
+
+
+def test_mapping_part_names_match_anchor_names():
+    """매핑 「부분」 이름과 값 묶음의 키가 필드목록 기준점의 「부분」 이름과 같다. 다르면 그 부분이 말없이 빠진다."""
+    bad = []
+    for name, m in _mappings().items():
+        fields = _fields(m["필드목록"])
+        alias = m.get("열") or {}
+        for c in m["칸"]:
+            f = fields[c["필드"]]
+            spec = c.get("열")
+            a = alias.get(spec, spec)
+            cols = (a["칸"] if isinstance(a, dict) else [a]) if spec else list((f.get("좌표") or {}).get("값_칸_해석") or {})
+            for col in cols:
+                names = _slot_names(f, col)
+                if c.get("부분"):
+                    if c["부분"] not in names:
+                        bad.append((name, c["필드"], col, c["부분"], names))
+                elif c.get("형식") in _PART_KEYS and names and set(names) != _PART_KEYS[c["형식"]]:
+                    bad.append((name, c["필드"], col, c["형식"], names))
+    assert bad == []
+
+
+# ------------------------------------------------------------ 검토 뒤 마무리: 두 파일을 함께 바꾼다
+
+def _fail_on_local(monkeypatch, how):
+    real_write, real_save = forms._write, forms.forms_pdf.save
+
+    def write(page, field, c, font):
+        if how == "write" and "지방" in c["목록"]:
+            raise ValueError("합성 실패")
+        return real_write(page, field, c, font)
+
+    def save(doc, path):
+        if how == "save" and os.path.basename(path).startswith("지방소득세"):
+            raise OSError("합성 저장 실패")
+        return real_save(doc, path)
+
+    monkeypatch.setattr(forms, "_write", write)
+    monkeypatch.setattr(forms.forms_pdf, "save", save)
+
+
+@pytest.mark.parametrize("how, exc", [("write", ValueError), ("save", OSError)])
+def test_local_failure_leaves_no_new_national_pdf_or_tmp(tmp_path, monkeypatch, how, exc):
+    _fail_on_local(monkeypatch, how)
+    with pytest.raises(exc):
+        forms.render(_rv_cached("S1"), str(tmp_path))
+    assert os.listdir(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("how, exc", [("write", ValueError), ("save", OSError)])
+def test_local_failure_keeps_the_previous_pair_untouched(tmp_path, monkeypatch, how, exc):
+    old = {"양도소득세_신고서.pdf": b"old-national", "지방소득세_신고서.pdf": b"old-local"}
+    for n, b in old.items():
+        (tmp_path / n).write_bytes(b)
+    _fail_on_local(monkeypatch, how)
+    with pytest.raises(exc):
+        forms.render(_rv_cached("S1"), str(tmp_path))
+    assert {n: (tmp_path / n).read_bytes() for n in os.listdir(str(tmp_path))} == old
+
+
+def test_render_replaces_both_files_and_leaves_no_tmp(tmp_path):
+    for n in ("양도소득세_신고서.pdf", "지방소득세_신고서.pdf"):
+        (tmp_path / n).write_bytes(b"old")
+    paths = forms.render(_rv_cached("S1"), str(tmp_path))
+    assert sorted(os.listdir(str(tmp_path))) == ["양도소득세_신고서.pdf", "지방소득세_신고서.pdf"]
+    assert all(pymupdf.open(p).page_count >= 2 for p in paths)

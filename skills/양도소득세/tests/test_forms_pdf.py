@@ -306,3 +306,19 @@ def test_refetch_keeps_file_when_a_new_edition_appears(tmp_path):
     assert mod.run(str(tmp_path), 교체=True, fetch=lambda seq: new, out=lines.append) == 0
     assert (tmp_path / "원본" / "a.pdf").read_bytes() == new
     assert any("새 판" in s for s in lines)
+
+
+def test_put_overflow_is_its_own_value_error_subclass():
+    page = pymupdf.open().new_page(width=200, height=100)
+    with pytest.raises(forms_pdf.Overflow) as e:
+        forms_pdf.put(page, [10, 10, 40, 24], "합성" * 30)
+    assert isinstance(e.value, ValueError)
+
+
+def test_put_field_non_overflow_errors_are_not_overflow():
+    page = pymupdf.open().new_page(width=200, height=100)
+    shaded = {"id": "X", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}, "음영_열": ["a"]}
+    for field, col in ((shaded, "a"), ({"id": "X", "좌표": {"값_칸_해석": {"a": [10, 10, 60, 24]}}}, "zz")):
+        with pytest.raises(ValueError) as e:
+            forms_pdf.put_field(page, field, "가", col=col)
+        assert not isinstance(e.value, forms_pdf.Overflow)

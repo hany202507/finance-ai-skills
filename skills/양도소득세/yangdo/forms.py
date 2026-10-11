@@ -311,17 +311,24 @@ class _Fmt:
         num, den = v
         return "%s/%s" % (num, den) if num and den else ""
 
+    def _name(self, table, code, kind, e):
+        """코드표에서 코드의 이름. 표에 없으면 멈춘다(빈칸으로 두면 값이 말없이 빠진다). 문장에는 코드 값을 싣지 않는다."""
+        hit = self.codes[table].get(code)
+        if hit is None:
+            raise ValueError("%s: %s 코드가 코드표 「%s」에 없다" % (e.get("필드") or "?", kind, table))
+        return hit.get("이름") or ""
+
     def f_관계(self, v, e):
         label, code = v
         if label:
             return str(label)
-        return (self.codes["양수인관계목록"].get(code) or {}).get("이름") or "" if code else ""
+        return self._name("양수인관계목록", code, "양수인 관계", e) if code else ""
 
     def f_국가명(self, v, e):
-        return (self.codes["국가"].get(v) or {}).get("이름") or "" if v else ""
+        return self._name("국가", v, "국가", e) if v else ""
 
     def f_은행(self, v, e):
-        return (self.codes["은행"].get(v) or {}).get("이름") or "" if v else ""
+        return self._name("은행", v, "은행", e) if v else ""
 
     @staticmethod
     def f_감면율(v, e):
@@ -450,7 +457,11 @@ class _Planner:
             return
         kind = e.get("형식", "글")
         if kind == "체크":
-            col = e["선택"].get(str(value)) if value is not None else None
+            col = None
+            if value not in (None, ""):
+                col = e["선택"].get(str(value))
+                if col is None:             # 빈칸으로 두면 체크가 말없이 빠진다. 값은 싣지 않는다
+                    raise ValueError("%s: 체크 값이 매핑 「선택」(%s)에 없다" % (e["필드"], ", ".join(e["선택"])))
             out = "V" if col else ""
         else:
             out = fmt(kind, value, e)
@@ -581,18 +592,22 @@ def unplaced(rv, forms_dir=None, efile_dir=None):
 # ------------------------------------------------------------ 쓰기
 
 def _write(page, field, c, font):
-    """칸 하나를 쓴다. 값이 후보 목록이면 앞에서부터 들어가는 것을 쓴다. 쓴 후보의 번호."""
+    """칸 하나를 쓴다. 값이 후보 목록이면 앞에서부터 들어가는 것을 쓴다. 쓴 후보의 번호.
+
+    넘침(forms_pdf.Overflow)만 다음 후보로 넘기고, 다른 ValueError(음영 칸·없는 열·기준점 못 찾음)는 그 원인을 그대로 낸다.
+    오류 문장에 값을 옮기지 않는다(인적사항이 로그에 남지 않게)."""
     values = c["값"] if isinstance(c["값"], list) else [c["값"]]
     for n, v in enumerate(values):
         try:
             forms_pdf.put_field(page, field, v, col=c["열"], align=c["맞춤"], size=SIZE, font=font, lines=c["줄"],
                                 pad=c["pad"])
             return n
-        except ValueError:
+        except forms_pdf.Overflow:
             continue
-    # 오류 문장에 값을 옮기지 않는다(인적사항이 로그에 남지 않게)
-    raise ValueError("%s %s 칸에 값이 들어가지 않는다(후보 %d개). 매핑의 줄·pad 를 고치거나 값을 줄인다"
-                     % (c["필드"], c["열"], len(values))) from None
+        except ValueError as err:           # forms_pdf 의 이 문장들은 칸·기준점 이름만 담고 값은 담지 않는다
+            raise ValueError("%s %s 칸을 쓸 수 없다: %s" % (c["필드"], c["열"], err)) from None
+    raise forms_pdf.Overflow("%s %s 칸에 값이 들어가지 않는다(후보 %d개). 매핑의 줄·pad 를 고치거나 값을 줄인다"
+                             % (c["필드"], c["열"], len(values))) from None
 
 
 def render(rv, out_dir, forms_dir=None):
@@ -605,27 +620,32 @@ def render(rv, out_dir, forms_dir=None):
     font = forms_pdf.load_font()
     os.makedirs(out_dir, exist_ok=True)
     notes = list(p["확인사항"])
-    paths = []
-    for which, name in (("국세", OUT_NATIONAL), ("지방", OUT_LOCAL)):
-        part = p[which]
-        src = pymupdf.open(part["원본"])
-        doc = pymupdf.open()
-        for pg in part["쪽"]:
-            doc.insert_pdf(src, from_page=pg - 1, to_page=pg - 1)
-        for c in part["칸"]:
-            if c["목록"] not in fields:
-                fields[c["목록"]] = {f["id"]: f for f in _read(os.path.join(root, "필드목록", c["목록"]))["fields"]}
-            n = _write(doc[c["쪽"]], fields[c["목록"]][c["필드"]], c, font)
-            if n:
-                notes.append("%s 칸이 좁아 시도 이름을 줄이거나 아파트 이름 등을 빼고 적었다. 전체 글자는 신고값과 전자신고 파일에 있다"
-                             % c["이름"])
-        path = os.path.join(out_dir, name)
-        tmp = path + ".tmp"
-        forms_pdf.save(doc, tmp)
-        doc.close()
-        src.close()
-        os.replace(tmp, path)
-        paths.append(path)
+    built = []              # (임시 경로, 최종 경로). 두 문서를 모두 임시 이름으로 만든 뒤에 한꺼번에 바꾼다
+    try:
+        for which, name in (("국세", OUT_NATIONAL), ("지방", OUT_LOCAL)):
+            part = p[which]
+            path = os.path.join(out_dir, name)
+            with pymupdf.open(part["원본"]) as src, pymupdf.open() as doc:
+                for pg in part["쪽"]:
+                    doc.insert_pdf(src, from_page=pg - 1, to_page=pg - 1)
+                for c in part["칸"]:
+                    if c["목록"] not in fields:
+                        fields[c["목록"]] = {f["id"]: f
+                                             for f in _read(os.path.join(root, "필드목록", c["목록"]))["fields"]}
+                    n = _write(doc[c["쪽"]], fields[c["목록"]][c["필드"]], c, font)
+                    if n:
+                        notes.append("%s 칸이 좁아 시도 이름을 줄이거나 아파트 이름 등을 빼고 적었다. "
+                                     "전체 글자는 신고값과 전자신고 파일에 있다" % c["이름"])
+                built.append((path + ".tmp", path))     # 저장 도중 실패해도 finally 가 지우도록 먼저 적는다
+                forms_pdf.save(doc, path + ".tmp")
+        for tmp, path in built:
+            os.replace(tmp, path)
+        built = []
+    finally:
+        for tmp, _ in built:                # 중간에 실패하면 새로 만든 임시 파일을 지우고 이전 파일은 그대로 둔다
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    paths = [os.path.join(out_dir, n) for n in (OUT_NATIONAL, OUT_LOCAL)]
     have = rv.setdefault("확인사항", [])
     for s in notes:
         if s not in have:
