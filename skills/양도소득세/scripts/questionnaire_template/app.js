@@ -118,6 +118,7 @@
     if (kind === 'int') { inp.setAttribute('inputmode', 'numeric'); inp.setAttribute('placeholder', spec.hint || '숫자만'); }
     if (kind === 'num') { inp.setAttribute('inputmode', 'decimal'); inp.setAttribute('placeholder', spec.hint || '숫자만'); }
     if (kind === 'text' && spec.hint) inp.setAttribute('placeholder', spec.hint);
+    if (kind === 'text' && spec.digits) inp.setAttribute('inputmode', 'numeric');
     var v = get();
     inp.value = v === undefined || v === null ? '' : String(v);
     inp.addEventListener('input', function () { put(inp.value); });
