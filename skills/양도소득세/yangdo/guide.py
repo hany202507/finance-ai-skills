@@ -36,7 +36,7 @@ SCREENS = (
     ("기본정보", "기본정보"),
     ("양수인", "양수인"),
     ("양도자산", "양도자산 및 거래일"),
-    ("취득가액", "양도소득금액의 취득가액 입력 " + NEED_NAME),
+    ("취득가액", "양도소득금액"),            # 화면 안의 취득가액 란 이름은 확인하지 못했다(4절 본문이 NEED_NAME 으로 알린다)
     ("필요경비", "양도소득금액의 필요경비 상세"),
     ("세액계산", "세율 선택 도우미, 장특공 계산기, 세액계산"),
     ("납부", "분납·환급계좌, 제출 뒤 신고내역 조회"),
@@ -130,6 +130,12 @@ def _expense_meta():
     return _cache["meta"]
 
 
+def _kind_name(row):
+    """필요경비 구분 이름. 코드표의 이름 가운데 (2)·(10)·(11) 은 서식의 번호가 이름 앞에 붙은 것이다. 다른 구분은 번호를 묶음 이름에 두므로
+    안내서에서는 번호를 떼어 구분 이름의 꼴을 맞춘다(번호는 신고값과 서식에 그대로 있다)."""
+    return re.sub(r"^\(\d+\)\s*", "", row["구분"])
+
+
 def _is_acq(row):
     """부표3 행이 취득가액 묶음(매입가액·취득세·부대비용·가산·차감)이면 참."""
     return (_expense_meta().get(row.get("전자코드")) or {}).get("묶음", "").startswith("취득가액")
@@ -162,7 +168,7 @@ def _row_table(rows):
     body = []
     for r in rows:
         must = (meta.get(r["전자코드"]) or {}).get("필수", False)
-        label = r["구분"] + (" (취득가액에서 뺀다)" if _is_deduct(r) else "")
+        label = _kind_name(r) + (" (취득가액에서 뺀다)" if _is_deduct(r) else "")
         ev = _evidence_name(r["증빙코드"]) if r["증빙코드"] else (NEED_VALUE if must else "")
         name = r["상호"] or NEED_VALUE
         biz = r["사업자번호"] or (NEED_VALUE if must else "")
@@ -390,8 +396,9 @@ def _penalty_table(pen):
              _won(c["무신고"]), _won(c["납부지연"])] for c in pen["건"]]
     out = ["### 가산세 계산", "",
            "예정신고 기한이 같은 자산을 한 건으로 묶어 건마다 셌다. 무신고가산세는 예정신고 세액 × %s, "
-           "납부지연가산세는 예정신고 세액 × 일수 × 1일 10만분의 %s 이다. 일수는 납부기한 다음 날부터 납부일(작성일 %s) 기준으로 셌다."
-           % (_rate(pen["율"]), format((Decimal(pen["일이자율"]) * 100000).normalize(), "f"), _date(pen.get("납부일"))), ""]
+           "납부지연가산세는 예정신고 세액 × 일수 × 1일 10만분의 %s 이다. 일수는 납부기한 다음 날부터 납부일(작성일 %s)%s까지 셌다."
+           % (_rate(pen["율"]), format((Decimal(pen["일이자율"]) * 100000).normalize(), "f"), _date(pen.get("납부일")),
+              "" if pen.get("납부일산입", True) else " 전날"), ""]
     out += _table(["자산", "예정신고 세액", "납부기한", "일수", "무신고가산세", "납부지연가산세"], body) + [""]
     # 감면 규정을 옮기는 말은 신고일이 속한 구간마다 다르다(penalty._relief_note). 여기서는 금액만 적고 확인사항을 가리킨다
     out += ["무신고가산세는 감면 없이 계산했다. 감면이 적용되면 무신고가산세는 %s이다. "
@@ -455,9 +462,9 @@ def _sec_payment(rv):
         body = [[", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"], c["일수"] if c["기한경과"] else "기한 안",
                  _won(c["무신고"]), _won(c["납부지연"])] for c in local_pen["건"]]
         out += ["지방소득세 가산세는 국세와 같은 건으로 묶어 계산했다. 무신고가산세는 지방소득세 예정신고 세액 × %s, 납부지연가산세는 "
-                "지방소득세 예정신고 세액 × 일수 × 1일 10만분의 %s 이다. 일수는 지방소득세 납부기한 다음 날부터 납부일(작성일 %s)까지 셌다."
+                "지방소득세 예정신고 세액 × 일수 × 1일 10만분의 %s 이다. 일수는 지방소득세 납부기한 다음 날부터 납부일(작성일 %s)%s까지 셌다."
                 % (_rate(local_pen["율"]), format((Decimal(local_pen["일이자율"]) * 100000).normalize(), "f"),
-                   _date(pen.get("납부일"))), ""]
+                   _date(pen.get("납부일")), "" if local_pen.get("납부일산입", True) else " 전날"), ""]
         out += _table(["자산", "지방소득세 예정신고 세액", "납부기한", "일수", "무신고가산세", "납부지연가산세"], body) + [""]
         out += ["지방소득세 무신고가산세는 감면 없이 계산했다. 감면이 적용되면 무신고가산세는 %s이다. 근거와 전제는 확인사항에 있다."
                 % _won(local_pen["무신고_감면적용"]), ""]
@@ -513,7 +520,8 @@ def hometax_input(rv):
             "- 국세: 산출세액 %s, %s납부할 세액 %s" % (_won(t.get("산출세액")),
                                              "가산세 %s, " % _won(t["가산세"]) if t.get("가산세") else "",
                                              _won(t.get("납부할세액"))),
-            "- 지방소득세: 산출세액 %s (위택스에서 따로 신고)" % _won(loc.get("산출세액")), ""]
+            "- 지방소득세: 산출세액 %s, %s납부할 세액 %s (위택스에서 따로 신고)"
+            % (_won(loc.get("산출세액")), "가산세 %s, " % _won(loc["가산세"]) if loc.get("가산세") else "", _won(loc.get("납부할세액"))), ""]
     return "\n".join(out + body).rstrip() + "\n"
 
 
@@ -545,7 +553,7 @@ def _expense_line(r, lead=""):
                          ("거래상대방 %s" % r["상호"]) if r["상호"] else "",
                          ("사업자번호 %s" % r["사업자번호"]) if r["사업자번호"] else "",
                          ("지급일 %s" % r["지급일"]) if r["지급일"] else "") if x]
-    return "- [ ] %s %s%s" % (r["구분"], _won(r["금액"]), (" (" + ", ".join(extra) + ")") if extra else "")
+    return "- [ ] %s %s%s" % (_kind_name(r), _won(r["금액"]), (" (" + ", ".join(extra) + ")") if extra else "")
 
 
 def attachments(rv, facts, result):

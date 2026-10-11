@@ -213,6 +213,35 @@ def test_bc_two_cases_in_two_rate_columns():
     assert (out["무신고"], out["납부지연"], out["계"]) == (15_080_400, 2_009_030, 17_089_430)
 
 
+def test_every_case_past_due_gets_its_own_line_with_the_values_of_the_guide_table():
+    """국세 가산세도 지방소득세처럼 건마다 한 줄이다(예정신고 세액, 납부기한, 일수, 금액). 기한을 옮긴 건의 까닭 문장은 그 건에만 붙는다."""
+    out = penalty.final_return(_calc(CASES["BC"]), CASES["BC"], "2027-05-20")
+    lines = [x for x in out["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
+    assert lines == [
+        "자산 C: 예정신고 세액 33,250,000원, 납부기한 2026-12-31, 일수 139일(납부기한 다음 날부터 납부일 2027-05-20 전날까지), 무신고가산세 6,650,000원, 납부지연가산세 1,016,780원이다",
+        "자산 B: 예정신고 세액 42,152,000원, 납부기한 2027-02-01, 일수 107일(납부기한 다음 날부터 납부일 2027-05-20 전날까지), 무신고가산세 8,430,400원, 납부지연가산세 992,250원이다"]
+    for c in out["건"]:
+        assert any(("예정신고 세액 %s원" % format(c["예정신고세액"], ",")) in x and ("%d일" % c["일수"]) in x for x in lines)
+    moved = [x for x in out["확인사항"] if "건너뛴 날은" in x and "예정신고 기한 말일은" in x]
+    assert len(moved) == 1 and moved[0].startswith("자산 B:")          # 기한을 옮긴 B 건에만 붙는다
+
+
+def test_per_case_line_and_guide_table_name_the_day_the_count_really_ends():
+    """일수의 끝 날은 규칙 가산세.납부지연.납부일산입 이 정한다. 2026-07-01 부터의 납부는 납부일 전날까지, 그 전은 납부일까지다.
+    건별 줄과 안내서 「가산세 계산」 표의 문장이 센 대로 말하고, 지방소득세는 지방 규칙대로 납부일까지다."""
+    late = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    assert late["납부일산입"] is False and late["지방"]["납부일산입"] is True
+    line = [x for x in late["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
+    assert len(line) == 1 and "일수 107일(납부기한 다음 날부터 납부일 2027-05-20 전날까지)" in line[0]
+    assert any("납부기한 다음 날부터 납부일 전날까지 일수를 셌다" in x for x in late["확인사항"])
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2025-08-01"
+    old = penalty.final_return(_calc(f), f, "2026-05-20")
+    assert old["납부일산입"] is True
+    line = [x for x in old["확인사항"] if "일(납부기한 다음 날부터 납부일 " in x]
+    assert len(line) == 1 and "일수 201일(납부기한 다음 날부터 납부일 2026-05-20까지)" in line[0] and "전날" not in line[0]
+
+
 def _two_lots():
     """누진세율 토지 둘을 다른 달에 양도(원문 사례 5 와 같은 꼴). L 은 2015-05-01 취득 1억원, 2026-08-10 양도 2억원."""
     lot = asset("L", "토지", 평택, "2015-05-01", "2026-08-10", 200_000_000, 100_000_000, 토지사용현황="사업용")
@@ -408,7 +437,7 @@ def test_rates_come_from_the_ruleset(tmp_path):
 
 # ---------------------------------------------------------------- 감면과 대안 금액
 # 국세기본법 제48조②3호라목은 2026-01-01 부터 「확정신고기한까지 제45조의3에 따른 기한 후 신고를 한 경우」에 감면한다.
-# 이 도구가 만드는 것은 확정신고서라 감면을 적용하지 않고, 감면을 적용한 금액을 대안으로 싣는다.
+# 이 스킬이 만드는 것은 확정신고서라 감면을 적용하지 않고, 감면을 적용한 금액을 대안으로 싣는다.
 # 그 전 문언(「과세표준신고를 한 경우」) 구간의 신고도 같다. 감면 판정은 조문 발췌의 글자를 보지 않는다.
 
 def test_no_relief_under_the_current_wording_and_relieved_amount_as_alternative():
@@ -451,7 +480,7 @@ def test_note_says_relief_was_not_applied_and_gives_the_relieved_amount():
 
 
 def test_no_relief_before_the_2026_wording_change_either():
-    """2025년 양도를 2025-12-20 에 신고·납부: 감면 조문이 「과세표준신고를 한 경우」이던 구간이다. 이 도구는 확정신고서를 만들므로
+    """2025년 양도를 2025-12-20 에 신고·납부: 감면 조문이 「과세표준신고를 한 경우」이던 구간이다. 이 스킬은 확정신고서를 만들므로
     이 구간에도 감면을 적용하지 않는다. 일수는 납부일까지 센다.
     F 를 2025-08-01 양도로 옮김: 세액 139,380,000, 기한 2025-10-31(금), 일수 2025-11-01 ~ 2025-12-20 = 30 + 20 = 50
     무신고 139,380,000 × 20% = 27,876,000(감면이 적용되면 13,938,000), 납부지연 139,380,000 × 50 × 22/100,000 = 1,533,180"""

@@ -59,7 +59,7 @@
 가산세가 있는 확정신고의 「사람이 할 일」은 작성일에 납부하라고 적는다. 지방소득세 신고서의 가산세는 두 가지를 가정한 값이라
 (지방소득세 예정신고기한, 가산세 금액의 끝수) 위택스 화면이 계산한 가산세와 다르면 위택스 값을 따르라고 적는다. 작성일이 지방소득세
 예정신고기한 이전이라 지방소득세 가산세가 없는 실행에는 그 줄을 적지 않는다.
-무신고가산세를 감면 없이 넣었다는 문장은 국세와 지방소득세 모두 알림에도 올리고, 예정신고분을 기한 후 신고로 내는 방법과 견주어 보라는 줄을 둔다.
+무신고가산세를 감면 없이 넣었다는 문장은 국세와 지방소득세 모두 알림에도 올리고, 예정신고분을 기한 후 신고로 내는 방법과 비교하라는 줄을 둔다.
 
 인적사항(성명, 주민등록번호, 주소, 전화, 계좌, 양수인, 자산 지번, 매도인 성명)은 신고값.json, 신고서 PDF, 전자신고 파일,
 입력 안내서·부속서류에만 들어간다. 화면 출력, 신고_확인.md, make 가 돌려주는 값(MCP 응답)에는 싣지 않는다.
@@ -175,6 +175,25 @@ def _clear_all(rep, out):
         raise first
 
 
+def _left_submittable(out):
+    """출력 폴더에 남은 신고서 PDF 와 제출용 이름의 전자신고 파일의 이름. 종료코드 4 로 끝날 때 쓰다 만 파일을 알리는 데 쓴다."""
+    try:
+        names = sorted(os.listdir(out))
+    except OSError:
+        return []
+    return [n for n in names if _clear_order(n) in (0, 2) and (n in OWN_NAMES or EFILE_NAME.match(n)) and os.path.isfile(os.path.join(out, n))]
+
+
+def _tell_left_files(rep, out):
+    """종료코드 4 에서 신고서 PDF 나 전자신고 파일이 남았으면 그 이름과 쓰지 말라는 말을 알림에 적는다(종료코드 1·3 과 같은 말을 한다)."""
+    head, tail = outputs.STALE_NOTE.split("%s")        # 이전 실행의 것으로 이미 알린 이름은 쓰다 만 파일로 다시 알리지 않는다
+    told = {n for x in rep["알림"] if x.startswith(head) for n in x[len(head):].split(tail[:2])[0].split(", ")}
+    left = [n for n in _left_submittable(out) if n not in told]
+    if left:
+        rep["알림"].append("출력 폴더에 쓰다 만 신고서 PDF 나 전자신고 파일이 남아 있다: %s. 이번 실행이 끝까지 가지 못했으니 "
+                         "다시 실행하기 전에는 쓰지 않는다" % ", ".join(left))
+
+
 def _drop_submittable(rep, out):
     """예상하지 못한 오류로 끝날 때, 이번 실행이 만든 신고서 PDF 와 제출용 이름의 전자신고 파일, 임시 폴더를 지운다.
 
@@ -233,7 +252,7 @@ def _report(out, upto):
     return {"종료코드": 0, "상태": "완료", "요약": "", "범위": upto, "출력": out,
             "단계": {name: NOT_DONE for name in STEPS}, "파일": [], "기준정보": None, "판": None, "합계": None,
             "질문": [], "다루지않음": [], "신고인질문": [], "검산": [], "서식검산": None, "전자신고": None,
-            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None, "보류사유": [], "가산세": None,
+            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None, "보류사유": [], "가산세": None, "분납": None, "작성일고침": None,
             "제외자산": [], "과세자산없음": False}
 
 
@@ -359,7 +378,8 @@ def _filer(rep, filer, facts, res):
         f = filing.load(filer)
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일을 읽지 못했거나 형식이 틀렸다", "신고인 정보", "형식 오류", "신고인 정보: %s" % e)
-    rep["경고"] += f.get("_경고") or []
+    for w in f.get("_경고") or []:
+        (rep["알림"] if w.startswith(filing.UNKNOWN_KEYS_HEAD) else rep["경고"]).append(w)    # 모르는 키는 알림으로 알린다
     # filing.questions 의 efile_dir 는 주지 않는다. 이 진입점은 efile 폴더를 따로 받지 않고 신고값 생성, 전자신고 파일, 검증기가
     # 모두 기본 폴더(efile/)를 읽으므로 질문도 같은 코드표와 법정동코드 표를 본다
     qs = _reference(rep, "신고인 정보", lambda: filing.questions(f, facts, res))
@@ -383,6 +403,12 @@ def _values(rep, res, facts, f, rules_dir):
     except return_values.NoTaxableAsset:      # _taxable 이 먼저 걸러 여기 오지 않는다. 와도 같은 문장으로 끝낸다
         _taxable(rep, res)
         raise
+    except return_values.FinalPeriodNotStarted as u:
+        # 다루지 않는 거래가 아니라 작성일을 고치면 되는 입력이다. 맨 위 줄, 알림, 사람이 할 일이 같은 말을 한다
+        fix = ("신고인 파일의 신고.작성일을 확정신고 기간(%s부터 %s까지) 안의 신고·납부 예정일로 고쳐 다시 실행한다"
+               % (u.start.isoformat(), u.end.isoformat()))
+        rep["작성일고침"] = fix
+        _stop(rep, 2, "입력오류", "작성일이 확정신고 기간 전이라 신고값을 만들지 않았다. %s" % fix, "신고값", "작성일 오류", str(u))
     except return_values.Unsupported as u:
         plan = outputs.plan_text(u.계획)
         text = str(u).rstrip(". ")
@@ -390,6 +416,8 @@ def _values(rep, res, facts, f, rules_dir):
         # 신고값 모듈의 문장이 이미 어느 계획에서 다루는지 말했으면 같은 말을 한 번 더 붙이지 않는다
         _stop(rep, 2, "다루지않음", "신고 범위가 아니라 신고값을 만들지 않았다", "신고값", "다루지않음",
               text if plan in text else "%s. %s" % (text, plan))
+    except return_values.InputError as e:
+        _stop(rep, 2, "입력오류", "사실관계 파일의 값이 틀려 신고값을 만들지 않았다", "신고값", "사실관계 오류", str(e))
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일의 값이 틀려 신고값을 만들지 않았다", "신고값", "신고인 정보 오류", "신고인 정보: %s" % e)
     except ValueError as e:
@@ -403,6 +431,14 @@ def _values(rep, res, facts, f, rules_dir):
                       "지방계": local.get("계") or 0}
         # 무신고가산세를 감면 없이 넣었다. 금액이 절반으로 달라질 수 있는 문장이라 확인사항에만 두지 않고 알림에도 올린다(국세, 지방소득세)
         rep["알림"] += [x for x in (pen.get("감면안내"), local.get("감면안내")) if x]
+        # 요약에도 가산세와 납부할 세액을 싣는다(신고서 본지 ⑱, 지방 서식 ⑮). 값은 신고값의 값을 그대로 읽는다
+        if rep["합계"] is not None:
+            nat, loc = rv["본지"]["열"]["합계"], rv["지방"]["열"]["합계"]
+            rep["합계"].update(가산세=nat["가산세"], 납부할세액=nat["납부할세액"], 지방가산세=loc["가산세"], 지방납부할세액=loc["납부할세액"])
+    if rv.get("분납기한"):        # 분납할 세액이 있다. 금액은 신고값의 값이고 새로 세지 않는다
+        total = rv["본지"]["열"]["합계"]
+        rep["분납"] = dict(rv["분납기한"], 분납액=total["분납"], 작성일내=total["신고기한내납부"],
+                         지방=rv["지방"]["열"]["합계"]["납부할세액"])
     if (facts.get("연간") or {}).get("다른양도") is True:      # 기신고 금액이 있으면 위에서 다루지않음으로 끝났다
         rep["알림"].append(OTHER_SALE)
     left = [x["자산"] for x in rv.get("제외자산") or []]
@@ -549,8 +585,13 @@ def _todo_steps(rep):
                 return ["신고서와 전자신고 파일이 없다(%s). 이 사유를 세무 전문가와 확인한다. "
                         "이 스킬은 이 건의 신고서와 전자신고 파일을 만들지 않으니 참고용으로 낸 값으로 신고하지 않는다"
                         % ", ".join(rep["보류사유"])]
-            return ["이 건은 이 도구가 다루지 않는 경우라 신고서와 전자신고 파일이 없다. 신고값도 만들지 못했다. "
-                    "알림이나 %s 에 적힌 사유를 세무 전문가와 확인한다" % outputs.QUESTIONS]
+            # 질문.md 는 계산이 질문으로 끝났을 때만 생긴다. 이 실행에서 실제로 만든 파일만 가리킨다
+            made = [os.path.basename(p) for p in rep["파일"]]
+            where = "알림이나 %s 에" % outputs.QUESTIONS if outputs.QUESTIONS in made else "알림에"
+            return ["이 건은 이 스킬이 다루지 않는 경우라 신고서와 전자신고 파일이 없다. 신고값도 만들지 못했다. "
+                    "%s 적힌 사유를 세무 전문가와 확인한다" % where]
+        if rep["작성일고침"]:
+            return [rep["작성일고침"], "홈택스·위택스 로그인과 제출은 사람이 한다. 신고서와 전자신고 파일이 만들어진 뒤에 한다"]
         asked = {"질문": "위 질문에 답을 채운 뒤 다시 실행한다. 계산 질문은 사실관계 파일에, 신고인 정보 질문은 신고인 파일에 채운다(F07 은 사실관계 파일)",
                  "입력오류": "알림의 문장대로 입력 파일을 고친 뒤 다시 실행한다"}
         failed = ("이 실행의 결과로 신고하지 않는다. 표준오류에 나온 오류 기록과 함께 운영자에게 알린다" if rep["상태"] == "오류" else
@@ -567,7 +608,7 @@ def _todo_steps(rep):
     out.append("%s, %s 과 %s 을 계약서·증빙과 대조해 검토한다. 신고 전 최종 판단은 세무 전문가가 한다"
                % (forms.OUT_NATIONAL, forms.OUT_LOCAL, RV_FILE))
     if rep["가산세"] and rep["가산세"]["감면적용금액"] is not None:
-        out.append("예정신고분을 확정신고기한까지 기한 후 신고로 내는 방법과 견주어 본다. 그렇게 내서 감면이 적용되면 무신고가산세가 "
+        out.append("예정신고분을 확정신고기한까지 기한 후 신고로 내는 방법과 비교한다. 그렇게 내서 감면이 적용되면 무신고가산세가 "
                    "%s원으로 줄어든다. 이 신고서는 감면 없이 만들었다. 어느 쪽으로 신고할지 세무 전문가와 정한다"
                    % outputs.won(rep["가산세"]["감면적용금액"]))
     if sent:
@@ -581,18 +622,50 @@ def _todo_steps(rep):
     if rep["제외자산"]:
         out.append("신고서에 넣지 않은 자산(%s)의 비과세 요건을 보이는 증빙을 보관한다. 목록은 %s 에 있다. "
                    "비과세 판정은 세무 전문가와 확인한다" % (", ".join(rep["제외자산"]), ATTACH_FILE))
-    if rep["가산세"]:
-        local = "위택스에서 지방소득세(양도소득분)를 따로 신고한다. 값은 %s 에 있다" % forms.OUT_LOCAL
-        if rep["가산세"]["지방계"]:        # 작성일이 지방소득세 예정신고기한 이전이면 지방소득세 가산세가 없어 이 문장을 붙이지 않는다
-            local += (". 지방소득세 가산세는 지방소득세 예정신고기한과 끝수를 가정해 계산했다. 위택스 화면이 계산한 가산세와 다르면 "
-                      "위택스 값을 따른다")
-        out.append(local)
+    local = "위택스에서 지방소득세(양도소득분)를 따로 신고한다. 값은 %s 에 있다" % forms.OUT_LOCAL
+    if rep["가산세"] and rep["가산세"]["지방계"]:        # 작성일이 지방소득세 예정신고기한 이전이면 지방소득세 가산세가 없어 이 문장을 붙이지 않는다
+        local += (". 지방소득세 가산세는 지방소득세 예정신고기한과 끝수를 가정해 계산했다. 위택스 화면이 계산한 가산세와 다르면 "
+                  "위택스 값을 따른다")
+    out.append(local)
+    if rep["분납"]:
+        out += _installment_todo(rep)
+    elif rep["가산세"]:
         out.append("국세와 지방소득세는 작성일 %s 에 납부한다. 납부지연가산세는 그 날 내는 것으로 셌다. 다른 날 내면 신고인 파일의 "
                    "작성일을 그 날로 바꿔 다시 만든다" % rep["가산세"]["납부일"])
     else:
-        out.append("위택스에서 지방소득세(양도소득분)를 따로 신고한다. 값은 %s 에 있다" % forms.OUT_LOCAL)
         out.append("신고기한 안에 국세와 지방소득세를 납부한다")
     return out
+
+
+def _installment_todo(rep):
+    """분납을 신청해 분납할 세액이 있는 실행의 납부 줄 둘. (가) 처음에 낼 금액, (나) 분납할 세액과 그 기한.
+    금액은 신고값의 값이다. 기한은 dates.installment_deadline 이 센 날짜다(소득세법 제112조)."""
+    inst = rep["분납"]
+    won = outputs.won
+    day = dates.to_date(inst["기한"])
+    if rep["가산세"]:
+        first = ("작성일 %s 에 국세 %s원(납부할 세액에서 분납할 세액을 뺀 금액)과 지방소득세 %s원을 납부한다. 납부지연가산세는 그 날 내는 것으로 "
+                 "셌다. 다른 날 내면 신고인 파일의 작성일을 그 날로 바꿔 다시 만든다"
+                 % (rep["가산세"]["납부일"], won(inst["작성일내"]), won(inst["지방"])))
+    else:
+        first = ("신고기한 안에 국세 %s원(납부할 세액에서 분납할 세액을 뺀 금액)과 지방소득세 %s원을 납부한다"
+                 % (won(inst["작성일내"]), won(inst["지방"])))
+    second = ("분납할 세액 %s원은 %s(%s요일)까지 납부한다. 소득세법 제112조의 「납부기한이 지난 후 2개월 이내」를 신고기한 %s 에서 "
+              "2개월 뒤 날짜로 읽고 그날이 토요일·일요일·공휴일이면 다음 평일로 옮겼다. 이 날짜 계산은 이 스킬의 가정이다. 홈택스 분납 납부서에 적힌 기한을 따른다"
+              % (won(inst["분납액"]), inst["기한"], dates.WEEKDAY_KO[day.weekday()], inst["신고기한"]))
+    if inst["건너뛴날"]:
+        second += ". 건너뛴 날은 %s 이다" % inst["건너뛴날"]
+    return [first, second]
+
+
+def _totals_line(t):
+    """요약 줄. 가산세를 넣은 확정신고는 국세 납부할 세액(본지 ⑱)과 가산세, 지방소득세 납부할 세액(지방 서식 ⑮)과 가산세를 함께 적는다.
+    예정신고(가산세 없음)의 줄은 그대로다."""
+    won = outputs.won
+    if "납부할세액" in t:
+        return ("산출세액 %s원, 가산세 %s원, 납부할 세액 %s원, 지방소득세 산출세액 %s원, 지방소득세 가산세 %s원, 지방소득세 납부할 세액 %s원"
+                % (won(t["산출세액"]), won(t["가산세"]), won(t["납부할세액"]), won(t["지방소득세"]), won(t["지방가산세"]), won(t["지방납부할세액"])))
+    return "산출세액 %s원, 지방소득세 %s원" % (won(t["산출세액"]), won(t["지방소득세"]))
 
 
 def _bullets(xs):
@@ -618,7 +691,7 @@ def confirm_md(rep):
         L += ["기준정보 판 %s, 확인일 %s%s" % (info["판"], info["확인일"],
                                           (", 서식판 %s, 규격서 %s" % (ed.get("서식"), ed.get("규격"))) if ed else ""), ""]
     if rep["합계"]:
-        L += ["산출세액 %s원, 지방소득세 %s원" % (outputs.won(rep["합계"]["산출세액"]), outputs.won(rep["합계"]["지방소득세"])), ""]
+        L += [_totals_line(rep["합계"]), ""]
     L += ["## 단계", "", "| 단계 | 결과 |", "|---|---|"] + ["| %s | %s |" % kv for kv in rep["단계"].items()] + [""]
     if rep["알림"]:
         L += ["## 알림", ""] + _bullets(rep["알림"]) + [""]
@@ -635,8 +708,9 @@ def confirm_md(rep):
     sent = rep["전자신고"]
     if sent is not None:
         L += ["## 전자신고 검증", ""] + (_bullets(sent["검증"]) if sent["검증"] else ["통과 (%s)" % sent["파일명"]]) + [""]
-        if sent["경고"]:
-            L += ["경고", ""] + _bullets(sent["경고"]) + [""]
+        again = [x for x in sent["경고"] if x not in rep["알림"]]      # 알림에 이미 실은 문장(섞인 임시 폴더)은 되풀이하지 않는다
+        if again:
+            L += ["경고", ""] + _bullets(again) + [""]
     if rep["확인사항"]:
         L += ["## 확인사항", ""] + _bullets(rep["확인사항"]) + [""]
     if rep["경고"]:
@@ -698,6 +772,8 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
             rep["전자신고"]["검증"] = ["예상하지 못한 오류로 멈췄다. 전자신고 파일을 %s" % (
                 "지우지 못했다. 신고에 쓰지 않는다" if stuck["전자신고 파일"] else "지웠다")]
         _mark_guides(rep, out, GUIDE_HEAD["오류"])
+    if rep["종료코드"] == 4:
+        _tell_left_files(rep, out)
     rep["사람이할일"] = _todo(rep)
     try:
         os.makedirs(out, exist_ok=True)
@@ -707,6 +783,7 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
         if rep["종료코드"] != 4:
             rep.update(종료코드=4, 상태="쓰기실패", 요약="출력 파일을 쓰지 못했다")
             rep["알림"].append("출력 파일을 쓰지 못했다: %s (%s). 파일을 닫고 다시 실행한다" % (CONFIRM_FILE, _why(e)))
+            _tell_left_files(rep, out)
     return rep
 
 
@@ -725,7 +802,7 @@ def main(argv=None):
         print(note, file=sys.stderr if code == 4 else sys.stdout)
     if code != 4:
         if rep["합계"]:
-            print("산출세액 %s원, 지방소득세 %s원" % (outputs.won(rep["합계"]["산출세액"]), outputs.won(rep["합계"]["지방소득세"])))
+            print(_totals_line(rep["합계"]))
         print("자세한 내용은 %s 에 적었다" % CONFIRM_FILE)
     return code
 

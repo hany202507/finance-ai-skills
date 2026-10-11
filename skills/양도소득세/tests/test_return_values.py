@@ -834,10 +834,10 @@ def test_permit_zone_without_permit_date_passes_only_inside_the_sale_based_deadl
 
 
 def test_permit_zone_without_permit_date_is_judged_asset_by_asset():
-    """허가일이 있는 자산이 기한 안이어도 허가일이 없는 자산은 따로 본다. BF 확정신고: B 는 허가일 2027-01-10(허가 전 대금
-    청산)이라 기한이 2028-05-31, F 는 허가 대상인데 허가일이 없어 양도일 기준 기한 2027-05-31 까지만 판정할 수 있다."""
+    """허가일이 있는 자산이 기한 안이어도 허가일이 없는 자산은 따로 본다. BF 확정신고: B 는 허가일 2026-12-10(허가 전 대금
+    청산, 양도일과 같은 해)이라 허가일 기준이고, F 는 허가 대상인데 허가일이 없어 양도일 기준 기한 2027-05-31 까지만 판정할 수 있다."""
     def mutate(f):
-        f["자산"][0].update(토지거래허가대상="예", 토지거래허가={"신청일": "2026-10-01", "허가일": "2027-01-10"})
+        f["자산"][0].update(토지거래허가대상="예", 토지거래허가={"신청일": "2026-10-01", "허가일": "2026-12-10"})
         f["자산"][1].update(토지거래허가대상="예", 토지거래허가=None)
     assert [a["id"] for a in CASES["BF"]["자산"]] == ["B", "F"]
     assert _late("BF", "2027-05-31", mutate, 구분="확정")["신고"]["구분"] == "확정"
@@ -892,14 +892,45 @@ def test_final_deadline_on_sunday_may_31_moves_to_monday_through_build():
         _late("S1", "2026-06-02", m, 구분="확정")
 
 
-def test_final_deadline_with_permit_date_in_next_year_counts_from_permit_year():
-    # 양도 2026-11-20, 허가일 2027-01-10(허가 전 대금 청산): 확정신고 기한은 허가일이 속한 과세기간의 다음 연도 5월 31일 = 2028-05-31
-    rv = _late("S1", "2027-06-15", _permit("2027-01-10"), 구분="확정")
-    assert any("허가일(2027-01-10)" in m for m in rv["확인사항"])
-    with pytest.raises(return_values.Unsupported, match="2028-05-31"):
-        _late("S1", "2028-06-01", _permit("2027-01-10"), 구분="확정")
-    with pytest.raises(return_values.Unsupported, match="2027-05-31"):          # 허가 단서가 없으면 양도 연도 기준
+def test_final_deadline_with_permit_date_in_the_same_year_counts_from_the_permit_date():
+    # 양도 2026-11-20, 허가일 2026-12-10(허가 전 대금 청산, 같은 해): 확정신고 기간은 양도일 기준과 같은 2027-05-01~05-31 이다
+    rv = _late("S1", "2027-05-31", _permit("2026-12-10"), 구분="확정")
+    assert any("허가일(2026-12-10)" in m for m in rv["확인사항"])
+    with pytest.raises(return_values.Unsupported, match="2027-05-31"):
+        _late("S1", "2027-06-01", _permit("2026-12-10"), 구분="확정")
+    with pytest.raises(return_values.Unsupported, match="2027-05-31"):          # 허가 단서가 없어도 같다
         _late("S1", "2027-06-15", None, 구분="확정")
+
+
+def test_final_return_of_a_permit_asset_whose_permit_year_differs_is_out_of_scope():
+    """제110조① 괄호: 허가일이 속하는 과세기간의 다음 연도 5월이 그 자산의 확정신고 기간이다. 허가일과 양도일의 해가 다르면 신고서를 만들지 않는다.
+    예정신고는 건드리지 않는다(허가일 기준 예정신고기한은 그대로 세어 만든다)."""
+    for made in ("2027-05-20", "2028-05-20"):
+        with pytest.raises(return_values.Unsupported) as e:
+            _late("S1", made, _permit("2027-01-15"), 구분="확정")
+        msg = str(e.value)
+        assert e.value.계획 == "미정" and "2028-05-01부터 2028-05-31까지" in msg and "허가일 2027-01-15" in msg
+        assert "이 스킬은 이 자산의 확정신고서를 만들지 않는다" in msg and msg.count("해가") == 0 and "2028-05-01부터 2028-05-31까지" in msg and "2026-11-20" in msg
+        # 계획 문장은 할 일 앞에 한 번만 온다(make_return 이 끝에 덧붙이지 않게 문장에 넣었다)
+        assert msg.count("다룰 계획이 정해지지 않았다") == 1 and msg.index("다룰 계획이 정해지지 않았다") < msg.index("세무 전문가와 확인한다")
+    assert _late("S1", "2027-03-01", _permit("2026-12-10"))["신고"]["구분"] == "예정"
+    assert _late("S1", "2027-03-01", _permit("2027-01-15"))["신고"]["구분"] == "예정"
+
+
+def test_final_return_before_the_final_return_period_is_out_of_scope():
+    """제110조①: 확정신고는 다음 연도 5월 1일부터 5월 31일까지다. 작성일이 기간 시작보다 앞서면 가산세를 작성일까지의 일수로 세는
+    신고서가 틀리므로 만들지 않는다. 2026년 양도, 경계 2027-04-30(막힘), 2027-05-01(통과), 2027-05-31(통과), 2027-06-01(막힘)."""
+    for made in ("2026-12-31", "2027-04-30"):
+        with pytest.raises(return_values.Unsupported) as e:
+            _late("BF", made, None, 구분="확정")
+        msg = str(e.value)
+        assert e.value.계획 == "없음" and made in msg and "2027-05-01부터 2027-05-31까지" in msg
+        assert "신고.작성일을 그 기간 안의 신고·납부 예정일로 고쳐 다시 실행한다" in msg and "납부지연가산세" in msg
+    for made in ("2027-05-01", "2027-05-31"):
+        assert _late("BF", made, None, 구분="확정")["신고"]["구분"] == "확정"
+    with pytest.raises(return_values.Unsupported, match="기한후신고"):
+        _late("BF", "2027-06-01", None, 구분="확정")
+    assert _late("BF", "2026-12-31", None, 구분="예정")["신고"]["구분"] == "예정"      # 예정신고는 기존대로
 
 
 def test_unreadable_permit_date_is_reported_as_unreadable_not_missing():

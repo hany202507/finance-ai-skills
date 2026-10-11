@@ -23,6 +23,11 @@ class Unsupported(Exception):
         self.계획 = 계획
 
 
+def _won(amount):
+    """문장에 적는 금액. 천 단위 쉼표를 넣는다(20,627,400). 결과의 숫자 값은 바꾸지 않고 문장에만 쓴다(outputs.won 은 engine 을 불러오므로 여기서는 쓸 수 없다)."""
+    return format(int(amount), ",")
+
+
 def floor(x):
     if isinstance(x, Fraction):
         return x.numerator // x.denominator
@@ -74,7 +79,7 @@ def expenses(a):
             amt = int(it.get("금액") or 0)
             why = drop_reason(g, it)
             if why:
-                dropped.append("%s %s원: %s" % (it.get("내용"), amt, why))
+                dropped.append("%s %s원: %s" % (it.get("내용"), _won(amt), why))
                 continue
             sums[g] += amt
     sums["합계"] = sums["취득세"] + sum(sums[g] for g in GROUPS)
@@ -121,10 +126,10 @@ def gain(a, v, rs):
                 취득, 경비 = 0, 실제
                 out["근거"] += rs.cite("판정.개산공제비교", on)
                 out["확인사항"].append("%s: 환산취득가액과 개산공제 합(%s원)보다 자본적지출·양도비(%s원)가 커서 그것을 필요경비로 했다(소득세법 제97조②2호 단서)"
-                                    % (aid, 환산 + 개산, 실제))
+                                    % (aid, _won(환산 + 개산), _won(실제)))
             else:
                 취득, 경비 = 환산, 개산
-        out["확인사항"].append("%s: 취득가액을 %s 으로 계산했다. 매매사례가액·감정가액·환산취득가액 순서를 확인하라" % (aid, kind))
+        out["확인사항"].append("%s: 취득가액을 %s으로 계산했다. 매매사례가액·감정가액·환산취득가액 순서를 확인하라" % (aid, kind))
         상대방 = F.get(a, "취득.상대방유형")   # 모를때처리(M20): 실제 금액을 먼저 찾아보라는 안내. 계산은 위 방법 그대로다
         if 상대방 in BUYER_LABELS:
             out["확인사항"].append("%s: %s" % (aid, F.NOT_REFLECTED % (
@@ -147,7 +152,7 @@ def taxable(g, v, rs):
     if v["전액비과세"]:
         return {"비과세양도차익": None, "과세양도차익": 0, "장특공률": "0", "장특공": 0, "양도소득금액": 0, "고가주택기준": 기준}
     if g["양도차익"] < 0:
-        raise Unsupported("%s: 양도차손 %s원. 양도차손 통산은 계획 5 범위라 계산하지 않았다" % (v["id"], g["양도차익"]), 계획="5")
+        raise Unsupported("%s: 양도차손 %s원. 양도차손 통산은 계획 5 범위라 계산하지 않았다" % (v["id"], _won(g["양도차익"])), 계획="5")
     if v["고가주택"]:
         전체 = g["전체양도가액"]
         과세 = floor(Fraction(g["양도차익"]) * (전체 - 기준) / 전체)

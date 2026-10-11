@@ -11,7 +11,7 @@
                 같은 세율로 합산하는 자산끼리 더해 세율을 적용한다(사례 8). 다른 건의 양도소득금액과는 합산하지 않는다(사례 4·5)
   무신고        건별 예정신고세액의 합 × 율. 원 미만을 버린다. 건별·열별 값은 건마다 원 미만을 버리고, 합계에 모자라는 원을
                 세액이 가장 큰 건에 더한다(사례 8 서식: 787,556 · 60,313).
-                확정신고기한까지 신고한 경우의 감면(가산세.무신고.확정신고감면율)은 적용하지 않는다. 이 도구가 만드는 것은
+                확정신고기한까지 신고한 경우의 감면(가산세.무신고.확정신고감면율)은 적용하지 않는다. 이 스킬이 만드는 것은
                 확정신고서이고 예정신고분의 기한 후 신고서가 아니다. 2026-01-01 부터의 문언은 「확정신고기한까지 제45조의3에 따른
                 기한 후 신고를 한 경우」이고, 그 전 문언(「과세표준신고를 한 경우」) 구간에도 같게 적용하지 않는다(문언으로 가르지 않는다).
                 감면을 적용한 금액은 대안으로 싣는다(국세청 사례 8 은 감면을 넣은 값이다: 8,478,692 × 20% × 50% = 847,869)
@@ -272,13 +272,13 @@ def local(found, rs, paid, names):
     건이 없으면(과세 자산이 없는 사건) 규칙을 읽지 않고 0 을 돌려준다. 그때 율·감면율·일이자율은 None 이다.
     """
     out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": False, "감면안내": None, "납부지연": 0, "계": 0,
-           "율": None, "감면율": None, "일이자율": None, "건": [],
+           "율": None, "감면율": None, "일이자율": None, "납부일산입": None, "건": [],
            "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "가정안내": None, "근거": []}
     if not found:
         return out, []
     rate, relief = rs.value(LOCAL_RATE_KEY, paid), rs.value(LOCAL_RELIEF_KEY, paid)
     daily, paid_day = rs.value(LOCAL_DAILY_KEY, paid), rs.value(LOCAL_PAID_DAY_KEY, paid)
-    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily))
+    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily), 납부일산입=bool(paid_day))
     taxes = [c["지방"]["예정신고세액"] for c in found]
     counts = [days(c["지방"]["납부기한"], paid, paid_day) for c in found]
     total, per_case, late = amounts(taxes, counts, rate, 0, daily, LOCAL_UNIT)
@@ -332,7 +332,7 @@ def local(found, rs, paid, names):
 
 
 def _relief_note(rs, paid, rate, relief, with_relief):
-    """감면을 적용하지 않았다는 것과 감면이 적용될 때의 금액. 감면 규정이 있다는 것, 이 도구가 확정신고서를 만든다는 것,
+    """감면을 적용하지 않았다는 것과 감면이 적용될 때의 금액. 감면 규정이 있다는 것, 이 스킬이 확정신고서를 만든다는 것,
     대안 금액과 그 조건(감면 규정의 괄호)을 적는다. 규정을 옮기는 말은 신고일이 속한 구간의 문구를 따른다.
       문구가 바뀐 뒤의 구간  「확정신고기한까지 예정신고분을 기한 후 신고로 내면 감면하는 규정」과 문구가 바뀐 날
       그 전 구간            「확정신고기한까지 신고하면 감면하는 규정」(조문은 「과세표준신고를 한 경우」다). 확정신고만 한 경우를
@@ -343,10 +343,10 @@ def _relief_note(rs, paid, rate, relief, with_relief):
     article = _articles(rs, (RELIEF_KEY,), paid)
     if _new_wording_from(rs, paid):
         return (head + "예정신고를 하지 않았더라도 확정신고기한까지 예정신고분을 기한 후 신고로 내면 무신고가산세의 %s 를 감면하는 "
-                "규정이 있다(%s). %s이 도구는 기한 후 신고서를 만들지 않고 확정신고서를 만들므로 그 감면을 적용하지 않았다. "
+                "규정이 있다(%s). %s이 스킬은 기한 후 신고서를 만들지 않고 확정신고서를 만들므로 그 감면을 적용하지 않았다. "
                 % (_pct(relief), article, _wording_sentence(rs, paid)) + tail)
     return (head + "예정신고를 하지 않았더라도 확정신고기한까지 신고하면 무신고가산세의 %s 를 감면하는 규정이 있다(%s). "
-            "이 도구는 예정신고분의 기한 후 신고서가 아니라 확정신고서를 만들므로, 확정신고만 한 경우를 과세관청이 감면 대상으로 "
+            "이 스킬은 예정신고분의 기한 후 신고서가 아니라 확정신고서를 만들므로, 확정신고만 한 경우를 과세관청이 감면 대상으로 "
             "보지 않을 수 있어 그 감면을 적용하지 않았다. " % (_pct(relief), article) + tail)
 
 
@@ -416,7 +416,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
     found, notes = cases(rows, facts, rs)
     # 확정신고서에는 감면을 넣지 않는다(문언이 바뀌기 전 구간의 신고도 같다). 감면율은 대안 금액을 구할 때만 쓴다
     out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": False, "감면안내": None, "납부지연": 0, "계": 0,
-           "율": None, "감면율": None, "일이자율": None,
+           "율": None, "감면율": None, "일이자율": None, "납부일산입": None,
            "건": [], "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "양도일별": None,
            "지방": local([], rs, paid, names)[0], "확인사항": [], "근거": []}
     if not found:
@@ -424,7 +424,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
         return out
     rate, relief = rs.value(RATE_KEY, paid), rs.value(RELIEF_KEY, paid)
     daily, paid_day = rs.value(DAILY_KEY, paid), rs.value(PAID_DAY_KEY, paid)
-    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily))
+    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily), 납부일산입=bool(paid_day))
 
     assets = {a.get("id"): a for a in facts.get("자산") or []}
     final_due = min(dates.filing_deadline("확정", _deadline_base(r, assets.get(r["id"]) or {}, []), rs)[1]
@@ -446,6 +446,12 @@ def final_return(result, facts, paid_on, rules_dir=None):
         out["건"].append({"자산": c["자산"], "예정신고세액": c["예정신고세액"], "기한말일": c["기한말일"].isoformat(),
                          "납부기한": c["납부기한"].isoformat(), "기한경과": n is not None, "일수": n or 0,
                          "무신고": nonfiling, "무신고_감면적용": reduced, "무신고_감면없음": nonfiling, "납부지연": delay})
+        if n is not None:       # 건마다 한 줄. 안내서 「가산세 계산」 표의 예정신고 세액, 납부기한, 일수, 금액과 같은 값이다
+            # 일수의 끝 날은 규칙(가산세.납부지연.납부일산입)이 정한다. 2026-07-01 부터는 납부일 전날까지다
+            notes.append("자산 %s: 예정신고 세액 %s원, 납부기한 %s, 일수 %d일(납부기한 다음 날부터 납부일 %s%s까지), 무신고가산세 %s원, "
+                         "납부지연가산세 %s원이다"
+                         % (", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"].isoformat(), n, paid.isoformat(),
+                            " 전날" if not paid_day else "", _won(nonfiling), _won(delay)))
         if c["양도일별"] is None or len(c["양도일별"]) >= 2:
             notes.append(_same_month_note(c, n, nonfiling, delay, rate, daily))
         if n is None:

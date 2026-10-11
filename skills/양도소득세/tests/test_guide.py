@@ -56,6 +56,24 @@ def test_screen_sections_are_numbered_in_order():
     assert [name for _, name in sec] == SCREENS
 
 
+def test_screen_table_and_section_titles_name_each_screen_the_same_way():
+    md = guide.hometax_input(_rv("S1"))
+    titles = dict(re.findall(r"^## [1-7]\. (\S+) \(홈택스 화면: (.+)\)$", md, re.M))
+    order = md.split("## 화면 순서", 1)[1].split("## 신고 요약", 1)[0]
+    table = {m[0]: m[1] for m in re.findall(r"^\| [1-7] \| (\S+) \| (.+?) \|$", order, re.M)}
+    assert list(titles) == SCREENS and titles == table, (titles, table)
+
+
+def test_expense_kind_names_do_not_carry_the_form_number():
+    """코드표의 (10) 양도시 중개수수료 같은 이름은 안내서와 부속서류에서 번호 없이 적는다. 신고값의 이름은 그대로다."""
+    rv = _rv("S1")
+    assert any(r["구분"].startswith("(10) ") for s in rv["부표3"] for r in s["행"])
+    for md in (guide.hometax_input(rv), guide.attachments(rv, CASES["S1"], _res("S1"))):
+        assert "양도시 중개수수료 등 직접지출비용" in md and "(10)" not in md
+    assert guide._kind_name({"구분": "(11) 국민주택채권 및 토지개발채권 매각차손등 기타경비"}).startswith("국민주택채권")
+    assert guide._kind_name({"구분": "도로시설비 등"}) == "도로시설비 등"
+
+
 def test_input_guide_header_warns_and_keeps_personal_numbers_out():
     for name in ("S1", "BF"):
         rv = _rv(name)

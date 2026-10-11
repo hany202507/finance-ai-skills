@@ -83,6 +83,10 @@ def _address(a, mountain=None):
     return " ".join(parts)
 
 
+# 영문 이름 후보 확인사항의 끝 문장. forms.render 는 칸을 실제로 비웠으면 이 문장으로 끝나는 확인사항을 비웠다는 문장으로 바꾼다
+ENGLISH_NOTE_TAIL = "칸에 들어가지 않으면 비워 둔다"
+
+
 class _Fmt:
     """형식 이름 → 값 바꾸기. 돌려주는 값은 글자, {부분: 글자}, 후보 목록(앞에서부터 칸에 맞는 것을 쓴다), 또는 빈 글자."""
 
@@ -243,8 +247,8 @@ class _Fmt:
         if hit.get("이름"):
             return hit["이름"]
         if hit.get("영문"):
-            self.note("%s 칸: 코드표 「%s」에 이 %s 코드의 한글 이름이 없어 영문 이름을 적는다. 칸에 들어가지 않으면 비워 둔다"
-                      % (where, table, kind))
+            self.note("%s 칸: 코드표 「%s」에 이 %s 코드의 한글 이름이 없어 영문 이름을 적는다. %s"
+                      % (where, table, kind, ENGLISH_NOTE_TAIL))
             return [hit["영문"], ""]
         self.note("%s 칸: 이 %s 코드의 이름이 코드표 「%s」에 없어 비워 두었다. 서면으로 낼 때 직접 적는다" % (where, kind, table))
         return ""
