@@ -1,5 +1,5 @@
 {
- "id": "11dc783fed0d1b3c",
+ "id": "078f1d6a8261e01f",
  "파일": {
   "../efile/codes_c116300.json": "7324c7483ef48b88c5664d4f1e97961e50f40d9600ea26c21366f7d802399975",
   "../efile/layout_c116300.json": "e03c97213245d11ef7b84844e2eb75957de9bf237bd77d285a523d780638ab94",
@@ -11,7 +11,7 @@
   "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
   "고시/투기지역.json": "93dd90d7c6813b8a109357fde66a80373d88a48a95d5a5262a1f1960c2e9c7fb",
   "코드표.json": "cc13ee60829c2d585bdbb386a2682e1b90085ba34d7f7e21d2ba9b76344fdca2",
-  "행정구역_대응.json": "3f3e20ff3ce81354d72c3ee035a036573a6a71063003bd8bf524bd3c53e64978"
+  "행정구역_대응.json": "0112576f05caad8658502efff7f45f1252fa5c21b1522d29bc25b9978c56c5c4"
  },
  "확인일": "2026-10-11"
 }

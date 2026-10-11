@@ -791,3 +791,47 @@ def test_temporary_exclusion_hint_holding_boundary_is_two_years_exactly():
 def test_hint_condition_does_not_change_tax_verdict():
     short = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
     assert short["중과"] == "중과2" and short["단기"] is not None
+
+
+# --- 전남광주통합특별시 주소의 지방 저가주택 판정 ---
+
+def _k2_with_third(시도, 시군구, 읍면동, 양도일=None):
+    """사례 K2(송파 집 양도, 강남 집, 셋째 집 기준시가 2억원)의 셋째 집 소재지만 바꾼다."""
+    f = copy.deepcopy(CASES["K2"])
+    for h in f["세대"]["주택목록"]:
+        if h["id"] == "H3":
+            h["소재지"] = addr(시도, 시군구, 읍면동)
+    if 양도일:
+        f["자산"][0]["양도"]["잔금일"] = 양도일
+    return f
+
+
+@pytest.mark.parametrize("시도", ["전라남도", "전남", "전남광주통합특별시"])
+@pytest.mark.parametrize("양도일", [None, "2026-06-30"])            # K2 의 양도일은 통합 시행일인 2026-07-01 이다
+def test_merged_city_county_house_is_a_local_low_price_house(시도, 양도일):
+    """통합특별시의 시·군(옛 전라남도) 집은 도 지역이라 기준시가 3억원 이하면 중과 주택 수에서 뺀다. 춘천 집(K2)과 같은 결과다."""
+    f = _k2_with_third(시도, "순천시", "조례동", 양도일)
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과2" and v["주택수_중과"] == 2 and not _note(v, "정하지 못해")
+    assert J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)["주택별"]["H3"]["지방소재"] is True
+    if 양도일 is None:
+        assert _engine_tax(f) == EXPECT_AMOUNTS["K2"]["산출세액"] == 272_560_000
+
+
+@pytest.mark.parametrize("시도", ["광주광역시", "광주", "전남광주통합특별시", "광주특별시"])
+@pytest.mark.parametrize("양도일", [None, "2026-06-30"])
+def test_merged_city_district_house_counts_like_a_metropolitan_house(시도, 양도일):
+    """통합특별시의 자치구(옛 광주광역시) 집은 광역시 지역이라 기준시가가 낮아도 주택 수에 넣는다. 서초 집(K)과 같은 결과다."""
+    f = _k2_with_third(시도, "서구", "치평동", 양도일)
+    v = run(f)["자산"][0]
+    assert v["중과"] == "중과3" and v["주택수_중과"] == 3 and not _note(v, "정하지 못해")
+    assert J.engine_values(f, f["자산"][0], F.prepare(f), RS, REG)["주택별"]["H3"]["지방소재"] is False
+    if 양도일 is None:
+        assert _engine_tax(f) == EXPECT_AMOUNTS["K"]["산출세액"] == 322_310_000
+
+
+def test_merged_city_house_without_district_is_counted_with_a_note():
+    f = _k2_with_third("전남광주통합특별시", "", "조례동")
+    v = run(f)["자산"][0]
+    assert v["주택수_중과"] == 3 and len(_note(v, "H3: 광역시 해당 여부를 정하지 못해 주택 수에 넣었다")) == 1
+

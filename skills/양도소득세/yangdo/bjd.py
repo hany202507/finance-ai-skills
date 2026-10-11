@@ -10,7 +10,9 @@ efile/법정동코드.json 은 행정표준코드 법정동코드 전체자료�
 - 같은 이름이 없으면 「성수동1가·2가」 처럼 숫자 가가 붙은 이름과 「기암리(岐岩)」 처럼 한자가 붙은 이름을 후보로 모은다
 - lookup 은 후보가 정확히 하나일 때만 코드를 돌려주고, 없거나 여럿이면 None 이다. 어느 쪽인지는 candidates 로 본다
 - 옛 시도 이름은 행정구역_대응.json 의 이름변경 중 등급이 ★★★ 인 것만 on 날짜(없으면 항상) 이후에 지금 이름으로 바꾼다.
-  ★★☆ 인 광주광역시·전라남도는 바꾸지 않아 None 이고, 신고인에게 법정동코드를 묻는 질문으로 넘어간다
+- 시도 둘이 합쳐진 경우(같은 파일의 통합. 2026-07-01 광주광역시·전라남도 → 전남광주통합특별시)는 시군구·읍면동 이름이
+  통합 전과 같아 옛 시도 이름으로 적은 주소도 on 날짜가 통합일 이후면 새 코드를 찾는다. 옛 시도 이름과 시군구가 맞지 않으면
+  (전라남도 서구) 바꾸지 않는다. on 날짜가 통합일 전이면 옛 이름 그대로 찾는데, 폐지된 옛 코드는 표에 없어 None 이다
 """
 import json
 import os
@@ -67,13 +69,15 @@ def parse(codes):
 
 
 class Bjd:
-    def __init__(self, codes, renames=None):
+    def __init__(self, codes, renames=None, merged=None):
         self._parts, self._names = parse(codes)
         self._index = {}
         for code, (sido, gu, dong) in self._parts.items():
             if dong:
                 self._index.setdefault((sido, gu), {})[dong] = code
         self._renames = {r["옛"]: r for r in (renames or []) if r.get("등급") == RENAME_GRADE}
+        # 합쳐지기 전 시도 이름 → 그 시도에 있던 시군구 이름. 여기 든 옛 이름은 제 시군구일 때만 새 이름으로 바꾼다
+        self._old_districts = {g["시도"]: set(g["시군구"]) for m in (merged or []) for g in m["옛"]}
 
     def exists(self, code):
         """지금 존재하는 법정동코드인지. 시도·시군구·읍면동·리 어느 단계든 존재 행이면 참이다."""
@@ -87,17 +91,20 @@ class Bjd:
         """코드를 (시도, 시군구, 읍면동) 으로. 없으면 None."""
         return self._parts.get(code) if isinstance(code, str) else None
 
-    def _sido(self, sido, on):
+    def _sido(self, sido, gu, on):
         s = _clean(sido)
         r = self._renames.get(s)
         if r and (on is None or to_date(r["시작"]) <= on):
+            if s in self._old_districts and gu not in self._old_districts[s]:
+                return s
             return r["새"]
         return s
 
     def candidates(self, 시도, 시군구, 읍면동, on=None):
         on = to_date(on)
         dong = _clean(읍면동)
-        names = self._index.get((self._sido(시도, on), _clean(시군구)))
+        gu = _clean(시군구)
+        names = self._index.get((self._sido(시도, gu, on), gu))
         if not names or not dong:
             return []
         if dong in names:
@@ -117,5 +124,5 @@ def load(efile_dir=None, rules_dir=None):
     if not isinstance(codes, dict) or not codes:
         raise BjdError("%s 에 코드 표가 없습니다" % TABLE_FILE)
     with open(os.path.join(rules_dir or RULES_DIR, RENAME_FILE), encoding="utf-8") as f:
-        renames = json.load(f).get("이름변경", [])
-    return Bjd(codes, renames)
+        admin = json.load(f)
+    return Bjd(codes, admin.get("이름변경", []), admin.get("통합", []))

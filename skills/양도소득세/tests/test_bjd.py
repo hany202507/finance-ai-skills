@@ -99,12 +99,38 @@ def test_abolished_names_are_not_found():
     assert B.lookup("전남광주통합특별시", "동구", "충장로1가") == "1221012700"
 
 
-def test_old_gwangju_jeonnam_names_return_none_even_with_date():
-    # 행정구역_대응.json 은 이 둘을 ★★☆(해석) 로 두었다. 코드 찾기에서는 바꾸지 않고 질문으로 넘긴다
-    for on in (None, "2026-06-30", "2026-07-01", "2026-12-20"):
-        assert B.lookup("광주광역시", "동구", "충장로1가", on=on) is None
-        assert B.lookup("전라남도", "강진군", "강진읍", on=on) is None
-        assert B.candidates("전라남도", "강진군", "강진읍", on=on) == []
+def test_old_gwangju_jeonnam_names_find_merged_city_codes_from_merger_date():
+    """광주광역시·전라남도는 2026-07-01 전남광주통합특별시가 됐고 시군구·읍면동 이름은 그대로다. 작성일이 그날 이후면 새 코드를 찾는다."""
+    for on in (None, "2026-07-01", "2026-12-20"):
+        assert B.lookup("광주광역시", "동구", "충장로1가", on=on) == "1221012700"
+        assert B.lookup("광주광역시", "서구", "치평동", on=on) == B.lookup("전남광주통합특별시", "서구", "치평동", on=on) == "1224012000"
+        assert B.lookup("전라남도", "강진군", "강진읍", on=on) == "1278025000"
+        assert B.candidates("전라남도", "강진군", "강진읍", on=on) == ["1278025000"]
+    # 통합 전 날짜에는 옛 이름 그대로 찾는다. 옛 코드(29·46)는 폐지돼 표에 없다
+    assert B.lookup("광주광역시", "동구", "충장로1가", on="2026-06-30") is None
+    assert B.lookup("전라남도", "강진군", "강진읍", on="2026-06-30") is None
+    assert B.candidates("전라남도", "강진군", "강진읍", on="2026-06-30") == []
+
+
+def test_old_sido_name_must_match_its_own_districts():
+    """옛 시도 이름과 시군구가 맞지 않으면 새 이름으로 바꾸지 않는다(전라남도에 서구는 없었다)."""
+    assert B.lookup("전라남도", "서구", "치평동", on="2026-12-20") is None
+    assert B.lookup("광주광역시", "강진군", "강진읍", on="2026-12-20") is None
+    assert B.lookup("전라남도", "서구", "치평동") is None
+
+
+def test_every_merged_city_row_is_reachable_by_an_old_name():
+    """통합특별시의 읍면동·리 행은 모두 옛 시도 이름 하나로 같은 코드에 닿는다(자치구는 광주광역시, 시·군은 전라남도)."""
+    n = 0
+    for code, (sido, gu, dong) in B._parts.items():
+        if sido != "전남광주통합특별시" or not dong:
+            continue
+        old = "광주광역시" if gu.endswith("구") else "전라남도"
+        other = "전라남도" if old == "광주광역시" else "광주광역시"
+        assert B.lookup(old, gu, dong, on="2026-10-11") == code, (code, gu, dong)
+        assert B.lookup(other, gu, dong, on="2026-10-11") is None, (code, gu, dong)
+        n += 1
+    assert n == 3176       # 12 로 시작하는 존재 행 3,204 에서 시도 1, 시군구 27 을 뺀 수
 
 
 def test_confirmed_renames_apply_from_their_start_date():

@@ -627,6 +627,15 @@ def test_dong_code():
     assert seen == ["2026-12-20"]
 
 
+def test_dong_code_of_old_gwangju_jeonnam_names_with_real_table():
+    """광주광역시·전라남도로 적은 주소도 작성일이 통합(2026-07-01) 이후면 전남광주통합특별시의 코드를 찾는다. 질문 F04 로 넘어가지 않는다."""
+    for sido in ("광주광역시", "전남광주통합특별시"):
+        assert filing.dong_code({"시도": sido, "시군구": "서구", "읍면동": "치평동"}, on="2026-10-11") == "1224012000"
+    for sido in ("전라남도", "전남광주통합특별시"):
+        assert filing.dong_code({"시도": sido, "시군구": "강진군", "읍면동": "강진읍"}, on="2026-10-11") == "1278025000"
+    assert filing.dong_code({"시도": "전라남도", "시군구": "서구", "읍면동": "치평동"}, on="2026-10-11") is None
+
+
 def test_bjd_is_not_read_when_nothing_needs_a_code_check():
     qs = filing.questions(filing.load({"세무대리인": None}), {"자산": []}, None)       # bjd 모듈이 없어도 돈다
     assert ids(qs) == [("F01", None), ("F03", None), ("F05", None), ("F06", None)]

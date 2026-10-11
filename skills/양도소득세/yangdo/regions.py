@@ -3,6 +3,11 @@
 
 공고를 효력발생일 순서로 다시 적용한다. 지정된 기간은 지정일부터 해제일 전날까지다.
 지구 단위 지정은 지번 경계 자료가 없어 문항 A02 로 묻는다.
+
+시도가 합쳐진 경우(행정구역_대응.json 의 통합. 2026-07-01 전남광주통합특별시)는 옛 시도 이름과 새 시도 이름을 모두 받는다.
+고시 이력은 새 이름으로 맞춰 판정하고, 광역시 해당 여부(metro)는 시군구가 통합 전 어느 시도의 것이었는지로 정한다.
+통합 근거 법률이 다른 법령의 광역시·도 규정을 그 법령이 개정될 때까지 자치구 관할구역에는 광역시 규정으로,
+시·군 관할구역에는 도 규정으로 적용하게 했기 때문이다. 그래서 통합 전후와 적은 이름에 관계없이 결과가 같다.
 """
 import json
 import os
@@ -17,12 +22,12 @@ SIDO_SHORT = {"서울": "서울특별시", "부산": "부산광역시", "대구"
               "전북": "전북특별자치도", "전남": "전라남도", "경북": "경상북도", "경남": "경상남도",
               "제주": "제주특별자치도",
               "서울시": "서울특별시", "부산시": "부산광역시", "대구시": "대구광역시", "인천시": "인천광역시",
-              "대전시": "대전광역시", "울산시": "울산광역시", "세종시": "세종특별자치시"}
+              "대전시": "대전광역시", "울산시": "울산광역시", "세종시": "세종특별자치시",
+              "광주특별시": "전남광주통합특별시"}       # 통합 근거 법률이 정한 약칭. 질문지 시도 목록의 순서가 바뀌지 않게 맨 뒤에 둔다
 CAPITAL = {"서울특별시", "인천광역시", "경기도"}
-METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시", "광주광역시"}
+METRO = {"부산광역시", "대구광역시", "대전광역시", "울산광역시", "광주광역시"}    # 광주광역시는 통합 전 날짜에 옛 이름으로 적은 주소에 쓴다
 SEJONG = "세종특별자치시"
-UNKNOWN_METRO = {"전남광주통합특별시"}
-KNOWN_SIDO = set(SIDO_SHORT.values()) | {"전남광주통합특별시"}
+KNOWN_SIDO = set(SIDO_SHORT.values())
 
 
 class NeedAnswer(Exception):
@@ -53,6 +58,10 @@ class Regions:
     def __init__(self, notices, admin):
         self.admin = admin
         self.rename = {r["옛"]: r for r in admin.get("이름변경", [])}
+        self.merged = {}
+        for m in admin.get("통합", []):
+            groups = {g["시도"]: g for g in m["옛"]}
+            self.merged[m["시도"]] = {"옛": groups, "시군구": {name: g for g in m["옛"] for name in g["시군구"]}}
         self.events = {}
         for name in REGIMES:
             evs = (notices.get(name) or {}).get("이벤트", [])
@@ -193,14 +202,34 @@ class Regions:
                 pass
         return False
 
+    def _merged_group(self, addr, a):
+        """합쳐진 시도의 주소 a 가 통합 전 어느 시도의 시군구였는지(통합 표의 옛 항목). 정하지 못하면 None.
+
+        표에 없는 시군구(비었거나 틀린 이름)이거나, 옛 시도 이름으로 적었는데 그 시도의 시군구가 아니면 정하지 않는다.
+        """
+        m = self.merged[a["시도"]]
+        g = m["시군구"].get(a["시군구"])
+        raw = _clean((addr or {}).get("시도"))
+        raw = SIDO_SHORT.get(raw, raw)
+        if g is None or (raw in m["옛"] and raw != g["시도"]):
+            return None
+        return g
+
     def metro(self, addr, on=None):
+        """수도권이거나 광역시(군 제외)·세종(읍·면 제외)이면 True, 그 밖의 지역이면 False, 정하지 못하면 None.
+
+        합쳐진 시도는 자치구 관할구역(통합 표의 적용이 광역시)에 광역시 규정을, 시·군 관할구역(적용이 도)에 도 규정을 적용한다.
+        """
         a = self.canon(addr, on=_d(on) if on is not None else None)
         if a["시도"] not in KNOWN_SIDO:
             return None
         if a["시도"] in CAPITAL:
             return True
-        if a["시도"] in UNKNOWN_METRO:
-            return None
+        if a["시도"] in self.merged:
+            g = self._merged_group(addr, a)
+            if g is None:
+                return None
+            return g["적용"] == "광역시" and not a["시군구"].endswith("군")
         if a["시도"] in METRO:
             return not a["시군구"].endswith("군")
         if a["시도"] == SEJONG:
