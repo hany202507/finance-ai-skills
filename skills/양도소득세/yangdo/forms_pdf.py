@@ -287,11 +287,12 @@ def _default_align(field, col=None):
     return "left"
 
 
-def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1):
+def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lines=1, pad=None):
     """필드목록의 필드 하나에 값을 쓴다. 쓴 상자 목록.
 
     기준점이 그 열에 걸리면 put_anchored, 아니면 put 으로 쓴다. 음영 칸, 쓰지않음 필드,
-    없는 열은 ValueError."""
+    없는 열은 ValueError. 기준점이 없는 칸에 dict·list 값을 주어도 ValueError(묶음 값을 글자로 바꿔 찍지 않는다).
+    pad 는 기준점이 없는 칸의 좌우 여백(put 과 같다). 좁은 칸에서 글자를 덜 줄이려고 줄여 쓴다."""
     fid = field.get("id")
     if field.get("쓰지않음"):
         raise ValueError("%s: 적지 않는 칸이다(%s)" % (fid, field["쓰지않음"]))
@@ -314,7 +315,10 @@ def put_field(page, field, value, col=None, align=None, size=7.5, font=None, lin
     slots = [s for s in _slots(field.get("기준점")) if not s.get("열") or col in s["열"]]
     if slots:
         return put_anchored(page, rect, slots, value, size=size, font=font)
-    used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines)
+    if isinstance(value, (dict, list, tuple)):
+        raise ValueError("%s %s: 기준점이 없는 칸이라 값 하나만 쓴다(묶음 값을 받았다)" % (fid, col))
+    used = put(page, rect, value, align=align or _default_align(field, col), size=size, font=font, lines=lines,
+               pad=pad)
     return [used] if used is not None else []
 
 
