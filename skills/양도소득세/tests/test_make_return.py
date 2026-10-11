@@ -1095,6 +1095,8 @@ def test_final_return_before_its_period_stops_for_a_permit_asset_without_permit_
     rep = MR.make(f, filer, str(tmp_path / "o"), today="2026-12-31")
     assert rep["종료코드"] == 2 and rep["상태"] == "입력오류"
     assert any("확정신고 기간 2027-05-01부터 2027-05-31까지보다 앞선다" in x for x in rep["알림"])
+    # 작성일만 고치면 허가일 때문에 한 번 더 멈추므로 허가일도 적으라고 함께 알린다
+    assert any("허가 대상인데 허가일 값이 없다. 사실관계에 허가일도 적는다" in x for x in rep["알림"])
     names = set(os.listdir(tmp_path / "o"))
     assert not ({"신고값.json", "홈택스_입력안내.md", "부속서류.md"} | PDFS) & names and _efiles(tmp_path / "o") == []
 
@@ -1195,6 +1197,7 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
 # 아래 시험이 그 경우를 make_return 에서 본다. 기한 이전이면 지방소득세 가산세가 없다는 한 줄만 나오고 05-03 부터는 붙는다.
 
 
+# 기한 2028-05-02 와 05-03 의 금액은 2028년이 공휴일 표에 없을 때의 값이다. 표에 2028년을 넣으면 기한과 금액을 다시 센다.
 def _local_penalty_run(tmp_path, made):
     f = copy.deepcopy(CASES["F"])
     f["자산"][0]["양도"]["잔금일"] = "2027-12-10"
