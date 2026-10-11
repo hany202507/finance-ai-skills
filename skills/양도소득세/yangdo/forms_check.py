@@ -45,14 +45,15 @@
   건            예정신고 기한의 말일이 같은 과세 자산(양도일이 속한 달, 허가 전에 대금을 청산한 허가구역 토지는 허가일이 속한 달)
   예정신고세액  건 안에서 합산 묶음마다 과세표준을 더해 엔진 결과의 적용세율(단일·가산)과 규칙세트 기본세율표로 세액을 구한 합
   무신고        기한이 지난 건의 세액 합 × 율, 원 미만 버림. 건별은 건마다 버리고 남는 원을 세액이 가장 큰 건에.
-                감면 조문의 근거 발췌가 「기한 후 신고를 한 경우」인 구간(2026-01-01 부터)은 감면율을 곱하지 않는다. 신고값이
-                확정신고서의 값이라서다. 그 전 구간은 × (1 - 감면율)
+                확정신고기한까지 신고한 경우의 감면율은 곱하지 않는다. 신고값이 확정신고서의 값이라서다(국세·지방 모두,
+                감면 조문의 문구가 바뀌기 전 구간의 신고도 같다)
   납부지연      건마다 세액 × 일수 × 일이자율, 10원 미만 버림. 일수 = 납부기한 다음 날부터 작성일 전날까지(규칙 납부일산입이 1 이면 작성일까지)
   열            건의 금액을 그 건의 세율구분별 세액 비율로 나눔(원 미만 버리고 남는 원은 세액이 가장 큰 열에)
   한 건 안에 합산 묶음이 둘 이상이고 합산 비교세액이 더 크거나, 허가구역 토지의 허가일을 읽지 못하면 정할 수 없다. 그때는 가산세 칸이
   0 이어야 하고 신고값 「가산세」 절이 계산하지 못했다고 적어야 한다. 허가일은 사실관계(facts)에서 읽는다.
   지방소득세 가산세도 같은 건으로 다시 계산한다. 세액은 지방소득세 세율, 납부기한은 dates.local_filing_deadline(소득세법 기한에
-  지방.신고기한.가산개월 을 더한 날), 일수는 납부일까지, 끝수는 원 미만 버림이다. 지방 서식 ⑬ 과 「가산세.지방」 을 대조한다.
+  지방.신고기한.가산개월 을 더한 날), 일수는 납부일까지, 끝수는 원 미만 버림이다. 감면율은 국세와 같이 곱하지 않는다.
+  지방 서식 ⑬ 과 「가산세.지방」 을 대조한다.
   국세와 지방 가운데 한쪽이라도 정할 수 없으면 둘 다 0 이어야 한다.
 
 검산하지 않는 것: ⑨ 세율 표기, ⑨⑩ 보유·거주기간 글자, 부표3 상호·사업자번호·지급일·증빙코드, 양도·취득 원인, 신고 절의 코드와 날짜,
@@ -106,17 +107,14 @@ LOCAL_PENALTY = ("가산세_신고", "가산세_납부", "가산세_기타")
 # 본지 ⑯ 가산세 네 줄. (신고값 키, 서식 번호, 이름). 세율구분 열 합 검사와 다시 계산한 값 대조에 쓴다
 NAT_PENALTY_ROWS = (("가산세_신고", "⑯", "가산세 무(과소)신고"), ("가산세_납부", "⑯", "가산세 납부지연"),
                     ("가산세_기장", "⑯", "가산세 기장불성실 등"))
-# 가산세 규칙 키와 납부지연가산세의 끝수 단위(원). 끝수 단위는 법령 값이 아니라 국세청 확정신고 작성 사례의 계산 근거가 쓴 처리다
-PENALTY_RATE, PENALTY_RELIEF = "가산세.무신고.율", "가산세.무신고.확정신고감면율"
-PENALTY_DAILY, PENALTY_PAID_DAY = "가산세.납부지연.일이자율", "가산세.납부지연.납부일산입"
+# 가산세 규칙 키(무신고 율, 일이자율, 납부일산입)와 납부지연가산세의 끝수 단위(원). 끝수 단위는 법령 값이 아니라 국세청 확정신고
+# 작성 사례의 계산 근거가 쓴 처리다. 확정신고기한까지 신고한 경우의 감면율은 읽지 않는다(확정신고서의 가산세에는 감면을 넣지 않는다)
+PENALTY_KEYS = ("가산세.무신고.율", "가산세.납부지연.일이자율", "가산세.납부지연.납부일산입")
 PENALTY_LATE_UNIT = 10
-# 감면 조문의 근거 발췌에 이 글자가 있으면 기한 후 신고를 해야 감면하는 문언 구간이다. 확정신고서의 무신고가산세에는 감면을 넣지 않는다
-PENALTY_LATE_RETURN_WORDING = "기한 후 신고를 한 경우"
-# 지방 서식 ⑬ 가산세 네 줄과 지방소득세 가산세 규칙 키(무신고 율, 감면율, 일이자율, 납부일산입). 지방은 원 미만을 버린다
+# 지방 서식 ⑬ 가산세 네 줄과 지방소득세 가산세 규칙 키(무신고 율, 일이자율, 납부일산입). 지방은 원 미만을 버린다
 LOCAL_PENALTY_ROWS = (("가산세_신고", "⑬", "가산세 무(과소)신고"), ("가산세_납부", "⑬", "가산세 납부지연"),
                       ("가산세_기타", "⑬", "가산세 기타"))
-LOCAL_PENALTY_KEYS = ("지방.가산세.무신고.율", "지방.가산세.무신고.확정신고감면율", "지방.가산세.납부지연.일이자율",
-                      "지방.가산세.납부지연.납부일산입")
+LOCAL_PENALTY_KEYS = ("지방.가산세.무신고.율", "지방.가산세.납부지연.일이자율", "지방.가산세.납부지연.납부일산입")
 LOCAL_PENALTY_UNIT = 1
 # 신고값 전자신고.세율별 행(03 레코드)의 가산세 칸 → 다시 계산한 값의 자리(0 무신고, 1 납부지연, 2 계)
 EFILE_PENALTY = (("가산세-신고불성실", 0), ("가산세-납부불성실", 1), ("가산세-계", 2))
@@ -663,10 +661,9 @@ class _Check:
         if rs is None:
             raise _Undetermined("규칙세트를 읽지 못했다")
         paid = dates.to_date(_iso(sin["작성일"]))
-        rate_key, relief_key, daily_key, paid_day_key, unit = (LOCAL_PENALTY_KEYS + (LOCAL_PENALTY_UNIT,) if local else
-                                                               (PENALTY_RATE, PENALTY_RELIEF, PENALTY_DAILY, PENALTY_PAID_DAY,
-                                                                PENALTY_LATE_UNIT))
-        rate, relief = Decimal(str(self.penalty_rule(rate_key, paid))), Decimal(str(self.penalty_rule(relief_key, paid)))
+        rate_key, daily_key, paid_day_key, unit = (LOCAL_PENALTY_KEYS + (LOCAL_PENALTY_UNIT,) if local else
+                                                   PENALTY_KEYS + (PENALTY_LATE_UNIT,))
+        factor = Decimal(str(self.penalty_rule(rate_key, paid)))        # 감면율은 곱하지 않는다
         daily, paid_day = Decimal(str(self.penalty_rule(daily_key, paid))), int(self.penalty_rule(paid_day_key, paid))
         deadline = dates.local_filing_deadline if local else dates.filing_deadline
         grouped = {}
@@ -680,8 +677,6 @@ class _Check:
             by_col = self.case_tax(members, rs, local)
             days = None if paid <= adjusted else (paid - adjusted).days - 1 + paid_day
             cases.append((by_col, sum(by_col.values()), days))
-        needs_late_return = any(PENALTY_LATE_RETURN_WORDING in x for g in rs.entry(relief_key, paid)["근거"] for x in g["발췌"])
-        factor = rate if needs_late_return else rate * (1 - relief)
         due = [i for i, c in enumerate(cases) if c[2] is not None]
         total = _floor(Decimal(sum(cases[i][1] for i in due)) * factor)
         nonfiling, late = [0] * len(cases), [0] * len(cases)

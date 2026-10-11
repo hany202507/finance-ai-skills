@@ -507,11 +507,13 @@ def test_final_return_guide_shows_the_penalty_amounts():
     assert "가산세 46,110,480원" in top and "납부할 세액 252,384,480원" in top
     pay = md.split("## 7.", 1)[1]
     assert "252,384,480" in pay
-    # 지방소득세: 산출세액 20,627,400 + 가산세 2,289,641(무신고 2,062,740, 납부지연 226,901) = 22,917,041
+    # 지방소득세: 산출세액 20,627,400 + 가산세 4,352,381(무신고 4,125,480 감면 없음, 납부지연 226,901) = 24,979,781
     local = pay.split("### 지방소득세", 1)[1]
     rows = {ln.split("|")[1].strip(): ln for ln in local.splitlines() if ln.startswith("|")}
-    assert "2,062,740" in rows["가산세(무신고)"] and "226,901" in rows["가산세(납부지연)"]
-    assert "22,917,041" in rows["납부할 세액(지방소득세)"]
+    assert "4,125,480" in rows["가산세(무신고)"] and "226,901" in rows["가산세(납부지연)"]
+    assert "24,979,781" in rows["납부할 세액(지방소득세)"]
+    assert "지방소득세 예정신고 세액 × 20%," in local and "(1 - 50%)" not in local      # 계산식에 감면이 없다
+    assert "지방소득세 무신고가산세는 감면 없이 계산했다. 감면이 적용되면 무신고가산세는 2,062,740원" in local
     assert "2027-03-31" in local and "50" in local               # 지방소득세 납부기한과 일수
     assert "두 가지를 가정" in local and "위택스 값을 따른다" in local
     assert "지방소득세 가산세는 계산하지 않았다" not in md and "가산세가 빠진" not in md
