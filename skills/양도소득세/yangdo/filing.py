@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""신고인 정보. 신고인.json(계약 C7)의 형식을 검사하고, 빠진 것을 서식 단계 문항 F01~F06 으로 돌려준다.
+"""신고인 정보. 신고인.json(계약 C7)의 형식을 검사하고, 빠진 것을 서식 단계 문항 F01~F08 으로 돌려준다.
 
 load      형식만 본다. 값이 비어 있으면 통과시키고(질문으로 돌린다), 적혀 있는데 틀리면 FilingError 를 낸다.
 questions 비어 있거나 하나로 정하지 못한 값을 문항 목록으로 낸다. 목록이 비면 신고값을 만들 수 있다.
+          F07(필수 구분코드 지출의 지급처 사업자번호)과 F08(매입가액 행의 취득 상대방)은 계산이 끝난 결과를 보고 묻는다.
 
 신고인 JSON 의 인적사항(성명, 주민등록번호, 전화, 주소)은 오류 문장과 질문 내용에 쓰지 않는다. 항목 이름만 적는다.
 법정동코드 찾기는 bjd 모듈(Bjd.lookup, candidates, exists)이 한다. 시험은 가짜 객체를 bjd 인자로 넣는다.
@@ -259,6 +260,7 @@ def _check_lot(aid, lot):
         for k, v in area.items():
             if not _blank(v):
                 _number(v, "%s.총면적.%s" % (w, k))
+    _text(lot.get("취득상대방"), w + ".취득상대방", 60)
     cause = lot.get("등기원인")
     if not _blank(cause):
         if not isinstance(cause, dict) or set(cause) - {"취득", "양도"}:
@@ -488,18 +490,84 @@ def _f06(f):
     return []
 
 
+def _seller_ok(v):
+    return isinstance(v, str) and ksx1001_ok(v) and len(v.encode("cp949")) <= 60
+
+
+def _spend(ln):
+    """지출을 「취득부대의 1번째 지출(중개수수료, 2018-03-15)」 로만 가리킨다. 번호는 사실관계 목록의 순서다. 금액·상호·번호는 싣지 않는다."""
+    it = ln.item
+    return "%s의 %d번째 지출(%s, %s)" % (ln.group, ln.no, it.get("내용") or "내용 없음", it.get("지급일") or "지급일 없음")
+
+
+def _f07(aid, lines, codes):
+    """07 레코드는 필수 구분코드에 지급금액이 있으면 사업자번호가 있어야 한다(규격서 p60). 비었거나 검증번호가 틀린 지출을 모아 묻는다."""
+    blank, wrong = [], []
+    for ln in lines:
+        it = ln.item
+        if it is None or not codes[ln.key]["필수"] or not int(it.get("금액") or 0) or biz_ok(it.get("사업자번호")):
+            continue
+        (blank if _blank(it.get("사업자번호")) else wrong).append(_spend(ln))
+    if not (blank or wrong):
+        return []
+    text = ["전자신고 07 레코드는 지급금액이 있는 필수 구분코드 지출에 지급처 사업자번호가 있어야 합니다(규격서 p60)."]
+    if blank:
+        text.append("사업자번호가 비어 있는 지출: %s." % ", ".join(blank))
+    if wrong:
+        text.append("사업자번호의 형식이나 검증번호가 틀린 지출: %s." % ", ".join(wrong))
+    text.append("사실관계의 해당 지출 항목에 사업자번호를 하이픈 없이 숫자 10자리로 적어 주세요.")
+    return [_q("F07", aid, " ".join(text))]
+
+
+def _f08(aid, lines, lot):
+    """07 레코드의 매입가액(11101) 행은 상호가 Not Null 이고 취득 상대방(매도인)의 성명이나 상호를 쓴다(규격서 p59~60)."""
+    if not any(ln.group == "매입가액" for ln in lines):
+        return []
+    v = (lot or {}).get("취득상대방")
+    if not _blank(v) and _seller_ok(v):
+        return []
+    head = ("적은 취득상대방에 전자신고 파일로 쓸 수 없는 글자가 있거나 60바이트를 넘습니다. " if not _blank(v) else
+            "전자신고 07 레코드의 매입가액(11101) 행에는 산 곳(매도인)의 성명이나 상호가 있어야 합니다(규격서 p59~60). ")
+    return [_q("F08", aid, head + "신고인 파일의 자산 항목 취득상대방에 한글 완성형 글자로 60바이트(한글 30자) 안에서 적어 주세요.")]
+
+
+def _f07_f08(f, facts, result):
+    """계산이 끝난 결과(상태 완료)가 있을 때만 묻는다. 07 행이 어느 지출에서 생기는지는 취득가액 방법이 정하기 때문이다."""
+    if not isinstance(result, dict) or result.get("상태") != "완료" or not (result.get("계산") or {}).get("자산"):
+        return []
+    from yangdo import return_values      # return_values 가 이 모듈을 읽으므로 늦게 읽는다
+    assets = {a.get("id"): a for a in (facts or {}).get("자산") or []}
+    lots = f.get("자산") or {}
+    codes = None
+    out7, out8 = [], []
+    for row in result["계산"]["자산"]:
+        aid, a = row.get("id"), assets.get(row.get("id"))
+        if a is None:
+            continue
+        lines = return_values.expense_lines(a, row["계산"])
+        if codes is None and any(ln.item is not None for ln in lines):
+            codes = return_values.load_codes()["필요경비구분"]
+        out7 += _f07(aid, lines, codes)
+        out8 += _f08(aid, lines, lots.get(aid))
+    return out7 + out8
+
+
 def questions(filer, facts, result=None, bjd=None):
     """빠진 신고인 정보를 문항 목록으로. [{"문항": "F01", "자산": None, "내용": "..."}]. 비면 신고값을 만들 수 있다.
 
-    filer 는 load 의 결과, facts 는 사실관계(자산 목록을 본다). result 는 지금은 쓰지 않는다(분납 가능 여부는
-    규칙세트 값이라 신고값 생성이 판정한다). bjd 는 시험용 주입 인자이고 없으면 yangdo.bjd.load() 를 처음 쓸 때 읽는다.
+    filer 는 load 의 결과, facts 는 사실관계(자산 목록을 본다). result 는 engine.calculate 의 결과이고, 상태가 완료일 때만
+    F07·F08 을 묻는다(None 이거나 끝나지 않았으면 두 문항은 건너뛴다. 분납 가능 여부는 규칙세트 값이라 신고값 생성이 판정한다).
+    bjd 는 시험용 주입 인자이고 없으면 yangdo.bjd.load() 를 처음 쓸 때 읽는다.
     내용에는 인적사항 값을 쓰지 않고 항목 이름만 적는다.
 
     타인이 아닌 양수인(사실관계 매수인관계)은 관계코드를 F02 로, 경매로 취득하거나 양도한 자산은 등기원인을 F04 로 묻는다.
     번지 0 은 특수지 9 일 때만 받아 F01·F04 로 되묻는다.
+    F07 은 필수 구분코드 필요경비에 지급금액이 있는데 사실관계의 사업자번호(10자리, 검증번호)가 없거나 틀린 자산을, F08 은
+    매입가액 행이 생기는데 자산[id].취득상대방이 없거나 쓸 수 없는 자산을 묻는다. 두 문항이 보는 07 행의 규칙은
+    return_values.expense_lines 가 정한다.
     """
     late = _Late(bjd)
     on = ((filer.get("신고") or {}).get("작성일")) or None
     assets = {a.get("id"): a for a in (facts or {}).get("자산") or []}
     return (_f01(filer.get("신고인"), late, on) + _f02(filer, assets) + _f03(filer)
-            + _f04(filer, facts, late, on) + _f05(filer) + _f06(filer))
+            + _f04(filer, facts, late, on) + _f05(filer) + _f06(filer) + _f07_f08(filer, facts, result))

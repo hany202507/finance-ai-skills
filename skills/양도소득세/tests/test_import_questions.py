@@ -49,7 +49,7 @@ def load_out():
 def test_committed_definition_is_consistent():
     out = load_out()
     qs = out["문항"]
-    assert len(qs) == 76
+    assert len(qs) == 78
     ids = {q["id"] for q in qs}
     roots = ("신고인.", "연간.", "세대.", "자산[].")
 
@@ -88,10 +88,10 @@ def test_no_old_plan_number_left_and_legend_matches():
             assert q["범위"] in legend, q["id"]
 
 
-def test_form_stage_questions_f01_to_f06():
+def test_form_stage_questions_f01_to_f08():
     out = load_out()
     qs = {q["id"]: q for q in out["문항"]}
-    for qid in ("F01", "F02", "F03", "F04", "F05", "F06"):
+    for qid in ("F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08"):
         q = qs[qid]
         assert q["범위"] == "서식단계" and q["키"] == [] and q["선택지"] is None and q["facts키"].startswith("(서식 전용)"), qid
         assert q["보이는조건"] == "항상" and not q["질문"].rstrip().endswith("?"), qid
@@ -99,4 +99,20 @@ def test_form_stage_questions_f01_to_f06():
     assert "등기원인" in qs["F04"]["질문"] and "자산[].등기원인.취득" in qs["F04"]["facts키"]
     assert "0336" in qs["F04"]["도움말"] and "0021" in qs["F04"]["도움말"]
     assert "신고.홈택스ID" in qs["F06"]["facts키"] and "신고.분납신청" in qs["F03"]["facts키"]
-    assert [q["id"] for q in out["문항"]][-6:] == ["F01", "F02", "F03", "F04", "F05", "F06"]
+    assert [q["id"] for q in out["문항"]][-8:] == ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08"]
+
+
+def test_form_stage_questions_f07_and_f08():
+    out = load_out()
+    qs = {q["id"]: q for q in out["문항"]}
+    assert "사업자번호" in qs["F07"]["질문"] and "숫자 10자리" in qs["F07"]["질문"] and "1번째 지출(" in qs["F07"]["질문"]
+    assert "자산[].필요경비.취득부대[].사업자번호" in qs["F07"]["facts키"] and "자산[].필요경비.양도비[].사업자번호" in qs["F07"]["facts키"]
+    assert "p60" in json.dumps(qs["F07"]["근거조문"], ensure_ascii=False)
+    assert "취득상대방" in qs["F08"]["질문"] and qs["F08"]["facts키"] == "(서식 전용) 자산[].취득상대방"
+    assert "p59" in json.dumps(qs["F08"]["근거조문"], ensure_ascii=False) and "60바이트" in qs["F08"]["도움말"]
+    # 사실관계 지출 목록(M08~M11)의 안내에도 지급처 사업자등록번호가 있다
+    for qid in ("M08", "M09", "M10", "M11"):
+        text = (qs[qid]["질문"] or "") + (qs[qid]["도움말"] or "")
+        assert "사업자등록번호" in text, qid
+        assert any("사업자번호" in u for u in qs[qid]["쓰이는판정"]), qid
+    assert "사업자번호" in qs["M09"]["facts키"] and qs["M09"]["키"] == ["자산[].필요경비.자본적지출"]

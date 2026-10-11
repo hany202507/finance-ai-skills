@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from yangdo import filing
+from yangdo import engine, filing
 from cases import CASES
 import filers
 
@@ -630,3 +630,207 @@ def test_dong_code():
 def test_bjd_is_not_read_when_nothing_needs_a_code_check():
     qs = filing.questions(filing.load({"세무대리인": None}), {"자산": []}, None)       # bjd 모듈이 없어도 돈다
     assert ids(qs) == [("F01", None), ("F03", None), ("F05", None), ("F06", None)]
+
+
+# ---- 서식 단계 F07(지급처 사업자번호)·F08(취득 상대방) ----
+
+TODAY = "2026-10-11"
+
+
+def done(name="S1", facts=None):
+    """계산이 끝난 엔진 결과. F07·F08 은 이 결과의 취득가액 방법을 보고 07 행이 생기는 지출을 정한다."""
+    facts = facts if facts is not None else CASES[name]
+    res = engine.calculate(facts, today=TODAY)
+    assert res["상태"] == "완료"
+    return res
+
+
+def ask_done(f, name="S1", facts=None):
+    facts = facts if facts is not None else CASES[name]
+    return filing.questions(filing.load(f), facts, done(name, facts), bjd=FakeBjd())
+
+
+def s1_facts(**gone):
+    """사례 S1 의 사실관계. gone 은 {묶음: [사업자번호를 지울 항목 순서(0부터)]}."""
+    facts = copy.deepcopy(CASES["S1"])
+    for group, idxs in gone.items():
+        for i in idxs:
+            del facts["자산"][0]["필요경비"][group][i]["사업자번호"]
+    return facts
+
+
+@pytest.mark.parametrize("name", ["A", "S1", "BF", "K"])
+def test_synthetic_filers_have_no_questions_once_codes_are_filled(name):
+    f = ready(name)
+    assert ask_done(f, name) == []
+    assert ask(f, name) == []
+
+
+def test_f07_asks_for_a_missing_business_number_of_a_required_code():
+    facts = s1_facts(취득부대=[0])                      # 중개수수료(11501)는 지급처 사업자번호가 필수 구분코드다
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    text = qs[0]["내용"]
+    assert "취득부대의 1번째 지출(중개수수료, 2018-03-15)" in text
+    assert "2번째 지출" not in text and "자본적지출" not in text and "양도비" not in text      # 번호가 있는 다른 지출은 묻지 않는다
+    assert "규격서 p60" in text and "사업자번호" in text
+
+
+def test_f07_is_silent_when_every_required_expense_has_a_valid_number():
+    assert ask_done(ready("S1"), facts=s1_facts()) == []
+
+
+@pytest.mark.parametrize("bad", ["", None, "   ", "101-81-01238", "101810123", "10181012380", "1018101239", fw("1018101238"),
+                                 1018101238])
+def test_f07_asks_when_the_number_is_blank_or_wrong(bad):
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] = bad
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    assert "양도비의 1번째 지출(중개수수료, 2026-11-20)" in qs[0]["내용"]
+    if isinstance(bad, str) and bad.strip():
+        assert bad not in qs[0]["내용"]                  # 적은 번호는 되풀이하지 않는다
+
+
+def test_f07_names_blank_and_wrong_numbers_separately_and_lists_every_expense():
+    facts = s1_facts(취득부대=[1])                       # 법무사비용: 빠짐
+    facts["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] = "3149007890"    # 발코니확장: 검증번호가 틀림
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]                    # 자산마다 질문 하나
+    text = qs[0]["내용"]
+    assert "취득부대의 2번째 지출(법무사비용, 2018-03-15)" in text
+    assert "자본적지출의 1번째 지출(발코니확장, 2018-04-10)" in text
+    assert text.index("비어 있는") < text.index("법무사비용") < text.index("틀린") < text.index("발코니확장")
+
+
+def test_f07_does_not_ask_about_codes_that_do_not_need_a_number():
+    facts = s1_facts()
+    ex = facts["자산"][0]["필요경비"]
+    ex["취득부대"].append({"내용": "인지세", "지급일": "2018-03-15", "금액": 150_000, "증빙종류": "계좌이체", "상대방": "합성은행"})
+    ex["기타"] = [{"내용": "개발부담금", "지급일": "2020-01-10", "금액": 1_000_000, "증빙종류": "계좌이체", "상대방": "합성시청"}]
+    assert ask_done(ready("S1"), facts=facts) == []      # 기타부대비용(11601)·개발부담금(26101)은 필수 구분코드가 아니다
+    ex["기타"][0]["내용"] = "토지 철거비"                   # 토지장애철거비(28001)는 필수다
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")] and "기타의 1번째 지출(토지 철거비, 2020-01-10)" in qs[0]["내용"]
+    assert "인지세" not in qs[0]["내용"]
+
+
+def test_f07_ignores_zero_amount_and_expenses_the_engine_drops():
+    facts = s1_facts(취득부대=[0], 양도비=[0])
+    facts["자산"][0]["필요경비"]["취득부대"][0]["금액"] = 0               # 지급금액이 없으면 필수가 아니다(규격서 p60)
+    facts["자산"][0]["필요경비"]["양도비"][0]["증빙종류"] = "간이영수증"      # 엔진이 필요경비에서 빼서 07 에 오지 않는다
+    assert ask_done(ready("S1"), facts=facts) == []
+
+
+def test_f07_numbers_stay_with_the_item_position_in_the_facts_list():
+    """n번째는 사실관계 목록의 순서다. 앞 항목을 엔진이 빼도 번호가 당겨지지 않는다."""
+    facts = s1_facts(취득부대=[1])
+    facts["자산"][0]["필요경비"]["취득부대"][0]["증빙종류"] = "간이영수증"
+    qs = ask_done(ready("S1"), facts=facts)
+    assert "취득부대의 2번째 지출(법무사비용, 2018-03-15)" in qs[0]["내용"]
+
+
+def test_f07_item_without_content_or_date_is_still_pointed_at():
+    facts = s1_facts(양도비=[0])
+    facts["자산"][0]["필요경비"]["양도비"][0].update(내용=None, 지급일=None)
+    qs = ask_done(ready("S1"), facts=facts)
+    assert "양도비의 1번째 지출(내용 없음, 지급일 없음)" in qs[0]["내용"]
+
+
+def test_f07_and_f08_do_not_echo_values():
+    facts = s1_facts(취득부대=[0, 1])
+    facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] = "1018101239"
+    f = ready("S1")
+    del f["자산"]["S1"]["취득상대방"]
+    qs = ask_done(f, facts=facts)
+    assert ids(qs) == [("F07", "S1"), ("F08", "S1")]
+    text = json.dumps(qs, ensure_ascii=False)
+    for s in ("2400000", "2,400,000", "800000", "9000000", "합성공인중개사", "합성법무사", "합성인테리어", "합성성동", "최합성",
+              "1018101238", "2118104565", "3149007897", "1018101239"):
+        assert s not in text
+    for q in qs:
+        assert set(q) == {"문항", "자산", "내용"}
+        assert q["내용"] and chr(0x2014) not in q["내용"] and not q["내용"].rstrip().endswith("?")
+        assert "밖" not in q["내용"]
+
+
+def test_f08_asks_for_the_seller_of_the_purchase_row():
+    f = ready("S1")
+    assert ask_done(f) == []
+    del f["자산"]["S1"]["취득상대방"]
+    qs = ask_done(f)
+    assert ids(qs) == [("F08", "S1")]
+    assert "취득상대방" in qs[0]["내용"] and "매입가액" in qs[0]["내용"] and "규격서 p59" in qs[0]["내용"]
+    for blank in (None, "", "   "):
+        f["자산"]["S1"]["취득상대방"] = blank
+        assert ids(ask_done(f)) == [("F08", "S1")]
+    f["자산"]["S1"]["취득상대방"] = "최합성"
+    assert ask_done(f) == []
+
+
+def test_f08_asks_when_the_asset_has_no_lot_entry():
+    f = ready("BF")
+    del f["자산"]["B"]
+    qs = ask_done(f, "BF")
+    assert [("F04", "B"), ("F08", "B")] == [x for x in ids(qs) if x[1] == "B"]
+
+
+def test_f08_is_asked_only_for_assets_that_get_a_purchase_row():
+    f = ready("BF")
+    assert "취득상대방" not in f["자산"]["F"]          # 토지 F 는 환산취득가액이라 매입가액 행이 없다
+    assert ask_done(f, "BF") == []
+    del f["자산"]["B"]["취득상대방"]
+    assert ids(ask_done(f, "BF")) == [("F08", "B")]
+
+
+def test_f07_and_f08_are_silent_for_a_fully_exempt_asset():
+    f = filers.filer("예정", "2026-12-20", {"G3": filers.lot()}, [filers.buyer("G3")])
+    f["자산"]["G3"]["법정동코드"] = "1171010100"
+    assert done("G3")["계산"]["자산"][0]["계산"]["취득가액"] is None          # 전액 비과세라 부표3 이 없다
+    assert ask_done(f, "G3") == []
+
+
+def test_f07_and_f08_need_a_finished_result():
+    f = ready("S1")
+    del f["자산"]["S1"]["취득상대방"]
+    facts = s1_facts(취득부대=[0])
+    loaded = filing.load(f)
+    assert filing.questions(loaded, facts, None, bjd=FakeBjd()) == []
+    assert filing.questions(loaded, facts, {"상태": "질문", "계산": None}, bjd=FakeBjd()) == []
+    broken = dict(done("S1", facts), 상태="검산실패")
+    assert filing.questions(loaded, facts, broken, bjd=FakeBjd()) == []
+
+
+def test_f07_and_f08_follow_the_rule_in_return_values(monkeypatch):
+    """어느 지출이 07 행이 되는지는 return_values.expense_lines 가 정한다. filing 은 같은 규칙을 다시 쓰지 않는다."""
+    from yangdo import return_values
+    seen = []
+
+    def fake(a, c):
+        seen.append((a["id"], c["취득가액방법"]))
+        return []
+
+    monkeypatch.setattr(return_values, "expense_lines", fake)
+    f = ready("S1")
+    del f["자산"]["S1"]["취득상대방"]
+    assert ask_done(f, facts=s1_facts(취득부대=[0])) == []
+    assert seen == [("S1", "실지거래가액")]
+
+
+def test_seller_name_is_checked_when_loading():
+    f = ready("S1")
+    f["자산"]["S1"]["취득상대방"] = "최" + "합" * 29                # 60바이트
+    assert filing.load(f)["자산"]["S1"]["취득상대방"].startswith("최합")
+    for bad in ("최합" * 16, "똠방각하", "합성" + chr(0xB7) + "건설", "최합성" + chr(0xFF3A), "최합성" + chr(0x2014), 123, ["최합성"]):
+        f["자산"]["S1"]["취득상대방"] = bad
+        with pytest.raises(filing.FilingError, match="취득상대방"):
+            filing.load(f)
+    f["자산"]["S1"]["취득상대방"] = "(주)합성건설 최합성"          # ASCII 괄호와 공백은 된다. 기호 행(가운뎃점)은 신고값 생성과 같게 받지 않는다
+    assert filing.load(f)["자산"]["S1"]["취득상대방"]
+
+
+def test_wrong_seller_name_is_asked_again_when_questions_get_an_unloaded_filer():
+    f = filing.load(ready("S1"))
+    f["자산"]["S1"]["취득상대방"] = "똠방각하"
+    qs = filing.questions(f, CASES["S1"], done("S1"), bjd=FakeBjd())
+    assert ids(qs) == [("F08", "S1")] and "쓸 수 없는 글자" in qs[0]["내용"] and "똠방각하" not in qs[0]["내용"]
