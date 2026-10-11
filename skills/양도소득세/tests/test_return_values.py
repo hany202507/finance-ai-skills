@@ -910,7 +910,7 @@ def test_final_return_of_a_permit_asset_whose_permit_year_differs_is_out_of_scop
             _late("S1", made, _permit("2027-01-15"), 구분="확정")
         msg = str(e.value)
         assert e.value.계획 == "미정" and "2028-05-01부터 2028-05-31까지" in msg and "허가일 2027-01-15" in msg
-        assert "허가일과 양도일의 해가 다른 자산의 확정신고서를 만들지 않는다" in msg and "2026-11-20" in msg
+        assert "이 스킬은 이 경우의 확정신고서를 만들지 않는다" in msg and msg.count("해가") == 0 and "2028-05-01부터 2028-05-31까지" in msg and "2026-11-20" in msg
     assert _late("S1", "2027-03-01", _permit("2026-12-10"))["신고"]["구분"] == "예정"
     assert _late("S1", "2027-03-01", _permit("2027-01-15"))["신고"]["구분"] == "예정"
 
@@ -923,7 +923,7 @@ def test_final_return_before_the_final_return_period_is_out_of_scope():
             _late("BF", made, None, 구분="확정")
         msg = str(e.value)
         assert e.value.계획 == "없음" and made in msg and "2027-05-01부터 2027-05-31까지" in msg
-        assert "작성일은 그 기간 안의 신고·납부 예정일로 적는다" in msg and "납부지연가산세" in msg
+        assert "신고.작성일을 그 기간 안의 신고·납부 예정일로 고쳐 다시 실행한다" in msg and "납부지연가산세" in msg
     for made in ("2027-05-01", "2027-05-31"):
         assert _late("BF", made, None, 구분="확정")["신고"]["구분"] == "확정"
     with pytest.raises(return_values.Unsupported, match="기한후신고"):

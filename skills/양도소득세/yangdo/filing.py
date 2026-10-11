@@ -265,7 +265,7 @@ def _check_refund(r):
 
 # ---------------------------------------------------------------- 모르는 키
 
-UNKNOWN_KEYS_HEAD = "신고인 파일에 읽지 않는 키가 있다"
+UNKNOWN_KEYS_HEAD = "신고인 파일의 다음 키는 양식에 없는 이름이라 반영하지 않았다"
 _ADDRESS_KEYS = {"시도", "시군구", "읍면동", "특수지", "번지", "호", "아파트명", "아파트동", "아파트호", "법정동코드"}
 _KNOWN_KEYS = {
     "": {"신고", "신고인", "양수인", "자산", "환급계좌", "세무대리인"},
@@ -346,7 +346,7 @@ def load(src):
             a["특수지"] = "0"
     unknown = _unknown_keys(f)
     if unknown:
-        warns.append("%s: %s. 키 이름이 양식(신고인_양식.json)과 다른지 확인한다. 읽지 않았다" % (UNKNOWN_KEYS_HEAD, ", ".join(unknown)))
+        warns.append("%s: %s. 키 이름이 신고인_양식.json 과 같은지 확인한다" % (UNKNOWN_KEYS_HEAD, ", ".join(unknown)))
     f["_경고"] = warns
     return f
 

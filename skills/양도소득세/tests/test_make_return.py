@@ -966,8 +966,11 @@ def test_final_return_before_its_period_stops_without_files_in_make_return_and_m
     f["신고"]["작성일"] = "2027-04-30"
     out = tmp_path / "o"
     res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(out), "today": "2027-04-30"})
-    assert res["종료코드"] == 2 and res["상태"] == "다루지않음" and res["전자신고"] is None
+    assert res["종료코드"] == 2 and res["상태"] == "입력오류" and res["전자신고"] is None
     assert any("확정신고 기간 2027-05-01부터 2027-05-31까지" in x for x in res["알림"])
+    fix = "신고인 파일의 신고.작성일을 확정신고 기간(2027-05-01부터 2027-05-31까지) 안의 신고·납부 예정일로 고쳐 다시 실행한다"
+    assert fix in res["요약"] and res["사람이할일"][0] == fix and not any("다루지 않는" in x for x in res["알림"] + res["사람이할일"])
+    assert "다루지 않는" not in res["요약"]
     assert not [n for n in os.listdir(out) if n.endswith(".pdf") or "C116300" in n or n == "신고값.json"]
     f["신고"]["작성일"] = "2027-05-01"
     res = mcp_server.call_tool(tool, {"facts": CASES["BF"], "filer_path": _filer_file(tmp_path, f), "out_dir": str(tmp_path / "p"), "today": "2027-05-01"})
@@ -992,6 +995,8 @@ def test_final_return_summary_carries_penalty_and_payable_amounts(tmp_path, caps
     assert _confirm(out).split("\n## ", 1)[0].splitlines().count(BF_SUMMARY) == 1
     guide = (out / "홈택스_입력안내.md").read_text(encoding="utf-8")
     assert "- 국세: 산출세액 206,274,000원, 가산세 46,110,480원, 납부할 세액 252,384,480원" in guide
+    assert "납부기한 다음 날부터 납부일(작성일 2027-05-20) 전날까지 셌다" in guide and "지방소득세 납부기한 다음 날부터 납부일(작성일 2027-05-20)까지 셌다" in guide
+    assert "납부일(2027-05-20) 전날까지 107일이라" in _confirm(out)
     assert "- 지방소득세: 산출세액 20,627,400원, 가산세 4,352,381원, 납부할 세액 24,979,781원 (위택스에서 따로 신고)" in guide
     rep = MR.make(CASES["BF"], filers.get("BF"), str(tmp_path / "again"), today=TODAY2027)
     assert rep["합계"] == {"산출세액": 206274000, "지방소득세": 20627400, "가산세": 46110480, "납부할세액": 252384480,
@@ -1063,10 +1068,10 @@ def test_unknown_filer_keys_are_told_in_the_notice_once(tmp_path):
     text = _confirm(out)
     assert code == 0
     notice = _section(text, "## 알림")
-    assert "신고인 파일에 읽지 않는 키가 있다: 신고.분납 신청, 자산.B.취득 상대방" in notice and "ZZ비밀값ZZ" not in text
-    assert text.count("읽지 않는 키가 있다") == 1
+    assert "신고인 파일의 다음 키는 양식에 없는 이름이라 반영하지 않았다: 신고.분납 신청, 자산.B.취득 상대방" in notice and "ZZ비밀값ZZ" not in text
+    assert text.count("양식에 없는 이름이라 반영하지 않았다") == 1 and text.count("읽지") == text.count("읽지 않는 키") == 0
     with open(out / "신고값.json", encoding="utf-8") as fh:
-        assert not any("읽지 않는 키" in x for x in json.load(fh)["확인사항"])
+        assert not any("양식에 없는 이름" in x for x in json.load(fh)["확인사항"])
 
 
 def test_installment_split_in_the_human_todo_matches_the_return_values(tmp_path):

@@ -52,7 +52,7 @@ SKIP_FIELDS = ("자료구분", "서식코드", "공란")
 SHORT = ("1년미만", "2년미만")
 
 # 신고값 「가산세」 절에 옮기는 penalty.final_return 결과의 키(확인사항은 신고값 확인사항으로 옮긴다)
-PENALTY_KEYS = ("무신고", "무신고_감면적용", "무신고_감면없음", "감면적용", "감면안내", "납부지연", "계", "율", "감면율", "일이자율",
+PENALTY_KEYS = ("무신고", "무신고_감면적용", "무신고_감면없음", "감면적용", "감면안내", "납부지연", "계", "율", "감면율", "일이자율", "납부일산입",
                 "건", "열", "양도일별", "지방", "근거")
 
 ACQ_LABEL = {"실지거래가액": "실지거래가액", "매매사례가액": "매매사례가액", "감정가액": "감정가액", "환산가액": "환산취득가액"}
@@ -89,6 +89,15 @@ class Unsupported(Exception):
     def __init__(self, message, 계획="미정"):
         super().__init__(message)
         self.계획 = 계획
+
+
+class FinalPeriodNotStarted(Unsupported):
+    """확정신고인데 작성일이 확정신고 기간보다 앞선다. 다루지 않는 거래가 아니라 신고인 파일의 작성일을 고치면 되는 경우다.
+    start, end 는 그 기간의 첫 날과 끝 날(date)이다. 신고 범위 밖 항목은 아니라서 make_return 이 입력 오류(종료코드 2)로 끝낸다."""
+
+    def __init__(self, message, start, end):
+        super().__init__(message, "없음")
+        self.start, self.end = start, end
 
 
 class InputError(Exception):
@@ -398,15 +407,16 @@ class _Builder:
         start = date(deadline[0].year, self.rs.value("신고기한.확정.월", to_date(base)), 1)
         if base.year != sold.year:
             raise Unsupported(
-                "자산 %s: 토지거래허가 전에 대금을 청산해 허가일 %s 이 속하는 과세기간의 다음 연도가 확정신고 기간이다(소득세법 제110조① 괄호, "
-                "%s부터 %s까지). 허가일과 양도일 %s 의 해가 달라 이 스킬은 허가일과 양도일의 해가 다른 자산의 확정신고서를 만들지 않는다"
-                % (row["id"], base.isoformat(), start.isoformat(), deadline[0].isoformat(), sold.isoformat()), "미정")
+                "자산 %s: 토지거래허가 전에 대금을 청산했고 허가일 %s 이 양도일 %s 과 다른 해에 속한다. 이 자산의 확정신고 기간은 허가일이 "
+                "속하는 과세기간의 다음 연도인 %s부터 %s까지다(소득세법 제110조① 괄호). 이 스킬은 이 경우의 확정신고서를 만들지 않는다. "
+                "허가일과 확정신고 기간을 세무 전문가와 확인한다"
+                % (row["id"], base.isoformat(), sold.isoformat(), start.isoformat(), deadline[0].isoformat()), "미정")
         if made < start:
-            raise Unsupported(
+            raise FinalPeriodNotStarted(
                 "작성일 %s 이 자산 %s 의 확정신고 기간 %s부터 %s까지보다 앞선다(소득세법 제110조①: 과세기간의 다음 연도 5월 1일부터 "
-                "5월 31일까지). 작성일은 그 기간 안의 신고·납부 예정일로 적는다. 납부지연가산세를 작성일까지의 일수로 세므로 "
-                "기간 전의 날짜로는 신고서를 만들지 않는다"
-                % (made.isoformat(), row["id"], start.isoformat(), deadline[0].isoformat()), "없음")
+                "5월 31일까지). 납부지연가산세를 작성일까지의 일수로 세므로 기간 전의 날짜로는 신고서를 만들지 않는다. 신고인 파일의 "
+                "신고.작성일을 그 기간 안의 신고·납부 예정일로 고쳐 다시 실행한다"
+                % (made.isoformat(), row["id"], start.isoformat(), deadline[0].isoformat()), start, deadline[0])
 
     def check_deadline(self, kind, rows, made):
         """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날로

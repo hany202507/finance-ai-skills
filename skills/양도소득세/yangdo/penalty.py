@@ -272,13 +272,13 @@ def local(found, rs, paid, names):
     건이 없으면(과세 자산이 없는 사건) 규칙을 읽지 않고 0 을 돌려준다. 그때 율·감면율·일이자율은 None 이다.
     """
     out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": False, "감면안내": None, "납부지연": 0, "계": 0,
-           "율": None, "감면율": None, "일이자율": None, "건": [],
+           "율": None, "감면율": None, "일이자율": None, "납부일산입": None, "건": [],
            "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "가정안내": None, "근거": []}
     if not found:
         return out, []
     rate, relief = rs.value(LOCAL_RATE_KEY, paid), rs.value(LOCAL_RELIEF_KEY, paid)
     daily, paid_day = rs.value(LOCAL_DAILY_KEY, paid), rs.value(LOCAL_PAID_DAY_KEY, paid)
-    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily))
+    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily), 납부일산입=bool(paid_day))
     taxes = [c["지방"]["예정신고세액"] for c in found]
     counts = [days(c["지방"]["납부기한"], paid, paid_day) for c in found]
     total, per_case, late = amounts(taxes, counts, rate, 0, daily, LOCAL_UNIT)
@@ -416,7 +416,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
     found, notes = cases(rows, facts, rs)
     # 확정신고서에는 감면을 넣지 않는다(문언이 바뀌기 전 구간의 신고도 같다). 감면율은 대안 금액을 구할 때만 쓴다
     out = {"무신고": 0, "무신고_감면적용": 0, "무신고_감면없음": 0, "감면적용": False, "감면안내": None, "납부지연": 0, "계": 0,
-           "율": None, "감면율": None, "일이자율": None,
+           "율": None, "감면율": None, "일이자율": None, "납부일산입": None,
            "건": [], "열": {name: {"무신고": 0, "납부지연": 0} for name in names}, "양도일별": None,
            "지방": local([], rs, paid, names)[0], "확인사항": [], "근거": []}
     if not found:
@@ -424,7 +424,7 @@ def final_return(result, facts, paid_on, rules_dir=None):
         return out
     rate, relief = rs.value(RATE_KEY, paid), rs.value(RELIEF_KEY, paid)
     daily, paid_day = rs.value(DAILY_KEY, paid), rs.value(PAID_DAY_KEY, paid)
-    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily))
+    out.update(율=str(rate), 감면율=str(relief), 일이자율=str(daily), 납부일산입=bool(paid_day))
 
     assets = {a.get("id"): a for a in facts.get("자산") or []}
     final_due = min(dates.filing_deadline("확정", _deadline_base(r, assets.get(r["id"]) or {}, []), rs)[1]
@@ -447,9 +447,10 @@ def final_return(result, facts, paid_on, rules_dir=None):
                          "납부기한": c["납부기한"].isoformat(), "기한경과": n is not None, "일수": n or 0,
                          "무신고": nonfiling, "무신고_감면적용": reduced, "무신고_감면없음": nonfiling, "납부지연": delay})
         if n is not None:       # 건마다 한 줄. 안내서 「가산세 계산」 표의 예정신고 세액, 납부기한, 일수, 금액과 같은 값이다
-            notes.append("자산 %s: 예정신고 세액 %s원, 납부기한 %s, 납부일(%s)까지 %d일이라 무신고가산세 %s원, 납부지연가산세 %s원이다"
-                         % (", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"].isoformat(), paid.isoformat(), n,
-                            _won(nonfiling), _won(delay)))
+            # 일수의 끝 날은 규칙(가산세.납부지연.납부일산입)이 정한다. 2026-07-01 부터는 납부일 전날까지다
+            notes.append("자산 %s: 예정신고 세액 %s원, 납부기한 %s, 납부일(%s)%s까지 %d일이라 무신고가산세 %s원, 납부지연가산세 %s원이다"
+                         % (", ".join(c["자산"]), _won(c["예정신고세액"]), c["납부기한"].isoformat(), paid.isoformat(),
+                            "" if paid_day else " 전날", n, _won(nonfiling), _won(delay)))
         if c["양도일별"] is None or len(c["양도일별"]) >= 2:
             notes.append(_same_month_note(c, n, nonfiling, delay, rate, daily))
         if n is None:

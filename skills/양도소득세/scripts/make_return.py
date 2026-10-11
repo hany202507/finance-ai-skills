@@ -250,7 +250,7 @@ def _report(out, upto):
     return {"종료코드": 0, "상태": "완료", "요약": "", "범위": upto, "출력": out,
             "단계": {name: NOT_DONE for name in STEPS}, "파일": [], "기준정보": None, "판": None, "합계": None,
             "질문": [], "다루지않음": [], "신고인질문": [], "검산": [], "서식검산": None, "전자신고": None,
-            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None, "보류사유": [], "가산세": None, "분납": None,
+            "확인사항": [], "경고": [], "알림": [], "사람이할일": [], "안내서머리": None, "보류사유": [], "가산세": None, "분납": None, "작성일고침": None,
             "제외자산": [], "과세자산없음": False}
 
 
@@ -401,6 +401,12 @@ def _values(rep, res, facts, f, rules_dir):
     except return_values.NoTaxableAsset:      # _taxable 이 먼저 걸러 여기 오지 않는다. 와도 같은 문장으로 끝낸다
         _taxable(rep, res)
         raise
+    except return_values.FinalPeriodNotStarted as u:
+        # 다루지 않는 거래가 아니라 작성일을 고치면 되는 입력이다. 맨 위 줄, 알림, 사람이 할 일이 같은 말을 한다
+        fix = ("신고인 파일의 신고.작성일을 확정신고 기간(%s부터 %s까지) 안의 신고·납부 예정일로 고쳐 다시 실행한다"
+               % (u.start.isoformat(), u.end.isoformat()))
+        rep["작성일고침"] = fix
+        _stop(rep, 2, "입력오류", "작성일이 확정신고 기간 전이라 신고값을 만들지 않았다. %s" % fix, "신고값", "작성일 오류", str(u))
     except return_values.Unsupported as u:
         plan = outputs.plan_text(u.계획)
         text = str(u).rstrip(". ")
@@ -582,6 +588,8 @@ def _todo_steps(rep):
             where = "알림이나 %s 에" % outputs.QUESTIONS if outputs.QUESTIONS in made else "알림에"
             return ["이 건은 이 스킬이 다루지 않는 경우라 신고서와 전자신고 파일이 없다. 신고값도 만들지 못했다. "
                     "%s 적힌 사유를 세무 전문가와 확인한다" % where]
+        if rep["작성일고침"]:
+            return [rep["작성일고침"], "홈택스·위택스 로그인과 제출은 사람이 한다. 신고서와 전자신고 파일이 만들어진 뒤에 한다"]
         asked = {"질문": "위 질문에 답을 채운 뒤 다시 실행한다. 계산 질문은 사실관계 파일에, 신고인 정보 질문은 신고인 파일에 채운다(F07 은 사실관계 파일)",
                  "입력오류": "알림의 문장대로 입력 파일을 고친 뒤 다시 실행한다"}
         failed = ("이 실행의 결과로 신고하지 않는다. 표준오류에 나온 오류 기록과 함께 운영자에게 알린다" if rep["상태"] == "오류" else
