@@ -825,6 +825,9 @@ def test_merged_city_county_house_is_a_local_low_price_house(시도, 양도일):
     if 양도일 is None:
         assert _engine_tax(f) == EXPECT_AMOUNTS["K2"]["산출세액"] == 272_560_000
         assert len(notes) == 1 and notes[0].startswith("H3: ") and "세무 전문가" in notes[0], notes
+        # 「통합특별시 시 지역의 집」으로 읽히지 않게 소재지를 주어로 쓰고, 시군구를 적지 않은 주소도 여기 든다고 밝힌다
+        assert notes[0].startswith("H3: 소재지가 전남광주통합특별시의 시 지역이다(시군구를 적지 않은 주소도 시 지역으로 보았다). ")
+        assert "통합특별시 시 지역의 집" not in notes[0]
         assert "제11조" not in notes[0] and "조제" not in notes[0]       # 규칙세트에 없는 조문 번호는 적지 않는다
     else:
         assert notes == []

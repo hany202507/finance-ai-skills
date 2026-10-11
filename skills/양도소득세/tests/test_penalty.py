@@ -265,6 +265,87 @@ def test_fully_exempt_assets_have_no_case():
     assert (out["무신고"], out["납부지연"], out["계"], out["건"]) == (0, 0, 0, [])
 
 
+def test_no_taxable_asset_returns_zero_without_reading_penalty_rules(monkeypatch):
+    """과세 자산이 없으면 건이 없어 가산세도 없다. 율을 읽지 않으므로 납부일이 가산세 규칙의 첫 구간(2025-01-01)보다
+    앞서도 오류 없이 0 을 돌려준다."""
+    r = _calc(CASES["G"])
+    real, seen = R.Ruleset.value, []
+
+    def value(self, key, on):
+        seen.append(key)
+        return real(self, key, on)
+    monkeypatch.setattr(R.Ruleset, "value", value)
+    for paid in ("2027-05-20", "2024-12-31"):
+        out = penalty.final_return(r, CASES["G"], paid)
+        assert (out["무신고"], out["납부지연"], out["계"], out["건"], out["확인사항"]) == (0, 0, 0, [], [])
+        assert (out["지방"]["무신고"], out["지방"]["납부지연"], out["지방"]["계"], out["지방"]["건"]) == (0, 0, 0, [])
+        assert out["율"] is None and out["감면율"] is None and out["일이자율"] is None and out["지방"]["율"] is None
+        assert out["감면적용"] is False and out["양도일별"] is None and out["열"] == {}
+    assert not [k for k in seen if "가산세" in k]
+    with pytest.raises(R.RuleError):                               # 과세 자산이 있으면 그 날짜의 규칙이 있어야 한다
+        penalty.final_return(_calc(CASES["F"]), CASES["F"], "2024-12-31")
+
+
+def test_same_month_note_lists_the_sale_dates_even_when_the_alternative_is_undetermined(rs):
+    """같은 달 양도 건을 양도일마다 따로 볼 때의 세액을 정하지 못해도, 문장은 자산마다 실제 양도일을 적는다.
+    A(2주택 중과, 과세표준 37,500,000)와 B(일반, 551,600,000)를 2026-05-15 에, C(2주택 중과, 500,000,000)를 2026-05-20 에 양도.
+      건 전체: 중과 묶음 537,500,000 → 174,060,000 + 37,500,000 × 42% + 537,500,000 × 20% = 297,310,000
+               일반 551,600,000 → 174,060,000 + 51,600,000 × 42% = 195,732,000, 합 493,042,000
+               합산 비교세액 1,089,100,000 → 384,060,000 + 89,100,000 × 45% = 424,155,000 < 493,042,000 이라 건 세액은 정해진다
+      2026-05-15 만: 세율별 합 207,597,000 < 합산 비교세액 211,482,000 이라 그 날의 세액은 정하지 못한다"""
+    rows = [_row("A", "2026-05-15", 37_500_000, "47", 묶음="중과2", 중과="중과2", 종류="주택"),
+            _row("B", "2026-05-15", 551_600_000, "10", 종류="주택"),
+            _row("C", "2026-05-20", 500_000_000, "47", 묶음="중과2", 중과="중과2", 종류="주택")]
+    got, _ = penalty.cases(rows, _facts_for(rows), rs)
+    assert [(c["자산"], c["예정신고세액"], c["양도일별"]) for c in got] == [(["A", "B", "C"], 493_042_000, None)]
+    assert got[0]["자산양도일"] == {"A": "2026-05-15", "B": "2026-05-15", "C": "2026-05-20"}
+    result = {"상태": "완료", "계산": {"자산": rows, "세율별": [{"국내외분": "1", "세율구분": "10"}, {"국내외분": "1", "세율구분": "47"}]}}
+    out = penalty.final_return(result, _facts_for(rows), "2027-05-20")
+    hit = [m for m in out["확인사항"] if "같은 달" in m]
+    assert len(hit) == 1 and out["양도일별"] is None
+    assert hit[0].startswith("자산 A, B, C: 같은 달에 양도해(A 2026-05-15, B 2026-05-15, C 2026-05-20) 예정신고 기한이 같다.")
+    assert hit[0].endswith("양도일마다 따로 신고하는 것으로 볼 때의 세액은 정하지 못했다")
+    assert "양도일이 둘 이상" not in hit[0] and "493042000원" in hit[0]
+
+
+def test_bf_same_month_note_lists_both_sale_dates():
+    out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
+    hit = [m for m in out["확인사항"] if "같은 달" in m]
+    assert len(hit) == 1 and hit[0].startswith("자산 F, B: 같은 달에 양도해(F 2026-11-01, B 2026-11-20) 예정신고 기한이 같다.")
+
+
+def test_relief_note_follows_the_wording_of_the_interval(tmp_path):
+    """감면 안내 문장은 신고일이 속한 규칙 이력 구간의 문구를 따른다. 2025-12-31 까지는 「확정신고기한까지 과세표준신고를 한
+    경우」라 「기한 후 신고로 내면」이라고 적지 않는다. 구간은 발췌 글자가 아니라 이력 구간의 시작 날짜로 가른다."""
+    f = copy.deepcopy(CASES["F"])
+    f["자산"][0]["양도"]["잔금일"] = "2025-08-01"
+    old = penalty.final_return(_calc(f), f, "2025-12-20")["감면안내"]
+    assert "확정신고기한까지 신고하면 무신고가산세의 50% 를 감면하는 규정이 있다(국세기본법 제48조)" in old
+    assert "기한 후 신고로 내면" not in old and "이 규정의 문구는" not in old
+    assert "확정신고서를 만들므로" in old and "적용하지 않았다" in old and "13938000원" in old
+    new = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")["감면안내"]
+    assert "확정신고기한까지 예정신고분을 기한 후 신고로 내면 무신고가산세의 50% 를 감면하는 규정이 있다(국세기본법 제48조)" in new
+    assert "이 규정의 문구는 2026-01-01 부터 「기한 후 신고를 한 경우」다. " in new
+
+    def refetched(data):                                           # 발췌를 다시 받아 글자가 조금 달라진 규칙세트
+        for e in data["규칙"]["가산세.무신고.확정신고감면율"]["이력"]:
+            for g in e["근거"]:
+                g["발췌"] = [x.replace("기한 후 신고를 한 경우", "기한후신고를 한 경우") for x in g["발췌"]]
+    d = _rules_copy(tmp_path, refetched)
+    again = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20", rules_dir=d)["감면안내"]
+    assert again == new                                            # 문장이 조용히 빠지지 않는다
+    old_again = penalty.final_return(_calc(f), f, "2025-12-20", rules_dir=d)["감면안내"]
+    assert old_again == old
+
+
+def test_relief_wording_constant_matches_the_ruleset_excerpts(rs):
+    """문장에 적는 바뀐 문구가 규칙세트 발췌와 어긋나면 알 수 있게 한다. 뒤 구간의 발췌에만 그 문구가 있다."""
+    history = rs.data["규칙"]["가산세.무신고.확정신고감면율"]["이력"]
+    assert [e["시작"] for e in history] == ["2025-01-01", "2026-01-01"]
+    has = [any(penalty.RELIEF_NEW_WORDING in x for g in e["근거"] for x in g["발췌"]) for e in history]
+    assert has == [False, True]
+
+
 def test_notes_say_what_was_assumed():
     out = penalty.final_return(_calc(CASES["BF"]), CASES["BF"], "2027-05-20")
     notes = out["확인사항"]
