@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 """결과 JSON, 검토 문서, 질문 문서를 쓰는 출력 함수. scripts/run.py, scripts/mcp_server.py, scripts/make_return.py 가 함께 쓴다.
+진입점이 함께 쓰는 작은 도우미(명령줄 날짜 읽기 iso_date, 사실관계 파일 읽기 read_facts, 오류 기록 log_call_sites)도 여기 둔다.
+진입점 스크립트끼리는 서로 가져다 쓰지 않는다.
 
 이 모듈이 쓰는 파일 이름은 RESULT, QUESTIONS, REVIEW, WORKBOOK 넷이다(OUTPUT_NAMES). 통합 문서(WORKBOOK)는 engine 이 쓰고
 이 모듈은 있으면 경로만 돌려준다. 출력 폴더에 계산 결과를 내는 차례(이전 결과 지움 → 계산 → 파일 쓰기)는 calculate_to 하나에 있다.
 
 같은 출력 폴더에 다시 돌릴 때 지우는 이름도 이 모듈 한 곳에 있다. 계산 결과 넷(OUTPUT_NAMES)과 신고서 단계
-(scripts/make_return.py)가 쓰는 이름(RETURN_NAMES), 양도소득세 전자신고 파일 이름 꼴(EFILE_NAME), 전자신고 임시 폴더
-(EFILE_TMP_PREFIX)다. 계산만 다시 돌려도 옛 신고서 PDF, 전자신고 파일, 신고값, 안내서, 확인 문서가 새 계산 결과 옆에 남지 않는다.
+(scripts/make_return.py)가 쓰는 이름(RETURN_NAMES), 양도소득세 전자신고 파일 이름 꼴(EFILE_NAME), 이 도구가 만든 전자신고
+임시 폴더(yangdo/efile_tmp.py 가 가린다)다. 계산만 다시 돌려도 옛 신고서 PDF, 전자신고 파일, 신고값, 안내서, 확인 문서가 새 계산 결과 옆에 남지 않는다.
 """
+import argparse
 import json
 import os
 import re
-import shutil
+import sys
+import traceback
 
-from yangdo import QUESTIONS_PATH, engine
+from yangdo import QUESTIONS_PATH, dates, efile_tmp, engine
 
 TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
 
@@ -28,7 +32,11 @@ RETURN_VALUES, GUIDE, ATTACHMENTS, CONFIRM = "신고값.json", "홈택스_입력
 FORM_NATIONAL, FORM_LOCAL = "양도소득세_신고서.pdf", "지방소득세_신고서.pdf"
 RETURN_NAMES = (RETURN_VALUES, FORM_NATIONAL, FORM_LOCAL, FORM_NATIONAL + ".tmp", FORM_LOCAL + ".tmp", GUIDE, ATTACHMENTS, CONFIRM)
 EFILE_NAME = re.compile(r"^[0-9]{8}C116300\.[0-9]{2}$")     # 양도소득세 전자신고 파일 이름 꼴(규격서 p20). 다른 세목 파일은 건드리지 않는다
-EFILE_TMP_PREFIX = ".efile-"                                # efile.write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
+EFILE_TMP_PREFIX = efile_tmp.PREFIX                         # efile.write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
+# 여러 진입점(run.py, make_return.py, MCP)이 같이 쓰는 문장
+QUESTION_COUNTS = "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개"
+STALE_NOTE = "지우지 못해 남은 파일: %s. 이 파일은 이전 실행의 것이다. 이번 실행의 결과가 아니니 신고에 쓰지 않는다"
+TMP_LEFT_NOTE = efile_tmp.LEFT_NOTE                         # 지우지 못한 임시 폴더를 알리는 문장(폴더 이름 하나를 넣는다)
 
 
 def won(n):
@@ -133,10 +141,70 @@ def review_md(res):
     return "\n".join(L)
 
 
+def why(e):
+    """OSError 를 한 줄 까닭으로. 운영체제 문장이 있으면 그것만 쓴다."""
+    return " ".join(str(getattr(e, "strerror", None) or e).split())
+
+
+def iso_date(s):
+    """명령줄 --오늘 의 값. 다른 날짜 입력과 같은 dates.to_date 로 읽어 YYYY-MM-DD 글자만 받는다(파이썬 3.10 과 3.11 이상이 같다).
+
+    run.py 와 make_return.py 가 함께 쓴다."""
+    try:
+        d = dates.to_date(s)
+    except ValueError:
+        d = None
+    if d is None:
+        raise argparse.ArgumentTypeError("날짜는 YYYY-MM-DD 로 적습니다: %s" % s)
+    return d.isoformat()
+
+
+def read_facts(path):
+    """사실관계 파일을 읽는다. (사실관계, None) 또는 (None, 읽지 못한 까닭). run.py 와 make_return.py 가 함께 쓴다."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            facts = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, "사실관계 파일을 읽지 못했다: %s" % e
+    if not isinstance(facts, dict):
+        return None, "사실관계 파일의 맨 위는 JSON 객체여야 한다"
+    return facts, None
+
+
+def log_call_sites(e, head, stream=None):
+    """예상하지 못한 예외를 운영자가 볼 수 있게 표준오류에 남긴다. head 뒤에 예외 형 이름을 붙이고 호출 위치(파일, 줄, 함수)만 찍는다.
+
+    예외 문장에는 사실관계나 신고인의 값이 실릴 수 있어 싣지 않는다. make_return.py 와 MCP 서버가 같은 꼴로 남긴다.
+    """
+    stream = stream or sys.stderr
+    print("%s(%s). 예외 문장은 싣지 않는다. 호출 위치:" % (head, type(e).__name__), file=stream)
+    traceback.print_tb(e.__traceback__, file=stream)
+
+
+def question_counts(res):
+    """질문으로 끝난 계산 결과의 문항 수 문장. run.py, make_return.py 가 같은 말을 쓴다."""
+    return QUESTION_COUNTS % (len(res["질문"]), len(res["다루지않음"]))
+
+
 def is_tmp_dir(out, name):
-    """출력 폴더 안의 name 이 전자신고 임시 폴더(.efile-*)인지. 같은 이름의 파일이나 링크는 아니다."""
-    path = os.path.join(out, name)
-    return name.startswith(EFILE_TMP_PREFIX) and os.path.isdir(path) and not os.path.islink(path)
+    """출력 폴더 안의 name 이 이 도구가 만든 전자신고 임시 폴더인지(efile_tmp.is_own). 이름이 「.efile-」 로 시작해도
+    이름 꼴이 다르거나 안에 다른 파일이 있는 폴더, 같은 이름의 파일이나 링크는 아니다."""
+    return efile_tmp.is_own(out, name)
+
+
+def tmp_left_notes(out):
+    """남은 임시 폴더마다 알릴 문장. 지우지 못한 폴더와, 다른 파일이 함께 있어 지우지 않은 임시 폴더 꼴의 폴더를 모두 싣는다.
+    인적사항이 든 신고값 사본이 있을 수 있어 계산만 돌린 쪽(run.py, MCP 계산 도구)도 알린다."""
+    return efile_tmp.left_notes(out)
+
+
+def stale_names(out, skip=()):
+    """출력 폴더에 남아 있는, 이 도구가 쓰는 이름의 파일(계산 결과, 신고서 단계 파일, 전자신고 파일). skip 의 이름은 뺀다."""
+    known = set(RETURN_NAMES + OUTPUT_NAMES) - set(skip)
+    try:
+        return [n for n in sorted(os.listdir(out)) if n in known or EFILE_NAME.match(n)]
+    except OSError:
+        return []
 
 
 def clear_order(name):
@@ -151,8 +219,9 @@ def clear_order(name):
 def clear_all(out):
     """이전 실행이 남긴 파일을 지운다. (지우지 못한 임시 폴더 이름 목록, 처음 난 OSError 또는 None).
 
-    지우는 것은 신고서 단계 이름(RETURN_NAMES), 옛 전자신고 파일(EFILE_NAME), 임시 폴더(.efile-*), 계산 결과 넷
-    (OUTPUT_NAMES)뿐이다. 다른 세목의 전자신고 파일과 사용자 파일, 폴더는 그대로 둔다.
+    지우는 것은 신고서 단계 이름(RETURN_NAMES), 옛 전자신고 파일(EFILE_NAME), 이 도구가 만든 임시 폴더(is_tmp_dir),
+    계산 결과 넷(OUTPUT_NAMES)뿐이다. 다른 세목의 전자신고 파일과 사용자 파일, 폴더는 그대로 둔다. 이름이 「.efile-」 로
+    시작하는 사용자 폴더도 그대로 둔다. 임시 폴더를 지우는 코드는 efile_tmp.remove 하나다(생성기도 같은 것을 쓴다).
     차례는 전자신고 파일, 임시 폴더, 신고서 PDF, 나머지 신고서 단계 파일, 마지막이 계산 결과(통합 문서부터)다. 제출용 파일이
     새 계산 결과 옆에 남는 일부터 막으려는 차례다. 신고서 단계 파일은 하나가 다른 프로그램에 잡혀 지워지지 않아도 나머지를
     끝까지 지운다. 계산 결과는 통합 문서를 먼저 지우고, 엑셀이 열어 두어 막히면(PermissionError) 나머지 계산 결과는 그대로 둔다.
@@ -161,8 +230,7 @@ def clear_all(out):
     for name in sorted(os.listdir(out), key=lambda n: (clear_order(n), n)):
         path = os.path.join(out, name)
         if is_tmp_dir(out, name):
-            shutil.rmtree(path, ignore_errors=True)
-            if os.path.lexists(path):
+            if efile_tmp.remove(path):
                 left.append(name)
         elif (name in RETURN_NAMES or EFILE_NAME.match(name)) and (os.path.isfile(path) or os.path.islink(path)):
             try:

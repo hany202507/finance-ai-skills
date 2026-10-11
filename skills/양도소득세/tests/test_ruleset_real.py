@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
+import json
+import os
+import shutil
 from decimal import Decimal
 
-from yangdo import keys
+import pytest
+
+from yangdo import SKILL_DIR, keys
 from yangdo import ruleset as R
 
 RS = R.load()
@@ -57,3 +62,41 @@ def test_cites_have_urls_and_versions():
         on = keys.LATE_KEYS.get(k, "2026-10-09")
         for c in RS.cite(k, on):
             assert c["URL"].startswith("https://www.law.go.kr/법령/") and c["시행일"], k
+
+
+# ---- 기준정보 판이 서식 매핑과 필드목록까지 덮는다(계획 2b G7) ----
+
+FORM_TABLES = ("매핑", "필드목록")
+
+
+def _form_table_keys():
+    return ["../forms/%s/%s" % (sub, name) for sub in FORM_TABLES
+            for name in sorted(os.listdir(os.path.join(SKILL_DIR, "forms", sub))) if name.endswith(".json")]
+
+
+def test_edition_covers_form_mapping_and_field_lists():
+    """신고값을 서식 칸에 잇는 매핑과 칸 좌표 목록이 바뀌면 신고서가 달라진다. 폴더의 모든 JSON 이 판 묶음과 판 파일에 있어야 한다."""
+    keys_ = _form_table_keys()
+    assert len(keys_) == 9
+    with open(os.path.join(R.RULES_DIR, "기준정보판.json"), encoding="utf-8") as f:
+        files = json.load(f)["파일"]
+    for k in keys_:
+        assert k in R.EDITION_EXTRA, k
+        assert files.get(k) == R.canonical_hash(os.path.join(R.RULES_DIR, k)), k
+
+
+def test_changed_mapping_file_is_caught_when_rules_load(tmp_path):
+    """매핑 파일을 고치고 판을 다시 만들지 않으면 규칙세트를 읽을 때 멈춘다."""
+    rules, forms = tmp_path / "rules", tmp_path / "forms"
+    shutil.copytree(R.RULES_DIR, str(rules), ignore=shutil.ignore_patterns("조문"))
+    for sub in FORM_TABLES:
+        shutil.copytree(os.path.join(SKILL_DIR, "forms", sub), str(forms / sub))
+    R.load(str(rules))                                      # 서식판·전자신고 묶음이 없는 사본은 그 파일을 대조하지 않는다
+    target = forms / "매핑" / "본지.json"
+    data = json.loads(target.read_text(encoding="utf-8"))
+    data["_시험"] = "바꿈"
+    target.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(R.RuleError, match="본지.json"):
+        R.load(str(rules))
+    R.write_edition(str(rules), "2026-10-11")               # 판을 다시 만들면 읽힌다
+    R.load(str(rules))

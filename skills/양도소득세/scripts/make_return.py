@@ -10,14 +10,17 @@
 
 종료코드
   0 완료
-  1 서식 검산 또는 전자신고 검증 실패(엔진 검산 실패, 신고값이나 신고서 PDF 를 만들지 못한 경우 포함). 결과를 신고에 쓰지 않는다
+  1 서식 검산 또는 전자신고 검증 실패(엔진 검산 실패, 신고값이나 신고서 PDF 를 만들지 못한 경우 포함). 결과를 신고에 쓰지 않는다.
+    전자신고 검증만 실패하면 서식 검산을 통과한 신고서 PDF 는 남는다. 전자신고 파일이 없다는 것과 까닭을 확인하기 전에는
+    신고서 PDF 도 쓰지 않는다는 것을 신고_확인.md 알림과 안내서 맨 위 줄에 적는다
   2 질문(계산 질문, 신고인 질문 F01~F08) 또는 다루지않음(신고 범위가 아닌 건, 전액 비과세 자산뿐이라 과세 자산이 없는 건,
-    가산세를 계산하지 못한 확정신고, 읽을 수 없거나 형식이 틀린 입력 파일, 작성일이 오늘보다 앞선 신고인 파일)
+    가산세를 계산하지 못한 확정신고, 읽을 수 없거나 형식이 틀린 입력 파일, 작성일이 오늘이나 양도일보다 앞선 신고인 파일)
 
 작성일(신고인 파일의 신고.작성일)은 신고서를 제출하는 날이다. 신고기한 판정이 작성일만 보므로, 신고인 파일을 미리 만들어 두고
 기한 뒤에 돌리면 기한후신고가 정기신고서로 나간다. 그래서 작성일이 오늘보다 앞서면 신고값을 만들지 않고 종료코드 2 로 멈춘다.
 오늘은 --오늘 로 준 날이고, 없으면 계산이 쓴 한국 시간 오늘이다(결과의 기준정보.오늘). 작성일이 오늘과 같거나 뒤면 지나간다.
-  3 기준정보·서식판·규격판 오류(규격판 잠금 포함)
+  3 기준정보·서식판·규격판 오류(규격판 잠금 포함). 규격판 잠금이면 서식 검산을 통과한 신고서 PDF 는 남고 전자신고 파일만 없다.
+    신고_확인.md 알림과 안내서 맨 위 줄에 그렇게 적는다
   4 출력 파일 쓰기 실패(이전 파일을 다른 프로그램이 열어 둔 경우 등. 파일을 닫고 다시 실행한다)
 
 출력 폴더에 쓰는 파일
@@ -29,14 +32,15 @@
   신고_확인.md                                             항상. 단계별 결과, 검산·검증 문장, 확인사항, 사람이 할 일
 
 같은 출력 폴더에 다시 실행하면 이 스크립트와 run.py 가 쓰는 이름만 먼저 지운다. 옛 전자신고 파일(<8자리>C116300.<2자리>)과
-앞선 실행이 남긴 임시 폴더(.efile-*)도 지운다. 이번에 새 파일을 만들지 못했을 때 옛 파일이 새 결과처럼 남지 않게 하려는 것이다.
+앞선 실행이 남긴 임시 폴더(.efile-*, 이 도구가 만든 것만)도 지운다. 이번에 새 파일을 만들지 못했을 때 옛 파일이 새 결과처럼 남지 않게 하려는 것이다.
 지울 이름과 차례는 yangdo/outputs.py 한 곳에 있고(clear_all), run.py 와 MCP 계산 도구도 같은 것을 지운다.
 지우는 차례는 전자신고 파일, 임시 폴더, 신고서 PDF, 나머지 이 스크립트의 파일, 마지막이 run.py 의 파일(통합 문서부터)이다.
 하나가 다른 프로그램에 잡혀 지워지지 않아도 나머지를 끝까지 지운 뒤 종료코드 4 로 멈추고, 남은 파일 이름을 신고_확인.md 에
 이전 실행의 것이라고 적는다. 엑셀이 계산근거를 열어 둔 채 다시 돌려도 옛 전자신고 파일은 남지 않는다. 다른 파일은 건드리지 않는다.
 
 예상하지 못한 오류가 나면 예외 형 이름과 호출 위치(파일, 줄, 함수)만 표준오류에 쓰고, 이미 만든 신고서 PDF 와 전자신고 파일을
-지운 뒤 예외 형 이름만 신고_확인.md 에 적고 종료코드 1 로 끝낸다. 예외 문장에는 인적사항이 실릴 수 있어 표준오류에도
+지운 뒤 예외 형 이름만 신고_확인.md 에 적고 종료코드 1 로 끝낸다. 지우지 못한 파일이 있으면 단계 표와 알림에 지우지 못했다고 적고,
+이미 쓴 입력 안내서·부속서류에는 맨 위에 쓰지 말라는 줄을 붙인다. 예외 문장에는 인적사항이 실릴 수 있어 표준오류에도
 신고_확인.md 에도 싣지 않는다.
 
 신고값을 만든 뒤에 신고서와 전자신고 파일을 만들지 않는 사유는 withheld 한 곳에서 모은다. 지금은 하나다.
@@ -64,19 +68,18 @@
 import argparse
 import json
 import os
-import shutil
 import sys
-import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
-for _p in (SKILL, HERE):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+if SKILL not in sys.path:
+    sys.path.insert(0, SKILL)
 
-from yangdo import bjd, dates, efile, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
+from yangdo import bjd, dates, efile, efile_tmp, filing, forms, forms_check, guide, outputs, return_values, ruleset  # noqa: E402
 from yangdo import facts as F  # noqa: E402
-from run import iso_date, read_facts  # noqa: E402
+
+# 명령줄 날짜 읽기와 사실관계 파일 읽기. run.py 와 같은 것을 쓴다(진입점 스크립트끼리는 가져다 쓰지 않는다)
+iso_date, read_facts = outputs.iso_date, outputs.read_facts
 
 # 이 스크립트가 쓰는 파일 이름과 옛 전자신고 파일 이름 꼴. 지울 이름 목록은 yangdo/outputs.py 한 곳에 있고 여기서는 가져다 쓴다
 # (run.py 와 MCP 계산 도구도 같은 이름을 지운다)
@@ -85,6 +88,7 @@ OWN_NAMES = outputs.RETURN_NAMES
 EFILE_NAME = outputs.EFILE_NAME
 FORMS, EFILE = "forms", "efile"                             # 어디까지 만드는지. forms 는 신고서 PDF 까지, efile 은 전자신고 파일까지
 NOT_DONE = "하지 않음"
+GUIDE_UNUSABLE = "만듦(신고에 쓰지 않는다)"                 # 끝까지 가지 못한 실행의 입력 안내서·부속서류 단계 칸
 STEPS = ("계산", "신고인 정보", "신고값", "서식 검산", "신고서 PDF", "전자신고 파일", "입력 안내서·부속서류")
 
 RV_NOTICE = ("이 파일에는 신고인과 양수인의 인적사항(성명, 주민등록번호, 주소, 전화, 계좌), 자산 지번, 매도인 성명이 들어 있다. "
@@ -95,21 +99,24 @@ NO_TAXABLE = return_values.NO_TAXABLE                       # 전액 비과세 �
 GUIDE_HEAD = {
     "서식검산실패": "이 실행은 서식 검산에 실패해 신고서와 전자신고 파일을 만들지 않았다. 아래 값으로 신고하지 않는다. 까닭은 신고_확인.md 에 있다.",
     "서식실패": "이 실행은 신고서 PDF 를 만들지 못해 전자신고 파일도 만들지 않았다. 아래 값으로 신고하지 않는다. 까닭은 신고_확인.md 에 있다.",
-    "전자신고검증실패": "이 실행은 전자신고 검증에 실패해 전자신고 파일을 남기지 않았다. 아래 값으로 신고하지 않는다. 까닭은 신고_확인.md 에 있다.",
+    "전자신고검증실패": "이 실행은 전자신고 검증에 실패해 전자신고 파일을 남기지 않았다. 전자신고 파일은 없다. 신고서 PDF 는 서식 검산을 "
+                        "통과한 것이지만, 검증에 실패한 까닭을 확인하기 전에는 아래 값과 신고서 PDF 로 신고하지 않는다. 까닭은 신고_확인.md 에 있다.",
+    "규격판잠금": "이 실행은 규격판이 잠겨 있어 전자신고 파일을 만들지 않았다. 전자신고 파일은 없다. 신고서 PDF 는 서식 검산을 통과한 "
+                  "것이고 아래 값은 그 신고서와 같다. 잠금은 운영자가 푼다.",
+    "오류": "이 실행은 예상하지 못한 오류로 멈췄다. 아래 값으로 신고하지 않는다. 까닭은 신고_확인.md 에 있다.",
 }
+# 전자신고 파일 없이 신고서 PDF 만 제출용 이름으로 남는 두 경우(전자신고 검증 실패, 규격판 잠금)에 확인 문서에 적는 문장
+PDF_KEPT = "전자신고 파일은 없다. 출력 폴더의 신고서 PDF 두 벌(%s, %s)은 서식 검산을 통과한 것이다" % (forms.OUT_NATIONAL, forms.OUT_LOCAL)
+PDF_KEPT_AFTER_FAILURE = PDF_KEPT + (". 다만 전자신고 검증이 실패한 까닭이 신고값에 있을 수 있으니, 까닭을 확인하기 전에는 신고서 PDF 도 "
+                                     "신고에 쓰지 않는다")
+PDF_KEPT_WHEN_LOCKED = PDF_KEPT + ". 규격판 잠금은 전자신고 파일에만 걸린다"
 NO_SENTENCE = "전자신고 파일을 만들지 못했다. 생성기가 까닭을 알리지 않았다"
 # 같은 해 다른 양도가 있다고 답했는데(사실관계 연간.다른양도, 문항 P05) 기신고 금액은 없는 건. 문항이 팔 예정인 건도 받아서 막지 않고 알린다
 OTHER_SALE = ("같은 해 다른 양도가 있다고 답했다(사실관계 연간.다른양도). 그 양도는 이 계산에 들어가지 않았다. "
               "그 양도를 먼저 신고했다면 이 신고서의 기본공제와 세액이 달라진다")
 OTHER_SALE_TODO = ("같은 해 다른 양도를 먼저 신고했는지 확인한다. 먼저 신고했다면 기본공제와 세액이 달라지니 이 실행의 값으로 신고하지 않고, "
                    "사실관계 연간.기신고 에 그 신고의 금액을 적어 다시 실행한다")
-# 규격서 원문만으로 정하지 못해 홈택스 형식검증으로 확정할 칸 가운데 레이아웃 FIXUPS 에 없는 것(global.md 「정한 것」·「실행 중 정한 것」)
-UNCONFIRMED = (
-    "01-23 세무프로그램코드: 규격서 p27~28 표에 없는 프로그램이라 9000(기타)을 썼다",
-    "01-18~22·26·27 세무대리인 칸: 본인 신고라 공란으로 두었다",
-    "03-31 주민세_세율: 합계 행만 10.00, 나머지 행은 0. 03-30·32·33 주민세 금액 칸은 0 이다",
-)
-TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다."
+TAIL = outputs.TAIL                                         # 검토 문서와 같은 맺음말
 
 
 def _dedupe(xs):
@@ -120,8 +127,7 @@ def _dedupe(xs):
     return out
 
 
-def _why(e):
-    return " ".join(str(getattr(e, "strerror", None) or e).split())
+_why = outputs.why
 
 
 def _inside(path, folder):
@@ -145,18 +151,14 @@ def clear_previous(out):
     run.py 의 파일(통합 문서부터)을 마지막에 지운다. 하나가 막혀도 나머지를 끝까지 지운다. 지우지 못한 파일이 있으면 처음 난
     OSError 를 돌려주고, 부른 쪽이 종료코드 4 로 멈춘다. 지우지 못한 임시 폴더는 문장으로 알린다. 폴더 안의 다른 파일은 그대로 둔다.
     """
-    left, first = outputs.clear_all(out)
-    return ["앞선 실행이 남긴 임시 폴더 %s 를 지우지 못했다. 인적사항이 든 임시 파일이 남아 있을 수 있으니 직접 지운다" % name
-            for name in left], first
+    _, first = outputs.clear_all(out)
+    # 지우지 못해 남은 임시 폴더와, 다른 파일이 함께 있어 지우지 않은 임시 폴더 꼴의 폴더를 같은 함수로 알린다
+    return outputs.tmp_left_notes(out), first
 
 
 def _leftovers(out):
     """출력 폴더에 남아 있는, 이 스크립트와 run.py 가 쓰는 이름의 파일(신고_확인.md 제외)."""
-    known = set(OWN_NAMES + tuple(outputs.OUTPUT_NAMES)) - {CONFIRM_FILE}
-    try:
-        return [n for n in sorted(os.listdir(out)) if n in known or EFILE_NAME.match(n)]
-    except OSError:
-        return []
+    return outputs.stale_names(out, skip=(CONFIRM_FILE,))
 
 
 def _clear_all(rep, out):
@@ -169,8 +171,7 @@ def _clear_all(rep, out):
     if first is not None:
         stale = _leftovers(out)
         if stale:
-            rep["알림"].append("지우지 못해 남은 파일: %s. 이 파일은 이전 실행의 것이다. 이번 실행의 결과가 아니니 신고에 쓰지 않는다"
-                             % ", ".join(stale))
+            rep["알림"].append(outputs.STALE_NOTE % ", ".join(stale))
         raise first
 
 
@@ -187,7 +188,7 @@ def _drop_submittable(rep, out):
     for name in names:
         path = os.path.join(out, name)
         if _is_tmp_dir(out, name):
-            shutil.rmtree(path, ignore_errors=True)
+            efile_tmp.remove(path)
         elif _clear_order(name) in (0, 2) and (name in OWN_NAMES or EFILE_NAME.match(name)) and os.path.isfile(path):
             try:
                 os.remove(path)
@@ -199,6 +200,33 @@ def _drop_submittable(rep, out):
             left.append(name)
     rep["파일"] = [x for x in rep["파일"] if os.path.exists(x)]
     return left
+
+
+def _mark_guides(rep, out, note):
+    """예상하지 못한 오류로 끝날 때, 이번 실행이 이미 쓴 입력 안내서·부속서류 맨 위에 쓰지 말라는 줄을 붙인다.
+
+    안내서를 쓰는 도중에 오류가 나면 먼저 쓴 파일이 그 사실 없이 남기 때문이다. 다른 머리 줄이 이미 있는 안내서도 맨 위에
+    붙인다. 줄을 붙이지 못한 파일은 지운다.
+    """
+    made = False
+    for name in (GUIDE_FILE, ATTACH_FILE):
+        path = os.path.join(out, name)
+        if path not in rep["파일"] or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                body = fh.read()
+            # 다른 머리 줄(참고용, 검증 실패 등)이 먼저 붙어 있어도 오류로 끝났다는 줄을 그 위에 붙인다. 같은 줄을 두 번 붙이지는 않는다
+            if not body.startswith("> %s\n" % note):
+                _write_text(path, "> %s\n\n%s" % (note, body))
+            made = True
+        except (OSError, ValueError):
+            try:
+                os.remove(path)
+            except OSError:
+                made = True         # 머리 줄 없이 남았다. 남은 이름은 확인 문서의 만든 파일 목록에 그대로 나온다
+    if made:
+        rep["단계"]["입력 안내서·부속서류"] = GUIDE_UNUSABLE
 
 
 def _report(out, upto):
@@ -245,11 +273,11 @@ def _write_rv(rep, rv, out):
 
 def _write_guides(rep, rv, facts, res, out):
     """입력 안내서와 부속서류 목록. 끝까지 가지 못한 실행이면 무슨 일이 있었는지를 맨 위 한 줄로 적는다."""
-    note = rep["안내서머리"] or (GUIDE_HEAD.get(rep["상태"]) if rep["종료코드"] == 1 else None)
+    note = rep["안내서머리"] or (GUIDE_HEAD.get(rep["상태"]) if rep["종료코드"] in (1, 3) else None)
     head = "> %s\n\n" % note if note else ""
     rep["파일"].append(_write_text(os.path.join(out, GUIDE_FILE), head + guide.hometax_input(rv)))
     rep["파일"].append(_write_text(os.path.join(out, ATTACH_FILE), head + guide.attachments(rv, facts, res)))
-    rep["단계"]["입력 안내서·부속서류"] = {1: "만듦(신고에 쓰지 않는다)", 2: "만듦(참고용)"}.get(rep["종료코드"], "만듦")
+    rep["단계"]["입력 안내서·부속서류"] = {1: GUIDE_UNUSABLE, 2: "만듦(참고용)"}.get(rep["종료코드"], "만듦")
 
 
 def _calculate(rep, facts, out, today, rules_dir):
@@ -269,9 +297,8 @@ def _calculate(rep, facts, out, today, rules_dir):
     rep["확인사항"] += res["확인사항"]
     rep["경고"] += res["경고"]
     if res["상태"] == "질문":
-        n, m = len(res["질문"]), len(res["다루지않음"])
-        _stop(rep, 2, "질문" if n else "다루지않음", "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개. %s 에 적었다" % (n, m, outputs.QUESTIONS),
-              "계산", "질문 %d개, 다루지 않는 경우 %d개" % (n, m))
+        words = outputs.question_counts(res)        # 요약, 단계 칸, 확인 문서의 계산 질문 절이 같은 말을 쓴다(run.py 도 같다)
+        _stop(rep, 2, "질문" if res["질문"] else "다루지않음", "%s. %s 에 적었다" % (words, outputs.QUESTIONS), "계산", words)
     rep["합계"] = {k: res["계산"]["합계"][k] for k in ("산출세액", "지방소득세")}
     if res["상태"] != "완료":
         _stop(rep, 1, "검산실패", "계산 검산 실패 %d건. 이 결과를 신고에 쓰지 않는다" % len(res["검산"]), "계산", "검산 실패 %d건" % len(res["검산"]))
@@ -307,6 +334,25 @@ def _old_return_date(f, res):
             "제출할 날짜로 고쳐 다시 실행한다" % (made, today))
 
 
+def _return_before_sale(f, res):
+    """작성일이 가장 늦은 양도일보다 앞서면 알릴 문장, 아니면 None.
+
+    신고값 단계(return_values.build)도 같은 경우에 멈추지만 다른 내부 오류와 같은 ValueError 라 입력 오류로 가르지 못한다.
+    그래서 신고값을 만들기 전에 여기서 본다. 날짜를 읽을 수 없으면 None 이고 그때는 신고값 단계가 알린다.
+    """
+    made = (f.get("신고") or {}).get("작성일")
+    try:
+        left_out = set(return_values.exempt_ids(res))      # 신고값 단계처럼 신고서에 넣지 않는 전액 비과세 자산은 보지 않는다
+        last = max(r["판정"]["양도일"] for r in res["계산"]["자산"] if r["id"] not in left_out)
+        early = dates.to_date(made) < dates.to_date(last)
+    except (ValueError, TypeError, KeyError):
+        return None
+    if not early:
+        return None
+    return ("신고인 파일의 신고.작성일 %s 이 양도일 %s 보다 앞선다. 작성일은 신고서를 제출하는 날이라 양도일보다 앞설 수 없다. "
+            "날짜를 고쳐 다시 실행한다" % (made, last))
+
+
 def _filer(rep, filer, facts, res):
     step = rep["단계"]
     try:
@@ -323,6 +369,9 @@ def _filer(rep, filer, facts, res):
     step["신고인 정보"] = "갖춤"
     if old:
         _stop(rep, 2, "입력오류", "작성일이 오늘보다 앞서 신고값을 만들지 않았다", "신고값", "만들지 않음(작성일이 오늘보다 앞섬)", old)
+    early = _return_before_sale(f, res)
+    if early:
+        _stop(rep, 2, "입력오류", "작성일이 양도일보다 앞서 신고값을 만들지 않았다", "신고값", "만들지 않음(작성일이 양도일보다 앞섬)", early)
     return f
 
 
@@ -334,8 +383,11 @@ def _values(rep, res, facts, f, rules_dir):
         raise
     except return_values.Unsupported as u:
         plan = "계획 %s 에서 다룬다" % u.계획 if u.계획 != "없음" else "이 스킬이 다루지 않는다"
+        text = str(u).rstrip(". ")
         rep["다루지않음"] = rep["다루지않음"] + [{"자산": None, "내용": str(u), "계획": u.계획}]
-        _stop(rep, 2, "다루지않음", "신고 범위가 아니라 신고값을 만들지 않았다", "신고값", "다루지않음", "%s. %s" % (u, plan))
+        # 신고값 모듈의 문장이 이미 어느 계획에서 다루는지 말했으면 같은 말을 한 번 더 붙이지 않는다
+        _stop(rep, 2, "다루지않음", "신고 범위가 아니라 신고값을 만들지 않았다", "신고값", "다루지않음",
+              text if plan in text else "%s. %s" % (text, plan))
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일의 값이 틀려 신고값을 만들지 않았다", "신고값", "신고인 정보 오류", "신고인 정보: %s" % e)
     except ValueError as e:
@@ -417,7 +469,7 @@ def _forms_and_file(rep, rv, res, facts, out, rules_dir, upto):
         w = efile.write(rv, out)
     except efile.Locked as e:
         step["전자신고 파일"] = "만들지 않음(규격판 잠금)"
-        rep["알림"].append("전자신고 파일을 만들지 않았다. %s" % e)
+        rep["알림"] += ["전자신고 파일을 만들지 않았다. %s" % e, PDF_KEPT_WHEN_LOCKED]
         rep.update(종료코드=3, 상태="규격판잠금", 요약="규격판이 잠겨 있어 전자신고 파일을 만들지 않았다")
         return
     except (ValueError, KeyError) as e:      # 파일명을 만들 수 없거나(BuildError) 신고값 행과 레이아웃이 어긋났다
@@ -428,8 +480,10 @@ def _forms_and_file(rep, rv, res, facts, out, rules_dir, upto):
     if not w["경로"]:
         step["전자신고 파일"] = "검증 실패 %d건" % len(fails)
         rep.update(종료코드=1, 상태="전자신고검증실패", 요약="전자신고 검증 실패 %d건. 전자신고 파일을 남기지 않았다" % len(fails))
+        rep["알림"].append(PDF_KEPT_AFTER_FAILURE)
         return
-    rep["파일"].append(w["경로"])
+    # efile.write 는 절대 경로를 돌려준다. 보고의 파일 경로는 다른 파일처럼 받은 출력 폴더 기준으로 적는다
+    rep["파일"].append(os.path.join(out, w["파일명"]))
     step["전자신고 파일"] = "만듦(%s)" % w["파일명"]
 
 
@@ -456,7 +510,11 @@ def _pipeline(rep, facts, filer, out, today, rules_dir, upto):
 
 
 def _unconfirmed():
-    """규격서 미확인 칸. 레이아웃 FIXUPS 가운데 홈택스 형식검증으로 확정할 것과 UNCONFIRMED."""
+    """규격서 미확인 칸. 레이아웃 파일(efile/layout_c116300.json)의 FIXUPS 가운데 「확인」이 홈택스 형식검증인 것이다.
+
+    표를 고쳐 읽은 곳(길이, 허용 목록)과 원문만으로 정하지 못해 이 스킬이 정한 값(종류 정한값)이 함께 있다. 문장을 고치려면
+    scripts/refresh/extract_layout.py 의 FIXUPS 를 고치고 레이아웃을 다시 만든다. 칸 이름은 「칸이름」이 있으면 그것을 쓴다.
+    """
     try:
         with open(os.path.join(efile.EFILE_DIR, efile.LAYOUT_FILE), encoding="utf-8") as fh:
             fixups = json.load(fh).get("FIXUPS") or []
@@ -465,9 +523,9 @@ def _unconfirmed():
     out = []
     for x in fixups:
         if "형식검증" in str(x.get("확인") or ""):
-            where = "%s 레코드%s" % (x.get("레코드"), (" %s" % x["name"]) if x.get("name") else "")
+            where = x.get("칸이름") or "%s 레코드%s" % (x.get("레코드"), (" %s" % x["name"]) if x.get("name") else "")
             out.append("%s: %s" % (where, x.get("내용")))
-    return out + list(UNCONFIRMED)
+    return out
 
 
 def _todo(rep):
@@ -486,11 +544,11 @@ def _todo_steps(rep):
                         "증빙(매매계약서, 보유 기간과 거주 기간, 세대의 주택 수를 확인할 수 있는 서류)을 보관하고, 비과세 판정을 "
                         "세무 전문가와 확인한다. 판정이 달라지면 사실관계를 고쳐 다시 실행한다" % ", ".join(rep["제외자산"])]
             if rep["보류사유"]:       # 신고값은 만들었고 참고용으로 냈다
-                return ["신고서와 전자신고 파일이 없다. 사유는 %s이다. 사유를 세무 전문가와 확인한다. "
+                return ["신고서와 전자신고 파일이 없다(%s). 이 사유를 세무 전문가와 확인한다. "
                         "이 스킬은 이 건의 신고서와 전자신고 파일을 만들지 않으니 참고용으로 낸 값으로 신고하지 않는다"
                         % ", ".join(rep["보류사유"])]
             return ["이 건은 이 도구가 다루지 않는 경우라 신고서와 전자신고 파일이 없다. 신고값도 만들지 못했다. "
-                    "사유는 알림이나 %s 에 있다. 사유를 세무 전문가와 확인한다" % outputs.QUESTIONS]
+                    "알림이나 %s 에 적힌 사유를 세무 전문가와 확인한다" % outputs.QUESTIONS]
         asked = {"질문": "위 질문에 답을 채운 뒤 다시 실행한다. 계산 질문은 사실관계 파일에, 신고인 정보 질문은 신고인 파일에 채운다(F07 은 사실관계 파일)",
                  "입력오류": "알림의 문장대로 입력 파일을 고친 뒤 다시 실행한다"}
         failed = ("이 실행의 결과로 신고하지 않는다. 표준오류에 나온 오류 기록과 함께 운영자에게 알린다" if rep["상태"] == "오류" else
@@ -563,7 +621,7 @@ def confirm_md(rep):
     if rep["알림"]:
         L += ["## 알림", ""] + _bullets(rep["알림"]) + [""]
     if rep["질문"] or (rep["다루지않음"] and rep["단계"]["계산"] != "완료"):
-        L += ["## 계산 질문", "", "계산 질문 %d개, 이 도구가 다루지 않는 경우 %d개. 문항은 %s 에 있다." % (len(rep["질문"]), len(rep["다루지않음"]), outputs.QUESTIONS), ""]
+        L += ["## 계산 질문", "", "%s. 문항은 %s 에 있다." % (outputs.QUESTION_COUNTS % (len(rep["질문"]), len(rep["다루지않음"])), outputs.QUESTIONS), ""]
     if rep["신고인질문"]:
         L += ["## 신고인 정보 질문", ""]
         L += ["- [%s] %s%s" % (q["문항"], ("자산 %s: " % q["자산"]) if q.get("자산") else "", q["내용"]) for q in rep["신고인질문"]]
@@ -619,20 +677,25 @@ def make(facts, filer, out, today=None, rules_dir=None, upto=EFILE):
             rep["알림"].append("기준 파일을 읽지 못했다: %s (%s)" % (name, _why(e)))
     except Exception as e:      # 예상하지 못한 오류. 확인 문서 없이 제출용 파일만 남지 않게 한다
         kind = type(e).__name__                  # 예외 문장에는 인적사항이 실릴 수 있어 형 이름만 적는다
-        # 운영자가 볼 수 있게 표준오류에 남긴다. 예외 문장은 빼고 형 이름과 호출 위치만 찍는다
-        print("예상하지 못한 오류(%s). 예외 문장은 싣지 않는다. 호출 위치:" % kind, file=sys.stderr)
-        traceback.print_tb(e.__traceback__, file=sys.stderr)
+        # 운영자가 볼 수 있게 표준오류에 남긴다. 예외 문장은 빼고 형 이름과 호출 위치만 찍는다(MCP 서버도 같은 함수를 쓴다)
+        outputs.log_call_sites(e, "예상하지 못한 오류")
         left = _drop_submittable(rep, out)
         rep.update(종료코드=1, 상태="오류", 요약="예상하지 못한 오류(%s)로 멈췄다. 이 실행의 결과로 신고하지 않는다" % kind)
-        rep["알림"].append("예상하지 못한 오류(%s)로 멈췄다. 이번 실행이 만든 신고서 PDF 와 전자신고 파일은 지웠다. "
-                         "오류 기록은 표준오류에 있다" % kind)
+        rep["알림"].append("예상하지 못한 오류(%s)로 멈췄다. 이번 실행이 만든 신고서 PDF 와 전자신고 파일은 %s. "
+                         "오류 기록은 표준오류에 있다" % (kind, "지우려 했지만 일부가 남았다" if left else "지웠다"))
         if left:
             rep["알림"].append("지우지 못한 파일: %s. 이번 실행이 끝까지 가지 못했으니 신고에 쓰지 않는다" % ", ".join(left))
+        # 단계 칸은 실제로 지워졌을 때만 「지움」이라 적는다. 남은 것이 있으면 지우지 못했다고 적는다
+        stuck = {"신고서 PDF": any(n.startswith((forms.OUT_NATIONAL, forms.OUT_LOCAL)) for n in left),
+                 "전자신고 파일": any(EFILE_NAME.match(n) or n.startswith(efile_tmp.PREFIX) for n in left)}
         for name in ("신고서 PDF", "전자신고 파일"):
             if rep["단계"][name].startswith("만듦"):
-                rep["단계"][name] = "지움(예상하지 못한 오류)"
+                rep["단계"][name] = ("지우지 못함(예상하지 못한 오류, 신고에 쓰지 않는다)" if stuck[name]
+                                   else "지움(예상하지 못한 오류)")
         if rep["전자신고"] and not rep["전자신고"]["검증"]:
-            rep["전자신고"]["검증"] = ["예상하지 못한 오류로 전자신고 파일을 지웠다"]
+            rep["전자신고"]["검증"] = ["예상하지 못한 오류로 멈췄다. 전자신고 파일을 %s" % (
+                "지우지 못했다. 신고에 쓰지 않는다" if stuck["전자신고 파일"] else "지웠다")]
+        _mark_guides(rep, out, GUIDE_HEAD["오류"])
     rep["사람이할일"] = _todo(rep)
     try:
         os.makedirs(out, exist_ok=True)

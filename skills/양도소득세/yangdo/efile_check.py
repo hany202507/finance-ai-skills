@@ -17,7 +17,13 @@
 다른 것은 실패가 아니라 경고다(2020-10 이후 발급·변경 번호는 옛 규칙이 맞지 않을 수 있다). 경고는 표준 오류에
 「경고: 」 로 쓰고 종료코드를 바꾸지 않는다. 출력은 UTF-8 이다.
 
+신고값(--신고값, check_file 의 rv)을 주면 파일을 신고값과 대사한다. 01·02·04 는 신고 구분과 인적사항 칸을, 03·05·07 은
+자료구분·서식코드와 공란을 뺀 모든 칸을 신고값 전자신고 절(세율별, 계산명세, 필요경비명세)의 같은 이름 값과 견준다.
+05 의 날짜·면적·법정동코드·지번·등기목적·등기원인·자산종류·과세구분·세율구분과 07 의 구분코드·상호·사업자등록번호·
+지급일자·증빙종류코드·지급금액이 여기에 든다. 파일에 값을 옮겨 적는 규칙(왼쪽 맞춤, 0 채움, 고정 소수)은 이 파일에 따로 적었다.
+
 문장에는 칸 이름, 코드, 금액, 날짜만 쓴다. 성명·주민등록번호·주소·전화 같은 인적사항 값은 쓰지 않는다.
+신고값 대사에서 03·05 의 금액 칸이 아닌 칸이 다르면 값 대신 칸 이름과 신고값 경로만 쓴다(지번과 07 상호는 인적 성격의 값이다).
 """
 import argparse
 import functools
@@ -26,7 +32,7 @@ import os
 import re
 import sys
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from fractions import Fraction
 
 from yangdo import SKILL_DIR
@@ -68,8 +74,19 @@ LOCAL_03 = (30, 32, 33)
 # 세율구분:00) 이외 항목에는 '0'으로 채움 →사용안함」, global.md 03-31 결정(홈택스 형식검증으로 확인할 항목)
 FIXED_TOTAL_ONLY = {("03", 31): "p43"}
 LOCAL_ROW_ZERO_03 = (8, 10, 11, 12, 14, 15, 16, 17, 18, 19, 21, 35)   # 지방소득세 행(Z/98) 금액 0(p32)
+# 05-41 장기보유특별공제를 적을 수 있는 세율구분. p50 41번은 「세율구분(10)[2 년이상]인 경우만 가능」이라 적지만, 같은 항목의
+# p51 은 적용하지 않는 자산 목록에서 비사업용토지를 「2016 년 양도분부터는 가능」이라 하고, p33 세율 표의 1-11 이
+# 「2 년이상 보유한 비사업용 토지(2016.1.1 이후 양도분부터 적용)」다. 그래서 11 도 받는다. 엔진은 지금 11 을 내지 않는다
+LTD_RATES = ("10", "11")
 E_FILING_CREDIT_CAP = 20000          # 03-36 세율별·소계·합계 최대 20,000원(p43)
 PENSION_CREDIT_CAP = 10000000        # 03-37 소계·합계 최대 1,000만원(p43)
+
+# 신고값 대사(14). 신고값 전자신고 절의 행 키는 레이아웃 필드 name 그대로다(global.md 「신고값 전자신고 키」).
+# 07 행만 세 칸의 키가 다르다(필요경비신고자료일련번호 → 일련번호, 구분코드 → 5자리 전자코드, 사업자등록번호 → 사업자번호).
+# 생성기(efile.py)에도 같은 뜻의 표가 있지만 가져오지 않고 여기 따로 적는다. 생성기의 표가 틀리면 함께 틀리기 때문이다
+RV_KEYS_07 = {"필요경비신고자료일련번호": "일련번호", "구분코드": "전자코드", "사업자등록번호": "사업자번호"}
+# 일련번호 칸(05-3, 07-3, 07-5)은 문자 칸이지만 앞을 0 으로 채운 6자리로 쓴다(p23 9번). 신고값에는 정수로 있고, 줄과 행을 잇는
+# 열쇠로 쓴다(_serial_of). 05-10·11 번지·호는 레이아웃 분류가 SEQ 여도 일련번호가 아니라 글자 그대로 견준다
 
 _NUM = re.compile(rb"-?\d+")
 _RRN_W = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
@@ -98,6 +115,9 @@ KSX_EMPTY = "KS X 1001 완성형에 없는 글자(표의 빈 자리)가 있음(p
 
 def _ksx_problem(b):
     """ASCII(0x20~0x7E)와 KS X 1001 완성형 2바이트(한글 0xB0~0xC8, 기호 0xA1~0xAC 행, 둘째 0xA1~0xFE)만이면 None.
+
+    생성기와 신고인 검사는 yangdo/efile_text.py 의 함수를 함께 쓴다. 검증기는 그 함수를 가져오지 않고 같은 규칙을 여기 따로
+    적는다. 같은 함수를 쓰면 그 함수가 틀렸을 때 검증기도 같이 틀린다.
 
     바이트 범위가 맞아도 0xA2E8 처럼 표의 빈 자리는 CP949 로 읽히지 않으므로 따로 실패로 센다.
     """
@@ -162,6 +182,29 @@ def _as_int(v):
     if isinstance(v, str) and re.fullmatch(r"-?\d+", v.strip()):
         return int(v.strip())
     return None
+
+
+def _scaled(v, dec):
+    """소수 dec 자리 고정 소수 칸의 값을 파일에 적는 정수로(p19~23: 소수점 없이 소수 자리만큼 늘려 쓰고 그 아래는 버린다).
+
+    수로 읽을 수 없으면 None. 소수 자리가 없는 칸(dec 0)은 정수만 받는다.
+    """
+    if dec == 0:
+        return _as_int(v)
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        d = Decimal(str(v).strip())
+        if not d.is_finite():
+            return None
+        return int((d * (10 ** dec)).to_integral_value(rounding=ROUND_DOWN))
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+
+
+def _serial_of(x):
+    """앞을 0 으로 채운 6자리 일련번호 바이트 → 정수. 꼴이 아니면 None."""
+    return int(x) if re.fullmatch(rb"\d{6}", x) else None
 
 
 def _is_total(r):
@@ -566,18 +609,18 @@ class _Checker:
                     self.fail(r.where(8) + ": 양도소득금액 + 기신고 - 소득감면대상 - 기본공제 %d 와 다름(p37)" % want)
             if None not in (v[15], v[16], v[35], v[17]) and v[17] != v[15] + v[16] + v[35]:
                 self.fail(r.where(17) + ": 15 + 16 + 35 가산세 합 %d 와 다름(p41)" % (v[15] + v[16] + v[35]))
-            parts = (v[10], v[11], v[12], v[13], v[14], v[36], v[37], v[17], v[18], v[19])
-            if None not in parts:
+            terms = (v[10], v[11], v[12], v[13], v[14], v[36], v[37], v[17], v[18], v[19])
+            if None not in terms:
                 want = v[10] - v[11] - v[12] - v[13] - v[14] - v[36] - v[37] + v[17] - v[18]
                 if v[19] != want:
                     self.fail(r.where(19) + ": 산출세액 - 감면·공제 + 가산세 - 기신고세액 %d 와 다름(서식 ⑱)" % want)
             if (d, c) == ("Z", "00") and None not in (v[19], v[20], v[21]) and v[21] != v[19] - v[20]:
                 self.fail(r.where(21) + ": 자진납부할세액 - 분납할세액 %d 와 다름(서식 ⑳)" % (v[19] - v[20]))
-        parts = [r for r, _ in rate_rows]
-        if len(total) == 1 and parts:
-            self._sum_rows(total[0], parts, "세율구분 행")
-        if len(sub) == 1 and parts:
-            self._sum_rows(sub[0], parts, "국내 세율구분 행")
+        rate_recs = [r for r, _ in rate_rows]
+        if len(total) == 1 and rate_recs:
+            self._sum_rows(total[0], rate_recs, "세율구분 행")
+        if len(sub) == 1 and rate_recs:
+            self._sum_rows(sub[0], rate_recs, "국내 세율구분 행")
         if len(total) == 1:
             t = total[0].n(8)
             for r, _ in rate_rows:
@@ -726,8 +769,8 @@ class _Checker:
                     self.fail(a.where(target) + ": %s (%d)와 다름(%s)" % (text, w, basis))
             if a.t(4) == "05" and v[40]:
                 self.fail(a.where(40) + ": 과세구분 05(전체비과세)이면 0(p50)")
-            if v[41] and code != "10":
-                self.fail(a.where(41) + ": 장기보유특별공제는 세율구분 10 일 때만(p50)")
+            if v[41] and code not in LTD_RATES:
+                self.fail(a.where(41) + ": 장기보유특별공제는 세율구분 10·11 일 때만(p33·p50·p51)")
             if v[43] and v[60]:
                 self.fail(a.where(60) + ": 43 세액감면대상과 함께 쓸 수 없음(p51·p53)")
             red = (v[43] or 0) + (v[60] or 0)
@@ -766,6 +809,10 @@ class _Checker:
                 self.fail(a.where(61) + ": 37 기타필요경비가 있으면 07 필요경비신고자료일련번호를 적는다(p53 에서 추론)")
 
     # 07 필요경비 상세 (12)
+    # 5 상세일련번호는 필요경비신고자료일련번호마다 1 부터 차례로 센다(p60 5번 「필요경비신고자료일련번호별로 일련번호를
+    # 순차적으로 부여」). p104 수록순서는 07 의 정렬 키를 「일련번호/구분코드/구분코드별_일련번호」라 적어 구분코드마다 다시
+    # 세는 것처럼 읽힌다. 칸 설명인 p60 을 따르고, 줄 순서는 p104 의 키(일련번호·구분코드·상세일련번호)로 본다.
+    # 구분코드 순으로 늘어놓고 차례로 세면 두 쪽의 순서가 같아진다. 홈택스 형식검증으로 확인할 항목이다
     def _expenses(self, exps, assets):
         by_code = {v["전자코드"]: v for v in self.codes["필요경비구분"].values()}
         banned = set(self.codes["메타"]["필요경비_쓰지않는코드"]["코드"])
@@ -920,9 +967,21 @@ class _Checker:
                              lambda r: (r.t(3), r.t(4)), lambda x: (str(x["국내외분"]), str(x["세율구분"])),
                              lambda k: "%s/%s" % k, ("국내외분", "세율구분"))
         self._reconcile_rows(get, by["05"], ("전자신고", "계산명세"), "계산명세",
-                             lambda r: r.n(3), lambda x: _as_int(x["일련번호"]), lambda k: "%s" % k, ("일련번호",))
+                             lambda r: _serial_of(r.b(3)), lambda x: _as_int(x["일련번호"]), lambda k: "%s" % k, ("일련번호",))
+        self._reconcile_rows(get, by["07"], ("전자신고", "필요경비명세"), "필요경비명세",
+                             lambda r: (_serial_of(r.b(3)), r.t(4), _serial_of(r.b(5))),
+                             lambda x: (_as_int(x["일련번호"]), str(x["전자코드"]), _as_int(x["상세일련번호"])),
+                             lambda k: "%s/%s/%s" % k, ("일련번호", "전자코드", "상세일련번호"), RV_KEYS_07)
 
-    def _reconcile_rows(self, get, recs, path, label, file_key, rv_key, show, key_names):
+    def _reconcile_rows(self, get, recs, path, label, file_key, rv_key, show, key_names, renames=None):
+        """파일의 레코드 줄을 신고값 전자신고 절의 행과 칸마다 견준다.
+
+        줄과 행은 key_names 칸(03 국내외분·세율구분, 05 일련번호, 07 일련번호·구분코드·상세일련번호)으로 잇는다.
+        자료구분·서식코드와 공란을 뺀 모든 칸을 본다. 03·05 의 13자리 금액 칸은 문장에 두 금액을 싣고, 나머지 칸(날짜, 면적,
+        법정동코드, 지번, 코드와 07 의 상호, 사업자번호, 지급금액 등)은 칸 이름과 신고값 경로만 싣는다. 지번과 상호는 인적 성격의
+        값이다.
+        """
+        renames = renames or {}
         rows = get(path)
         if rows is _MISSING:
             return
@@ -945,20 +1004,47 @@ class _Checker:
                 self.fail("%d줄(%s): 신고값 전자신고.%s 에 %s 행이 없음" % (r.line, r.kind, label, show(k)))
                 continue
             for no, f in r.f.items():
-                if not (f["type"] == "N" and f["len"] == 13 and f["dec"] == 0):
-                    continue
                 name = f["name"]
-                if name not in x:
-                    self.fail("신고값에 전자신고.%s[%s].%s 없음" % (label, show(k), name))
+                key = renames.get(name, name)
+                if no <= 2 or f["class"] == "SPACE" or key in key_names:
                     continue
-                v = _as_int(x[name])
-                if v is None:
-                    self.fail("신고값 전자신고.%s[%s].%s 이 정수가 아님" % (label, show(k), name))
-                elif r.n(no) is not None and r.n(no) != v:
-                    self.fail(r.where(no) + ": 신고값 %d 과 다름(파일 %d)" % (v, r.n(no)))
+                where = "전자신고.%s[%s].%s" % (label, show(k), key)
+                if key not in x:
+                    self.fail("신고값에 %s 없음" % where)
+                elif f["type"] == "N":
+                    self._reconcile_number(r, no, f, x[key], where)
+                else:
+                    self._reconcile_text(r, no, x[key], where)
         for k in want:
             if k not in seen:
                 self.fail("신고값 전자신고.%s 의 %s 행이 파일에 없음" % (label, show(k)))
+
+    def _reconcile_number(self, r, no, f, value, where):
+        money = r.kind in ("03", "05") and f["len"] == 13 and f["dec"] == 0      # 두 금액을 문장에 싣는 칸
+        # 신고값이 None 이나 빈 글자면 실패로 본다. 생성기는 Null 허용 수치 칸의 빈 값을 0 으로 채우지만 검증기는 0 으로 읽어 주지 않는다.
+        # 신고값 전자신고 절은 0 칸까지 수로 싣기로 했으므로(global.md 「신고값 전자신고 키」) 빈 값은 신고값이 덜 채워진 것이다
+        v = _scaled(value, f["dec"])
+        if v is None:
+            self.fail("신고값 %s 이 %s 아님" % (where, "정수가" if f["dec"] == 0 else "수가"))
+        elif r.n(no) is not None and r.n(no) != v:
+            if money:
+                self.fail(r.where(no) + ": 신고값 %d 과 다름(파일 %d)" % (v, r.n(no)))
+            else:
+                self.fail(r.where(no) + ": 신고값 %s 와 다름" % where)
+
+    def _reconcile_text(self, r, no, value, where):
+        """문자 칸은 왼쪽부터 쓰고 남는 바이트를 공백으로 채운다(p19). 뒤 공백을 떼고 글자 그대로 견준다."""
+        if value is None:
+            v = ""
+        elif isinstance(value, str):
+            v = value.rstrip(" ")
+        elif isinstance(value, int) and not isinstance(value, bool):
+            v = str(value)
+        else:
+            self.fail("신고값 %s 이 글자가 아님" % where)
+            return
+        if r.t(no) != v:
+            self.fail(r.where(no) + ": 신고값 %s 와 다름" % where)
 
 
 # ---------------------------------------------------------------- 진입점
@@ -977,7 +1063,7 @@ def check_file_ex(path, efile_dir=None, rv=None):
 
 
 def check_file(path, efile_dir=None, rv=None):
-    """실패 문장 목록. 비면 통과. rv(신고값 JSON, C8)를 주면 03·05 금액과 신고인 칸을 대사한다."""
+    """실패 문장 목록. 비면 통과. rv(신고값 JSON, C8)를 주면 01·02·04 의 신고 구분·인적사항 칸과 03·05·07 의 모든 칸을 대사한다."""
     return check_file_ex(path, efile_dir=efile_dir, rv=rv)[0]
 
 
@@ -988,7 +1074,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m yangdo.efile_check",
                                  description="양도소득세 전자신고 변환파일(C116300) 독립 검증")
     ap.add_argument("파일")
-    ap.add_argument("--신고값", dest="rv", help="신고값 JSON(C8) 경로. 주면 03·05 금액과 신고인 칸을 대사한다")
+    ap.add_argument("--신고값", dest="rv", help="신고값 JSON(C8) 경로. 주면 신고인 칸과 03·05·07 의 모든 칸을 대사한다")
     a = ap.parse_args(argv)
     rv = None
     if a.rv:

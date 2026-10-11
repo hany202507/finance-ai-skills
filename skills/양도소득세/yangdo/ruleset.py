@@ -13,9 +13,17 @@ EDITION_FILES = ["ruleset.json", "코드표.json", "행정구역_대응.json",
 # 공휴일 표는 신고기한을 옮길 때 쓴다(dates.filing_deadline). 없으면 공휴일을 모르는 규칙세트가 된다
 HOLIDAY_FILE = "공휴일.json"
 # 서식 판·전자신고 규격 판(설계 ① 다섯 묶음)과 공휴일 표. rules 폴더 기준 상대 경로. 판 id 에 들어가지만,
-# rules 폴더만 따로 쓰는 경우(시험의 임시 사본, --rules)가 있어 파일이 없을 때는 대조하지 않는다
+# rules 폴더만 따로 쓰는 경우(시험의 임시 사본, --rules)가 있어 파일이 없을 때는 대조하지 않는다.
+# 서식 매핑(신고값 키 → 서식 칸)과 필드목록(칸 좌표)도 넣는다. 이 파일이 바뀌면 같은 신고값에서 다른 신고서가 나오는데
+# 서식판.json 의 원본 sha256 만으로는 잡히지 않는다. 폴더에 파일을 더하면 이 목록에도 더한다(시험이 폴더와 견준다)
+FORM_TABLES = ["../forms/매핑/본지.json", "../forms/매핑/부표1.json", "../forms/매핑/부표3.json", "../forms/매핑/지방.json",
+               "../forms/필드목록/필드목록_별지84_신고및납부계산서.json",
+               "../forms/필드목록/필드목록_별지84부표1_양도소득금액계산명세서.json",
+               "../forms/필드목록/필드목록_별지84부표3_2_취득가액및필요경비계산상세명세서.json",
+               "../forms/필드목록/필드목록_별지84부표3_취득가액및필요경비계산상세명세서.json",
+               "../forms/필드목록/필드목록_지방세_별지40의11_신고및납부계산서.json"]
 EDITION_EXTRA = ["../forms/서식판.json", "../efile/규격판.json", "../efile/법정동코드.json",
-                 "../efile/layout_c116300.json", "../efile/codes_c116300.json", HOLIDAY_FILE]
+                 "../efile/layout_c116300.json", "../efile/codes_c116300.json", HOLIDAY_FILE] + FORM_TABLES
 
 
 class RuleError(Exception):

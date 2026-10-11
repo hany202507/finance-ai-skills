@@ -152,11 +152,13 @@ def test_added_watch_article_refetches_saved_versions(tmp_path):
     rep = fa.fetch(str(rules), api, td, "2026-10-09")
     assert sorted(m for p, m in calls if p == "lawService.do") == ["3", "4", "5"]
     assert rep["오류"] == [] and rep["새판"] == 0
+    assert rep["갱신"] == 3                                    # 다시 받은 세 판 모두 조문이 늘어 내용이 바뀌었다
     one = json.loads((rules / "조문" / "소득세법" / "3@2025-01-01.json").read_text(encoding="utf-8"))
     assert set(one["조문"]) == {"103", "159의4"}
     calls.clear()
-    fa.fetch(str(rules), api, td, "2026-10-09")
+    rep = fa.fetch(str(rules), api, td, "2026-10-09")
     assert [m for p, m in calls if p == "lawService.do"] == ["5"]  # 다 받은 뒤에는 시행예정 판만 다시 받는다
+    assert rep["갱신"] == 0 and rep["새판"] == 0                # 다시 받았지만 내용이 같아 바뀐 판으로 세지 않는다
 
 
 # DRF 가 목내용을 중첩 목록으로 주는 모양을 줄인 시험 자료다. 실제 응답에서 시행령 제167조의3 제1항 제12호가 이렇게 온다.
