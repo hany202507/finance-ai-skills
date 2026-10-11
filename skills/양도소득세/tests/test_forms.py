@@ -453,18 +453,48 @@ def test_unplaced_is_judged_form_by_form(tmp_path):
     assert "지방.열.국외소계" not in p["서식별"]["국세"]["안씀"]            # 지방 매핑의 항목은 국세 쪽에 섞이지 않는다
 
 
-def test_code_with_an_empty_name_stops_instead_of_going_blank(tmp_path):
-    """코드표에 코드는 있는데 이름이 비어 있으면 빈칸으로 두지 않고 멈춘다."""
+def _foreign(rv, code="CD"):
+    """합성 신고인을 국적 code 인 외국인으로 바꾼 신고값."""
+    rv["신고인"].update(내외국인="9", 국적=code)
+    rv["신고인"]["코드"].update(내외국인여부="N", 국적=code)
+    return rv
+
+
+def test_code_without_a_korean_name_uses_the_english_name_or_stays_blank(tmp_path):
+    """코드표에 코드는 있는데 한글 이름이 비어 있으면 멈추지 않는다. 신고인이 고칠 수 있는 입력이 아니기 때문이다.
+    영문 이름이 있으면 그것을 적고(칸에 들어가지 않으면 비운다), 영문 이름도 없으면 비우고 확인사항으로 알린다.
+    코드표 「국가」에서 한글 이름이 빈 코드는 CD(콩고민주공화국) 하나다(규격서 원문의 한글 명칭 칸이 비어 있다)."""
     import shutil
+    codes = json.load(open(os.path.join(SKILL, "efile", "codes_c116300.json"), encoding="utf-8"))
+    assert [k for k, v in codes["국가"].items() if not v["이름"]] == ["CD"] and codes["국가"]["CD"]["영문"]
+    # 1) 국적 CD: 영문 이름이 후보이고, 본지와 지방 서식의 국적 칸(폭 52pt)에는 들어가지 않아 비운다
+    rv = _foreign(_rv_cached("S1"))
+    plan = forms.plan(rv)
+    cell = next(p for p in plan["국세"]["칸"] if p["필드"] == "신고인.국적" and p["열"] == "국적")
+    assert cell["값"] == [codes["국가"]["CD"]["영문"], ""]
+    assert any("신고인.국적" in s and "한글 이름이 없어" in s and "CD" not in s for s in plan["확인사항"])
+    paths = forms.render(rv, str(tmp_path / "cd"))
+    for p in paths:
+        assert "CONGO" not in pymupdf.open(p)[0].get_text()
+    blank = [s for s in rv["확인사항"] if "국적" in s and "비워 두었다" in s]
+    assert len(blank) == 2 and all("CD" not in s and "CONGO" not in s for s in blank)       # 본지와 지방 서식에 한 줄씩
+    # 2) 영문 이름이 짧으면 칸에 적는다
     e = tmp_path / "efile"
     shutil.copytree(os.path.join(SKILL, "efile"), str(e))
+    _edit_json(e / "codes_c116300.json", lambda c: c["국가"]["CD"].update(영문="DR Congo"))
+    cell = next(p for p in forms.plan(rv, efile_dir=str(e))["국세"]["칸"] if p["필드"] == "신고인.국적" and p["열"] == "국적")
+    assert cell["값"] == ["DR Congo", ""]
+    # 3) 영문 이름도 없는 코드(은행 표에는 영문 칸이 없다): 비우고 확인사항 한 줄. 코드 값은 싣지 않는다
     rv = _rv_cached("S1")
     rv["환급계좌"] = {"은행코드": "004", "계좌번호": "1234567890"}
-    assert forms.plan(rv)                                                     # 이름이 있으면 그대로 놓인다
+    named = forms.plan(rv)
+    assert any(p["필드"] == "환급계좌.금융기관명" for p in named["국세"]["칸"])               # 이름이 있으면 그대로 놓인다
     _edit_json(e / "codes_c116300.json", lambda c: c["은행"]["004"].update(이름=""))
-    with pytest.raises(ValueError) as err:
-        forms.plan(rv, efile_dir=str(e))
-    assert "은행" in str(err.value) and "이름이 비어" in str(err.value) and "004" not in str(err.value)
+    plan = forms.plan(rv, efile_dir=str(e))
+    assert not any(p["필드"] == "환급계좌.금융기관명" for p in plan["국세"]["칸"])
+    notes = [s for s in plan["확인사항"] if "금융기관명" in s]
+    assert notes and all("이름이 코드표" in s and "비워 두었다" in s and "004" not in s for s in notes)
+    # 4) 코드표에 없는 코드는 그대로 멈춘다(test_unknown_code_stops_instead_of_going_blank)
 
 
 def test_area_and_period_formats():

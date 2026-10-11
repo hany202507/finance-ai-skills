@@ -360,6 +360,8 @@ def _filer(rep, filer, facts, res):
     except filing.FilingError as e:
         _stop(rep, 2, "입력오류", "신고인 파일을 읽지 못했거나 형식이 틀렸다", "신고인 정보", "형식 오류", "신고인 정보: %s" % e)
     rep["경고"] += f.get("_경고") or []
+    # filing.questions 의 efile_dir 는 주지 않는다. 이 진입점은 efile 폴더를 따로 받지 않고 신고값 생성, 전자신고 파일, 검증기가
+    # 모두 기본 폴더(efile/)를 읽으므로 질문도 같은 코드표와 법정동코드 표를 본다
     qs = _reference(rep, "신고인 정보", lambda: filing.questions(f, facts, res))
     old = _old_return_date(f, res)
     if qs:

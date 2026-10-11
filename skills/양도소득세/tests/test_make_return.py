@@ -871,6 +871,21 @@ def _main_facts(tmp_path, facts, filer, today=TODAY):
     return MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", today]), out
 
 
+def test_foreign_filer_whose_nationality_has_no_korean_name_still_finishes(tmp_path, capsys):
+    """국적 CD(코드표에 한글 이름이 없는 하나뿐인 국가)인 외국인 신고인도 신고서와 전자신고 파일까지 만든다. 국적 칸은 영문
+    이름이 들어가지 않아 비우고 확인사항으로 알린다. 신고인이 고칠 수 있는 입력이 아니라 멈추지 않는다."""
+    f = s1_filer()
+    f["신고인"].update(내외국인="9", 국적="CD", 주민등록번호=filers.rrn("0001015", "23456"))
+    code, out = _main(tmp_path, "S1", f)
+    shown = capsys.readouterr()
+    assert code == 0, shown.out + shown.err + _confirm(out)
+    names = set(os.listdir(out))
+    assert PDFS | {"신고값.json", "신고_확인.md", S1_FILE} <= names
+    text = _confirm(out)
+    assert "| 신고서 PDF | 만듦 |" in text and "국적" in text and "비워 두었다" in text
+    assert "CONGO" not in text and "이름이 비어" not in text
+
+
 def test_final_return_makes_forms_and_file_with_penalty(tmp_path, capsys):
     f = filers.get("BF")
     code, out = _main(tmp_path, "BF", f)

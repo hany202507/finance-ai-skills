@@ -2,6 +2,7 @@
 """신고값을 서식 칸에 적는 글자로 바꾼다. forms.py 의 매핑 「형식」 이름마다 함수 하나(`_Fmt.f_<형식>`)가 있다.
 
 돌려주는 값은 글자, {부분: 글자}(기준점이 여럿인 칸), 후보 목록(앞에서부터 칸에 들어가는 것을 쓴다), 또는 빈 글자다.
+후보 목록의 마지막이 빈 글자면 앞 후보가 칸에 들어가지 않을 때 그 칸을 비운다는 뜻이다(코드표에 한글 이름이 없는 국가).
 값을 다시 계산하지 않는다. 좁은 칸에 쓸 주소·소재지의 줄임 후보(`_shorter`)도 여기서 만든다.
 코드표나 매핑에 없는 값, 꼴이 다른 값은 ValueError 로 멈춘다. 문장에는 필드 이름만 적고 값을 옮기지 않는다
 (인적사항이 로그에 남지 않게).
@@ -85,8 +86,10 @@ def _address(a, mountain=None):
 class _Fmt:
     """형식 이름 → 값 바꾸기. 돌려주는 값은 글자, {부분: 글자}, 후보 목록(앞에서부터 칸에 맞는 것을 쓴다), 또는 빈 글자."""
 
-    def __init__(self, rv, mapping, codes):
+    def __init__(self, rv, mapping, codes, note=None):
+        """note 는 확인사항 한 줄을 받는 함수다(없으면 버린다). 값을 싣지 않는 문장만 넘긴다."""
         self.rv, self.m, self.codes = rv, mapping, codes
+        self.note = note or (lambda text: None)
         self.mountain = next((v.get("코드") for v in (codes.get("특수지") or {}).values() if v.get("이름") == "산"), None)
 
     def __call__(self, kind, value, e):
@@ -228,14 +231,23 @@ class _Fmt:
         return "%s/%s" % (num, den) if num and den else ""
 
     def _name(self, table, code, kind, e):
-        """코드표에서 코드의 이름. 표에 없거나 이름이 비어 있으면 멈춘다(빈칸으로 두면 값이 말없이 빠진다).
-        문장에는 코드 값을 싣지 않는다."""
+        """코드표에서 코드의 이름. 표에 없는 코드는 멈춘다(빈칸으로 두면 값이 말없이 빠진다). 문장에는 코드 값을 싣지 않는다.
+
+        표에 있는데 한글 이름이 빈 코드는 멈추지 않는다. 규격서 원문이 한글 명칭을 비운 코드(국가 CD)라 신고인이 고칠 수 있는
+        입력이 아니다. 영문 이름이 있으면 [영문, ""] 후보를 돌려주어 칸에 들어가면 영문으로 적고 들어가지 않으면 비운다.
+        영문 이름도 없으면 비운다. 어느 쪽이든 확인사항으로 알린다."""
         hit = self.codes[table].get(code)
+        where = e.get("필드") or "?"
         if hit is None:
-            raise ValueError("%s: %s 코드가 코드표 「%s」에 없다" % (e.get("필드") or "?", kind, table))
-        if not hit.get("이름"):
-            raise ValueError("%s: %s 코드의 이름이 비어 있다(코드표 「%s」)" % (e.get("필드") or "?", kind, table))
-        return hit["이름"]
+            raise ValueError("%s: %s 코드가 코드표 「%s」에 없다" % (where, kind, table))
+        if hit.get("이름"):
+            return hit["이름"]
+        if hit.get("영문"):
+            self.note("%s 칸: 코드표 「%s」에 이 %s 코드의 한글 이름이 없어 영문 이름을 적는다. 칸에 들어가지 않으면 비워 둔다"
+                      % (where, table, kind))
+            return [hit["영문"], ""]
+        self.note("%s 칸: 이 %s 코드의 이름이 코드표 「%s」에 없어 비워 두었다. 서면으로 낼 때 직접 적는다" % (where, kind, table))
+        return ""
 
     def f_관계(self, v, e):
         label, code = v

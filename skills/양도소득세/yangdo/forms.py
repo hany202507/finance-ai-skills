@@ -54,6 +54,8 @@ SIZE = 7.5
 _ALIGN = {"금액": "right", "면적": "right", "세율": "right", "감면율": "right", "코드": "center", "체크": "center",
           "날짜": "center", "주민등록번호": "center", "사업자번호": "center", "전화": "center", "지분": "center"}
 _TOKEN = re.compile(r"([^.\[\]]+)|\[(\d+)\]")
+
+
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -182,7 +184,7 @@ class _Planner:
             noun = next(k for k, v in alias.items() if isinstance(v, dict))
             self.note("%s: %d장으로 나눴다(%s %d개, 한 장에 %d개). 합계 열은 첫 장에만 적었다"
                       % (m["이름"], count, noun, len(items), per))
-        fmt = _Fmt(self.rv, m, self.codes)
+        fmt = _Fmt(self.rv, m, self.codes, self.note)
         for s in range(count):
             page = len(pages)
             pages.append(m["채움쪽"])
@@ -237,7 +239,7 @@ class _Planner:
     # ---- 부표3
 
     def schedule3(self, m, pages, cells):
-        fmt = _Fmt(self.rv, m, self.codes)
+        fmt = _Fmt(self.rv, m, self.codes, self.note)
         rows_of = m["행"]
         detail_rows = m["명세행"]
         money_col = m["금액열"]              # 소계와 행 합계액을 적는 열
@@ -395,8 +397,11 @@ _SHORT_NOTES["소재지"] = _SHORT_NOTES["자산소재지"] = _SHORT_NOTES["주�
 _SHORT_NOTE_OTHER = "줄인 값으로 적었다. 전체 글자는 신고값에 있다"
 
 
-def shortened_note(c):
-    """칸 c(plan 의 칸 항목)를 첫 후보가 아닌 줄인 후보로 썼다는 확인사항 문장."""
+def shortened_note(c, written=None):
+    """칸 c(plan 의 칸 항목)를 첫 후보가 아닌 뒤 후보로 썼다는 확인사항 문장. written 은 쓴 후보다.
+    쓴 후보가 빈 글자면 앞 후보가 들어가지 않아 칸을 비운 것이다(한글 이름이 없는 코드의 영문 이름)."""
+    if written == "":
+        return "%s 칸에 적을 글자가 칸에 들어가지 않아 비워 두었다. 서면으로 낼 때 직접 적는다" % c["이름"]
     return "%s 칸이 좁아 %s" % (c["이름"], _SHORT_NOTES.get(c.get("형식"), _SHORT_NOTE_OTHER))
 
 
@@ -424,7 +429,7 @@ def render(rv, out_dir, forms_dir=None):
                                              for f in _read(os.path.join(root, "필드목록", c["목록"]))["fields"]}
                     n = _write(doc[c["쪽"]], fields[c["목록"]][c["필드"]], c, font)
                     if n:
-                        notes.append(shortened_note(c))
+                        notes.append(shortened_note(c, c["값"][n]))
                 built.append((path + ".tmp", path))     # 저장 도중 실패해도 finally 가 지우도록 먼저 적는다
                 forms_pdf.save(doc, path + ".tmp")
         for tmp, path in built:
