@@ -592,8 +592,10 @@ def test_rerun_with_locked_pdf_leaves_no_submittable_file(tmp_path, monkeypatch)
 
 
 def test_unexpected_error_still_writes_confirm_and_drops_submittable_files(tmp_path, monkeypatch, capsys):
+    secret = "김합성 비밀"                                      # 예외 문장에는 인적사항이 실릴 수 있다
+
     def boom(rv):
-        raise KeyError("김합성 비밀")                           # 예외 문장에는 인적사항이 실릴 수 있다
+        raise KeyError(secret)
 
     monkeypatch.setattr(MR.guide, "hometax_input", boom)
     code, out = _main(tmp_path, "S1", s1_filer())
@@ -606,21 +608,28 @@ def test_unexpected_error_still_writes_confirm_and_drops_submittable_files(tmp_p
     text = _confirm(out)
     assert "KeyError" in text and "예상하지 못한" in text
     assert "김합성" not in text and "김합성" not in shown.out
-    assert "Traceback" in shown.err
+    # 표준오류에는 예외 형 이름과 호출 위치만 나온다. 예외 문장은 싣지 않는다
+    assert "김합성" not in shown.err and "비밀" not in shown.err
+    assert "KeyError" in shown.err and 'File "' in shown.err and "in boom" in shown.err
+    assert "Traceback" not in shown.err
     made = text.split("## 만든 파일", 1)[1].split("## 사람이 할 일")[0]
     assert S1_FILE not in made and "신고서.pdf" not in made
 
 
 def test_unexpected_error_in_render_is_reported_too(tmp_path, monkeypatch, capsys):
+    message = "code=2: cannot open document"                   # pymupdf 가 내는 꼴
+
     def boom(rv, out_dir, **k):
-        raise RuntimeError("code=2: cannot open document")     # pymupdf 가 내는 꼴
+        raise RuntimeError(message)
 
     monkeypatch.setattr(MR.forms, "render", boom)
     res = MR.make(CASES["S1"], s1_filer(), str(tmp_path / "o"), today=TODAY)
     assert res["종료코드"] == 1 and any("RuntimeError" in x for x in res["알림"])
     assert not any("cannot open" in x for x in res["알림"])
     assert "신고_확인.md" in os.listdir(tmp_path / "o")
-    assert "Traceback" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and 'File "' in err and "in boom" in err
+    assert "cannot open" not in err and "Traceback" not in err
 
 
 def _first_line(out, name):
