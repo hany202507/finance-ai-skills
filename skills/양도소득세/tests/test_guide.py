@@ -2,8 +2,10 @@
 import copy
 import re
 
+import pytest
+
 from yangdo import engine, filing, guide, return_values
-from cases import CASES
+from cases import CASES, F자산
 import filers
 
 SCREENS = ["기본정보", "양수인", "양도자산", "취득가액", "필요경비", "세액계산", "납부"]
@@ -206,14 +208,26 @@ def _attach_args(facts, kind="예정", made="2026-12-20"):
     return rv, facts, res
 
 
-def test_all_exempt_asset_has_no_blank_markers():
-    facts = CASES["G"]
+def _mixed_facts():
+    """전액 비과세 주택 G 와 과세 토지 F(환산취득가액)."""
+    facts = copy.deepcopy(CASES["G"])
+    facts["자산"].append(copy.deepcopy(F자산))
+    return facts
+
+
+def test_exempt_asset_is_not_in_the_guides():
+    """전액 비과세 자산은 신고서에 넣지 않는다. 입력 안내서는 과세 자산만 적고 넣지 않은 자산을 따로 알린다.
+    전액 비과세 자산뿐이면 신고값이 없어 안내서도 없다."""
+    facts = _mixed_facts()
     rv, res = _rv_facts(facts)
     md = guide.hometax_input(rv)
-    assert "전액 비과세" in md and "입력 필요" not in md
-    assert "과세되는 자산이 없다" in md
+    assert "### 자산 F" in md and "### 자산 G" not in md and "입력 필요" not in md
+    assert "## 신고서에 넣지 않은 자산" in md and "전액 비과세" in md
+    assert "과세되는 자산이 없다" not in md
     att = guide.attachments(rv, facts, res)
-    assert "전액 비과세" in att and "근거 자료" not in att
+    assert "넣지 않은 자산 G" in att and "근거 자료" not in att
+    with pytest.raises(return_values.NoTaxableAsset):
+        _rv_facts(CASES["G"])
 
 
 def test_two_rate_columns():
@@ -308,7 +322,7 @@ def test_blank_marker_is_explained_once_in_head():
         assert "입력 필요" in md
         assert md.count("신고값에 값이 없는 항목이다") == 1
         assert md.index("신고값에 값이 없는 항목이다") < md.index("## 화면 순서")
-    md = guide.hometax_input(_rv_facts(CASES["G"])[0])
+    md = guide.hometax_input(_rv_facts(_mixed_facts())[0])      # F 는 환산취득가액이라 빈 값이 없다
     assert "신고값에 값이 없는 항목이다" not in md
 
 
@@ -468,7 +482,7 @@ def test_other_rows_keep_their_payment_dates():
 
 
 def test_no_purchase_price_note_without_a_purchase_price_row():
-    sec = _section4(guide.hometax_input(_rv_facts(CASES["G"])[0]))   # 전액 비과세라 부표3 이 없다
+    sec = _section4(guide.hometax_input(_rv_facts(CASES["F"])[0]))   # 환산취득가액이라 부표3 이 없다
     assert "매입가액 행의 지급일자" not in sec
 
 
@@ -507,11 +521,13 @@ def test_final_return_guide_shows_the_penalty_amounts():
     assert "가산세 46,110,480원" in top and "납부할 세액 252,384,480원" in top
     pay = md.split("## 7.", 1)[1]
     assert "252,384,480" in pay
-    # 지방소득세: 산출세액 20,627,400 + 가산세 2,289,641(무신고 2,062,740, 납부지연 226,901) = 22,917,041
+    # 지방소득세: 산출세액 20,627,400 + 가산세 4,352,381(무신고 4,125,480 감면 없음, 납부지연 226,901) = 24,979,781
     local = pay.split("### 지방소득세", 1)[1]
     rows = {ln.split("|")[1].strip(): ln for ln in local.splitlines() if ln.startswith("|")}
-    assert "2,062,740" in rows["가산세(무신고)"] and "226,901" in rows["가산세(납부지연)"]
-    assert "22,917,041" in rows["납부할 세액(지방소득세)"]
+    assert "4,125,480" in rows["가산세(무신고)"] and "226,901" in rows["가산세(납부지연)"]
+    assert "24,979,781" in rows["납부할 세액(지방소득세)"]
+    assert "지방소득세 예정신고 세액 × 20%," in local and "(1 - 50%)" not in local      # 계산식에 감면이 없다
+    assert "지방소득세 무신고가산세는 감면 없이 계산했다. 감면이 적용되면 무신고가산세는 2,062,740원" in local
     assert "2027-03-31" in local and "50" in local               # 지방소득세 납부기한과 일수
     assert "두 가지를 가정" in local and "위택스 값을 따른다" in local
     assert "지방소득세 가산세는 계산하지 않았다" not in md and "가산세가 빠진" not in md
