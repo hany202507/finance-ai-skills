@@ -61,8 +61,12 @@ RATES_05 = (RATES_03 - frozenset("61 62 70 63 80 81 94".split())) | frozenset("2
 # 03 금액 칸 번호. 합계 행 = 세율구분 행 합(p37~43). 36 전자신고세액공제는 합산 문장이 없고 상한만 있다(p43)
 SUM_03 = (5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 24, 25, 26, 27, 34, 35, 37)
 TOTAL_ONLY_03 = (20, 21, 28, 29)                       # 합계 행 이외 0(p42~43)
-# 주민세 금액 칸 0(global.md 지방소득세 결정). 31 주민세_세율은 레이아웃 점검값 01000 을 고정값으로 본다(컨트롤러 결정)
+# 주민세 금액 칸 0(global.md 지방소득세 결정). 31 주민세_세율은 아래 FIXED_TOTAL_ONLY 로 본다
 LOCAL_03 = (30, 32, 33)
+# 점검내용이 칸 길이와 같은 숫자열인 N 칸은 그 값이 고정값이다. 다만 이 표의 칸은 합계 행(03 의 Z/00)에만 고정값을
+# 쓰고 나머지 행(세율구분 행, 소계 1/00, Z/98)은 0 이다. 03-31 주민세_세율: p43 「10% (01000) 합계(국내외분:Z,
+# 세율구분:00) 이외 항목에는 '0'으로 채움 →사용안함」, global.md 03-31 결정(홈택스 형식검증으로 확인할 항목)
+FIXED_TOTAL_ONLY = {("03", 31): "p43"}
 LOCAL_ROW_ZERO_03 = (8, 10, 11, 12, 14, 15, 16, 17, 18, 19, 21, 35)   # 지방소득세 행(Z/98) 금액 0(p32)
 E_FILING_CREDIT_CAP = 20000          # 03-36 세율별·소계·합계 최대 20,000원(p43)
 PENSION_CREDIT_CAP = 10000000        # 03-37 소계·합계 최대 1,000만원(p43)
@@ -158,6 +162,11 @@ def _as_int(v):
     if isinstance(v, str) and re.fullmatch(r"-?\d+", v.strip()):
         return int(v.strip())
     return None
+
+
+def _is_total(r):
+    """03 합계 행(국내외분 Z, 세율구분 00)인지."""
+    return r.kind == "03" and (r.t(3), r.t(4)) == ("Z", "00")
 
 
 def _part(items, prefix):
@@ -344,9 +353,14 @@ class _Checker:
                     self.fail(r.where(no) + ": 숫자가 아님")
                 elif x.startswith(b"-") and "양의" in chk:
                     self.fail(r.where(no) + ": 음수가 올 수 없음(양의실수형식점검)")
-                elif re.fullmatch(r"\d+", chk) and len(chk) == f["len"] and x.decode("ascii") != chk:
-                    # 점검내용이 칸 길이와 같은 숫자열이면 고정값이다(03-31 주민세_세율 01000, p43)
-                    self.fail(r.where(no) + ": 고정값 %s 와 다름(레이아웃 점검값)" % chk)
+                elif re.fullmatch(r"\d+", chk) and len(chk) == f["len"]:
+                    basis = FIXED_TOTAL_ONLY.get((r.kind, no))
+                    if basis and not _is_total(r):
+                        if x.strip(b"0"):
+                            self.fail(r.where(no) + ": 합계 행(Z/00) 이외는 0(%s 「합계 이외 항목에는 '0'으로 채움」)" % basis)
+                    elif x.decode("ascii") != chk:
+                        self.fail(r.where(no) + ": 고정값 %s 와 다름(레이아웃 점검값%s)"
+                                  % (chk, ", 합계 행, %s" % basis if basis else ""))
                 continue
             problem = _ksx_problem(x)
             if problem:

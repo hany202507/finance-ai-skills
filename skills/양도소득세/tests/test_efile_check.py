@@ -128,7 +128,7 @@ BASIC = {"주소_법정동코드": "1144010200", "주소_특수지코드": "0", 
          "내외국인여부": "Y", "거주구분": "N", "거주지국코드": "KR", "거주지국명": "한국", "국적코드": "KR"}
 RATE = {"양도소득금액": 155893334, "양도소득기본공제": 2500000, "과세표준": 153393334, "산출세액": 38349466,
         "전자신고세액공제": 20000, "자진납부할세액": 38329466}
-LOCAL_RATE = {"주민세_세율": 10}          # 03-31 은 모든 행에서 01000(레이아웃 점검값, 컨트롤러 결정)
+TOTAL_LOCAL_RATE = {"주민세_세율": 10}    # 03-31 은 합계 행(Z/00)만 01000, 나머지 행은 0(p43, global.md 03-31 결정)
 BUYER_REC = {"일련번호": "000001", "양수인_주민사업자구분": "1", "양수인_내외국인_구분코드": "1",
              "양수인_주민등록번호": BUYER, "양수인_성명": "이합성", "양수인_지분(분자)": 1, "양수인_지분(분모)": 1,
              "양수인_양도자와의관계": "ZA"}
@@ -161,8 +161,8 @@ def _s1_lines():
                        "사업자등록번호": biz, "지급일자": day, "지급금액": amt, "증빙종류코드": proof})
            for i, (c, who, biz, day, amt, proof) in enumerate(EXPENSES, 1)]
     return [_rec("01", HEADER), _rec("02", BASIC),
-            _rec("03", dict(RATE, 국내외분="1", 세율구분="10", **LOCAL_RATE)),
-            _rec("03", dict(RATE, 국내외분="Z", 세율구분="00", 자진납부세액=38329466, **LOCAL_RATE)),
+            _rec("03", dict(RATE, 국내외분="1", 세율구분="10")),
+            _rec("03", dict(RATE, 국내외분="Z", 세율구분="00", 자진납부세액=38329466, **TOTAL_LOCAL_RATE)),
             _rec("04", BUYER_REC), _rec("05", ASSET)] + exp
 
 
@@ -217,8 +217,8 @@ def test_file_without_expense_detail_passes(tmp_path):
                  **{"1세대1주택비과세_보유기간": "ZZ", "1세대1주택_비과세_거주기간": "ZZ"})
     rate = {"양도소득금액": 100000000, "양도소득기본공제": 2500000, "과세표준": 97500000, "산출세액": 19710000,
             "전자신고세액공제": 20000, "자진납부할세액": 19690000}
-    lines = [_rec("01", HEADER), _rec("02", BASIC), _rec("03", dict(rate, 국내외분="1", 세율구분="10", **LOCAL_RATE)),
-             _rec("03", dict(rate, 국내외분="Z", 세율구분="00", 자진납부세액=19690000, **LOCAL_RATE)),
+    lines = [_rec("01", HEADER), _rec("02", BASIC), _rec("03", dict(rate, 국내외분="1", 세율구분="10")),
+             _rec("03", dict(rate, 국내외분="Z", 세율구분="00", 자진납부세액=19690000, **TOTAL_LOCAL_RATE)),
              _rec("04", BUYER_REC), _rec("05", asset)]
     assert _check(tmp_path, lines) == []
 
@@ -406,14 +406,36 @@ def test_duplicate_basic_record(tmp_path):
     assert _has(_check(tmp_path, lines), "02", "한 줄")
 
 
-@pytest.mark.parametrize("nth", [0, 1])
-def test_local_tax_rate_is_fixed_01000(tmp_path, nth):
-    # 03-31 주민세_세율은 레이아웃 점검값 01000 이 고정값이다. 00000 이면 실패, 01000(픽스처)이면 통과
-    f = _field("03", "주민세_세율")
+def _with_extra_rate_rows():
+    """픽스처에 국내 소계(1/00)와 지방소득세(Z/98) 행을 더한 줄들. 둘 다 31 = 0 이다."""
     lines = _lines()
-    assert all(x[f["start"] - 1:f["end"]] == b"01000" for x in lines if x[:2] == b"03")
-    msgs = _check(tmp_path, _put(lines, "03", "주민세_세율", 0, nth=nth))
-    assert _has(msgs, "%d줄(03) 31 주민세_세율" % (3 + nth), "01000")
+    lines.insert(2, _rec("03", dict(RATE, 국내외분="1", 세율구분="00")))
+    lines.insert(5, _rec("03", {"국내외분": "Z", "세율구분": "98"}))
+    return lines
+
+
+def test_local_tax_rate_fixture_and_extra_rows_pass(tmp_path):
+    f = _field("03", "주민세_세율")
+    rates = {x[9:12]: x[f["start"] - 1:f["end"]] for x in _lines() if x[:2] == b"03"}
+    assert rates == {b"110": b"00000", b"Z00": b"01000"}
+    assert _check(tmp_path, _with_extra_rate_rows()) == []
+
+
+@pytest.mark.parametrize("row,line,value,ok", [
+    (0, 3, 0, True), (0, 3, 10, False),          # 세율구분 행 1/10: 00000 통과, 01000 실패
+    (1, 4, 10, True), (1, 4, 0, False),          # 합계 행 Z/00: 01000 통과, 00000 실패
+])
+def test_local_tax_rate_by_row(tmp_path, row, line, value, ok):
+    msgs = _check(tmp_path, _put(_lines(), "03", "주민세_세율", value, nth=row))
+    assert (msgs == []) == ok
+    if not ok:
+        assert _has(msgs, "%d줄(03) 31 주민세_세율" % line, "p43")
+
+
+@pytest.mark.parametrize("row,line", [(0, 3), (3, 6)])      # 소계 1/00(3줄), Z/98(6줄)
+def test_local_tax_rate_subtotal_and_local_rows_must_be_zero(tmp_path, row, line):
+    msgs = _check(tmp_path, _put(_with_extra_rate_rows(), "03", "주민세_세율", 10, nth=row))
+    assert _has(msgs, "%d줄(03) 31 주민세_세율" % line, "합계 행(Z/00) 이외는 0")
 
 
 @pytest.mark.parametrize("name", ["주민세_소득세자진납부할세액", "주민세_산출세액", "주민세_자진납부세액"])
