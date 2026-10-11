@@ -304,28 +304,32 @@ class _Builder:
         return sold
 
     def check_deadline(self, kind, rows, made):
-        """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한의 끝이 토요일·일요일이면 다음 월요일까지로 본다.
-        공휴일 표가 없어 공휴일·대체공휴일·노동절은 옮기지 못한다(소득세법 제105조①, 제110조①, 국세기본법 제5조①)."""
+        """작성일이 신고기한을 지났으면 기한후신고라 Unsupported. 기한이 토요일·일요일·공휴일·대체공휴일·노동절이면 그 다음 날로
+        옮긴 기한으로 본다(dates.filing_deadline, 소득세법 제105조①, 제110조①, 국세기본법 제5조①). 문장에는 건너뛴 날을
+        그대로 적고, 기한이 끝나는 해가 공휴일 표에 없으면 그 해의 연휴와 대체공휴일을 모른다고 적는다."""
         due = []
         for r in rows:
             base = self.deadline_base(r)
             if base is not None:
-                due.append(dates.filing_deadline(kind, base, self.rs) + (r["id"],))
+                due.append((dates.filing_deadline(kind, base, self.rs), r["id"]))
         if not due:
             return
-        nominal, adjusted, aid = min(due, key=lambda x: x[1])
+        deadline, aid = min(due, key=lambda x: x[0][1])
+        nominal, adjusted = deadline
+        skipped = dates.skipped_text(deadline)
         if made > adjusted:
-            raise Unsupported(
-                "작성일 %s 이 자산 %s 의 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 예정신고를 하지 "
-                "않은 확정신고 정기만 다룬다). 기한의 끝이 공휴일·대체공휴일·노동절이면 그 다음날까지인데 이 도구는 공휴일을 알지 못한다. "
-                "그런 경우라면 기한 안일 수 있으니 달력으로 확인한다%s"
-                % (made.isoformat(), aid, adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()],
-                   "" if nominal == adjusted else "(기한 말일 %s 이 %s요일이라 다음 월요일로 보았다)"
-                   % (nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()])), "없음")
+            text = ("작성일 %s 이 자산 %s 의 신고기한 %s(%s요일)을 지났다. 기한후신고는 이 도구의 신고 범위가 아니다(예정신고 정기와 "
+                    "예정신고를 하지 않은 확정신고 정기만 다룬다)"
+                    % (made.isoformat(), aid, adjusted.isoformat(), dates.WEEKDAY_KO[adjusted.weekday()]))
+            if skipped:
+                text += ". 기한 말일은 %s 이고 건너뛴 날은 %s 이다" % (nominal.isoformat(), skipped)
+            if not deadline.공휴일표:
+                text += (". 기한이 끝나는 해가 공휴일 표에 없어 그 해의 설날·추석 연휴, 대체공휴일, 선거일, 임시공휴일은 알지 못한다. "
+                         "기한이 그런 날이면 기한 안일 수 있으니 달력으로 확인한다")
+            raise Unsupported(text, "없음")
         if made > nominal:
-            self.note("신고기한 말일 %s 이 %s요일이라 다음 월요일 %s 까지로 보고 정기신고로 만들었다. 작성일 %s 은 말일 다음 날부터 그 "
-                      "월요일 사이다. 월요일이 공휴일이어도 기한 안이다"
-                      % (nominal.isoformat(), dates.WEEKDAY_KO[nominal.weekday()], adjusted.isoformat(), made.isoformat()))
+            self.note("신고기한 말일 %s 뒤의 작성일 %s 을 정기신고로 만들었다. 신고기한을 %s 까지로 보았고 건너뛴 날은 %s 이다"
+                      % (nominal.isoformat(), made.isoformat(), adjusted.isoformat(), skipped))
 
     # ------------------------------------------------------------ 신고인·양수인
 
@@ -667,7 +671,8 @@ class _Builder:
 
     @staticmethod
     def nat_column(income, deduct, base, rate, tax, credit, inst=0, pen=(0, 0)):
-        """본지 한 열. pen 은 (무신고가산세, 납부지연가산세). ⑱ 납부할 세액 = ⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰."""
+        """본지 한 열. pen 은 (무신고가산세, 납부지연가산세). ⑱ 납부할 세액 = ⑩-⑪-⑫-⑬-⑭-⑮+⑯-⑰.
+        세율구분 열의 ⑱ 은 전자신고 03 행의 자진납부할세액과 같은 값이다(합산 비교세액이 이기면 blank_payment 가 비운다)."""
         nonfiling, delay = pen
         due = tax - credit + nonfiling + delay
         return {"양도소득금액": income, "기신고양도소득금액": 0, "감면소득금액": 0, "기본공제": deduct, "과세표준": base,
@@ -726,10 +731,13 @@ class _Builder:
         return calc.floor(Decimal(due) * self.rs.value("분납.상한율", self.last_sold))
 
     @staticmethod
-    def blank_payment(col, single, keys):
-        """세율구분 열·국내소계의 납부 행. 열이 여럿이면 모두 비우고(국세청 확정신고 작성 사례 09), 하나면 납부할세액까지만
-        적는다(예정신고 작성 사례 03·06·07·08 은 ⑰ 납부할 세액을 열에도 적고 ⑱ 분납·⑲ 납부세액은 합계에만 적었다)."""
-        for k in keys if not single else keys[2:]:
+    def blank_payment(col, write_due, keys):
+        """세율구분 열·국내소계의 납부 행. keys 는 (기신고세액, 납부할세액, 그 뒤의 합계 열 전용 칸).
+
+        합산 비교세액이 이긴 신고서(write_due 거짓)는 모두 비운다. 합계 산출세액이 열의 합과 달라 열마다 납부할 세액을 적을 수 없다
+        (국세청 확정신고 작성 사례 09 하위 1·2·7 은 합계 열에만 적었다). 그 밖에는 ⑰ 기신고세액과 ⑱ 납부할 세액을 열과 소계에도
+        적고(하위 4·5·8, 예정신고 작성 사례 01~08), ⑲ 분납과 ⑳ 납부세액은 합계 열에만 적는다."""
+        for k in keys if not write_due else keys[2:]:
             col[k] = None
         return col
 
@@ -801,9 +809,9 @@ class _Builder:
                 for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기장"):
                     c[k] = None
         for c in list(nat_cols.values()) + [sub_nat]:
-            self.blank_payment(c, single, nat_pay)
+            self.blank_payment(c, not merged_win, nat_pay)
         for c in list(loc_cols.values()) + [sub_loc]:
-            self.blank_payment(c, single, loc_pay)
+            self.blank_payment(c, not local_win, loc_pay)
         zero_nat = self.nat_column(0, 0, 0, "", 0, 0)
         zero_loc = self.local_column(0, "", 0)
         main = {"세율구분": labels, "열": dict([("합계", sum_nat), ("국내소계", sub_nat)]
@@ -816,11 +824,14 @@ class _Builder:
         if done and sum(pen_total):
             self.note("예정신고 무신고가산세 %s원과 납부지연가산세 %s원을 본지 ⑯ 가산세와 ⑱ 납부할 세액에 넣었다(가산세 계 %s원). %s"
                       % (pen_total[0], pen_total[1], sum(pen_total),
-                         "합산 비교 세액이 큰 신고서라 가산세는 합계 열에만 적었다" if merged_win
+                         "합산 비교 세액이 큰 신고서라 가산세와 납부할 세액은 합계 열에만 적었다" if merged_win
                          else "합계 열과 국내분 소계 열, 세율구분 열에 나눠 적었다"))
             if inst:
                 self.note("분납할 세액의 한도는 가산세를 뺀 세액 %s원으로 셌다(%s). 가산세는 신고기한 안에 내는 세액에 넣었다"
                           % (total["산출세액"] - credit, self.articles("판정.분납대상세액", self.last_sold)))
+                # 국세청 작성 사례에 가산세와 분납이 함께 있는 서식이 없다. 금액은 바꾸지 않고 전제를 알린다
+                self.note("납부지연가산세는 납부할 세액 전부를 작성일 %s 에 내는 것으로 셌다. 분납할 세액 %s원은 그 뒤에 내므로 "
+                          "그 세액의 납부지연가산세가 더 붙을 수 있다. 세무 전문가와 확인한다" % (self.made, inst))
             if total["지방소득세"]:
                 self.note("지방소득세 신고서의 가산세는 계산하지 않아 0 으로 두었다. 예정신고를 하지 않은 확정신고에는 지방소득세에도 "
                           "무신고가산세와 납부지연가산세가 붙으므로 지방소득세 신고서의 납부할 세액은 실제보다 적다. 지방소득세는 "

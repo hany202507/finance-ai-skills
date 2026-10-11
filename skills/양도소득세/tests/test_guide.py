@@ -397,7 +397,7 @@ def _permit_facts(permit_date):
 
 def test_deadline_notes_with_january_to_july_dates_reach_input_guide():
     cases = [
-        ("주말 보정", _deadline_rv("S1", "2027-02-01"), "다음 월요일", "2027-01-31"),           # 말일 2027-01-31 일요일
+        ("주말 보정", _deadline_rv("S1", "2027-02-01"), "정기신고로 만들었다", "2027-01-31"),   # 말일 2027-01-31 일요일
         ("허가일 기준", _deadline_rv("S1", "2027-02-01", _permit_facts("2027-01-10")), "허가일(2027-01-10)", "2027-01-10"),
         ("허가일 없음", _deadline_rv("S1", "2030-01-01", _permit_facts(None)), "신고기한을 판정하지 않았다", None),
     ]

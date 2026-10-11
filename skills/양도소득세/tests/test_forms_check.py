@@ -36,9 +36,19 @@ def _pair(name, facts=None, **over):
     return _build(name, facts, **over)
 
 
+_FACTS = {}        # id(엔진 결과) → 사실관계. 확정신고 검산은 사실관계를 받아야 한다(_MEMO 가 결과를 붙들어 id 가 바뀌지 않는다)
+
+
+def _fc(rv, r, **kw):
+    """forms_check.check 를 그 결과를 만든 사실관계와 함께 부른다."""
+    kw.setdefault("facts", _FACTS.get(id(r)))
+    return forms_check.check(rv, r, **kw)
+
+
 def _build(name, facts, **over):
     facts = facts or CASES[name]
     r = engine.calculate(facts, today="2026-10-11")
+    _FACTS[id(r)] = facts
     f = filers.get(name)
     for aid in f["자산"]:
         f["자산"][aid]["법정동코드"] = "1120011400"
@@ -82,6 +92,7 @@ def _joint_half():
     f["자산"]["S1"]["법정동코드"] = "1120011400"
     f["자산"]["S1"]["총면적"] = {"토지": 60.0, "건물": 168.0}
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    _FACTS[id(r)] = facts
     rv = return_values.build(r, facts, filing.load(f))
     assert (rv["부표1"][0]["지분분자"], rv["부표1"][0]["지분분모"], rv["부표1"][0]["양도면적_건물"]) == (1, 2, 84.0)
     return r, rv
@@ -95,6 +106,7 @@ def _exempt():
     facts["자산"][0]["전체취득가액"] = 600000000
     r = engine.calculate(facts, today="2026-10-11")
     assert r["계산"]["자산"][0]["판정"]["전액비과세"]
+    _FACTS[id(r)] = facts
     f = filers.get("S1")
     f["자산"]["S1"]["법정동코드"] = "1120011400"
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
@@ -102,7 +114,7 @@ def _exempt():
 
 
 def _msgs(bad, r):
-    return forms_check.check(bad, r)
+    return _fc(bad, r)
 
 
 def _form_only(msgs):
@@ -115,35 +127,35 @@ def _form_only(msgs):
 def test_clean_values_pass():
     for name in ("A", "S1", "BF", "K"):
         r, rv = _pair(name)
-        assert forms_check.check(rv, r) == [], name
+        assert _fc(rv, r) == [], name
 
 
 def test_transfer_schedule1_to_main_is_checked():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["양도소득금액"] += 1
-    assert any("부표1" in m and "본지" in m for m in forms_check.check(bad, r))
+    assert any("부표1" in m and "본지" in m for m in _fc(bad, r))
 
 
 def test_schedule3_to_schedule1_is_checked():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["부표3"][0]["취득가액계"] -= 1
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
 
 
 def test_payment_formula_is_checked():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["납부할세액"] += 10
-    assert any("⑱" in m for m in forms_check.check(bad, r))
+    assert any("⑱" in m for m in _fc(bad, r))
 
 
 def test_local_tax_base_equals_national():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["지방"]["열"]["합계"]["과세표준"] += 1
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
 
 
 def test_engine_totals_are_reconciled():
@@ -151,7 +163,7 @@ def test_engine_totals_are_reconciled():
     bad = copy.deepcopy(rv)
     bad["부표1"][0]["장특공"] -= 1
     bad["부표1"][0]["양도소득금액"] += 1
-    assert any("엔진" in m for m in forms_check.check(bad, r))
+    assert any("엔진" in m for m in _fc(bad, r))
 
 
 # ---- 깨끗한 값이 모두 통과해야 하는 변형 ----
@@ -165,20 +177,20 @@ def test_clean_variants_pass():
         "전액비과세 한 건": _exempt(),
         "S1 공동 1/2 지분": _joint_half(),
     }.items():
-        assert forms_check.check(rv, r) == [], label
+        assert _fc(rv, r) == [], label
 
 
 def test_message_shape():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["양도소득금액"] += 1
-    assert "부표1 ⑱ 합계 155,893,334 ≠ 본지 ④ 155,893,335" in forms_check.check(bad, r)
+    assert "부표1 ⑱ 합계 155,893,334 ≠ 본지 ④ 155,893,335" in _fc(bad, r)
 
 
 # ---- 변조 시험: 칸 하나를 틀리게 하면 그 칸을 짚는다 ----
 
 def _hit(bad, r, *words):
-    got = forms_check.check(bad, r)
+    got = _fc(bad, r)
     assert any(all(w in m for w in words) for m in got), (words, got)
     return got
 
@@ -252,10 +264,19 @@ def test_total_column_payment_cells_must_not_be_blank():
         bad = copy.deepcopy(rv)
         bad["지방"]["열"]["합계"][key] = None
         _hit(bad, r, "지방 합계", no, "비어 있다")
-    # 세율구분 열과 국내소계의 납부 칸은 비워 두는 것이 정상이다
+    # 세율구분 열과 국내소계는 ⑲ 분납·⑳ 납부세액을 비워 두는 것이 정상이다. ⑱ 은 합산 비교세액이 이길 때만 비운다
     r2, rv2 = _bf_two_columns()
-    assert rv2["본지"]["열"]["1-10"]["납부할세액"] is None
-    assert forms_check.check(rv2, r2) == []
+    assert rv2["본지"]["열"]["1-10"]["납부할세액"] is not None and rv2["본지"]["열"]["1-10"]["신고기한내납부"] is None
+    assert _fc(rv2, r2) == []
+    for name, shown in (("1-10", "본지 1-10 열"), ("국내소계", "본지 국내소계")):
+        bad = copy.deepcopy(rv2)
+        bad["본지"]["열"][name]["납부할세액"] = None
+        _hit(bad, r2, shown, "⑱", "비어 있다")
+    bad = copy.deepcopy(rv2)
+    bad["지방"]["열"]["1-15"]["납부할세액"] = None
+    _hit(bad, r2, "지방 1-15 열", "⑮", "비어 있다")
+    r3, rv3 = _bf_merged()                                # 합산 비교세액이 이긴 신고서는 열과 소계를 비운다
+    assert rv3["본지"]["열"]["1-10"]["납부할세액"] is None and _fc(rv3, r3) == []
 
 
 def test_filing_credit_must_equal_rule_on_provisional_return():
@@ -287,7 +308,7 @@ def test_filing_credit_on_final_return_is_zero_without_rule_lookup(monkeypatch):
             raise AssertionError("확정신고는 전자신고세액공제 규칙 키를 부르지 않는다: %s" % key)
         return real(self, key, on)
     monkeypatch.setattr(ruleset.Ruleset, "value", boom)
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
 
 
 def test_filing_credit_is_capped_by_tax_after_credits():
@@ -380,7 +401,7 @@ def test_actual_cost_asset_needs_schedule3():
 def test_converted_cost_asset_has_no_schedule3_and_passes():
     r, rv = _pair("BF")
     assert [x["자산"] for x in rv["부표3"]] == ["B"]
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
 
 
 def test_column_sum_equals_total_column():
@@ -422,7 +443,7 @@ def test_merged_comparison_total_may_differ_from_column_sum():
     r, rv = _bf_merged()
     cols = rv["본지"]["열"]
     assert cols["합계"]["산출세액"] != cols["1-10"]["산출세액"] + cols["1-15"]["산출세액"]
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
     # 비교세액은 엔진과 맞아야 한다
     bad = copy.deepcopy(rv)
     bad["본지"]["열"]["합계"]["산출세액"] += 1
@@ -443,7 +464,7 @@ def test_blank_columns_are_not_summed():
     r, rv = _bf_merged()
     cols = rv["본지"]["열"]
     assert cols["1-10"]["납부할세액"] is None and cols["합계"]["납부할세액"]
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
 
 
 def test_column_label_mismatch():
@@ -506,10 +527,10 @@ def test_engine_column_and_total_amounts():
 def test_exempt_asset_rows():
     r, rv = _exempt()
     assert rv["부표1"][0]["양도차익"] is None and rv["본지"]["열"]["합계"]["산출세액"] == 0
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
     bad = copy.deepcopy(rv)
     bad["부표1"][0]["양도소득금액"] = 1
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
 
 
 def test_form_codes_match_engine():
@@ -533,7 +554,7 @@ def test_share_and_area_follow_the_engine():
     _hit(bad, r, "부표1", "⑦ 양도면적", "건물")
     bad = copy.deepcopy(rv)
     bad["부표1"][0]["양도면적_토지"] = 30.0004             # 소수 셋째 자리 아래 차이는 같게 본다
-    assert forms_check.check(bad, r) == []
+    assert _fc(bad, r) == []
 
 
 def test_schedule3_row_name_and_label_notation():
@@ -582,7 +603,7 @@ def test_messages_never_carry_personal_values():
     bad["본지"]["열"]["합계"]["양도소득금액"] += 1
     bad["부표3"][0]["취득가액계"] -= 1
     bad["부표1"][0]["취득일"] = "2018-03-16"
-    text = "\n".join(forms_check.check(bad, r))
+    text = "\n".join(_fc(bad, r))
     assert text
     for s in secrets:
         assert s and s not in text
@@ -621,7 +642,7 @@ def test_every_integer_cell_is_checked(label, make, monkeypatch):
         return loaded[rules_dir]
     monkeypatch.setattr(ruleset, "load", load_once)
     r, rv = make()
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
     missed = []
     for sec in ("본지", "부표1", "부표1합계", "부표3", "지방"):
         for path in _int_cells(rv[sec]):
@@ -632,7 +653,7 @@ def test_every_integer_cell_is_checked(label, make, monkeypatch):
             for k in path[:-1]:
                 node = node[k]
             node[path[-1]] += 1
-            if not forms_check.check(bad, r):
+            if not _fc(bad, r):
                 missed.append((sec,) + path)
     assert missed == [], label
 
@@ -646,6 +667,7 @@ def _synthetic(name, kind="확정"):
                      [filers.buyer(i, serial=str(34567 + k)) for k, i in enumerate(ids)])
     f["신고인"]["주소"]["법정동코드"] = "1144010200"
     r = engine.calculate(facts, today="2026-10-11")
+    _FACTS[id(r)] = facts
     if r["상태"] != "완료":
         return r, None
     return r, return_values.build(r, facts, filing.load(f))
@@ -657,7 +679,7 @@ def test_every_finished_case_passes():
         r, rv = _synthetic(name)
         if rv is None:
             continue
-        assert forms_check.check(rv, r) == [], name
+        assert _fc(rv, r) == [], name
         done += 1
     assert done >= 15                                    # 전액비과세·단기·중과·미등기·두 열 사례를 포함한다
 
@@ -672,7 +694,7 @@ def test_messages_follow_the_writing_rules():
     bad["부표3"][0]["취득가액계"] -= 1
     bad["지방"]["열"]["합계"]["산출세액"] += 1
     bad["신고인"]["성명"] = ""
-    msgs = forms_check.check(bad, r)
+    msgs = _fc(bad, r)
     assert len(msgs) >= 5
     for m in msgs:
         assert chr(0x2014) not in m and not m.rstrip().endswith("?"), m
@@ -683,7 +705,7 @@ def test_messages_follow_the_writing_rules():
 
 def test_unfinished_result_is_reported():
     r, rv = _pair("S1")
-    got = forms_check.check(rv, dict(r, 상태="질문", 계산=None))
+    got = _fc(rv, dict(r, 상태="질문", 계산=None))
     assert got and any("엔진" in m for m in got)
 
 
@@ -691,13 +713,13 @@ def test_missing_section_is_reported_not_raised():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     del bad["본지"]["열"]["합계"]
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
     bad = copy.deepcopy(rv)
     del bad["지방"]
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
     bad = copy.deepcopy(rv)
     del bad["부표3"]
-    assert forms_check.check(bad, r)
+    assert _fc(bad, r)
 
 
 def test_does_not_import_generator_or_renderer():
@@ -738,7 +760,7 @@ def test_efile_section_tax_lowered_in_every_row_is_caught(tmp_path):
         x["자진납부할세액"] -= 5000000
         if (x["국내외분"], x["세율구분"]) == ("Z", "00"):
             x["자진납부세액"] -= 5000000
-    got = forms_check.check(bad, r)
+    got = _fc(bad, r)
     text = "\n".join(got)
     assert got and all("전자신고" in m for m in got), got
     for word in ("합계 행", "산출세액 33,349,466", "본지 합계 ⑩", "자진납부할세액 33,329,466", "본지 합계 ⑱",
@@ -785,7 +807,7 @@ def test_efile_section_when_merged_tax_wins_rate_rows_sum_to_total():
     main = rv["본지"]["열"]
     assert len(rows) == 2 and sum(x["산출세액"] for x in rows) == main["합계"]["산출세액"]
     assert any(x["산출세액"] != main["%s-%s" % (x["국내외분"], x["세율구분"])]["산출세액"] for x in rows)
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
     bad = copy.deepcopy(rv)
     [x for k, x in _rate_rows(bad).items() if k[1] != "00"][0]["산출세액"] -= 1000
     _hit(bad, r, "전자신고", "세율구분 행 산출세액 합", "본지 합계 ⑩")
@@ -809,7 +831,7 @@ def test_efile_section_fully_exempt_asset_has_zero_amounts():
     """전액 비과세 자산은 부표1 의 취득가액, 기타 필요경비, 양도차익이 비어 있다. 계산명세의 같은 칸은 0 이어야 한다."""
     r, rv = _exempt()
     assert rv["부표1"][0]["취득가액"] is None and rv["전자신고"]["계산명세"][0]["거래금액_취득가액"] == 0
-    assert forms_check.check(rv, r) == []
+    assert _fc(rv, r) == []
     bad = copy.deepcopy(rv)
     bad["전자신고"]["계산명세"][0]["거래금액_취득가액"] = 600000000
     _hit(bad, r, "전자신고", "계산명세 S1", "거래금액_취득가액")
@@ -819,10 +841,10 @@ def test_efile_section_missing_is_reported_not_raised():
     r, rv = _pair("S1")
     bad = copy.deepcopy(rv)
     del bad["전자신고"]
-    assert any("전자신고" in m for m in forms_check.check(bad, r))
+    assert any("전자신고" in m for m in _fc(bad, r))
     bad = copy.deepcopy(rv)
     del _rate_rows(bad)[("Z", "00")]["산출세액"]
-    assert any("전자신고" in m for m in forms_check.check(bad, r))
+    assert any("전자신고" in m for m in _fc(bad, r))
 
 
 def test_efile_section_messages_carry_no_personal_values():
@@ -831,7 +853,7 @@ def test_efile_section_messages_carry_no_personal_values():
     for x in bad["전자신고"]["세율별"]:
         x["산출세액"] -= 1
     bad["전자신고"]["계산명세"][0]["거래금액_양도가액"] += 1
-    text = "\n".join(forms_check.check(bad, r))
+    text = "\n".join(_fc(bad, r))
     assert text and "성수동" not in text and "김합성" not in text and "최합성" not in text
     assert chr(0x2014) not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
 
@@ -870,10 +892,10 @@ def _bump_penalty(rv, col, key, by):
 def test_penalty_cells_are_recalculated():
     r, rv = _pair("BF")
     assert rv["본지"]["열"]["합계"]["가산세"] == 25483080
-    assert forms_check.check(rv, r, facts=CASES["BF"]) == []
+    assert _fc(rv, r, facts=CASES["BF"]) == []
     for col, shown in (("합계", "본지 합계"), ("국내소계", "본지 국내소계"), ("1-10", "본지 1-10 열")):
         for key, name, want in (("가산세_신고", "무(과소)신고", "20,627,400"), ("가산세_납부", "납부지연", "4,855,680")):
-            msgs = forms_check.check(_bump_penalty(rv, col, key, 10), r, facts=CASES["BF"])
+            msgs = _fc(_bump_penalty(rv, col, key, 10), r, facts=CASES["BF"])
             hit = [m for m in msgs if shown in m and "⑯" in m and name in m and "다시 계산" in m and want in m]
             assert hit, (col, key, msgs)
     bad = _bump_penalty(rv, "합계", "가산세_기장", 1000)
@@ -898,7 +920,7 @@ def test_penalty_lowered_in_every_place_is_still_caught():
         if x["자진납부세액"]:
             x["자진납부세액"] -= 20627400
     bad["가산세"].update(무신고=0, 계=4855680)
-    msgs = forms_check.check(bad, r, facts=CASES["BF"])
+    msgs = _fc(bad, r, facts=CASES["BF"])
     assert any("본지 합계" in m and "⑯" in m and "무(과소)신고" in m and "20,627,400" in m for m in msgs), msgs
     assert any(m.startswith("전자신고") and "가산세-신고불성실" in m and "20,627,400" in m for m in msgs), msgs
     assert any("가산세 절" in m and "20,627,400" in m for m in msgs), msgs
@@ -914,11 +936,11 @@ def test_penalty_in_efile_rows_is_recalculated():
             x[key] += 10
             x["가산세-계"] += 10
             x["자진납부할세액"] += 10
-            msgs = forms_check.check(bad, r, facts=CASES["BF"])
+            msgs = _fc(bad, r, facts=CASES["BF"])
             assert any(m.startswith("전자신고 세율별 " + shown) and key in m for m in msgs), (shown, key, msgs)
     bad = copy.deepcopy(rv)
     _rate_rows(bad)[("1", "10")]["가산세-기장불성실등"] = 5
-    assert any("가산세-기장불성실등" in m for m in forms_check.check(bad, r, facts=CASES["BF"]))
+    assert any("가산세-기장불성실등" in m for m in _fc(bad, r, facts=CASES["BF"]))
 
 
 def test_penalty_recalculation_works_without_the_penalty_module(monkeypatch):
@@ -929,8 +951,8 @@ def test_penalty_recalculation_works_without_the_penalty_module(monkeypatch):
         raise AssertionError("서식 검산은 penalty 를 부르지 않는다")
     for name in ("final_return", "cases", "amounts", "days"):
         monkeypatch.setattr(penalty, name, boom)
-    assert forms_check.check(rv, r, facts=CASES["BF"]) == []
-    assert forms_check.check(_bump_penalty(rv, "합계", "가산세_납부", 10), r, facts=CASES["BF"])
+    assert _fc(rv, r, facts=CASES["BF"]) == []
+    assert _fc(_bump_penalty(rv, "합계", "가산세_납부", 10), r, facts=CASES["BF"])
 
 
 def test_penalty_two_cases_two_columns_from_answer_key():
@@ -938,12 +960,13 @@ def test_penalty_two_cases_two_columns_from_answer_key():
     from answer_keys import KEYS
     k = KEYS["09-8"]
     r = engine.calculate(copy.deepcopy(k["facts"]), today="2026-10-11")
+    _FACTS[id(r)] = k["facts"]
     rv = return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
-    assert forms_check.check(rv, r, facts=k["facts"]) == []
+    assert _fc(rv, r, facts=k["facts"]) == []
     for col, key, name, want in (("1-10", "가산세_신고", "무(과소)신고", "733,556"), ("1-10", "가산세_납부", "납부지연", "292,100"),
                                  ("1-20", "가산세_신고", "무(과소)신고", "60,313"), ("1-20", "가산세_납부", "납부지연", "19,900"),
                                  ("합계", "가산세_신고", "무(과소)신고", "793,869"), ("합계", "가산세_납부", "납부지연", "312,000")):
-        msgs = forms_check.check(_bump_penalty(rv, col, key, 1), r, facts=k["facts"])
+        msgs = _fc(_bump_penalty(rv, col, key, 1), r, facts=k["facts"])
         shown = "본지 %s" % (col if col == "합계" else col + " 열")
         assert any(shown in m and "⑯" in m and name in m and want in m for m in msgs), (col, key, msgs)
     # 열의 가산세를 비워 두면 합 검사가 건너뛰므로 따로 잡는다
@@ -959,14 +982,14 @@ def test_penalty_on_preliminary_return_must_be_zero():
     _hit(bad, r, "본지 합계", "⑯", "예정신고")
     bad = copy.deepcopy(rv)
     _rate_rows(bad)[("Z", "00")]["가산세-납부불성실"] = 7
-    assert any("가산세-납부불성실" in m for m in forms_check.check(bad, r))
+    assert any("가산세-납부불성실" in m for m in _fc(bad, r))
 
 
 def test_penalty_that_cannot_be_determined_must_be_zero_and_flagged():
     """한 건 안에서 세율이 다른 자산의 합산 비교세액이 이기면 다시 계산할 수 없다. 가산세 칸은 0 이어야 하고,
     신고값이 「가산세」 절에 계산하지 못했다고 적어야 한다(진입점이 그 표시로 신고서를 만들지 않는다)."""
     r, rv = _bf_merged()
-    assert rv["가산세"]["계산"] is False and forms_check.check(rv, r) == []
+    assert rv["가산세"]["계산"] is False and _fc(rv, r) == []
     bad = _bump_penalty(rv, "합계", "가산세_신고", 1000)
     _hit(bad, r, "본지 합계", "⑯", "정할 수 없")
     bad = copy.deepcopy(rv)
@@ -991,15 +1014,15 @@ def test_penalty_merged_comparison_total_column_only():
     r, rv = _pair("BF", facts)
     assert r["계산"]["합계"]["합산비교세액"] > r["계산"]["합계"]["호별합산세액"]
     assert rv["본지"]["열"]["1-10"]["가산세"] is None and rv["본지"]["열"]["합계"]["가산세"] == 36102670
-    assert forms_check.check(rv, r, facts=facts) == []
-    msgs = forms_check.check(_bump_penalty(rv, "합계", "가산세_납부", 10), r, facts=facts)
+    assert _fc(rv, r, facts=facts) == []
+    msgs = _fc(_bump_penalty(rv, "합계", "가산세_납부", 10), r, facts=facts)
     assert any("본지 합계" in m and "납부지연" in m and "8,227,470" in m for m in msgs), msgs
     bad = copy.deepcopy(rv)
     x = _rate_rows(bad)[("1", "15")]
     x["가산세-납부불성실"] += 10
     x["가산세-계"] += 10
     x["자진납부할세액"] += 10
-    msgs = forms_check.check(bad, r, facts=facts)
+    msgs = _fc(bad, r, facts=facts)
     assert any(m.startswith("전자신고 세율별 1-15 행") and "가산세-납부불성실" in m and "7,235,220" in m for m in msgs), msgs
 
 
@@ -1010,8 +1033,18 @@ def test_penalty_permit_date_comes_from_facts():
     facts["자산"][1].update(토지거래허가대상="예", 토지거래허가={"신청일": "2026-10-01", "허가일": "2026-12-10"})
     r, rv = _pair("BF", facts)
     assert len(rv["가산세"]["건"]) == 2
-    assert forms_check.check(rv, r, facts=facts) == []
-    assert any("⑯" in m for m in forms_check.check(rv, r))          # 사실관계가 없으면 양도일 기준으로 세어 값이 다르다
+    assert _fc(rv, r, facts=facts) == []
+    without = dict(facts, 자산=[dict(a, 토지거래허가대상="아니오") for a in facts["자산"]])
+    assert any("⑯" in m for m in _fc(rv, r, facts=without))            # 허가일을 보지 않으면 양도일 기준이라 값이 다르다
+
+
+def test_final_return_check_needs_facts():
+    """확정신고 검산을 사실관계 없이 부르면 한 문장으로 실패한다(가산세를 다시 계산할 때 허가구역 토지의 허가일을 읽는다)."""
+    r, rv = _pair("BF")
+    msgs = forms_check.check(rv, r)
+    assert len(msgs) == 1 and "확정신고" in msgs[0] and "사실관계" in msgs[0]
+    r, rv = _pair("S1")                                              # 예정신고는 사실관계 없이도 검산한다
+    assert forms_check.check(rv, r) == []
 
 
 def test_penalty_follows_ruleset_values(tmp_path):
@@ -1033,7 +1066,7 @@ def test_penalty_follows_ruleset_values(tmp_path):
         json.dump(data, f, ensure_ascii=False)
     ruleset.write_edition(d, data["확인일"])
     r, rv = _pair("BF")
-    msgs = forms_check.check(rv, r, rules_dir=d, facts=CASES["BF"])
+    msgs = _fc(rv, r, rules_dir=d, facts=CASES["BF"])
     assert any("본지 합계" in m and "무(과소)신고" in m and "61,882,200" in m for m in msgs), msgs
 
 
@@ -1042,7 +1075,7 @@ def test_installment_limit_excludes_penalty():
     r, rv = _pair("BF", 분납신청=True)
     t = rv["본지"]["열"]["합계"]
     assert (t["분납"], t["신고기한내납부"]) == (103137000, 128620080)
-    assert forms_check.check(rv, r, facts=CASES["BF"]) == []
+    assert _fc(rv, r, facts=CASES["BF"]) == []
     bad = copy.deepcopy(rv)
     for c in (bad["본지"]["열"]["합계"],):
         c["분납"] += 1

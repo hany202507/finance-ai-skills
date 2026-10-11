@@ -149,6 +149,21 @@ def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law, toda
     assert "서식 검산" in text and "전자신고 검증" in text and "통과" in text
 
 
+def test_s1_preliminary_efile_bytes_are_pinned(tmp_path):
+    """예정신고 S1 의 전자신고 파일 바이트를 고정한다. 확정신고 가산세, 지방소득세, 서식 열 규칙을 고치는 동안 예정신고의
+    국세 파일이 바뀌지 않았다는 것을 본다. 기대 해시는 통합 브랜치(계획 2b, 공휴일 병합 뒤)가 만든 파일의 sha256 이다.
+    레코드 레이아웃이나 합성 신고인 값, S1 사실관계를 일부러 바꾸면 이 값도 새 파일에서 다시 얻는다."""
+    import hashlib
+    code, out = _main(tmp_path, "S1", s1_filer())
+    assert code == 0
+    with open(out / S1_FILE, "rb") as fh:
+        data = fh.read()
+    assert hashlib.sha256(data).hexdigest() == "d82dff1e2fb66add08a8699c3c8c43a3cc0308581177786b52600992809f85b2"
+    todo = _confirm(out).split("## 사람이 할 일", 1)[1]
+    assert "신고기한 안에 국세와 지방소득세를 납부한다" in todo        # 예정신고의 납부 안내는 그대로다
+    assert "값은 지방소득세_신고서.pdf 에 있다" in todo
+
+
 def test_confirm_document_lists_what_people_do(tmp_path):
     code, out = _main(tmp_path, "S1", s1_filer())
     assert code == 0
@@ -858,6 +873,15 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     assert "가산세는 계산하지 않았다" not in body and "25,483,080원" in body and "따로 계산해 더한다" not in md
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     assert "형식검증" in todo and "위택스" in todo
+    # 지방소득세 신고서는 가산세가 빠진 값이다. 값의 출처로 가리키지 않고 가산세를 더하라고 적는다
+    local = [ln for ln in todo.splitlines() if "위택스" in ln and "지방소득세" in ln][0]
+    assert "가산세가 빠진 값" in local and "가산세를 더" in local and "값은 지방소득세_신고서.pdf 에 있다" not in local
+    alerts = _confirm(out).split("## 알림", 1)[1].split("##")[0]
+    assert "지방소득세 신고서" in alerts and "가산세" in alerts and "실제보다 적다" in alerts
+    # 납부지연가산세를 작성일에 내는 것으로 셌다. 「신고기한 안에 납부」가 아니라 작성일에 납부하라고 적는다
+    pay = [ln for ln in todo.splitlines() if "납부한다" in ln][0]
+    assert "작성일 2027-05-20 에 납부한다" in pay and "작성일을 그 날로 바꿔 다시 만든다" in pay
+    assert "신고기한 안에 국세와 지방소득세를 납부한다" not in todo
     assert DASH not in _confirm(out) and not [ln for ln in _confirm(out).splitlines() if ln.rstrip().endswith("?")]
 
 

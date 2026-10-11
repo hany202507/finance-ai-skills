@@ -557,7 +557,8 @@ def test_merged_comparison_penalty_goes_to_total_column_only():
     assert (t["가산세_신고"], t["가산세_납부"], t["가산세"]) == (27875200, 8227470, 36102670)
     assert t["납부할세액"] == 317220670
     for name in ("국내소계", "1-10", "1-15"):
-        assert all(cols[name][k] is None for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기장", "납부할세액")), name
+        assert all(cols[name][k] is None for k in ("가산세", "가산세_신고", "가산세_납부", "가산세_기장", "기신고세액", "납부할세액",
+                                                   "분납", "신고기한내납부")), name
     rows = {(x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
     # 03 레코드는 합계 행이 세율구분 행의 합이어야 해서 행마다 적는다(규격서 p41 15~17번)
     assert (rows[("1", "10")]["가산세-신고불성실"], rows[("1", "10")]["가산세-납부불성실"]) == (4215200, 992250)
@@ -620,8 +621,8 @@ def _late(name, made, mutate=None, **over):
 
 
 def _weekend_notes(rv):
-    """신고기한의 끝이 토·일이라 옮겼다는 문장. 확정신고 가산세의 예정신고 납부기한 문장(「납부기한으로 보았다」)은 뺀다."""
-    return [m for m in rv["확인사항"] if "다음 월요일" in m and "납부기한으로 보았다" not in m]
+    """신고기한이 토·일·공휴일이라 옮긴 기한 안의 작성일을 정기신고로 만들었다는 문장."""
+    return [m for m in rv["확인사항"] if "정기신고로 만들었다" in m]
 
 
 def test_preliminary_deadline_on_weekday_is_inclusive():
@@ -638,12 +639,14 @@ def test_preliminary_deadline_on_sunday_moves_to_monday():
     assert _weekend_notes(_late("S1", "2027-01-31")) == []            # 명목 기한 이내는 안내가 필요 없다
     rv = _late("S1", "2027-02-01")
     notes = _weekend_notes(rv)
-    assert len(notes) == 1 and "2027-01-31" in notes[0] and "일요일" in notes[0] and "2027-02-01" in notes[0]
+    assert len(notes) == 1 and "2027-01-31(일요일)" in notes[0] and "2027-02-01" in notes[0]
+    assert "다음 월요일" not in notes[0] and "공휴일이어도" not in notes[0]      # 건너뛴 날을 그대로 적는다
     assert rv["본지"]["열"]["합계"]["전자신고공제"] == 20000          # 기한 안이라 정기신고다
     with pytest.raises(return_values.Unsupported) as e:
         _late("S1", "2027-02-02")
     msg = str(e.value)
-    assert "2027-02-01" in msg and "공휴일" in msg and "알지 못" in msg
+    assert "2027-02-01" in msg and "2027-01-31(일요일)" in msg
+    assert "알지 못" not in msg and "다음 월요일" not in msg         # 2027년은 공휴일 표에 있다
 
 
 def test_final_deadline_is_may_31_of_next_year():
@@ -674,6 +677,7 @@ def test_permit_zone_uses_permit_date_when_paid_before_permit():
     # 다음 날 2027-03-01(월)이 3·1절이라 2027-03-02(화)까지다(공휴일 표)
     rv = _late("S1", "2027-03-01", _permit("2026-12-10"))
     assert any("허가일" in m and "2026-12-10" in m for m in rv["확인사항"]) and len(_weekend_notes(rv)) == 1
+    assert "2027-02-28(일요일), 2027-03-01(3·1절)" in _weekend_notes(rv)[0] and "2027-03-02" in _weekend_notes(rv)[0]
     assert _late("S1", "2027-03-02", _permit("2026-12-10"))["신고"]["상세코드"] == "01"      # 3·1절 다음 날은 기한 안이다
     with pytest.raises(return_values.Unsupported) as e:
         _late("S1", "2027-03-03", _permit("2026-12-10"))
@@ -756,3 +760,76 @@ def test_unsupported_names_the_asset_whose_deadline_was_missed():
     with pytest.raises(return_values.Unsupported) as e:
         _late("BF", "2027-06-01", 구분="확정")
     assert "자산 B" in str(e.value) or "자산 F" in str(e.value)
+
+
+# ---- 서식 열 납부 행(계획 2b fix round 1 에서 바꾼 계약) ----
+# 열과 소계의 ⑯·⑰·⑱ 은 합산 비교세액이 이길 때만 비운다. 그 밖에는 열과 소계에도 적는다. ⑲·⑳ 은 합계 열에만 적는다.
+# 국세청 확정신고 작성 사례 09: 하위 8(열 둘, 이기지 않음)은 ⑰ 납부할 세액을 합계·소계·열에 모두 적었고(1859~1866행),
+# 하위 1·2·7(이김)은 합계 열에만, 하위 4·5(열 하나)는 합계와 소계에 적었다.
+
+def _key(name):
+    from answer_keys import KEYS
+    k = KEYS[name]
+    r = engine.calculate(copy.deepcopy(k["facts"]), today="2026-10-11")
+    return r, return_values.build(r, k["facts"], filing.load(copy.deepcopy(k["filer"])))
+
+
+def test_columns_carry_tax_due_when_merged_comparison_does_not_win():
+    """09-8 현행 손계산: 1-10 열 7,335,556 + 1,025,656 = 8,361,212, 1-20 열 603,136 + 80,213 = 683,349, 소계 9,044,561."""
+    r, rv = _key("09-8")
+    cols = rv["본지"]["열"]
+    assert (cols["1-10"]["납부할세액"], cols["1-20"]["납부할세액"], cols["국내소계"]["납부할세액"]) == (8361212, 683349, 9044561)
+    assert cols["합계"]["납부할세액"] == 9044561
+    for name in ("1-10", "1-20", "국내소계"):
+        assert cols[name]["기신고세액"] == 0 and cols[name]["분납"] is None and cols[name]["신고기한내납부"] is None, name
+    rows = {"%s-%s" % (x["국내외분"], x["세율구분"]): x for x in rv["전자신고"]["세율별"]}
+    for label in ("1-10", "1-20"):                         # 열의 ⑱ 은 03 행의 자진납부할세액과 같다
+        assert cols[label]["납부할세액"] == rows[label]["자진납부할세액"], label
+    loc = rv["지방"]["열"]                                    # 지방 서식 열도 같은 규칙. 733,555 + 60,313 = 793,868
+    assert (loc["1-10"]["납부할세액"], loc["1-20"]["납부할세액"], loc["국내소계"]["납부할세액"]) == (733555, 60313, 793868)
+    assert loc["1-10"]["신고기한내납부"] is None and loc["합계"]["신고기한내납부"] == 793868
+
+
+def test_single_column_with_merged_comparison_win_blanks_penalty_and_tax_due_together():
+    """세율구분 열이 하나인데 합산 비교세액이 큰 신고서에 가산세가 있으면 열과 소계의 ⑯ 과 ⑱ 을 함께 비운다
+    (⑯ 만 비우고 ⑱ 에 가산세가 든 값이 남으면 검산의 ⑱ 산식이 어긋난다). 엔진 결과의 합계만 고친 시험용 값이다."""
+    r = engine.calculate(CASES["BF"], today="2026-10-11")
+    r = copy.deepcopy(r)
+    t = r["계산"]["합계"]
+    t["합산비교세액"] = t["산출세액"] = t["호별합산세액"] + 1_000_000
+    f = filers.get("BF")
+    for aid in f["자산"]:
+        f["자산"][aid]["법정동코드"] = "1120011400"
+    rv = return_values.build(r, CASES["BF"], filing.load(f))
+    cols = rv["본지"]["열"]
+    assert [x["표기"] for x in rv["본지"]["세율구분"]] == ["1-10"]
+    for name in ("1-10", "국내소계"):
+        assert cols[name]["가산세"] is None and cols[name]["납부할세액"] is None and cols[name]["기신고세액"] is None, name
+    assert cols["합계"]["가산세"] == 25483080 and cols["합계"]["납부할세액"] == 207274000 + 25483080
+    from yangdo import forms_check
+    assert forms_check.check(rv, r, facts=CASES["BF"]) == []
+
+
+# ---- 분납을 신청한 확정신고: 납부지연가산세는 전액을 작성일에 낸 것으로 셌다는 것을 알린다 ----
+
+def test_installment_on_final_return_notes_delay_penalty_on_the_deferred_part():
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20", 분납신청=True)
+    note = [m for m in rv["확인사항"] if "분납할 세액 103137000원" in m and "납부지연가산세" in m]
+    assert len(note) == 1
+    assert "작성일 2027-05-20" in note[0] and "더 붙을 수 있다" in note[0] and "세무 전문가" in note[0]
+    assert rv["본지"]["열"]["합계"]["분납"] == 103137000 and rv["본지"]["열"]["합계"]["가산세_납부"] == 4855680   # 금액은 그대로
+    r, rv = _rv("BF", 구분="확정", 작성일="2027-05-20")
+    assert not [m for m in rv["확인사항"] if "더 붙을 수 있다" in m]       # 분납하지 않으면 붙이지 않는다
+    r, rv = _rv("S1", 분납신청=True)
+    assert not [m for m in rv["확인사항"] if "더 붙을 수 있다" in m]       # 예정신고에는 가산세가 없다
+
+
+# ---- 공휴일 표를 반영한 기한 문장 ----
+
+def test_deadline_message_in_a_year_the_holiday_table_does_not_cover():
+    """공휴일 표에 없는 해(2028년)에 끝나는 기한을 지난 작성일. 그 해의 연휴와 대체공휴일을 모른다고 적는다.
+    S1 을 2027-11-20 양도로 옮기면 예정신고 기한은 2028-01-31(월요일)이다."""
+    with pytest.raises(return_values.Unsupported) as e:
+        _late("S1", "2028-02-01", _sold_on("2027-11-20"))
+    msg = str(e.value)
+    assert "2028-01-31" in msg and "공휴일 표에 없" in msg and "알지 못" in msg and "달력으로 확인" in msg
