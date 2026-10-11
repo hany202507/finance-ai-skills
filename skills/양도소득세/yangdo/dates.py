@@ -135,10 +135,17 @@ class Holidays:
                       for f in data.get("고정", [])]
         self.days, self.years = {}, set()
         for year, y in (data.get("연도") or {}).items():
-            for x in y.get("날짜", []):
+            # 날짜가 빈 해를 덮는 해로 세면 그 해의 연휴를 아는 것처럼 된다. 확인일과 출처가 없는 해도 받지 않는다
+            lacking = [k for k in ("확인일", "출처", "날짜") if not y.get(k)]
+            if lacking:
+                raise ValueError("공휴일 표의 %s년에 %s 이 없다" % (year, "·".join(lacking)))
+            to_date(y["확인일"])
+            for x in y["날짜"]:
                 d = to_date(x["날짜"])
                 if d.year != int(year):
                     raise ValueError("공휴일 표의 %s년에 다른 해의 날짜가 있다: %s" % (year, d))
+                if d in self.days:
+                    raise ValueError("공휴일 표의 %s년에 같은 날짜가 두 번 있다: %s" % (year, d))
                 self.days[d] = x["이름"]
             self.years.add(int(year))
 
@@ -167,6 +174,10 @@ class Deadline(tuple):
         self.공휴일표 = covered
         self.옮긴이유 = tuple(moved)
         return self
+
+    def __getnewargs__(self):
+        """copy·deepcopy·pickle 이 네 값으로 다시 만들게 한다(없으면 두 값 튜플 하나만 넘겨 TypeError)."""
+        return self[0], self[1], self.공휴일표, self.옮긴이유
 
 
 def filing_deadline(kind, base, rs):

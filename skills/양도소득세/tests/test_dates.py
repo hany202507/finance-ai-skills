@@ -336,9 +336,74 @@ def test_holiday_table_file_has_source_and_check_date_for_every_year(rs):
 
 
 def test_holiday_table_rejects_date_in_wrong_year():
-    bad = {"고정": [], "연도": {"2033": {"확인일": "2026-10-11", "출처": [], "날짜": [{"날짜": "2034-01-01", "이름": "x"}]}}}
-    with pytest.raises(ValueError, match="2033"):
+    src = [{"이름": "시험용", "URL": "https://example.invalid/"}]
+    bad = {"고정": [], "연도": {"2033": {"확인일": "2026-10-11", "출처": src, "날짜": [{"날짜": "2034-01-01", "이름": "x"}]}}}
+    with pytest.raises(ValueError, match="2033년에 다른 해"):
         dates.Holidays(bad)
+    twice = {"고정": [], "연도": {"2033": {"확인일": "2026-10-11", "출처": src,
+                                         "날짜": [{"날짜": "2033-01-31", "이름": "x"}, {"날짜": "2033-01-31", "이름": "y"}]}}}
+    with pytest.raises(ValueError, match="두 번"):
+        dates.Holidays(twice)
+
+
+@pytest.mark.parametrize("year,lacking", [
+    ({}, "확인일·출처·날짜"),                                                              # 빈 해를 덮는 해로 세지 않는다
+    ({"확인일": "2026-10-11", "출처": [{"이름": "시험용", "URL": "https://example.invalid/"}], "날짜": []}, "날짜"),
+    ({"확인일": "2026-10-11", "날짜": [{"날짜": "2030-02-04", "이름": "x"}]}, "출처"),
+    ({"출처": [{"이름": "시험용", "URL": "https://example.invalid/"}], "날짜": [{"날짜": "2030-02-04", "이름": "x"}]}, "확인일"),
+])
+def test_holiday_table_rejects_year_without_dates_source_or_check_date(year, lacking):
+    with pytest.raises(ValueError, match="2030년에 %s 이 없다" % lacking):
+        dates.Holidays({"고정": [], "연도": {"2030": year}})
+
+
+def test_deadline_survives_copy_and_pickle(rs):
+    import copy
+    import pickle
+    got = dates.filing_deadline("예정", "2026-12-10", rs)
+    for clone in (copy.copy(got), copy.deepcopy(got), pickle.loads(pickle.dumps(got)), copy.deepcopy({"기한": got})["기한"]):
+        assert type(clone) is dates.Deadline and clone == got
+        assert clone.공휴일표 is True and clone.옮긴이유 == got.옮긴이유
+
+
+def _real_table():
+    import json
+    import os
+    from yangdo import RULES_DIR
+    with open(os.path.join(RULES_DIR, "공휴일.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_real_table_substitute_holidays_are_weekdays():
+    # 대체공휴일은 공휴일 다음의 첫 번째 비공휴일이라 토요일·일요일일 수 없다. 고정 공휴일과 겹쳐도 안 된다
+    h = dates.Holidays(_real_table())
+    found = 0
+    for year, y in _real_table()["연도"].items():
+        for x in y["날짜"]:
+            if x["이름"].startswith("대체공휴일"):
+                d = _d(x["날짜"])
+                found += 1
+                assert d.weekday() < 5, x
+                assert not any((d.month, d.day) == (m, dd) for m, dd, *_ in h.fixed), x
+    assert found >= 10
+
+
+def test_real_table_lunar_holidays_are_three_consecutive_days():
+    from datetime import timedelta
+    for year, y in _real_table()["연도"].items():
+        for name in ("설날(연휴)", "추석(연휴)"):
+            days = [_d(x["날짜"]) for x in y["날짜"] if x["이름"] == name]
+            assert len(days) == 3 and days[1] - days[0] == days[2] - days[1] == timedelta(days=1), (year, name, days)
+
+
+def test_real_table_has_no_duplicate_dates_and_one_spelling_per_holiday():
+    data = _real_table()
+    days = [x["날짜"] for y in data["연도"].values() for x in y["날짜"]]
+    assert len(days) == len(set(days))
+    names = {x["이름"] for y in data["연도"].values() for x in y["날짜"]} | {f["이름"] for f in data["고정"]}
+    assert len({n.replace(" ", "") for n in names}) == len(names), sorted(names)      # 띄어쓰기만 다른 이름이 없다
+    for year, y in data["연도"].items():
+        assert sum(1 for x in y["날짜"] if x["이름"] == "부처님 오신 날") == 1, year
 
 
 def test_holiday_table_is_part_of_the_edition(rs, tmp_path):
