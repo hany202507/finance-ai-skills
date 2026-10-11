@@ -12,7 +12,8 @@ EDITION_FILES = ["ruleset.json", "코드표.json", "행정구역_대응.json",
                  "고시/조정대상지역.json", "고시/투기과열지구.json", "고시/투기지역.json"]
 # 서식 판·전자신고 규격 판(설계 ① 다섯 묶음). rules 폴더 기준 상대 경로. 판 id 에 들어가지만,
 # rules 폴더만 따로 쓰는 경우(시험의 임시 사본, --rules)가 있어 파일이 없을 때는 대조하지 않는다
-EDITION_EXTRA = ["../forms/서식판.json", "../efile/규격판.json", "../efile/법정동코드.json"]
+EDITION_EXTRA = ["../forms/서식판.json", "../efile/규격판.json", "../efile/법정동코드.json",
+                 "../efile/layout_c116300.json", "../efile/codes_c116300.json"]
 
 
 class RuleError(Exception):
