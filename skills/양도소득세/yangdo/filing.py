@@ -3,7 +3,10 @@
 
 load      형식만 본다. 값이 비어 있으면 통과시키고(질문으로 돌린다), 적혀 있는데 틀리면 FilingError 를 낸다.
 questions 비어 있거나 하나로 정하지 못한 값을 문항 목록으로 낸다. 목록이 비면 신고값을 만들 수 있다.
-          F07(필수 구분코드 지출의 지급처 사업자번호)과 F08(매입가액 행의 취득 상대방)은 계산이 끝난 결과를 보고 묻는다.
+          F07(필수 구분코드 지출의 지급처 사업자번호와 지급일)과 F08(매입가액 행의 취득 상대방)은 계산이 끝난 결과를 보고 묻는다.
+          전자신고 파일 검증기가 막는 입력 가운데 신고인 파일과 사실관계로 알 수 있는 것은 여기서 먼저 묻는다. 신고서 PDF 를
+          만든 뒤에야 파일 검증에서 걸리지 않게 하려는 것이다: 0 으로만 된 번지(00), 앞에 0 을 붙인 번지, 시도·시군구 단계의
+          법정동코드, 필수 구분코드 지출의 빠진 지급일.
 
 신고인 JSON 의 인적사항(성명, 주민등록번호, 전화, 주소)은 오류 문장과 질문 내용에 쓰지 않는다. 항목 이름만 적는다.
 법정동코드 찾기는 bjd 모듈(Bjd.lookup, candidates, exists)이 한다. 시험은 가짜 객체를 bjd 인자로 넣는다.
@@ -35,7 +38,11 @@ FIELD_NAMES = ("성명", "주민등록번호", "전화", "내외국인", "거주
 ADDR_NAMES = ("시도", "시군구", "읍면동", "번지", "호")
 BUYER_NAMES = ("구분", "내외국인", "번호", "성명", "지분")
 RRN_WARNING = "의 검증번호가 옛 규칙과 다르다. 2020-10 이후 발급·변경된 번호가 아니면 다시 확인하라"
-경매원인후보 = "0336 임의경매로 인한 매각, 0337 강제경매로 인한 매각, 0302, 0303, 0015 경락, 0021 공매"
+# 등기목적 소유권이전(A1ZZCZ)에 쓰는 경매 쪽 등기원인(규격서 p109~110, efile/codes_c116300.json 등기원인목록). 코드마다 이름을 적는다
+경매원인후보 = ("0336 임의경매로 인한 매각, 0337 강제경매로 인한 매각, 0302 임의경매로 인한 낙찰, 0303 강제경매로 인한 낙찰, "
+          "0015 경락, 0021 공매")
+# 법정동코드 10자리는 시도 2 + 시군구 3 + 읍면동 3 + 리 2 자리다. 읍면동 자리가 000 이면 시도나 시군구 행이다
+_ABOVE_DONG = re.compile(r"[0-9]{5}000[0-9]{2}")
 
 
 def _err(where, msg):
@@ -338,22 +345,28 @@ class _Late:
     그래서 주소가 하나도 없는 신고인만 bjd 모듈 없이 돈다. 코드가 모두 적힌 신고인도 존재 검사 때문에 읽는다.
     """
 
-    def __init__(self, bjd=None):
+    def __init__(self, bjd=None, efile_dir=None):
         self._bjd = bjd
+        self._efile_dir = efile_dir
 
     def get(self):
         if self._bjd is None:
             from yangdo import bjd as _bjd
-            self._bjd = _bjd.load()
+            self._bjd = _bjd.load(self._efile_dir)
         return self._bjd
 
 
 def _resolve(addr, late, on):
-    """(상태, 값). 상태는 ok(코드), no_address, ambiguous(후보 목록), not_found, unknown_code(적은 코드)."""
+    """(상태, 값). 상태는 ok(코드), no_address, ambiguous(후보 목록), not_found, unknown_code(적은 코드),
+    above_dong(적은 코드가 시도나 시군구 단계). 전자신고 파일의 법정동코드 칸(02-3, 05-8)은 읍면동이나 리 단계 코드만 받는다."""
     addr = addr or {}
     given = addr.get("법정동코드")
     if not _blank(given):
-        return ("ok", given) if late.get().exists(given) else ("unknown_code", given)
+        if not late.get().exists(given):
+            return "unknown_code", given
+        if isinstance(given, str) and _ABOVE_DONG.fullmatch(given):
+            return "above_dong", given
+        return "ok", given
     parts = [addr.get(k) for k in ("시도", "시군구", "읍면동")]
     if any(_blank(p) for p in parts):
         return "no_address", None
@@ -366,9 +379,9 @@ def _resolve(addr, late, on):
 
 
 def dong_code(addr, bjd=None, on=None):
-    """주소의 법정동코드 10자리. 적어 둔 코드가 법정동코드표에 있으면 그것, 없으면 시도·시군구·읍면동으로 찾는다.
+    """주소의 법정동코드 10자리. 적어 둔 코드가 법정동코드표에 있는 읍면동(또는 리) 단계 코드면 그것, 적지 않았으면 시도·시군구·읍면동으로 찾는다.
 
-    찾지 못했거나 후보가 여럿이면 None. questions 와 신고값 생성이 같은 방법으로 찾도록 여기 한 곳에 둔다.
+    찾지 못했거나 후보가 여럿이거나 적어 둔 코드가 표에 없거나 시도·시군구 단계면 None. questions 와 신고값 생성이 같은 방법으로 찾도록 여기 한 곳에 둔다.
     """
     state, val = _resolve(addr, _Late(bjd), on)
     return val if state == "ok" else None
@@ -387,9 +400,19 @@ def _share_or_none(v):
         return None
 
 
-def _zero_lot(addr):
-    """번지 0 은 특수지가 9(무번지)일 때만 쓴다. 특수지가 비어 있으면 0(일반 지번)으로 본다."""
-    return addr.get("번지") == "0" and (addr.get("특수지") or "0") != "9"
+def _lot_problem(addr):
+    """번지의 꼴이 전자신고 파일에 쓸 수 없으면 그 까닭(문장), 괜찮으면 None.
+
+    0 으로만 된 번지(0, 00, 000)는 특수지가 9(무번지)일 때만 쓰고(규격서 p30·p48) 「0」 한 글자로 적는다. 특수지가 비어 있으면
+    0(일반 지번)으로 본다. 앞에 0 을 붙인 번지(0123)는 받지 않는다. 숫자가 아닌 번지는 load 가 형식 오류로 막는다."""
+    no = addr.get("번지")
+    if not isinstance(no, str) or not no.startswith("0"):
+        return None
+    if re.fullmatch(r"0+", no):
+        if (addr.get("특수지") or "0") != "9":
+            return "번지가 0 이면 특수지가 9(무번지)여야 합니다. 번지를 확인해 주세요."
+        return None if no == "0" else "무번지(특수지 9)의 번지는 0 한 글자로 적어 주세요."
+    return "번지는 앞에 0 을 붙이지 않고 적어 주세요."
 
 
 def _f01(p, late, on):
@@ -399,11 +422,14 @@ def _f01(p, late, on):
     out = []
     if miss:
         out.append("신고인 본인 정보에서 빠진 것: %s." % ", ".join(miss))
-    if _zero_lot(a):
-        out.append("신고인.주소의 번지가 0 이면 특수지가 9(무번지)여야 합니다. 번지를 확인해 주세요.")
+    lot = _lot_problem(a)
+    if lot:
+        out.append("신고인.주소의 " + lot)
     state, _ = _resolve(a, late, on)      # 주소의 시도·시군구·읍면동이 비어 있으면 위에서 이미 알렸다
     if state == "unknown_code":
         out.append("신고인.주소의 법정동코드가 법정동코드표에 없습니다. 다시 확인해 주세요.")
+    elif state == "above_dong":
+        out.append("신고인.주소의 법정동코드가 시도나 시군구 단계 코드입니다. 읍면동(읍·면 아래 리가 있으면 리)까지 내려간 10자리 코드를 적어 주세요.")
     elif state in ("ambiguous", "not_found"):
         out.append("신고인.주소의 법정동코드를 하나로 정하지 못했습니다. 주소를 더 자세히 적거나 법정동코드 10자리를 직접 적어 주세요.")
     return [_q("F01", None, " ".join(out))] if out else []
@@ -455,8 +481,9 @@ def _f04(f, facts, late, on, skip=()):
         miss = [k for k in ("번지", "호") if _blank((lot or {}).get(k))]
         if miss:
             why.append("지번에서 빠진 것: %s." % ", ".join(miss))
-        if _zero_lot(lot or {}):
-            why.append("번지가 0 이면 특수지가 9(무번지)여야 합니다. 번지를 확인해 주세요.")
+        bad_lot = _lot_problem(lot or {})
+        if bad_lot:
+            why.append(bad_lot)
         cause = (lot or {}).get("등기원인") or {}
         for side in ("취득", "양도"):
             if (a.get(side) or {}).get("원인") == "경매" and _blank(cause.get(side)):
@@ -473,6 +500,8 @@ def _f04(f, facts, late, on, skip=()):
                        % (len(val), ", ".join(val[:10])))
         elif state == "unknown_code":
             why.append("적은 법정동코드가 법정동코드표에 없습니다. 다시 확인해 주세요.")
+        elif state == "above_dong":
+            why.append("적은 법정동코드가 시도나 시군구 단계 코드입니다. 읍면동(읍·면 아래 리가 있으면 리)까지 내려간 10자리 코드를 적어 주세요.")
         if why:
             out.append(_q("F04", aid, " ".join(why)))
     return out
@@ -496,28 +525,49 @@ def _seller_ok(v):
     return isinstance(v, str) and ksx1001_ok(v) and len(v.encode("cp949")) <= 60
 
 
-def _spend(ln):
-    """지출을 「취득부대의 1번째 지출(중개수수료, 2018-03-15)」 로만 가리킨다. 번호는 사실관계 목록의 순서다. 금액·상호·번호는 싣지 않는다."""
+def _spend(ln, dated=True):
+    """지출을 「취득부대의 1번째 지출(중개수수료, 2018-03-15)」 로만 가리킨다. 번호는 사실관계 목록의 순서다. 금액·상호·번호는 싣지 않는다.
+    dated 가 거짓이면 지급일을 읽지 못한 지출이라 적힌 값을 옮기지 않고 「지급일 없음」으로 적는다."""
     it = ln.item
-    return "%s의 %d번째 지출(%s, %s)" % (ln.group, ln.no, it.get("내용") or "내용 없음", it.get("지급일") or "지급일 없음")
+    day = it.get("지급일") if dated and isinstance(it.get("지급일"), str) and it["지급일"].strip() else None
+    return "%s의 %d번째 지출(%s, %s)" % (ln.group, ln.no, it.get("내용") or "내용 없음", day or "지급일 없음")
+
+
+def _paid_on_ok(v):
+    """지출의 지급일이 YYYY-MM-DD 로 읽히는 있는 날짜인가."""
+    if _blank(v):
+        return False
+    try:
+        return to_date(v) is not None
+    except ValueError:
+        return False
 
 
 def _f07(aid, lines, codes):
-    """07 레코드는 필수 구분코드에 지급금액이 있으면 사업자번호가 있어야 한다(규격서 p60). 비었거나 검증번호가 틀린 지출을 모아 묻는다."""
-    blank, wrong = [], []
+    """07 레코드는 필수 구분코드에 지급금액이 있으면 사업자번호와 지급일자가 있어야 한다(규격서 p60).
+    사업자번호가 비었거나 검증번호가 틀린 지출, 지급일이 없거나 읽을 수 없는 지출을 모아 자산마다 한 번에 묻는다."""
+    blank, wrong, undated = [], [], []
     for ln in lines:
         it = ln.item
-        if it is None or not codes[ln.key]["필수"] or not int(it.get("금액") or 0) or biz_ok(it.get("사업자번호")):
+        if it is None or not codes[ln.key]["필수"] or not int(it.get("금액") or 0):
             continue
-        (blank if _blank(it.get("사업자번호")) else wrong).append(_spend(ln))
-    if not (blank or wrong):
+        if not biz_ok(it.get("사업자번호")):
+            (blank if _blank(it.get("사업자번호")) else wrong).append(_spend(ln))
+        if not _paid_on_ok(it.get("지급일")):
+            undated.append(_spend(dated=False, ln=ln))
+    if not (blank or wrong or undated):
         return []
-    text = ["전자신고 07 레코드는 지급금액이 있는 필수 구분코드 지출에 지급처 사업자번호가 있어야 합니다(규격서 p60)."]
+    text = ["전자신고 07 레코드는 지급금액이 있는 필수 구분코드 지출에 지급처 사업자번호와 지급일자가 있어야 합니다(규격서 p60)."]
     if blank:
         text.append("사업자번호가 비어 있는 지출: %s." % ", ".join(blank))
     if wrong:
         text.append("사업자번호의 형식이나 검증번호가 틀린 지출: %s." % ", ".join(wrong))
-    text.append("사실관계의 해당 지출 항목에 사업자번호를 하이픈 없이 숫자 10자리로 적어 주세요.")
+    if undated:
+        text.append("지급일이 없거나 읽을 수 없는 지출: %s." % ", ".join(undated))
+    if blank or wrong:
+        text.append("사실관계의 해당 지출 항목에 사업자번호를 하이픈 없이 숫자 10자리로 적어 주세요.")
+    if undated:
+        text.append("사실관계의 해당 지출 항목 지급일에 YYYY-MM-DD 로 적어 주세요.")
     return [_q("F07", aid, " ".join(text))]
 
 
@@ -533,8 +583,9 @@ def _f08(aid, lines, lot):
     return [_q("F08", aid, head + "신고인 파일의 자산 항목 취득상대방에 한글 완성형 글자로 60바이트(한글 30자) 안에서 적어 주세요.")]
 
 
-def _f07_f08(f, facts, result):
-    """계산이 끝난 결과(상태 완료)가 있을 때만 묻는다. 07 행이 어느 지출에서 생기는지는 취득가액 방법이 정하기 때문이다."""
+def _f07_f08(f, facts, result, efile_dir=None):
+    """계산이 끝난 결과(상태 완료)가 있을 때만 묻는다. 07 행이 어느 지출에서 생기는지는 취득가액 방법이 정하기 때문이다.
+    필수 구분코드는 efile_dir 의 코드표에서 읽는다(신고값을 만들 때 return_values.build 에 주는 폴더와 같아야 한다)."""
     if not isinstance(result, dict) or result.get("상태") != "완료" or not (result.get("계산") or {}).get("자산"):
         return []
     from yangdo import return_values      # return_values 가 이 모듈을 읽으므로 늦게 읽는다
@@ -548,34 +599,37 @@ def _f07_f08(f, facts, result):
             continue
         lines = return_values.expense_lines(a, row["계산"])
         if codes is None and any(ln.item is not None for ln in lines):
-            codes = return_values.load_codes()["필요경비구분"]
+            codes = return_values.load_codes(efile_dir)["필요경비구분"]
         out7 += _f07(aid, lines, codes)
         out8 += _f08(aid, lines, lots.get(aid))
     return out7 + out8
 
 
-def questions(filer, facts, result=None, bjd=None):
+def questions(filer, facts, result=None, bjd=None, efile_dir=None):
     """빠진 신고인 정보를 문항 목록으로. [{"문항": "F01", "자산": None, "내용": "..."}]. 비면 신고값을 만들 수 있다.
 
     filer 는 load 의 결과, facts 는 사실관계(자산 목록을 본다). result 는 engine.calculate 의 결과이고, 상태가 완료일 때만
     F07·F08 을 묻는다(None 이거나 끝나지 않았으면 두 문항은 건너뛴다. 분납 가능 여부는 규칙세트 값이라 신고값 생성이 판정한다).
     bjd 는 시험용 주입 인자이고 없으면 yangdo.bjd.load() 를 처음 쓸 때 읽는다.
+    efile_dir 는 법정동코드 표와 코드표를 읽는 폴더다(없으면 기본 efile 폴더). return_values.build 에 다른 폴더를 줄 때 같은 것을 준다.
     내용에는 인적사항 값을 쓰지 않고 항목 이름만 적는다.
 
     타인이 아닌 양수인(사실관계 매수인관계)은 관계코드를 F02 로, 경매로 취득하거나 양도한 자산은 등기원인을 F04 로 묻는다.
-    번지 0 은 특수지 9 일 때만 받아 F01·F04 로 되묻는다.
-    F07 은 필수 구분코드 필요경비에 지급금액이 있는데 사실관계의 사업자번호(10자리, 검증번호)가 없거나 틀린 자산을, F08 은
+    번지 0 은 특수지 9 일 때만 받아 F01·F04 로 되묻는다(00 처럼 0 으로만 된 번지와 앞에 0 을 붙인 번지도 되묻는다).
+    적어 둔 법정동코드가 시도나 시군구 단계 코드면 F01·F04 로 되묻는다.
+    F07 은 필수 구분코드 필요경비에 지급금액이 있는데 사실관계의 사업자번호(10자리, 검증번호)가 없거나 틀린 자산, 지급일이
+    없거나 YYYY-MM-DD 로 읽을 수 없는 자산을, F08 은
     매입가액 행이 생기는데 자산[id].취득상대방이 없거나 쓸 수 없는 자산을 묻는다. 두 문항이 보는 07 행의 규칙은
     return_values.expense_lines 가 정한다.
     계산이 끝난 결과가 전액 비과세로 판정한 자산은 신고서에 넣지 않으므로 그 자산의 양수인(F02)과 지번(F04)을 묻지 않는다.
     신고인 파일에 그 자산의 양수인이나 지번이 있어도 알리지 않는다. 결과가 없으면 어느 자산이 빠질지 몰라 모든 자산을 묻는다.
     """
-    late = _Late(bjd)
+    late = _Late(bjd, efile_dir)
     on = ((filer.get("신고") or {}).get("작성일")) or None
     skip = _left_out(result)
     assets = {a.get("id"): a for a in (facts or {}).get("자산") or [] if a.get("id") not in skip}
     return (_f01(filer.get("신고인"), late, on) + _f02(filer, assets, skip) + _f03(filer)
-            + _f04(filer, facts, late, on, skip) + _f05(filer) + _f06(filer) + _f07_f08(filer, facts, result))
+            + _f04(filer, facts, late, on, skip) + _f05(filer) + _f06(filer) + _f07_f08(filer, facts, result, efile_dir))
 
 
 def _left_out(result):

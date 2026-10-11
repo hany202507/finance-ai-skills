@@ -843,3 +843,139 @@ def test_wrong_seller_name_is_asked_again_when_questions_get_an_unloaded_filer()
     f["자산"]["S1"]["취득상대방"] = "똠방각하"
     qs = filing.questions(f, CASES["S1"], done("S1"), bjd=FakeBjd())
     assert ids(qs) == [("F08", "S1")] and "쓸 수 없는 글자" in qs[0]["내용"] and "똠방각하" not in qs[0]["내용"]
+
+
+# ---- 전자신고 검증에서만 걸리던 입력을 질문 단계에서 잡는다(계획 2b G6) ----
+# 번지 00, 시도·시군구 단계의 법정동코드, 필수 구분 지출의 지급일 없음은 신고서 PDF 를 만든 뒤 파일 검증에서야 걸렸다.
+
+@pytest.mark.parametrize("lot", ["00", "000", "0000"])
+def test_lot_made_of_zeros_is_treated_as_zero(lot):
+    f = ready()
+    f["자산"]["A"]["번지"] = lot
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "번지가 0 이면 특수지가 9(무번지)여야 합니다" in qs[0]["내용"]
+    f["자산"]["A"]["특수지"] = "9"                         # 무번지도 0 한 글자로 적는다
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "0 한 글자" in qs[0]["내용"]
+    f = ready()
+    f["신고인"]["주소"]["번지"] = lot
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "번지가 0 이면 특수지가 9(무번지)여야 합니다" in qs[0]["내용"]
+    f["신고인"]["주소"]["특수지"] = "9"
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "0 한 글자" in qs[0]["내용"]
+
+
+def test_lot_with_leading_zero_is_asked_again():
+    f = ready()
+    f["자산"]["A"]["번지"] = "0123"
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")] and "앞에 0 을 붙이지 않고" in qs[0]["내용"] and "0123" not in qs[0]["내용"]
+    f["자산"]["A"]["번지"] = "1230"                        # 끝의 0 은 번지의 일부다
+    assert ask(f) == []
+    f["신고인"]["주소"]["번지"] = "01"
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "앞에 0 을 붙이지 않고" in qs[0]["내용"]
+
+
+@pytest.mark.parametrize("code,stage", [("1100000000", "시도"), ("1171000000", "시군구"), ("4111000000", "시군구"),
+                                        ("3611000000", "시도")])
+def test_given_code_above_dong_level_is_asked_again(code, stage):
+    """법정동코드는 시도 2 + 시군구 3 + 읍면동 3 + 리 2 자리다. 읍면동 자리가 000 이면 시도나 시군구 행이라 05-8·02-3 에 쓸 수 없다."""
+    f = ready(A=code)
+    qs = ask(f)
+    assert ids(qs) == [("F04", "A")]
+    assert "시도나 시군구 단계" in qs[0]["내용"] and "읍면동" in qs[0]["내용"] and code not in qs[0]["내용"]
+    f = ready()
+    f["신고인"]["주소"]["법정동코드"] = code
+    qs = ask(f)
+    assert ids(qs) == [("F01", None)] and "시도나 시군구 단계" in qs[0]["내용"]
+    assert filing.dong_code({"법정동코드": code}, FakeBjd()) is None
+
+
+def test_given_code_at_dong_or_ri_level_passes_with_real_table():
+    """진짜 법정동코드 표로: 읍면동 단계(공덕동)와 리 단계(강진읍 아래 리)는 받고, 시군구 단계(마포구)는 되묻는다."""
+    from yangdo import bjd
+    table = bjd.load()
+    ri = next(c for c in sorted(table._names) if c.startswith("12780250") and c[8:] != "00")
+    for code in ("1144010200", ri):
+        assert filing.dong_code({"법정동코드": code}, table) == code
+    assert table.exists("1144000000") and filing.dong_code({"법정동코드": "1144000000"}, table) is None
+    f = ready(A="1144000000")
+    assert ids(filing.questions(filing.load(f), CASES["A"], None, bjd=table)) == [("F04", "A")]
+
+
+def test_f07_asks_for_a_missing_payment_date_of_a_required_code():
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["취득부대"][1]["지급일"] = None          # 법무사비용(11401)은 필수 구분코드다
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    text = qs[0]["내용"]
+    assert "지급일이 없거나 읽을 수 없는 지출: 취득부대의 2번째 지출(법무사비용, 지급일 없음)." in text
+    assert "지급일에 YYYY-MM-DD 로 적어 주세요" in text and "규격서 p60" in text
+    assert "사업자번호가 비어 있는 지출" not in text and "숫자 10자리" not in text      # 사업자번호는 다 맞다
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "2018.03.15", "20180315", "2018-02-30", 20180315])
+def test_f07_asks_when_the_payment_date_is_blank_or_unreadable(bad):
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = bad
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")] and "지급일이 없거나 읽을 수 없는 지출: 양도비의 1번째 지출(중개수수료" in qs[0]["내용"]
+
+
+def test_f07_lists_numbers_and_dates_separately():
+    facts = s1_facts(취득부대=[0])                       # 중개수수료: 사업자번호 빠짐
+    facts["자산"][0]["필요경비"]["자본적지출"][0]["지급일"] = ""     # 발코니확장: 지급일 빠짐
+    qs = ask_done(ready("S1"), facts=facts)
+    assert ids(qs) == [("F07", "S1")]
+    text = qs[0]["내용"]
+    assert "사업자번호가 비어 있는 지출: 취득부대의 1번째 지출(중개수수료, 2018-03-15)." in text
+    assert "지급일이 없거나 읽을 수 없는 지출: 자본적지출의 1번째 지출(발코니확장, 지급일 없음)." in text
+    assert text.index("사업자번호가 비어 있는") < text.index("지급일이 없거나") < text.index("숫자 10자리") < text.index("YYYY-MM-DD")
+
+
+def test_f07_does_not_ask_for_the_date_of_codes_that_do_not_need_it():
+    """필수가 아닌 구분(기타부대비용 11601, 개발부담금 26101)과 지급금액이 없는 지출, 엔진이 뺀 지출은 지급일을 묻지 않는다."""
+    facts = s1_facts()
+    ex = facts["자산"][0]["필요경비"]
+    ex["취득부대"].append({"내용": "인지세", "지급일": None, "금액": 150_000, "증빙종류": "계좌이체", "상대방": "합성은행"})
+    ex["기타"] = [{"내용": "개발부담금", "지급일": "", "금액": 1_000_000, "증빙종류": "계좌이체", "상대방": "합성시청"}]
+    assert ask_done(ready("S1"), facts=facts) == []
+    facts = s1_facts()
+    facts["자산"][0]["필요경비"]["취득부대"][0].update(금액=0, 지급일=None)
+    facts["자산"][0]["필요경비"]["양도비"][0].update(증빙종류="간이영수증", 지급일=None)
+    assert ask_done(ready("S1"), facts=facts) == []
+
+
+def test_auction_cause_candidates_all_carry_their_names():
+    """F04 가 보여 주는 경매 등기원인 후보는 코드마다 코드표(규격서 p109~110)의 이름을 함께 적는다."""
+    import os
+    from yangdo import SKILL_DIR
+    with open(os.path.join(SKILL_DIR, "efile", "codes_c116300.json"), encoding="utf-8") as fh:
+        names = json.load(fh)["등기원인목록"]["A1ZZCZ"]
+    listed = dict(x.strip().split(" ", 1) for x in filing.경매원인후보.split(","))
+    assert sorted(listed) == ["0015", "0021", "0302", "0303", "0336", "0337"]
+    for code, name in listed.items():
+        assert name == names[code]["이름"].replace(chr(0xA0), " "), code
+    facts = facts_with(취득__원인="경매")
+    qs = ask_facts(ready(), facts)
+    assert "0302 임의경매로 인한 낙찰" in qs[0]["내용"] and "0303 강제경매로 인한 낙찰" in qs[0]["내용"]
+
+
+def test_questions_read_the_code_table_of_the_given_efile_dir(tmp_path):
+    """F07 이 보는 필수 구분코드 표는 신고값을 만들 때와 같은 efile 폴더의 것이어야 한다."""
+    import os
+    import shutil
+    from yangdo import SKILL_DIR
+    efile_dir = tmp_path / "efile"
+    shutil.copytree(os.path.join(SKILL_DIR, "efile"), str(efile_dir))
+    path = efile_dir / "codes_c116300.json"
+    codes = json.loads(path.read_text(encoding="utf-8"))
+    codes["필요경비구분"]["취득중개수수료"]["필수"] = False
+    path.write_text(json.dumps(codes, ensure_ascii=False), encoding="utf-8")
+    facts = s1_facts(취득부대=[0])
+    loaded, res = filing.load(ready("S1")), done("S1", facts)
+    assert ids(filing.questions(loaded, facts, res, bjd=FakeBjd())) == [("F07", "S1")]
+    assert filing.questions(loaded, facts, res, bjd=FakeBjd(), efile_dir=str(efile_dir)) == []
+

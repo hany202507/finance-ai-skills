@@ -242,6 +242,7 @@ class _Builder:
         self.lots = filer.get("자산") or {}
         self.notes = []
         self._bjd = None
+        self._dated = None
         self.special = self.codes["세율별특수행"]           # 03 국내 소계·합계 행의 (국내외분, 세율구분)
 
     # ------------------------------------------------------------ 공통
@@ -471,11 +472,29 @@ class _Builder:
                       % (aid, side, cause, where, side))
         return purpose, reg
 
+    def form_writes_date(self, code):
+        """부표3 서식이 그 전자코드 행의 지급일 칸을 받는가. 서식 (1) 에서 그 행의 지급일 칸이 음영이면 적지 않는다
+        (forms/매핑/부표3.json 의 「행」과 「행칸」, 필드목록의 「음영_열」). 필수 구분코드 행은 모두 칸이 열려 있다."""
+        if self._dated is None:
+            m = _read_json(os.path.join(self.forms_dir, "매핑", "부표3.json"))
+            col = next(c["열"] for c in m["행칸"] if c["신고값"] == "지급일")
+            shaded = {}
+            for name in m["필드목록"]:
+                for fld in _read_json(os.path.join(self.forms_dir, "필드목록", name))["fields"]:
+                    shaded[fld["id"]] = bool(fld.get("음영")) or col in (fld.get("음영_열") or [])
+            self._dated = {c: not shaded[fid] for c, fid in m["행"].items()}
+        return self._dated[code]
+
     def schedule3_row(self, key, amount, date="", partner="", evidence=None, biz=""):
+        """부표3 행 하나. 「지급일」은 부표3 서식에 실제로 적는 값이다(서식에서 지급일 칸이 음영인 행은 빈 글자).
+        「_지급일」은 사실관계의 값 그대로이고 07 레코드가 필수 구분코드 행에만 쓴다(규격서 p60). 밑줄 키는 신고값에 싣지 않는다."""
         e = self.codes["필요경비구분"][key]
         ev = (self.codes["증빙종류"].get(evidence) or {}).get("코드") if evidence else None
+        if e["필수"] and not self.form_writes_date(e["전자코드"]):
+            raise ValueError("필요경비 구분 %s 는 07 레코드에 지급일자가 필수인데 부표3 서식 매핑에서 지급일 칸이 음영이다" % e["전자코드"])
         return {"구분코드": e["코드"], "전자코드": e["전자코드"], "구분": e["이름"], "상호": partner or "", "사업자번호": biz or "",
-                "지급일": date or "", "금액": amount, "증빙코드": ev or "", "_필수": e["필수"], "_묶음": e["묶음"]}
+                "지급일": (date or "") if self.form_writes_date(e["전자코드"]) else "", "금액": amount, "증빙코드": ev or "",
+                "_지급일": date or "", "_필수": e["필수"], "_묶음": e["묶음"]}
 
     def biz_no(self, aid, it):
         """필요경비 항목의 사업자번호(사실관계 선택 키, 10자리 숫자). 모양이 틀리면 빈 글자와 확인사항."""
@@ -514,8 +533,9 @@ class _Builder:
         for ln in expense_lines(a, c):
             it = ln.item
             if ln.group == "매입가액":
-                rows.append(self.schedule3_row("매입가액", c["취득가액"] + _int(a.get("감가상각비")), v["취득일"],
-                                               self.seller(aid, self.lots.get(aid))))
+                # 지급일은 주지 않는다. 부표3 서식은 이 행의 지급일 칸이 음영이고 07 레코드도 필수가 아니라 비운다
+                rows.append(self.schedule3_row("매입가액", c["취득가액"] + _int(a.get("감가상각비")),
+                                               partner=self.seller(aid, self.lots.get(aid))))
             elif ln.group == "취득세":
                 rows.append(self.schedule3_row("취득세", _int(ex.get("취득세")), partner=self.tax_office(a)))
                 self.note("%s: 07 레코드 취득세(11201) 행 상호는 취득세 납세지인 부동산 소재지의 시도와 시군구 이름으로 적었다"
@@ -637,7 +657,7 @@ class _Builder:
                 self.note("%s: 07 레코드 상호는 Not Null 인데(규격서 p59~60) %s 행의 거래상대방 상호가 없어 비웠다. "
                           "매입가액 행은 신고인 JSON 자산[id].취득상대방(매도인 성명 또는 상호), 나머지 행은 사실관계 필요경비 상대방에 적는다"
                           % (aid, ", ".join(missing_name)))
-            need_date = [x["전자코드"] for x in rows if x["_필수"] and x["금액"] and not x["지급일"]]
+            need_date = [x["전자코드"] for x in rows if x["_필수"] and x["금액"] and not x["_지급일"]]
             if need_date:
                 self.note("%s: 07 레코드 %s 행은 지급금액이 있으면 지급일자가 필수인데(규격서 p60) 없어 비웠다. "
                           "사실관계 필요경비 항목의 지급일에 적는다" % (aid, ", ".join(need_date)))
@@ -650,7 +670,7 @@ class _Builder:
                 exp_rows.append(self.record("07", {
                     "일련번호": n, "전자코드": x["전자코드"], "상세일련번호": k, "상호": x["상호"],
                     "사업자번호": x["사업자번호"] if must else "",
-                    "지급일자": _ymd(x["지급일"]) if must else "", "지급금액": x["금액"],
+                    "지급일자": _ymd(x["_지급일"]) if must else "", "지급금액": x["금액"],
                     "증빙종류코드": (x["증빙코드"] if must else self.codes["메타"]["증빙_필수아닌행"]["코드"]),
                     "구분코드": x["구분코드"], "자산": aid,
                 }, renames=EXPENSE_RENAMES, extra=("구분코드", "자산")))

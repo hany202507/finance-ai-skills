@@ -192,6 +192,57 @@ def test_expense_business_number_and_counterparty_names():
     assert rv["전자신고"]["필요경비명세"][0]["상호"] == "" and any("11101" in x and "취득상대방" in x for x in rv["확인사항"])
 
 
+def _dated_expenses():
+    """S1 에 필수가 아닌 구분의 지출 둘을 지급일과 함께 더한다.
+    인지세(기타부대비용 11601): 부표3 서식에서 지급일 칸이 열려 있고 07 레코드는 필수가 아니라 비운다.
+    수익자부담금(28101): 부표3 서식에서 지급일 칸이 음영이고 07 레코드도 비운다."""
+    facts = copy.deepcopy(CASES["S1"])
+    ex = facts["자산"][0]["필요경비"]
+    ex["취득부대"].append({"내용": "인지세", "지급일": "2018-03-20", "금액": 150_000, "증빙종류": "계좌이체", "상대방": "합성은행"})
+    ex["기타"] = [{"내용": "수익자부담금", "지급일": "2020-01-10", "금액": 1_000_000, "증빙종류": "계좌이체", "상대방": "합성시청"}]
+    r = engine.calculate(facts, today="2026-10-11")
+    f = filers.get("S1")
+    f["자산"]["S1"]["법정동코드"] = "1120011400"
+    f["신고인"]["주소"]["법정동코드"] = "1144010200"
+    return r, return_values.build(r, facts, filing.load(f))
+
+
+def test_schedule3_payment_date_is_kept_only_where_the_form_writes_it():
+    """신고값 부표3 행의 지급일은 부표3 서식이 실제로 적는 값이다. 서식에서 지급일 칸이 음영인 행(매입가액, 취득세,
+    수익자부담금 등)은 빈 글자다. 07 레코드의 지급일자는 필수 구분코드 행에만 적는다(규격서 p60)."""
+    r, rv = _dated_expenses()
+    rows = {x["전자코드"]: x for x in rv["부표3"][0]["행"]}
+    assert {k: v["지급일"] for k, v in rows.items()} == {
+        "11101": "", "11201": "",                          # 매입가액(취득일을 넣지 않는다), 취득세: 음영
+        "11401": "2018-03-15", "11501": "2018-03-15",      # 법무사비용, 취득 중개수수료: 필수
+        "11601": "2018-03-20",                             # 인지세: 필수는 아니지만 서식 칸이 열려 있다
+        "26001": "2018-04-10", "28101": "",                # 발코니확장: 필수, 수익자부담금: 음영
+        "29001": "2026-11-20"}
+    ex = {x["전자코드"]: x["지급일자"] for x in rv["전자신고"]["필요경비명세"]}
+    assert ex == {"11101": "", "11201": "", "11401": "20180315", "11501": "20180315", "11601": "",
+                  "26001": "20180410", "28101": "", "29001": "20261120"}
+    assert not any(k.startswith("_") for x in rv["부표3"][0]["행"] for k in x)
+
+
+def test_form_guide_and_file_follow_the_payment_date_in_the_values():
+    """서식 계획, 입력 안내서, 부속서류 목록이 신고값의 지급일을 그대로 쓴다. 음영 행의 날짜는 어디에도 나오지 않는다."""
+    from yangdo import forms, guide
+    r, rv = _dated_expenses()
+    cells = {(p["필드"], p["열"]): p["값"] for p in forms.plan(rv)["국세"]["칸"] if p["필드"].startswith("부표3.")}
+    assert cells[("부표3.취득기타", "지급일")] == "2018.03.20"
+    assert cells[("부표3.법무사비용", "지급일")] == "2018.03.15"
+    for fid in ("부표3.매입가액", "부표3.취득세", "부표3.수익자부담금"):
+        assert (fid, "지급일") not in cells, fid
+    md = guide.hometax_input(rv)
+    lines = {ln.split("|")[1].strip(): [c.strip() for c in ln.strip().strip("|").split("|")]
+             for ln in md.splitlines() if ln.startswith("| ") and ln.count("|") == 7}
+    assert lines["기타 부대 비용 - 기타"][-1] == "2018-03-20"
+    paid = [row[-1] for name, row in lines.items() if "수익자부담금" in name]
+    assert paid == ["-"], lines.keys()
+    assert "2020-01-10" not in md and "2020-01-10" not in guide.attachments(rv, None, r)
+    assert "2018-03-20" in md
+
+
 def test_missing_payment_date_is_a_check_item():
     facts = copy.deepcopy(CASES["S1"])
     facts["자산"][0]["필요경비"]["양도비"][0]["지급일"] = None

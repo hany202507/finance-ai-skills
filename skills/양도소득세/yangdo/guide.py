@@ -163,9 +163,9 @@ def _row_table(rows):
         ev = _evidence_name(r["증빙코드"]) if r["증빙코드"] else (NEED_VALUE if must else "")
         name = r["상호"] or NEED_VALUE
         biz = r["사업자번호"] or (NEED_VALUE if must else "")
-        # 매입가액(111) 행은 신고값에 취득일이 들어 있지만 부표3 서식은 이 행의 지급일 칸을 막았고 07 레코드도 비운다.
-        # 신고서와 파일에 적지 않은 값을 안내서가 옮기지 않는다(대신 표 아래 한 줄로 알린다)
-        day = "" if r["구분코드"] == ACQ_EXPENSE_CODE else (r["지급일"] or (NEED_VALUE if must and r["금액"] else ""))
+        # 신고값 행의 지급일은 부표3 서식에 실제로 적는 값이다. 서식에서 지급일 칸이 음영인 행(매입가액, 취득세 등)은
+        # 비어 있고 안내서도 비운다(매입가액 행은 표 아래 한 줄로 알린다)
+        day = r["지급일"] or (NEED_VALUE if must and r["금액"] else "")
         body.append([label, ev, name, biz, _won(r["금액"]), day])
     return _table(["구분", "증빙종류", "거래상대방(상호)", "사업자번호", "지급금액", "지급일자"], body)
 
