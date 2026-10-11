@@ -182,3 +182,39 @@ def test_residence_never_exceeds_union_or_holding_period():
 def test_residence_touching_periods_join():
     y, approx = dates.residence_years([["2014-11-01", "2020-01-01"], ["2020-01-01", "2026-11-15"]], "2014-11-01", "2026-11-15")
     assert (y, approx) == (12, False)
+
+
+# ---- 양도소득세 신고기한(소득세법 제105조①, 제110조①, 국세기본법 제5조①). 규칙 값은 규칙세트에서 읽는다 ----
+
+@pytest.fixture(scope="module")
+def rs():
+    from yangdo import ruleset
+    return ruleset.load()
+
+
+@pytest.mark.parametrize("종류,양도,명목,보정", [
+    ("예정", "2026-01-15", "2026-03-31", "2026-03-31"),      # 화요일 말일
+    ("예정", "2026-08-20", "2026-10-31", "2026-11-02"),      # 토요일 말일은 월요일로
+    ("예정", "2026-11-20", "2027-01-31", "2027-02-01"),      # 일요일 말일은 월요일로
+    ("예정", "2026-12-10", "2027-02-28", "2027-03-01"),      # 12월 양도는 2월 말일(일요일)
+    ("예정", "2027-12-10", "2028-02-29", "2028-02-29"),      # 윤년 2월 말일(화요일)
+    ("예정", "2026-12-31", "2027-02-28", "2027-03-01"),      # 양도일이 말일이어도 같은 달 말일 기준
+    ("확정", "2026-03-10", "2027-05-31", "2027-05-31"),      # 월요일
+    ("확정", "2025-11-10", "2026-05-31", "2026-06-01"),      # 5월 31일이 일요일인 해
+    ("확정", "2030-11-10", "2031-05-31", "2031-06-02"),      # 5월 31일이 토요일인 해
+])
+def test_filing_deadline(rs, 종류, 양도, 명목, 보정):
+    assert dates.filing_deadline(종류, 양도, rs) == (date.fromisoformat(명목), date.fromisoformat(보정))
+
+
+def test_filing_deadline_reads_ruleset_values(rs):
+    class Fake:
+        def value(self, key, on):
+            return {"신고기한.예정.개월": 3, "신고기한.확정.월": 6, "신고기한.확정.일": 30}[key]
+    assert dates.filing_deadline("예정", "2026-01-15", Fake())[0] == date(2026, 4, 30)
+    assert dates.filing_deadline("확정", "2026-01-15", Fake())[0] == date(2027, 6, 30)
+
+
+def test_filing_deadline_rejects_unknown_kind(rs):
+    with pytest.raises(ValueError):
+        dates.filing_deadline("수정", "2026-01-15", rs)

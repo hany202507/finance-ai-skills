@@ -51,7 +51,7 @@ def _label(조, 항="", 공포번호=None):
 def _conv(unit, v):
     if unit == "근거" or v is None:
         return None
-    if unit in ("원", "년"):
+    if unit in ("원", "년", "개월", "월", "일"):
         return int(v)
     if unit == "율":
         return Decimal(str(v))

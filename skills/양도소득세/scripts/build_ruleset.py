@@ -23,7 +23,7 @@ from yangdo import ruleset as R  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 
 BOX = set("│┌┐└┘├┤┬┴┼─|")
-UNITS = {"원", "년", "율", "날짜", "세율표", "율표", "근거"}
+UNITS = {"원", "년", "개월", "월", "일", "율", "날짜", "세율표", "율표", "근거"}
 
 
 def squash(s):

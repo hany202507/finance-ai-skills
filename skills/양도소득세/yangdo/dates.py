@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """기간 계산과 양도·취득 시기. 민법 초일 불산입에 따라 시작일 다음 날부터 센다."""
+import calendar
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -116,3 +117,28 @@ def acquisition_date(취득):
         if done and d < min(done):
             return min(done), "완성일(사용승인일과 사실상 사용일 중 빠른 날, 시행령 제162조①8호 후단·4호)"
     return d, why
+
+
+WEEKDAY_KO = "월화수목금토일"
+
+
+def filing_deadline(kind, base, rs):
+    """양도소득세 신고기한 (명목 기한, 토·일을 다음 월요일로 옮긴 기한).
+
+    예정신고는 base(양도일, 허가 전 대금 청산이면 허가일)가 속하는 달의 말일에서 `신고기한.예정.개월` 달 뒤 말일(소득세법 제105조①1호),
+    확정신고는 base 가 속하는 과세기간의 다음 연도 `신고기한.확정.월`·`신고기한.확정.일`(소득세법 제110조①)이다.
+    기한의 끝이 토요일·일요일이면 그 다음날까지가 기한이다(국세기본법 제5조①). 공휴일·대체공휴일·노동절은 표가 없어 옮기지 못한다.
+    """
+    b = to_date(base)
+    if kind == "예정":
+        n = b.year * 12 + (b.month - 1) + rs.value("신고기한.예정.개월", b)
+        year, month = n // 12, n % 12 + 1
+        nominal = date(year, month, calendar.monthrange(year, month)[1])
+    elif kind == "확정":
+        nominal = date(b.year + 1, rs.value("신고기한.확정.월", b), rs.value("신고기한.확정.일", b))
+    else:
+        raise ValueError("신고 구분은 예정 또는 확정이어야 합니다: %r" % (kind,))
+    adjusted = nominal
+    while adjusted.weekday() >= 5:
+        adjusted += timedelta(days=1)
+    return nominal, adjusted
