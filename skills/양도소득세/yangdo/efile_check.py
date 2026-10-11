@@ -23,7 +23,7 @@
 지급일자·증빙종류코드·지급금액이 여기에 든다. 파일에 값을 옮겨 적는 규칙(왼쪽 맞춤, 0 채움, 고정 소수)은 이 파일에 따로 적었다.
 
 문장에는 칸 이름, 코드, 금액, 날짜만 쓴다. 성명·주민등록번호·주소·전화 같은 인적사항 값은 쓰지 않는다.
-신고값 대사에서 금액이 아닌 칸이 다르면 값 대신 칸 이름과 신고값 경로만 쓴다(지번과 07 상호는 인적 성격의 값이다).
+신고값 대사에서 03·05 의 금액 칸이 아닌 칸이 다르면 값 대신 칸 이름과 신고값 경로만 쓴다(지번과 07 상호는 인적 성격의 값이다).
 """
 import argparse
 import functools
@@ -85,9 +85,8 @@ PENSION_CREDIT_CAP = 10000000        # 03-37 소계·합계 최대 1,000만원(p
 # 07 행만 세 칸의 키가 다르다(필요경비신고자료일련번호 → 일련번호, 구분코드 → 5자리 전자코드, 사업자등록번호 → 사업자번호).
 # 생성기(efile.py)에도 같은 뜻의 표가 있지만 가져오지 않고 여기 따로 적는다. 생성기의 표가 틀리면 함께 틀리기 때문이다
 RV_KEYS_07 = {"필요경비신고자료일련번호": "일련번호", "구분코드": "전자코드", "사업자등록번호": "사업자번호"}
-# 문자 칸이지만 앞을 0 으로 채운 6자리로 쓰는 일련번호 칸(p23 9번). 신고값에는 정수로 있어 수로 견준다.
-# 05-10·11 번지·호는 레이아웃 분류가 SEQ 여도 일련번호가 아니라 글자 그대로 견준다
-SERIAL_NAMES = {"05": ("일련번호",), "07": ("필요경비신고자료일련번호", "상세일련번호")}
+# 일련번호 칸(05-3, 07-3, 07-5)은 문자 칸이지만 앞을 0 으로 채운 6자리로 쓴다(p23 9번). 신고값에는 정수로 있고, 줄과 행을 잇는
+# 열쇠로 쓴다(_serial_of). 05-10·11 번지·호는 레이아웃 분류가 SEQ 여도 일련번호가 아니라 글자 그대로 견준다
 
 _NUM = re.compile(rb"-?\d+")
 _RRN_W = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
@@ -978,8 +977,9 @@ class _Checker:
         """파일의 레코드 줄을 신고값 전자신고 절의 행과 칸마다 견준다.
 
         줄과 행은 key_names 칸(03 국내외분·세율구분, 05 일련번호, 07 일련번호·구분코드·상세일련번호)으로 잇는다.
-        자료구분·서식코드와 공란을 뺀 모든 칸을 본다. 13자리 금액 칸은 문장에 두 금액을 싣고, 그 밖의 칸(날짜, 면적,
-        법정동코드, 지번, 코드, 상호, 사업자번호 등)은 칸 이름과 신고값 경로만 싣는다. 지번과 상호는 인적 성격의 값이다.
+        자료구분·서식코드와 공란을 뺀 모든 칸을 본다. 03·05 의 13자리 금액 칸은 문장에 두 금액을 싣고, 나머지 칸(날짜, 면적,
+        법정동코드, 지번, 코드와 07 의 상호, 사업자번호, 지급금액 등)은 칸 이름과 신고값 경로만 싣는다. 지번과 상호는 인적 성격의
+        값이다.
         """
         renames = renames or {}
         rows = get(path)
@@ -1014,13 +1014,13 @@ class _Checker:
                 elif f["type"] == "N":
                     self._reconcile_number(r, no, f, x[key], where)
                 else:
-                    self._reconcile_text(r, no, name, x[key], where)
+                    self._reconcile_text(r, no, x[key], where)
         for k in want:
             if k not in seen:
                 self.fail("신고값 전자신고.%s 의 %s 행이 파일에 없음" % (label, show(k)))
 
     def _reconcile_number(self, r, no, f, value, where):
-        money = f["len"] == 13 and f["dec"] == 0
+        money = r.kind in ("03", "05") and f["len"] == 13 and f["dec"] == 0      # 두 금액을 문장에 싣는 칸
         v = _scaled(value, f["dec"])
         if v is None:
             self.fail("신고값 %s 이 %s 아님" % (where, "정수가" if f["dec"] == 0 else "수가"))
@@ -1030,14 +1030,8 @@ class _Checker:
             else:
                 self.fail(r.where(no) + ": 신고값 %s 와 다름" % where)
 
-    def _reconcile_text(self, r, no, name, value, where):
-        if name in SERIAL_NAMES.get(r.kind, ()):
-            a, v = _serial_of(r.b(no)), _as_int(value)
-            if v is None:
-                self.fail("신고값 %s 이 정수가 아님" % where)
-            elif a is not None and a != v:
-                self.fail(r.where(no) + ": 신고값 %s 와 다름" % where)
-            return
+    def _reconcile_text(self, r, no, value, where):
+        """문자 칸은 왼쪽부터 쓰고 남는 바이트를 공백으로 채운다(p19). 뒤 공백을 떼고 글자 그대로 견준다."""
         if value is None:
             v = ""
         elif isinstance(value, str):

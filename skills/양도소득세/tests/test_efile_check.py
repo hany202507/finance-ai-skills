@@ -703,9 +703,8 @@ def test_expense_record_cell_is_reconciled_with_return_values(tmp_path, name, va
     lines = _put(_lines(), "07", name, value, nth=3)
     no = _field("07", name)["no"]
     msgs = _check(tmp_path, lines, rv=_rv())
-    assert _has(msgs, "10줄(07) %d %s" % (no, name), "신고값"), msgs
-    if name != "지급금액":
-        assert _has(msgs, "신고값 전자신고.필요경비명세[1/11501/4].%s 와 다름" % key), msgs
+    assert _has(msgs, "10줄(07) %d %s" % (no, name), "신고값 전자신고.필요경비명세[1/11501/4].%s 와 다름" % key), msgs
+    assert not _has(msgs, "10줄(07)", str(value))             # 07 은 금액도 문장에 싣지 않는다
     if not caught_anyway:
         assert _check(tmp_path, lines) == []
 

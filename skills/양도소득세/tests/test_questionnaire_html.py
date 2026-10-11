@@ -60,7 +60,7 @@ def test_no_network_and_no_personal_questions():
     shown = {q["id"] for q in defs["questions"]}
     assert shown and not shown & form_ids and not set(conds) & form_ids
     assert not [i for i in shown | set(conds) if re.fullmatch(r"F0\d", i)]
-    for i in form_ids:                                       # 정의 밖의 글자로도 문항 id 가 실리지 않았다
+    for i in form_ids:                                       # 정의가 아닌 곳에도 문항 id 가 실리지 않았다
         assert ('"%s"' % i) not in s, i
 
 

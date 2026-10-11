@@ -69,16 +69,26 @@ def _confirm(out):
         return fh.read()
 
 
+def _section(text, head):
+    """확인 문서에서 head 절의 본문. 절이 없으면 빈 글자(IndexError 를 내지 않는다)."""
+    parts = text.split(head, 1)
+    return parts[1].split("\n## ")[0] if len(parts) == 2 else ""
+
+
 def _efiles(out):
     return [n for n in os.listdir(str(out)) if "C116300" in n]
 
 
 def _personal(filer):
-    """화면·확인 문서·MCP 응답에 나오면 안 되는 값."""
+    """화면·확인 문서·MCP 응답에 나오면 안 되는 값. 주소는 다른 글에 섞여 나올 수 없는 읍면동과 아파트 이름으로 본다
+    (번지·동·호 같은 짧은 숫자는 금액이나 날짜와 겹쳐 견줄 수 없다)."""
     p = filer["신고인"]
     vals = [p["성명"], p["주민등록번호"], p["전화"], filer["신고"]["홈택스ID"]]
+    vals += [p["주소"][k] for k in ("읍면동", "아파트명") if p["주소"].get(k)]
+    vals += [p["전자메일"]] if p.get("전자메일") else []
+    vals += [filer["환급계좌"]["계좌번호"]] if filer.get("환급계좌") else []
     vals += [b[k] for b in filer["양수인"] for k in ("성명", "번호")]
-    vals += [lot["취득상대방"] for lot in filer["자산"].values() if lot.get("취득상대방")]
+    vals += [lot[k] for lot in filer["자산"].values() for k in ("취득상대방", "아파트명") if lot.get(k)]
     return vals
 
 
@@ -129,15 +139,13 @@ def test_mcp_forms_and_efile_do_not_echo_personal_data(tmp_path):
 
 # 확정신고(BF)는 가산세를 넣어 신고서와 전자신고 파일까지 만든다. 자세한 값은 아래 「확정신고」 시험이 본다
 # K 의 작성일은 2026-08-20 이라 오늘을 그 날로 준다(작성일이 오늘보다 앞서면 멈춘다)
-@pytest.mark.parametrize("name,file_name,law,today", [
-    ("A", "20261220C116300.01", {}, TODAY),
-    ("K", "20260820C116300.01", {}, "2026-08-20"),
-    ("BF", "20270520C116300.01", {}, TODAY),
+@pytest.mark.parametrize("name,file_name,today", [
+    ("A", "20261220C116300.01", TODAY),
+    ("K", "20260820C116300.01", "2026-08-20"),
+    ("BF", "20270520C116300.01", TODAY),
 ])
-def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, law, today):
+def test_other_cases_run_to_the_end(tmp_path, capsys, name, file_name, today):
     f = filers.get(name)
-    for aid, code in law.items():
-        f["자산"][aid]["법정동코드"] = code
     code, out = _main(tmp_path, name, f, today=today)
     shown = capsys.readouterr()
     assert code == 0, shown.out + shown.err + _confirm(out)
@@ -273,7 +281,7 @@ def test_other_sale_answer_is_raised_in_notes_and_todo(tmp_path):
     rep, out = _a_with(tmp_path, 다른양도=True)
     assert rep["종료코드"] == 0 and _efiles(out) == ["20261220C116300.01"]
     text = _confirm(out)
-    for part in (text.split("## 알림", 1)[1].split("##")[0], _todo_part(text), " ".join(rep["알림"]), " ".join(rep["사람이할일"])):
+    for part in (_section(text, "## 알림"), _todo_part(text), " ".join(rep["알림"]), " ".join(rep["사람이할일"])):
         assert "같은 해 다른 양도" in part and "기본공제" in part and "먼저 신고" in part
     assert DASH not in text and not [ln for ln in text.splitlines() if ln.rstrip().endswith("?")]
     plain, out2 = _a_with(tmp_path / "plain")
@@ -290,7 +298,7 @@ def _stopped_for_old_date(rep_or_text, out):
     assert CALC | {"신고_확인.md"} <= names
     assert not (PDFS | GUIDES | {"신고값.json"}) & names and _efiles(out) == []
     text = _confirm(out)
-    notes = text.split("## 알림", 1)[1].split("##")[0]
+    notes = _section(text, "## 알림")
     assert "작성일" in notes and "2026-12-20" in notes and LATE in notes and "오늘" in notes and "앞선다" in notes
     assert "제출하는 날" in notes and "고쳐 다시 실행한다" in notes
     assert "| 신고값 | 만들지 않음(작성일이 오늘보다 앞섬) |" in text
@@ -901,7 +909,7 @@ def test_final_return_confirm_document_carries_the_penalty_notes(tmp_path):
     body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
     assert "가산세는 계산하지 않았다" not in body and "46,110,480원" in body and "따로 계산해 더한다" not in md
     # 감면을 적용하지 않았다는 문장은 확인사항 여러 줄에 묻히지 않게 알림 절에도 올리고, 사람이 할 일에 한 줄을 둔다
-    alerts = _confirm(out).split("## 알림", 1)[1].split("##")[0]
+    alerts = _section(_confirm(out), "## 알림")
     assert "감면 없이" in alerts and "기한 후 신고로 내면" in alerts and "20627400원" in alerts and "세무 전문가" in alerts
     todo = _confirm(out).split("## 사람이 할 일", 1)[1]
     late = [ln for ln in todo.splitlines() if "기한 후 신고로 내는 방법" in ln]
@@ -933,7 +941,7 @@ def test_final_return_whose_penalty_cannot_be_determined_makes_no_forms(tmp_path
     assert not PDFS & names and _efiles(out) == []
     assert not [n for n in names if n.startswith(".efile-") or n.endswith(".tmp")]
     text = _confirm(out)
-    alerts = text.split("## 알림", 1)[1].split("##")[0]
+    alerts = _section(text, "## 알림")
     for word in ("확정신고", "가산세를 계산하지 못해", "신고서와 전자신고 파일을 만들지 않았다", "합산 비교세액", "실제보다 적게",
                  "세무 전문가", "참고용"):
         assert word in alerts, word
@@ -962,7 +970,7 @@ def test_final_return_with_fully_exempt_asset_is_held_for_the_exempt_asset_only(
     names = set(os.listdir(out))
     assert GUIDES | {"신고값.json"} <= names and not PDFS & names and _efiles(out) == []
     text = _confirm(out)
-    notes = text.split("## 알림", 1)[1].split("##")[0]
+    notes = _section(text, "## 알림")
     assert "전액 비과세 자산(G)" in notes and "가산세" not in notes
     assert "전액 비과세" in text.splitlines()[2] and "가산세" not in text.splitlines()[2]
     for g in GUIDES:
@@ -1131,12 +1139,6 @@ def test_question_run_keeps_its_instruction_and_has_no_reference_values_sentence
 
 # ---------------------------------------------------------------- 계획 2b G7: 미뤄 둔 지적
 
-def _section(text, head):
-    """확인 문서에서 head 절의 본문. 절이 없으면 빈 글자(IndexError 를 내지 않는다)."""
-    parts = text.split(head, 1)
-    return parts[1].split("\n## ")[0] if len(parts) == 2 else ""
-
-
 def test_prior_return_note_says_the_plan_once(tmp_path):
     """신고값 모듈의 문장이 이미 「계획 5 에서 다룬다」로 끝나면 같은 말을 한 번 더 붙이지 않는다."""
     rep, out = _a_with(tmp_path, 다른양도=True, 기신고=50000000)
@@ -1246,7 +1248,7 @@ def test_unconfirmed_cells_come_from_the_layout_file(tmp_path, monkeypatch):
         assert any(x.startswith(word) for x in lines), word
     # 레이아웃 파일의 문장을 바꾸면 확인 문서의 문장이 따라 바뀐다
     for x in layout["FIXUPS"]:
-        if x.get("자리") == "01-23 세무프로그램코드":
+        if x.get("칸이름") == "01-23 세무프로그램코드":
             x["내용"] = "시험용으로 바꾼 문장"
     d = tmp_path / "efile"
     d.mkdir()
@@ -1313,3 +1315,49 @@ def test_sample_inputs_script_writes_both_files(tmp_path, capsys):
     assert sample_inputs.main(["A"]) == 2
     with pytest.raises(SystemExit):
         sample_inputs.main(["없는사례", str(tmp_path / "t")])
+
+
+def test_missing_section_is_an_empty_string_not_an_error():
+    assert _section("# 제목\n\n## 단계\n\n표\n\n## 사람이 할 일\n\n1. 일\n", "## 알림") == ""
+    assert _section("## 알림\n\n- 하나\n\n## 확인사항\n\n- 둘\n", "## 알림").strip() == "- 하나"
+
+
+def test_personal_values_with_email_and_refund_account_stay_out(tmp_path, capsys):
+    """전자메일과 환급계좌를 적은 신고인 파일로 끝까지 돌린다. 주소·전자메일·계좌번호도 화면, 확인 문서, 보고에 실리지 않는다."""
+    f = s1_filer()
+    f["신고인"]["전자메일"] = "hapseong.kim@example.com"
+    f["환급계좌"] = {"은행코드": "004", "계좌번호": "98765432101234"}
+    vals = _personal(f)
+    assert {"hapseong.kim@example.com", "98765432101234", "공덕동", "합성아파트"} <= set(vals)
+    fp, gp, out = _write(tmp_path, "S1", f)
+    rep = MR.make(str(fp), str(gp), str(out), today=TODAY)
+    code = MR.main(["--사실관계", str(fp), "--신고인", str(gp), "--출력", str(out), "--오늘", TODAY])
+    shown = capsys.readouterr()
+    assert rep["종료코드"] == 0 and code == 0
+    text = _confirm(out)
+    res = mcp_server.call_tool("yangdo_efile", {"facts": CASES["S1"], "filer_path": str(gp), "out_dir": str(tmp_path / "m"), "today": TODAY})
+    for v in vals:
+        for where, body in (("확인 문서", text), ("화면", shown.out + shown.err), ("보고", json.dumps(rep, ensure_ascii=False)),
+                            ("MCP 응답", json.dumps(res, ensure_ascii=False))):
+            assert v not in body, (where, v)
+    with open(out / "신고값.json", encoding="utf-8") as fh:      # 신고값 파일에는 있다
+        assert "hapseong.kim@example.com" in fh.read()
+
+
+def test_final_return_after_preliminary_in_the_same_folder(tmp_path):
+    """예정신고를 만든 폴더에 확정신고를 다시 돌린다. 예정신고의 전자신고 파일과 문서가 확정신고 결과 옆에 남지 않는다."""
+    out = tmp_path / "out"
+    first = MR.make(CASES["S1"], s1_filer(), str(out), today=TODAY)
+    assert first["종료코드"] == 0 and _efiles(out) == [S1_FILE]
+    before = {n: (out / n).read_bytes() for n in PDFS | GUIDES | {"신고값.json", "신고_확인.md"}}
+    second = MR.make(CASES["BF"], filers.get("BF"), str(out), today=TODAY)
+    assert second["종료코드"] == 0, second["알림"]
+    assert _efiles(out) == ["20270520C116300.01"]              # 예정신고 파일(.01, 작성일 2026-12-15)은 지워졌다
+    for n, old in before.items():
+        assert (out / n).read_bytes() != old, n               # 모두 확정신고의 것으로 바뀌었다
+    text = _confirm(out)
+    assert S1_FILE not in text and "20270520C116300.01" in text
+    with open(out / "신고값.json", encoding="utf-8") as fh:
+        rv = json.load(fh)
+    assert rv["신고"]["구분"] == "확정" and {x["자산"] for x in rv["부표1"]} == {"B", "F"}
+    assert {os.path.basename(p) for p in second["파일"]} == set(os.listdir(out))

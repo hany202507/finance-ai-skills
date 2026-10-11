@@ -126,7 +126,7 @@ def test_decided_values_in_fixups_name_existing_cells():
     """형식검증으로 확정할 「정한값」 고침은 레이아웃에 있는 칸 번호를 가리킨다. 추출 스크립트의 목록과 레이아웃 파일이 같다."""
     import extract_layout
     decided = [x for x in L["FIXUPS"] if x["종류"] == "정한값"]
-    assert {x["자리"].split(" ")[0] for x in decided} >= {"01-23", "01-18~22·26·27", "03-31"}
+    assert {x["칸이름"].split(" ")[0] for x in decided} >= {"01-23", "01-18~22·26·27", "03-31"}
     for x in decided:
         nos = {f["no"] for f in L["레코드"][x["레코드"]]["필드"]}
         assert x["칸번호"] and set(x["칸번호"]) <= nos and x["확인"] == "홈택스 형식검증" and x["내용"] and x["근거"]

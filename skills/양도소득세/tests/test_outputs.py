@@ -3,6 +3,8 @@
 import copy
 import json
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -11,6 +13,7 @@ import run
 from cases import CASES
 from yangdo import calc, efile_tmp, engine, outputs, ruleset, verify
 
+SKILL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TODAY = "2026-10-11"
 RS = ruleset.load()
 ROW = "| 조정대상지역(취득일 · 양도일) |"
@@ -26,11 +29,13 @@ def test_review_shows_regulated_area_row():
     assert "| 조정대상지역(취득일 · 양도일) | 예 · 예 |" in md
 
 
-def test_verify_recomputes_group_tax_independently():
-    r = engine.calculate(CASES["BC"], today="2026-10-11")
+@pytest.mark.parametrize("name", ["BC", "BF"])
+def test_verify_recomputes_group_tax_independently(name):
+    """BC 는 자산마다 세율이 달라 묶음이 하나씩이고, BF 는 두 자산이 기본세율 한 묶음이다."""
+    r = engine.calculate(CASES[name], today="2026-10-11")
     res = r["계산"]
     res["합계"]["호별합산세액"] += 1
-    assert any("호별" in m for m in verify.check(res, CASES["BC"], ruleset.load()))
+    assert any("호별" in m for m in verify.check(res, CASES[name], ruleset.load()))
 
 
 def test_run_and_mcp_share_outputs(tmp_path):
@@ -46,10 +51,25 @@ def test_run_reexports_every_moved_name():
     assert outputs.OUTPUT_NAMES == (outputs.RESULT, outputs.QUESTIONS, outputs.REVIEW, outputs.WORKBOOK)
 
 
-def test_mcp_server_uses_outputs_not_run_copies():
-    src = open(mcp_server.__file__, encoding="utf-8").read()
-    assert "import run" not in src and "RUN." not in src
+def test_mcp_server_uses_outputs_not_run_copies(tmp_path, monkeypatch):
+    """MCP 계산 도구는 run.py 를 거치지 않고 outputs.calculate_to 를 부른다. 그 함수를 바꾸면 도구의 결과가 따라 바뀐다."""
     assert mcp_server.outputs is outputs
+    seen = []
+    real = outputs.calculate_to
+
+    def spy(facts, out, rules_dir=None, today=None):
+        seen.append((out, today))
+        return real(facts, out, rules_dir=rules_dir, today=today)
+
+    monkeypatch.setattr(outputs, "calculate_to", spy)
+    out = str(tmp_path / "m")
+    res = mcp_server.call_tool("yangdo_calculate", {"facts": CASES["A"], "out_dir": out, "today": TODAY})
+    assert seen == [(out, TODAY)] and res["파일"] == [os.path.join(out, n) for n in (outputs.RESULT, outputs.REVIEW, outputs.WORKBOOK)]
+    # 서버를 읽어 들여도 run 모듈은 올라오지 않는다
+    code = ("import sys; sys.path[:0] = [%r, %r]; import mcp_server; print('run' in sys.modules)"
+            % (SKILL, os.path.join(SKILL, "scripts")))
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0 and p.stdout.strip() == "False", p.stdout + p.stderr
 
 
 def test_write_outputs_question_and_done(tmp_path):
@@ -368,8 +388,12 @@ def test_group_check_ignores_fully_exempt_assets():
     assert r["검산"] == []
 
 
-def test_group_check_does_not_call_calc(monkeypatch):
-    r = calc_result("BC")["계산"]
+GROUP_CASES = ("BC", "BF")      # BC 는 구성원이 하나인 묶음 둘, BF 는 구성원이 둘인 묶음 하나
+
+
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_does_not_call_calc(monkeypatch, name):
+    r = calc_result(name)["계산"]
 
     def boom(*a, **k):
         raise AssertionError("calc 를 부르면 안 된다")
@@ -378,15 +402,20 @@ def test_group_check_does_not_call_calc(monkeypatch):
     assert verify.group_totals(r) == []
 
 
-def test_group_check_uses_earliest_member_rate_basis():
-    """묶음 세율의 기준은 가장 이른 양도일 구성원이다(입력 순서와 상관없다)."""
-    r = calc_result("BC")["계산"]
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_uses_earliest_member_rate_basis(name):
+    """묶음 세율의 기준은 가장 이른 양도일 구성원이다(입력 순서와 상관없다). BF 는 두 자산의 양도일이 다른 한 묶음이다."""
+    r = calc_result(name)["계산"]
+    if name == "BF":
+        days = [a["판정"]["양도일"] for a in r["자산"]]
+        assert len(set(days)) == 2 and {a["계산"]["합산묶음"] for a in r["자산"]} == {"기본"}
     r["자산"].reverse()
     assert verify.group_totals(r) == []
 
 
-def test_group_check_does_not_mutate_result():
-    r = calc_result("BC")["계산"]
+@pytest.mark.parametrize("name", GROUP_CASES)
+def test_group_check_does_not_mutate_result(name):
+    r = calc_result(name)["계산"]
     before = copy.deepcopy(r)
     verify.group_totals(r)
     assert r == before

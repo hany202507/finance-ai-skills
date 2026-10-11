@@ -489,7 +489,7 @@ def _unconfirmed():
     """규격서 미확인 칸. 레이아웃 파일(efile/layout_c116300.json)의 FIXUPS 가운데 「확인」이 홈택스 형식검증인 것이다.
 
     표를 고쳐 읽은 곳(길이, 허용 목록)과 원문만으로 정하지 못해 이 스킬이 정한 값(종류 정한값)이 함께 있다. 문장을 고치려면
-    scripts/refresh/extract_layout.py 의 FIXUPS 를 고치고 레이아웃을 다시 만든다. 칸 이름은 「자리」가 있으면 그것을 쓴다.
+    scripts/refresh/extract_layout.py 의 FIXUPS 를 고치고 레이아웃을 다시 만든다. 칸 이름은 「칸이름」이 있으면 그것을 쓴다.
     """
     try:
         with open(os.path.join(efile.EFILE_DIR, efile.LAYOUT_FILE), encoding="utf-8") as fh:
@@ -499,7 +499,7 @@ def _unconfirmed():
     out = []
     for x in fixups:
         if "형식검증" in str(x.get("확인") or ""):
-            where = x.get("자리") or "%s 레코드%s" % (x.get("레코드"), (" %s" % x["name"]) if x.get("name") else "")
+            where = x.get("칸이름") or "%s 레코드%s" % (x.get("레코드"), (" %s" % x["name"]) if x.get("name") else "")
             out.append("%s: %s" % (where, x.get("내용")))
     return out
 
