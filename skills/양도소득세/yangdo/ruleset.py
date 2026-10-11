@@ -41,13 +41,17 @@ def write_edition(rules_dir, 확인일):
     return ed
 
 
-def _label(조, 항="", 공포번호=None):
+def label(조, 항="", 공포번호=None):
+    """조문 이름. label("47의2", "①2호") 는 「제47조의2①2호」, 부칙은 「부칙(제N호)」."""
     if 조 == "부칙":
         return "부칙(제%s호)" % 공포번호
     if "의" in 조:
         a, b = 조.split("의", 1)
         return "제%s조의%s%s" % (a, b, 항 or "")
     return "제%s조%s" % (조, 항 or "")
+
+
+_label = label   # 옛 이름. scripts/build_ruleset.py 가 쓴다
 
 
 def _conv(unit, v):

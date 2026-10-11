@@ -1,12 +1,12 @@
 {
- "id": "2d7be88eec51d95a",
+ "id": "54f00cb489e2aef8",
  "파일": {
   "../efile/codes_c116300.json": "7324c7483ef48b88c5664d4f1e97961e50f40d9600ea26c21366f7d802399975",
   "../efile/layout_c116300.json": "e03c97213245d11ef7b84844e2eb75957de9bf237bd77d285a523d780638ab94",
   "../efile/규격판.json": "9e871bd2ccfce1c583bd9e9923a3bd6dbb713129305cbc7cef29e621402045f6",
   "../efile/법정동코드.json": "81e155e0dc5257cfa8e37c8bb138d2f028a9907046b20730528ae856dfd6ee24",
   "../forms/서식판.json": "037c98312569387637b08f978ad13fe5ffda1aeed97d970c0011395091232dc6",
-  "ruleset.json": "c65bce4814b5228dfb4fc5ba8f14a930c0513f28ca17d2be7eb8f36dbd9d4d60",
+  "ruleset.json": "416436594dbfef6eaddbbce47a09e09c7ddc718f1bfda86fce1746e00b44aecf",
   "고시/조정대상지역.json": "bfca44562d5457182976b27363c0062e474054a9462d7da6fc71e269eca80cff",
   "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
   "고시/투기지역.json": "93dd90d7c6813b8a109357fde66a80373d88a48a95d5a5262a1f1960c2e9c7fb",
