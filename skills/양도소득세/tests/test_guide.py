@@ -137,7 +137,7 @@ def test_input_guide_marks_blank_required_values():
 def test_input_guide_style():
     for name in ("A", "S1", "BF", "K"):
         md = guide.hometax_input(_rv(name))
-        assert "—" not in md
+        assert chr(0x2014) not in md
         assert "그리디" not in md
         assert not any(line.rstrip().endswith(("?", "？")) for line in md.splitlines())
 
@@ -177,7 +177,7 @@ def test_attachment_list_has_no_personal_numbers():
         md = guide.attachments(rv, CASES[name], _res(name))
         for s in [rv["신고인"]["주민등록번호"], rv["신고인"]["전화"]] + [b["번호"] for b in rv["양수인"]]:
             assert s not in md
-        assert "—" not in md
+        assert chr(0x2014) not in md
         assert not any(line.rstrip().endswith(("?", "？")) for line in md.splitlines())
 
 
@@ -470,3 +470,29 @@ def test_purchase_price_note_has_no_banned_style():
     md = guide.hometax_input(_rv("S1"))
     assert chr(0x2014) not in md
     assert not [ln for ln in md.splitlines() if ln.rstrip().endswith("?")]
+
+
+# ---- 확정신고 안내서의 가산세 문장 ----
+# 확정신고는 신고서 PDF 와 전자신고 파일을 만들지 않아 입력 안내서가 사람 손에 남는 유일한 지침이다.
+# 맨 위 줄, 세액계산 본문, 확인사항이 가산세를 같은 뜻으로 말해야 한다.
+
+ZERO_PENALTY = re.compile(r"가산세[^.\n]{0,20}0원")
+
+
+def test_final_return_guide_does_not_say_penalty_is_zero():
+    md = guide.hometax_input(_rv("BF"))
+    assert "확정신고" in md
+    assert not ZERO_PENALTY.search(md), ZERO_PENALTY.search(md).group(0)
+    body = md.split("### 세액계산 결과", 1)[1].split("## 7.", 1)[0]
+    assert "가산세는 계산하지 않았다" in body and "무신고가산세" in body and "납부지연가산세" in body
+    assert "입력하지 않는다" in body and "감면세액, 외국납부세액공제, 원천징수세액은 0원이라 입력하지 않는다" in body
+    notes = md.split("## 확인사항", 1)[1]
+    line = [ln for ln in notes.splitlines() if "무신고가산세" in ln]
+    assert len(line) == 1 and "이 값으로 신고하지 않는다" in line[0]
+    assert "따로 계산해 더한다" not in md
+
+
+def test_preliminary_return_guide_still_says_penalty_is_zero():
+    md = guide.hometax_input(_rv("S1"))
+    assert "감면세액, 외국납부세액공제, 원천징수세액, 가산세는 0원이라 입력하지 않는다." in md
+    assert "가산세는 계산하지 않았다" not in md

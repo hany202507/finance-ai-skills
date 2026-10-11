@@ -3,9 +3,15 @@
 
 이 모듈이 쓰는 파일 이름은 RESULT, QUESTIONS, REVIEW, WORKBOOK 넷이다(OUTPUT_NAMES). 통합 문서(WORKBOOK)는 engine 이 쓰고
 이 모듈은 있으면 경로만 돌려준다. 출력 폴더에 계산 결과를 내는 차례(이전 결과 지움 → 계산 → 파일 쓰기)는 calculate_to 하나에 있다.
+
+같은 출력 폴더에 다시 돌릴 때 지우는 이름도 이 모듈 한 곳에 있다. 계산 결과 넷(OUTPUT_NAMES)과 신고서 단계
+(scripts/make_return.py)가 쓰는 이름(RETURN_NAMES), 양도소득세 전자신고 파일 이름 꼴(EFILE_NAME), 전자신고 임시 폴더
+(EFILE_TMP_PREFIX)다. 계산만 다시 돌려도 옛 신고서 PDF, 전자신고 파일, 신고값, 안내서, 확인 문서가 새 계산 결과 옆에 남지 않는다.
 """
 import json
 import os
+import re
+import shutil
 
 from yangdo import QUESTIONS_PATH, engine
 
@@ -13,6 +19,16 @@ TAIL = "이 결과는 검토용입니다. 신고 전 최종 판단은 세무 전
 
 RESULT, QUESTIONS, REVIEW, WORKBOOK = "result.json", "질문.md", "양도소득세_검토.md", "양도소득세_계산근거.xlsx"
 OUTPUT_NAMES = (RESULT, QUESTIONS, REVIEW, WORKBOOK)
+
+# 신고서 단계(scripts/make_return.py)가 같은 출력 폴더에 쓰는 이름. make_return.py 가 이 이름을 가져다 쓴다.
+# 신고서 PDF 이름은 forms.OUT_NATIONAL·OUT_LOCAL, 임시 폴더 머리는 efile.TMP_PREFIX 와 같은 글자다. forms 는 pymupdf 를 읽어서
+# 계산만 하는 run.py 와 MCP 계산 도구가 쓰는 이 모듈이 import 하지 않는다(같은 글자인지는 시험이 본다).
+# 신고서 PDF 는 forms 가 임시 이름(.tmp)으로 만든 뒤 바꾸므로 그 이름도 지운다
+RETURN_VALUES, GUIDE, ATTACHMENTS, CONFIRM = "신고값.json", "홈택스_입력안내.md", "부속서류.md", "신고_확인.md"
+FORM_NATIONAL, FORM_LOCAL = "양도소득세_신고서.pdf", "지방소득세_신고서.pdf"
+RETURN_NAMES = (RETURN_VALUES, FORM_NATIONAL, FORM_LOCAL, FORM_NATIONAL + ".tmp", FORM_LOCAL + ".tmp", GUIDE, ATTACHMENTS, CONFIRM)
+EFILE_NAME = re.compile(r"^[0-9]{8}C116300\.[0-9]{2}$")     # 양도소득세 전자신고 파일 이름 꼴(규격서 p20). 다른 세목 파일은 건드리지 않는다
+EFILE_TMP_PREFIX = ".efile-"                                # efile.write 가 출력 폴더 아래에 만드는 임시 폴더 이름의 머리
 
 
 def won(n):
@@ -117,15 +133,62 @@ def review_md(res):
     return "\n".join(L)
 
 
-def clear_previous(out):
-    """이 모듈이 쓰는 파일 이름만 지운다. 폴더 안의 다른 파일은 그대로 둔다.
+def is_tmp_dir(out, name):
+    """출력 폴더 안의 name 이 전자신고 임시 폴더(.efile-*)인지. 같은 이름의 파일이나 링크는 아니다."""
+    path = os.path.join(out, name)
+    return name.startswith(EFILE_TMP_PREFIX) and os.path.isdir(path) and not os.path.islink(path)
 
-    통합 문서를 먼저 지운다. 엑셀이 열어 둔 파일은 지워지지 않아서(PermissionError), 막히면 다른 이전 결과를 지우기 전에 멈춘다.
+
+def clear_order(name):
+    """신고서 단계 이름을 지우는 차례. 제출용 이름의 전자신고 파일, 임시 폴더, 신고서 PDF 를 다른 파일보다 먼저 지운다."""
+    if EFILE_NAME.match(name):
+        return 0
+    if name.startswith(EFILE_TMP_PREFIX):
+        return 1
+    return 2 if name.startswith((FORM_NATIONAL, FORM_LOCAL)) else 3
+
+
+def clear_all(out):
+    """이전 실행이 남긴 파일을 지운다. (지우지 못한 임시 폴더 이름 목록, 처음 난 OSError 또는 None).
+
+    지우는 것은 신고서 단계 이름(RETURN_NAMES), 옛 전자신고 파일(EFILE_NAME), 임시 폴더(.efile-*), 계산 결과 넷
+    (OUTPUT_NAMES)뿐이다. 다른 세목의 전자신고 파일과 사용자 파일, 폴더는 그대로 둔다.
+    차례는 전자신고 파일, 임시 폴더, 신고서 PDF, 나머지 신고서 단계 파일, 마지막이 계산 결과(통합 문서부터)다. 제출용 파일이
+    새 계산 결과 옆에 남는 일부터 막으려는 차례다. 신고서 단계 파일은 하나가 다른 프로그램에 잡혀 지워지지 않아도 나머지를
+    끝까지 지운다. 계산 결과는 통합 문서를 먼저 지우고, 엑셀이 열어 두어 막히면(PermissionError) 나머지 계산 결과는 그대로 둔다.
     """
-    for name in (WORKBOOK,) + tuple(n for n in OUTPUT_NAMES if n != WORKBOOK):
-        p = os.path.join(out, name)
-        if os.path.isfile(p):
-            os.remove(p)
+    left, first = [], None
+    for name in sorted(os.listdir(out), key=lambda n: (clear_order(n), n)):
+        path = os.path.join(out, name)
+        if is_tmp_dir(out, name):
+            shutil.rmtree(path, ignore_errors=True)
+            if os.path.lexists(path):
+                left.append(name)
+        elif (name in RETURN_NAMES or EFILE_NAME.match(name)) and (os.path.isfile(path) or os.path.islink(path)):
+            try:
+                os.remove(path)
+            except OSError as e:
+                first = first or e
+    try:
+        for name in (WORKBOOK,) + tuple(n for n in OUTPUT_NAMES if n != WORKBOOK):
+            p = os.path.join(out, name)
+            if os.path.isfile(p):
+                os.remove(p)
+    except OSError as e:
+        first = first or e
+    return left, first
+
+
+def clear_previous(out):
+    """이전 실행이 남긴 파일을 지운다(clear_all). 지우지 못한 파일이 있으면 처음 난 OSError 를 다시 낸다.
+
+    지우지 못한 임시 폴더 이름 목록을 돌려준다(임시 폴더는 오류로 보지 않는다). run.py, MCP 계산 도구, make_return.py 가
+    calculate_to 로 이 함수를 같이 쓴다. 폴더 안의 다른 파일은 그대로 둔다.
+    """
+    left, first = clear_all(out)
+    if first is not None:
+        raise first
+    return left
 
 
 def write_outputs(res, out):
@@ -150,8 +213,9 @@ def write_outputs(res, out):
 def calculate_to(facts, out, rules_dir=None, today=None):
     """출력 폴더에 계산 결과를 낸다. (engine.calculate 결과, 쓴 파일 경로 목록).
 
-    폴더를 만들고 이 모듈이 쓰는 이전 결과를 지운 뒤 계산하고(통합 문서 포함) 결과 파일을 쓴다. 이번 결과가 질문이어도
-    이전 완료 결과가 옆에 남지 않는다. run.py, mcp_server.py, make_return.py 가 이 함수 하나를 같이 쓴다.
+    폴더를 만들고 이전 결과(계산 결과와 신고서 단계 파일, clear_previous)를 지운 뒤 계산하고(통합 문서 포함) 결과 파일을 쓴다.
+    이번 결과가 질문이어도 이전 완료 결과가 옆에 남지 않고, 계산만 다시 돌려도 옛 신고서와 전자신고 파일이 남지 않는다.
+    run.py, mcp_server.py, make_return.py 가 이 함수 하나를 같이 쓴다.
     기준정보가 깨졌으면 ruleset.RuleError, 사실관계가 틀렸으면 facts.FactsError, 폴더나 파일을 쓰지 못하면 OSError 가 그대로 나온다.
     """
     os.makedirs(out, exist_ok=True)

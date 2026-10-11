@@ -63,7 +63,7 @@ TOOLS = [
                                         asset={"type": "string", "description": "자산마다 묻는 문항이면 자산 id(자산)"},
                                         house={"type": "string", "description": "주택마다 묻는 문항이면 주택 id(주택)"})},
      "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
-    {"name": "yangdo_calculate", "description": "판정·세액·근거·규격서 코드. out_dir 를 주면 검토 문서·워크북·결과 JSON 을 쓴다(그 폴더의 이전 결과 파일은 지운다)",
+    {"name": "yangdo_calculate", "description": "판정·세액·근거·규격서 코드. out_dir 를 주면 검토 문서·워크북·결과 JSON 을 쓴다(그 폴더의 이전 계산 결과와 신고서·전자신고 파일·신고값·안내서·신고_확인.md 는 지운다)",
      "inputSchema": {"type": "object", "properties": dict(FACTS, out_dir={"type": "string", "description": "출력 폴더"}, today=TODAY)},
      "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
     {"name": "yangdo_forms", "description": "계산 뒤 신고인 정보를 검사하고 신고값, 서식 검산, 신고서 PDF(양도소득세 별지 제84호, 지방소득세 별지 제40호의11), "

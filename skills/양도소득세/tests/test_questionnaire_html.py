@@ -71,7 +71,7 @@ def test_html_does_not_depend_on_format_stage_questions(tmp_path):
 def test_generated_html_has_no_banned_marks_in_screen_copy():
     """화면 문구에 줄표, 비유 명사, 한글 제품명을 쓰지 않았다. 문항 원문은 정의에서 그대로 온 것이라 이 점검에 넣지 않는다."""
     tpl = "".join(mq.read(n) for n in ("page.html", "app.js", "style.css"))
-    assert "—" not in tpl and "그리디" not in tpl
+    assert chr(0x2014) not in tpl and "그리디" not in tpl
     assert not re.search(r"갈래|계단|사다리|행선지", tpl)
     assert "Gridie" in tpl
 

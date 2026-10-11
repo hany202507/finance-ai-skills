@@ -537,3 +537,33 @@ def test_missing_numeric_value_is_refused():
     rv["전자신고"]["계산명세"][0]["거래금액_양도가액"] = None
     with pytest.raises(ValueError, match="거래금액_양도가액"):
         efile.build_records(rv)
+
+
+# ---------------------------------------------------------------- 상대 경로 출력 폴더
+
+def _mkdtemp_like_py310(monkeypatch):
+    """파이썬 3.10·3.11 의 tempfile.mkdtemp 처럼, dir 가 상대 경로면 상대 경로를 돌려주게 한다(3.12 부터는 절대 경로다)."""
+    real = efile.tempfile.mkdtemp
+
+    def mkdtemp(suffix=None, prefix=None, dir=None):
+        made = real(suffix=suffix, prefix=prefix, dir=dir)
+        return os.path.join(dir, os.path.basename(made)) if dir else made
+
+    monkeypatch.setattr(efile.tempfile, "mkdtemp", mkdtemp)
+
+
+def test_write_with_relative_out_dir_passes_check_on_old_python(tmp_path, monkeypatch):
+    """검증기는 스킬 폴더를 작업 폴더로 돈다. 임시 파일 경로가 상대 경로면 검증기가 파일을 찾지 못한다."""
+    monkeypatch.chdir(tmp_path)
+    _mkdtemp_like_py310(monkeypatch)
+    out = efile.write(_rv("S1"), "out")
+    assert out["검증"] == [], out["검증"]
+    assert os.path.isabs(out["경로"]) and os.path.isfile(out["경로"])
+    assert os.listdir(tmp_path / "out") == ["20261215C116300.01"]
+
+
+def test_write_with_relative_out_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    out = efile.write(_rv("A"), os.path.join("결과", "out"))
+    assert out["검증"] == [], out["검증"]
+    assert os.listdir(tmp_path / "결과" / "out") == ["20261220C116300.01"]
