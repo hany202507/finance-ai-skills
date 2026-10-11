@@ -363,11 +363,11 @@ def test_html_business_number_cell_drops_hyphens_and_blocks_wrong_input():
         out = _node({"mode": "facts", "defs": defs, "conds": conds, "stores": [store]})["results"][0]
         return out, store["assets"][0]["id"]
 
-    out, sid = run("101-81-01238 ")
-    assert out["errors"] == [] and out["facts"]["자산"][0]["필요경비"]["취득부대"][0]["사업자번호"] == "1018101238"
+    out, sid = run("000-00-00015 ")
+    assert out["errors"] == [] and out["facts"]["자산"][0]["필요경비"]["취득부대"][0]["사업자번호"] == "0000000015"
     out, sid = run("")                                           # 비워도 된다
     assert out["errors"] == [] and "사업자번호" not in out["facts"]["자산"][0]["필요경비"]["취득부대"][0]
-    for bad in ("12345", "10181012380", "1018101238".replace("1", "１"), "abcdefghij"):
+    for bad in ("12345", "00000000150", "0000000015".replace("0", chr(0xFF10)), "abcdefghij"):
         out, sid = run(bad)
         assert [(e["qid"], e["unit"]) for e in out["errors"]] == [("M08", sid)], bad
         assert "숫자 10자리" in out["errors"][0]["msg"]

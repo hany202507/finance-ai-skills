@@ -680,8 +680,8 @@ def test_f07_is_silent_when_every_required_expense_has_a_valid_number():
     assert ask_done(ready("S1"), facts=s1_facts()) == []
 
 
-@pytest.mark.parametrize("bad", ["", None, "   ", "101-81-01238", "101810123", "10181012380", "1018101239", fw("1018101238"),
-                                 1018101238])
+@pytest.mark.parametrize("bad", ["", None, "   ", "000-00-00015", "000000001", "00000000150", "0000000016", fw("0000000015"),
+                                 15])
 def test_f07_asks_when_the_number_is_blank_or_wrong(bad):
     facts = s1_facts()
     facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] = bad
@@ -694,7 +694,7 @@ def test_f07_asks_when_the_number_is_blank_or_wrong(bad):
 
 def test_f07_names_blank_and_wrong_numbers_separately_and_lists_every_expense():
     facts = s1_facts(취득부대=[1])                       # 법무사비용: 빠짐
-    facts["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] = "3149007890"    # 발코니확장: 검증번호가 틀림
+    facts["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] = "0000000040"    # 발코니확장: 검증번호가 틀림(0000000048 에서 끝자리만 바꿨다)
     qs = ask_done(ready("S1"), facts=facts)
     assert ids(qs) == [("F07", "S1")]                    # 자산마다 질문 하나
     text = qs[0]["내용"]
@@ -739,14 +739,14 @@ def test_f07_item_without_content_or_date_is_still_pointed_at():
 
 def test_f07_and_f08_do_not_echo_values():
     facts = s1_facts(취득부대=[0, 1])
-    facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] = "1018101239"
+    facts["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] = "0000000016"
     f = ready("S1")
     del f["자산"]["S1"]["취득상대방"]
     qs = ask_done(f, facts=facts)
     assert ids(qs) == [("F07", "S1"), ("F08", "S1")]
     text = json.dumps(qs, ensure_ascii=False)
     for s in ("2400000", "2,400,000", "800000", "9000000", "합성공인중개사", "합성법무사", "합성인테리어", "합성성동", "최합성",
-              "1018101238", "2118104565", "3149007897", "1018101239"):
+              "0000000015", "0000000034", "0000000048", "0000000016"):
         assert s not in text
     for q in qs:
         assert set(q) == {"문항", "자산", "내용"}

@@ -105,11 +105,13 @@ def test_form_stage_questions_f01_to_f08():
 def test_form_stage_questions_f07_and_f08():
     out = load_out()
     qs = {q["id"]: q for q in out["문항"]}
-    assert "사업자번호" in qs["F07"]["질문"] and "숫자 10자리" in qs["F07"]["질문"] and "1번째 지출(" in qs["F07"]["질문"]
+    assert "사업자번호" in qs["F07"]["질문"] and "숫자 10자리" in qs["F07"]["질문"]
+    assert "1번째 지출(" not in qs["F07"]["질문"] and "1번째 지출(" in qs["F07"]["비고"]      # 시스템 동작 설명은 질문이 아니라 비고에 둔다
     assert "자산[].필요경비.취득부대[].사업자번호" in qs["F07"]["facts키"] and "자산[].필요경비.양도비[].사업자번호" in qs["F07"]["facts키"]
     assert "p60" in json.dumps(qs["F07"]["근거조문"], ensure_ascii=False)
     assert "취득상대방" in qs["F08"]["질문"] and qs["F08"]["facts키"] == "(서식 전용) 자산[].취득상대방"
     assert "p59" in json.dumps(qs["F08"]["근거조문"], ensure_ascii=False) and "60바이트" in qs["F08"]["도움말"]
+    assert "㈜" in qs["F08"]["도움말"] and "(주)" in qs["F08"]["도움말"] and "공백" in qs["F08"]["도움말"]
     # 사실관계 지출 목록(M08~M11)의 안내에도 지급처 사업자등록번호가 있다
     for qid in ("M08", "M09", "M10", "M11"):
         text = (qs[qid]["질문"] or "") + (qs[qid]["도움말"] or "")
