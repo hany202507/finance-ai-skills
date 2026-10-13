@@ -33,7 +33,7 @@ for _p in (SKILL, HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from yangdo import engine, outputs, questions, regions, ruleset  # noqa: E402
+from yangdo import engine, evidence, outputs, questions, regions, ruleset  # noqa: E402
 from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
@@ -47,7 +47,9 @@ INSTRUCTIONS = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민�
                 "남은 문항이 없으면 yangdo_calculate 를 부른다. 계산 결과는 검토용이며 신고 전 최종 판단은 세무 전문가가 한다. "
                 "신고서 PDF 는 yangdo_forms, 전자신고 파일까지는 yangdo_efile 로 만든다. 신고인 정보(인적사항)는 신고인 JSON 파일의 경로"
                 "(filer_path)로만 주고 내용을 대화나 인자에 옮기지 않는다. 두 도구의 응답과 신고_확인.md 에는 인적사항이 없다. "
-                "홈택스·위택스 로그인과 제출은 사람이 한다.")
+                "홈택스·위택스 로그인과 제출은 사람이 한다. 사용자가 매매계약서나 경비 영수증 파일을 주면 문항을 묻기 전에 먼저 "
+                "yangdo_evidence_inventory 로 목록을 만들고, 문서를 읽어 증빙추출 JSON 으로 적은 뒤 yangdo_evidence_apply 로 넣는다. "
+                "넣지 못한 값은 확인표에 오니 사용자에게 확인받고, 남은 문항만 묻는다.")
 FACTS = {"facts_path": {"type": "string", "description": "사실관계 JSON 파일 경로(로컬)"},
          "facts": {"type": "object", "description": "사실관계 JSON. facts_path 대신 쓴다. 둘을 함께 주지 않는다"}}
 TODAY = {"type": "string", "description": "오늘 날짜 YYYY-MM-DD(오늘). 비우면 오늘(한국 시간)"}
@@ -79,6 +81,20 @@ TOOLS = [
     {"name": "yangdo_efile", "description": "yangdo_forms 가 만드는 것에 더해 전자신고 변환파일(<작성일자>C116300.01)을 만든다. 독립 검증기를 통과한 파일만 남긴다. "
                                             "홈택스 로그인·형식검증·제출은 사람이 한다. 응답에 인적사항은 싣지 않는다",
      "inputSchema": {"type": "object", "required": ["filer_path", "out_dir"], "properties": RETURN},
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
+    {"name": "yangdo_evidence_inventory", "description": "증빙 폴더(매매계약서, 영수증, 세금계산서 파일)의 문서 목록을 만든다. 문서마다 id(D01...)와 글자층 여부를 돌려준다. "
+                                                   "목록 파일(증빙_목록.json)은 yangdo_evidence_apply 가 쓴다",
+     "inputSchema": {"type": "object", "required": ["folder", "out_dir"],
+                     "properties": {"folder": {"type": "string", "description": "증빙 파일이 든 폴더 경로(로컬)"},
+                                    "out_dir": {"type": "string", "description": "증빙_목록.json 을 쓸 폴더"}}},
+     "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}},
+    {"name": "yangdo_evidence_apply", "description": "문서를 읽어 적은 값(증빙추출)을 원문과 대조해, 통과한 값만 사실관계에 넣는다. 스캔본이나 사진에서 읽은 값, 확신이 불확실한 값, "
+                                                  "이미 다른 값이 있는 값은 넣지 않고 확인표(증빙_확인표.md)에 올린다. facts 를 주지 않으면 자산 A 하나로 시작한다",
+     "inputSchema": {"type": "object", "required": ["inventory_path", "out_dir"],
+                     "properties": dict(FACTS, inventory_path={"type": "string", "description": "yangdo_evidence_inventory 가 쓴 증빙_목록.json 경로"},
+                                        extractions={"type": "array", "description": "추출 목록. 항목: {문항, 자산, 값, 출처:{문서, 쪽, 발췌}, 확신, 비고}. extractions_path 대신 쓴다"},
+                                        extractions_path={"type": "string", "description": "증빙추출 JSON 파일 경로"},
+                                        out_dir={"type": "string", "description": "증빙_확인표.md 와 증빙_결과.json 을 쓸 폴더"})},
      "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}},
     {"name": "regulated_area", "description": "기준일에 조정대상지역·투기과열지구·투기지역인지(공고 이력 재적용)",
      "inputSchema": {"type": "object", "required": ["sido", "sigungu", "as_of"],
@@ -368,8 +384,65 @@ def _efile(args):
     return _make_return(args, with_efile=True)
 
 
+def _evidence_inventory(args):
+    folder, out = _text(args, "folder", True), _text(args, "out_dir", True)
+    try:
+        inv = evidence.inventory(os.path.expanduser(folder))
+        path = os.path.join(os.path.expanduser(out), "증빙_목록.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fp:
+            json.dump(inv, fp, ensure_ascii=False, indent=1)
+    except evidence.EvidenceError as e:
+        raise ToolError(str(e)) from e
+    except OSError as e:
+        raise _write_error(e, out) from e
+    return {"문서": inv["문서"], "목록파일": path}
+
+
+def _evidence_apply(args):
+    if args.get("facts") is None and args.get("facts_path") is None:
+        f, path = {"자산": [{"id": "A"}]}, None
+    else:
+        f, path = _facts(args), args.get("facts_path")
+    inv = _read_json(_text(args, "inventory_path", True))
+    items = args.get("extractions")
+    if items is None:
+        ep = _text(args, "extractions_path")
+        if ep is None:
+            raise ToolError("extractions 또는 extractions_path 가 필요하다")
+        try:
+            with open(os.path.expanduser(ep), encoding="utf-8-sig") as fp:
+                items = json.load(fp)
+        except OSError as e:
+            raise ToolError("증빙추출 파일을 읽지 못했다: %s (%s)" % (ep, _why(e))) from e
+        except ValueError as e:
+            raise ToolError("증빙추출 파일이 JSON 이 아니다: %s" % ep) from e
+    out = os.path.expanduser(_text(args, "out_dir", True))
+    try:
+        new, rep = evidence.apply(f, items, inv)
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "증빙_결과.json"), "w", encoding="utf-8", newline="\n") as fp:
+            json.dump(rep, fp, ensure_ascii=False, indent=1)
+        with open(os.path.join(out, "증빙_확인표.md"), "w", encoding="utf-8", newline="\n") as fp:
+            fp.write(evidence.confirm_markdown(rep, inv))
+    except evidence.EvidenceError as e:
+        raise ToolError(str(e)) from e
+    except OSError as e:
+        raise _write_error(e, out) from e
+    F.check_personal(new)
+    if path is not None:
+        _write_json(path, new)
+    res = {"반영": len(rep["반영"]), "일치": len(rep["일치"]), "충돌": rep["충돌"], "확인필요": rep["확인필요"],
+           "거절": rep["거절"], "남은문항": rep["남은문항"][:15], "남은문항수": len(rep["남은문항"]),
+           "확인표": os.path.join(out, "증빙_확인표.md")}
+    if path is None:
+        res["사실관계"] = new
+    return res
+
+
 HANDLERS = {"yangdo_next_questions": _next_questions, "yangdo_answer": _answer, "yangdo_calculate": _calculate,
-            "yangdo_forms": _forms, "yangdo_efile": _efile, "regulated_area": _regulated_area, "ruleset_info": _ruleset_info}
+            "yangdo_forms": _forms, "yangdo_efile": _efile, "yangdo_evidence_inventory": _evidence_inventory,
+            "yangdo_evidence_apply": _evidence_apply, "regulated_area": _regulated_area, "ruleset_info": _ruleset_info}
 
 
 PROPERTIES = {t["name"]: tuple(t["inputSchema"]["properties"]) for t in TOOLS}
