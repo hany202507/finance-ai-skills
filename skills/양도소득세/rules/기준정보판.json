@@ -1,5 +1,5 @@
 {
- "id": "2445dbb6ebd63f5b",
+ "id": "92587e89a9d8f7e0",
  "파일": {
   "../efile/codes_c116300.json": "7324c7483ef48b88c5664d4f1e97961e50f40d9600ea26c21366f7d802399975",
   "../efile/layout_c116300.json": "19620f40b0fa8b01d30f9536240ce7d37e1593845438e0fe6ad95bafde734bd5",
@@ -15,7 +15,7 @@
   "../forms/필드목록/필드목록_별지84부표3_2_취득가액및필요경비계산상세명세서.json": "a101c3ac4ceb005ad798acd107024d0c0ce702c56b65ea896a7afb3d81fcc99b",
   "../forms/필드목록/필드목록_별지84부표3_취득가액및필요경비계산상세명세서.json": "efe8663da9c36d9467ac21b32ea06ae18682095fb0b0c59f804773d4ee364bb3",
   "../forms/필드목록/필드목록_지방세_별지40의11_신고및납부계산서.json": "c8d3f8c6d84ed3d8e62dc6100c8c34e526b4902123e002e2be278aec62da6fa7",
-  "ruleset.json": "cfa38b2ddfb586e33f51bd575c6b233f43b6483fdea79ec3b19cbf4eb9e398a3",
+  "ruleset.json": "7f8243bd6b42103ea9dcae49460bb29303d667e7228fcbdb552acafd3b518a22",
   "고시/조정대상지역.json": "bfca44562d5457182976b27363c0062e474054a9462d7da6fc71e269eca80cff",
   "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
   "고시/투기지역.json": "93dd90d7c6813b8a109357fde66a80373d88a48a95d5a5262a1f1960c2e9c7fb",
@@ -23,5 +23,5 @@
   "코드표.json": "cc13ee60829c2d585bdbb386a2682e1b90085ba34d7f7e21d2ba9b76344fdca2",
   "행정구역_대응.json": "0112576f05caad8658502efff7f45f1252fa5c21b1522d29bc25b9978c56c5c4"
  },
- "확인일": "2026-10-11"
+ "확인일": "2026-10-13"
 }
