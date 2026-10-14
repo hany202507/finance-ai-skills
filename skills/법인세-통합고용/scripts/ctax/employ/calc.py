@@ -82,6 +82,7 @@ class Count:
     me_youth_sum: Fraction = Fraction(0)    # 월말 합(청년등, 현재 연령)
     me_total: Fraction = Fraction(0)        # 월말 합 방식 상시
     me_youth: Fraction = Fraction(0)        # 월말 합 방식 청년등
+    core: Fraction = Fraction(0)            # 단시간근로자를 뺀 상시근로자 수(시행령 제11조의2 제8항 제2호 가목)
     monthly: list[Fraction] = field(default_factory=list)        # 달마다 월말 현재 상시근로자 수
     monthly_paid: list[int] = field(default_factory=list)        # 달마다 급여가 있는 사람 수
     monthly_worked: list[int] = field(default_factory=list)      # 달마다 월말 재직 사람 수(상시 여부와 무관)
@@ -160,9 +161,10 @@ def common_reason(p: Person, rules: dict) -> str:
     return ""
 
 
-def weight_of(p: Person, rules: dict) -> Fraction:
+def weight_of(p: Person, rules: dict, half: bool = False) -> Fraction:
+    """단시간근로자 1명은 0.5명, 지원요건(입력 「0.75 요건」)을 모두 채우면 0.75명. half 면 가목(상시근로자 수 감소 없음)을 못 채워 0.5명."""
     if p.kind == "단시간" and (p.hours or 0) >= float(rule(rules, "scope", "part_time_hours")):
-        key = "part_time_weight_supported" if p.supported == "Y" else "part_time_weight"
+        key = "part_time_weight_supported" if p.supported == "Y" and not half else "part_time_weight"
         return Fraction(str(rule(rules, "scope", key)))
     return Fraction(1)
 
@@ -181,11 +183,13 @@ def periods(co: Company, rules: dict) -> dict[str, Period]:
         while month_end(m) <= e:
             ends.append(month_end(m))
             m = add_months(date(m.year, m.month, 1), 1)
-        out[name] = Period(name, s, e, ends, deemed=new_rule and i == 0 and co.deem != "N")
+        # 2026 과세연도 신규공제는 직전(2025) 과세연도 청년등 인원에도 간주를 넣는다(사용자 결정 2026-10-14, rules.yaml youth.deemed_prior_year)
+        deemed = new_rule and co.deem != "N" and (i == 0 or (i == 1 and end.year == 2026))
+        out[name] = Period(name, s, e, ends, deemed=deemed)
     return out
 
 
-def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
+def count_period(inp: Inputs, per: Period, rules: dict, half: bool = False) -> Count:
     co = inp.company
     pays = [x for x in inp.pays if per.start <= x.month <= per.end]
     per.has_payroll = bool(pays)
@@ -194,12 +198,14 @@ def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
         by_id.setdefault(x.id, []).append(x)
     rows = []
     for p in inp.staff:
-        r = Row(person=p, weight=weight_of(p, rules), kind=youth_kind(p, rules))
+        r = Row(person=p, weight=weight_of(p, rules, half), kind=youth_kind(p, rules))
         mine = by_id.get(p.id, [])
         if not per.has_payroll:
             r.proof = "자료없음"
         else:
-            r.proof = "Y" if sum(x.tax + x.pension + x.health for x in mine) > 0 else "N"
+            # 단시간근로자가 아니면 급여가 지급된 사람은 원천징수 사실이 있는 것으로 본다(사용자 결정 2026-10-14). 단시간근로자는 공제액으로 본다
+            seen = sum(x.tax + x.pension + x.health for x in mine) if p.kind == "단시간" else sum(x.pay for x in mine)
+            r.proof = "Y" if seen > 0 else "N"
         common = common_reason(p, rules)
         r.regular = not common and r.proof != "N"
         r.reason = common or ("" if r.proof != "N" else REASONS["e"])
@@ -233,6 +239,7 @@ def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
     c = Count(period=per, rows=rows)
     reg = [r for r in rows if r.regular]
     c.total = sum((r.n_work for r in reg), Fraction(0))
+    c.core = sum((r.n_work for r in reg if r.person.kind != "단시간"), Fraction(0))     # 단시간근로자를 뺀 상시근로자 수
     c.youth_age = sum((r.n_youth_age for r in reg), Fraction(0))
     c.youth_deem = sum((r.n_youth_deem for r in reg), Fraction(0))
     for i in range(per.months):
@@ -248,6 +255,17 @@ def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
 
 
 # ---------------------------------------------------------------- 공제액
+
+def new_units(size: str, capital: str, rates: dict) -> tuple[int, int]:
+    """2026 신규공제 직전 대비(A) 1인당 공제금액(청년등, 청년등 외). 조세특례제한법 제29조의8 제1항 제1호 · 제2호."""
+    r = lambda k: int(rates["employment_integrated_2026"][k]["value"])   # noqa: E731
+    if size == "중소기업":
+        tail = "capital" if capital == "Y" else "local"
+        return r(f"youth_sme_A_{tail}"), r(f"other_sme_A_{tail}")
+    if size == "중견기업":
+        return r("youth_mid_A"), r("other_mid_A")
+    return r("youth_general_A"), r("other_general")
+
 
 def per_head(size: str, capital: str, rates: dict) -> tuple[int, int]:
     """(청년등, 청년등 외) 1인당 공제금액(조세특례제한법 제29조의8 제1항 제1호 · 제2호)."""
@@ -265,9 +283,20 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     co = inp.company
     pers = periods(co, rules)
     counts = {name: count_period(inp, per, rules) for name, per in pers.items()}
+    # 시행령 제11조의2 제8항 제2호 가목: 단시간근로자를 뺀 상시근로자 수가 직전 과세연도보다 줄면 0.75명이 아니라 0.5명으로 센다.
+    # 비교할 직전 급여대장이 없으면 확인할 수 없어 사람이 입력한 「0.75 요건」 을 그대로 쓴다(사용자 결정 2026-10-14)
+    half: dict[str, tuple[Fraction, Fraction]] = {}
+    order = list(pers)
+    for i, name in enumerate(order[:-1]):
+        c, older = counts[name], counts[order[i + 1]]
+        if (older.period.has_payroll and c.core < older.core
+                and any(r.regular and r.person.kind == "단시간" and r.person.supported == "Y" for r in c.rows)):
+            half[name] = (c.core, older.core)
+            counts[name] = count_period(inp, pers[name], rules, half=True)
     cur = pers["해당"]
     method = "근로자별" if cur.start >= date.fromisoformat(rule(rules, "youth", "deemed_from")) else "월말합"
     in_time = cur.end.year <= int(rates["employment_integrated"]["first_year_until"]["value"])
+    new26 = cur.end.year == 2026      # 2026 과세연도 신규공제(2027 과세연도 이후는 정리 전)
 
     def filed(name: str):
         t = co.filed_prev_total if name == "직전" else co.filed_prev2_total
@@ -284,7 +313,7 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         f = filed(name) if name != "해당" else None
         if name == "해당" or c.period.has_payroll:
             if method == "근로자별" and name != "직전전":
-                y = c.youth_deem if name == "해당" else c.youth_age
+                y = c.youth_deem if name == "해당" or c.period.deemed else c.youth_age
                 used[name] = (c.total, y)
             else:
                 used[name] = (c.me_total, c.me_youth)
@@ -305,20 +334,45 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     a_y, a_o = per_head(co.size, co.capital, rates)
     prev_ok = source["직전"] != "없음"
     ok = co.consumer != "Y" and in_time and prev_ok and d_t > 0
+    min_n, new_min, new_cut = 0, 0, ""
+    if new26:
+        # 신규공제: 직전 대비(A)만. 중소기업이 아니면 증가 인원이 최소고용증가인원수를 넘을 때만 공제한다(법 제29조의8 제1항 단서)
+        ok = co.consumer != "Y" and prev_ok and d_t > 0
+        if ok and co.size != "중소기업":
+            key = "중견기업" if co.size == "중견기업" else "중견기업이 아닌 경우"
+            min_n = int(rates["employment_integrated_2026"]["min_increase_count"]["value"][key])
+            if d_t <= min_n:
+                ok, new_cut = False, f"증가 인원이 최소고용증가인원수({min_n}명) 이하"
+        a_y, a_o = new_units(co.size, co.capital, rates)
     n_y = max(Fraction(0), min(d_y, d_t)) if ok else Fraction(0)
     n_o = max(Fraction(0), min(d_o, d_t)) if ok else Fraction(0)
     first_y, first_o = round(n_y * a_y), round(n_o * a_o)
+    if new26 and ok and min_n:
+        # 제3호: 중견기업은 증가 인원이 최소 이상이면 최소 × 300만원, 미만이면 증가 × 300만원 + (최소 − 증가) × 500만원,
+        # 중견기업이 아니면 증가가 최소 미만일 때만 (최소 − 증가) × 300만원. 증가 = 청년등외상시근로자의 직전 대비 증가 인원
+        if co.size == "중견기업":
+            new_min = round(min_n * 3_000_000 if n_o >= min_n else n_o * 3_000_000 + (min_n - n_o) * 5_000_000)
+        else:
+            new_min = 0 if n_o >= min_n else round((min_n - n_o) * 3_000_000)
+    first_net = max(0, first_y + first_o - new_min)
 
     (lt_c, ly_c), (lt_p, ly_p), (lt_pp, ly_pp) = legacy["해당"], legacy["직전"], legacy["직전전"]
+    # 2026 과세연도의 2차 연도(2025 증가분) 판정은 근로자별 방식 · 간주 없음(사용자 결정 2026-10-14), 그 밖에는 월말 합 방식(종전 규정)
+    if new26:
+        pc, pp = counts["해당"], counts["직전"]
+        sec_c = (pc.total, pc.youth_age)
+        sec_p = (pp.total, pp.youth_age) if pp.period.has_payroll else legacy["직전"]
+    else:
+        sec_c, sec_p = legacy["해당"], legacy["직전"]
     second, second_cut = 0, ""
     f1 = (co.first_prev_youth, co.first_prev_other)
     if any(f1) and co.consumer != "Y":
         if source["직전"] in ("없음", "창업(0)"):
             second_cut = "직전 인원 없음"
-        elif lt_c < lt_p:
+        elif sec_c[0] < sec_p[0]:
             second_cut = "전체 감소"
         else:
-            cut = ly_c < ly_p
+            cut = sec_c[1] < sec_p[1]
             second = (0 if cut else f1[0]) + f1[1]
             second_cut = "청년등 감소" if cut and f1[0] else ""
     third, third_cut = 0, ""
@@ -339,11 +393,12 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         1 for p in inp.staff if p.returned == "Y" and p.hired <= cur.end and (p.left or FAR) >= cur.start)
     amt_sizes = {"중소기업": int(rule(rules, "extra", "return_sme")), "중견기업": int(rule(rules, "extra", "return_mid"))}
     amt = amt_sizes.get(co.size, 0)
-    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and in_time and prev_ok and t_c >= t_p
+    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and (in_time or new26) and prev_ok and t_c >= t_p
                                                 and co.size in amt_sizes) else 0
 
-    return {"periods": pers, "counts": counts, "method": method, "in_time": in_time, "used": used, "legacy": legacy,
+    return {"periods": pers, "counts": counts, "half": half, "method": method, "in_time": in_time, "used": used, "legacy": legacy,
             "source": source, "d_t": d_t, "d_y": d_y, "d_o": d_o, "n_y": n_y, "n_o": n_o, "a_y": a_y, "a_o": a_o,
-            "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second, "second_cut": second_cut,
+            "first_y": first_y, "first_o": first_o, "first": first_net, "new26": new26, "new_min": new_min, "new_min_n": min_n,
+            "new_cut": new_cut, "second": second, "second_cut": second_cut,
             "third": third, "third_cut": third_cut, "returned": float(returned), "extra": extra,
-            "total": first_y + first_o + second + third + extra}
+            "total": first_net + second + third + extra}
