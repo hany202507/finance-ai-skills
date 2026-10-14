@@ -26,7 +26,7 @@ TODAY = "2026-10-09"
 ENGINE_MODULES = ("facts", "judge", "calc", "verify", "engine", "regions", "codes", "dates", "ruleset", "workbook")
 # 훑지 않는 모듈(서식·전자신고, 묻기, 규칙 키 목록). 새 모듈이 생기면 둘 중 어디에 드는지 정해야 test_every_module_is_classified 가 통과한다.
 # penalty(확정신고 가산세)는 engine.calculate 가 부르지 않고 신고 단계에서 엔진 결과를 받아 계산하므로 return_values 와 같은 쪽이다
-NOT_SCANNED = ("__init__", "questions", "keys", "return_values", "filing", "bjd", "outputs", "guide", "penalty")
+NOT_SCANNED = ("__init__", "questions", "keys", "return_values", "filing", "bjd", "outputs", "guide", "penalty", "evidence")
 FORM_PREFIXES = ("forms", "efile")
 
 

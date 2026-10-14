@@ -49,7 +49,7 @@ def test_initialize_and_list():
     assert r["result"]["protocolVersion"] == "2025-03-26" and "tools" in r["result"]["capabilities"]
     names = {t["name"] for t in M.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]}
     assert names == {"yangdo_next_questions", "yangdo_answer", "yangdo_calculate", "yangdo_forms", "yangdo_efile",
-                     "regulated_area", "ruleset_info"}
+                     "yangdo_evidence_inventory", "yangdo_evidence_apply", "regulated_area", "ruleset_info"}
     assert M.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     assert M.handle({"jsonrpc": "2.0", "id": 3, "method": "없는메서드"})["error"]["code"] == -32601
 
@@ -574,7 +574,7 @@ def _property_keys(node, path):
 
 def test_schema_property_names_are_ascii():
     tools = M.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-    assert len(tools) == 7
+    assert len(tools) == 9
     seen = set()
     for t in tools:
         schema = t["inputSchema"]
@@ -671,7 +671,7 @@ def test_plan1_tools_work_without_pymupdf(tmp_path):
     p = _py(code, facts, filer, str(tmp_path / "o"))
     assert p.returncode == 0, p.stderr
     out = json.loads(p.stdout)
-    assert out["tools"] == 7 and out["info"] is True and out["calc"] == "완료"
+    assert out["tools"] == 9 and out["info"] is True and out["calc"] == "완료"
     for name in ("yangdo_forms", "yangdo_efile"):
         is_error, text = out[name]
         assert is_error is True and "pymupdf" in text and "pip install" in text and "Traceback" not in text
