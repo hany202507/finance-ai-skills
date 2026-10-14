@@ -176,6 +176,59 @@ def test_capital_expenditure_list_is_checked_item_by_item(inv):
         assert f["자산"][0]["필요경비"]["자본적지출"][0]["금액"] == 12000000
 
 
+def _row(내용, 지급일, 금액, 증빙종류="세금계산서", 상대방="공급업체", 사업자번호="1234567890"):
+    return {"내용": 내용, "지급일": 지급일, "금액": 금액, "증빙종류": 증빙종류, "상대방": 상대방, "사업자번호": 사업자번호}
+
+
+@pytest.fixture
+def inv_two_receipts(folder):
+    """세금계산서(D02)에 더해 발코니 공사 이체 확인증(D04)이 있는 증빙 폴더."""
+    _pdf(os.path.join(folder, "4_이체확인증.pdf"), [["이체금액 18,000,000원", "이체일자 2022-05-10", "받는분 합성인테리어"]])
+    return E.inventory(folder)
+
+
+SASH_QUOTE = "공급가액 12,000,000원 작성일자 2022-03-02"
+BALCONY_QUOTE = "이체금액 18,000,000원 이체일자 2022-05-10"
+
+
+def test_list_question_rows_from_several_documents_are_joined(inv_two_receipts):
+    items = [_item("M09", [_row("샷시", "2022-03-02", 12000000)], "D02", SASH_QUOTE),
+             _item("M09", [_row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어")], "D04",
+                   BALCONY_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv_two_receipts)
+    rows = f["자산"][0]["필요경비"]["자본적지출"]
+    assert [r["금액"] for r in rows] == [12000000, 18000000]
+    assert len(rep["반영"]) == 2 and not rep["충돌"], rep
+
+
+def test_list_question_same_row_twice_is_a_match_not_a_second_expense(inv_two_receipts):
+    row = _row("샷시", "2022-03-02", 12000000)
+    items = [_item("M09", [row], "D02", SASH_QUOTE), _item("M09", [dict(row)], "D02", SASH_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv_two_receipts)
+    assert len(f["자산"][0]["필요경비"]["자본적지출"]) == 1
+    assert len(rep["반영"]) == 1 and len(rep["일치"]) == 1 and not rep["충돌"], rep
+
+
+def test_list_question_same_payment_from_another_document_waits_for_the_user(inv_two_receipts):
+    """같은 지급일·금액의 지출이 다른 서류에서 다른 모양으로 오면 같은 지출을 두 서류로 낸 것일 수 있어 넣지 않는다."""
+    _pdf_quote = "이체금액 18,000,000원 이체일자 2022-05-10"
+    items = [_item("M09", [_row("발코니확장", "2022-05-10", 18000000)], "D04", _pdf_quote),
+             _item("M09", [_row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어")], "D04",
+                   _pdf_quote)]
+    f, rep = E.apply(FACTS, items, inv_two_receipts)
+    assert len(f["자산"][0]["필요경비"]["자본적지출"]) == 1
+    assert len(rep["반영"]) == 1 and len(rep["충돌"]) == 1 and "같은 지급일·금액" in rep["충돌"][0]["사유"], rep
+
+
+def test_list_question_already_in_facts_is_not_extended(inv_two_receipts):
+    """사실관계에 원래 있던 목록은 덮어쓰지도 늘리지도 않는다. 이번 실행에서 넣은 목록만 이어 붙인다."""
+    facts = {"자산": [{"id": "A", "필요경비": {"자본적지출": [_row("보일러", "2021-01-05", 3000000)]}}]}
+    items = [_item("M09", [_row("샷시", "2022-03-02", 12000000)], "D02", SASH_QUOTE)]
+    f, rep = E.apply(facts, items, inv_two_receipts)
+    assert [r["내용"] for r in f["자산"][0]["필요경비"]["자본적지출"]] == ["보일러"]
+    assert len(rep["충돌"]) == 1 and not rep["반영"], rep
+
+
 def test_cli_inventory_then_apply_writes_facts_and_table(folder, tmp_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location(

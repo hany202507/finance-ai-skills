@@ -13,6 +13,10 @@
   반영   글자층이 있는 문서에서 발췌가 원문에 있고 값이 발췌에 있으며 확신이 「확실」이고 사실관계에 다른 값이 없다
   일치   이미 같은 값이 있다(교차 확인으로 세어 보여 준다)
   충돌   이미 다른 값이 있다. 덮어쓰지 않는다
+
+경비 목록 문항(M08~M11)은 서류마다 따로 낸다. 이번 실행에서 넣은 목록에는 다음 서류의 줄을 이어 붙인다.
+같은 줄은 일치로 세고, 지급일·금액이 같은데 다른 칸이 다른 줄은 같은 지출을 서류 두 장으로 낸 것일 수 있어 충돌로 올린다.
+사실관계에 원래 있던 목록은 늘리지 않는다(충돌).
   확인필요  스캔본·사진이거나 확신이 불확실이거나 값이 발췌에서 대조되지 않는다. 사용자가 확인표에서 고른다
   거절   없는 문항, 없는 문서, 글자층 원문에 없는 발췌, 형식이 틀린 값, 인적사항
 """
@@ -309,6 +313,26 @@ def _brief(item):
             "문서": src.get("문서"), "쪽": src.get("쪽"), "발췌": redact(src.get("발췌")), "비고": redact(item.get("비고"))}
 
 
+EXPENSE_QUESTIONS = {문항 for _, 문항 in F.EXPENSE_GROUPS}   # M08~M11. 서류마다 따로 내고 이어 붙인다
+SAME_PAYMENT_MSG = "같은 지급일·금액의 지출이 이미 들어갔다. 같은 지출을 서류 두 장으로 낸 것인지 확인하라"
+
+
+def _payment(r):
+    return (r.get("지급일"), r.get("금액")) if isinstance(r, dict) else None
+
+
+def _join_rows(have, rows):
+    """(새로 붙일 줄, 충돌 사유). 이미 있는 줄과 똑같은 줄은 건너뛴다."""
+    new = []
+    for r in rows:
+        if r in have or r in new:
+            continue
+        if _payment(r) is not None and any(_payment(h) == _payment(r) for h in have + new):
+            return [], SAME_PAYMENT_MSG
+        new.append(r)
+    return new, None
+
+
 def apply(facts, items, inv, texts=None):
     """추출 목록을 검증해 사실관계에 넣는다. (새 사실관계, 보고) 를 돌려준다. 원본 facts 는 바꾸지 않는다."""
     if not isinstance(items, list):
@@ -319,6 +343,7 @@ def apply(facts, items, inv, texts=None):
     f = copy.deepcopy(facts)
     rep = {"반영": [], "일치": [], "충돌": [], "확인필요": [], "거절": []}
     seen = {}
+    added = {}      # 이번 실행에서 넣은 경비 목록. 다음 서류의 줄을 여기에 이어 붙인다
     for item in items:
         verdict, why = check_item(item, docs, texts, bank)
         row = _brief(item) if isinstance(item, dict) else {"문항": None}
@@ -335,6 +360,22 @@ def apply(facts, items, inv, texts=None):
             rep["거절"].append(dict(row, 사유=str(e)))
             continue
         marker = (q["id"], asset["id"] if asset else None, house["id"] if house else None)
+        unit = {"자산": asset["id"] if asset else None, "주택": house["id"] if house else None}
+        if marker in added and isinstance(item["값"], list):
+            new, why = _join_rows(added[marker], item["값"])
+            if why:
+                rep["충돌"].append(dict(row, 사유=why))
+            elif not new:
+                rep["일치"].append(dict(row, 사유="이번에 넣은 줄과 같다"))
+            else:
+                try:
+                    f = Q.answer(f, q["id"], added[marker] + new, **unit)
+                except (ValueError, F.FactsError) as e:
+                    rep["거절"].append(dict(row, 사유="답 형식이 맞지 않는다: %s" % e))
+                    continue
+                added[marker] = added[marker] + new
+                rep["반영"].append(row)
+            continue
         old = _existing(f, q, asset, house)
         if marker in seen and not _same(seen[marker], item["값"]):
             rep["충돌"].append(dict(row, 사유="같은 문항에 다른 값을 두 번 냈다. 앞의 값: %s" % json.dumps(seen[marker], ensure_ascii=False)))
@@ -346,11 +387,13 @@ def apply(facts, items, inv, texts=None):
                 rep["충돌"].append(dict(row, 사유="사실관계에 이미 다른 값이 있다: %s" % json.dumps(old, ensure_ascii=False)))
             continue
         try:
-            f = Q.answer(f, q["id"], item["값"], 자산=asset["id"] if asset else None, 주택=house["id"] if house else None)
+            f = Q.answer(f, q["id"], item["값"], **unit)
         except (ValueError, F.FactsError) as e:
             rep["거절"].append(dict(row, 사유="답 형식이 맞지 않는다: %s" % e))
             continue
         seen[marker] = item["값"]
+        if q["id"] in EXPENSE_QUESTIONS and isinstance(item["값"], list):
+            added[marker] = list(item["값"])
         rep["반영"].append(row)
     rest = Q.next_questions(f, limit=None)
     rep["남은문항"] = [{"id": p["id"], "질문": p["질문"], "자산": p["자산"], "주택": p["주택"], "증빙서류": p["증빙서류"]}
