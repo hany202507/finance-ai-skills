@@ -76,7 +76,20 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
     names = lambda rows, n=8: ", ".join(r.person.name for r in rows[:n]) + (f" 외 {len(rows) - n}명" if len(rows) > n else "")  # noqa: E731
     if co.consumer == "Y":
         out.append("소비성서비스업이라 공제 대상이 아닙니다(조세특례제한법 제29조의8 제1항 괄호). 공제액을 0 으로 두었습니다")
-    if not res["in_time"]:
+    if res["new26"]:
+        out.append("2026 과세연도는 신규공제(직전 과세연도 대비 A 만, 법 제29조의8 제1항)와 기존공제(2025 증가분의 2차 연도, "
+                   "2024 증가분의 3차 연도)를 엔진 값으로만 냅니다. 워크북 · 별지 제10호의9서식(2)는 만들지 않았습니다(칸 구성 미확정)")
+        out.append("신규공제 인원은 근로자별 방식으로 세고, 해당 과세연도는 근로계약 체결일부터 4년(중소 · 중견기업이 아니면 3년), "
+                   "직전(2025) 과세연도는 2025년 계약 3년(중소 · 중견기업이 아니면 2년)의 청년 간주를 넣었습니다. 청년등 외 인원은 "
+                   "전체에서 청년등을 뺐고 증가 인원은 전체 증가를 한도로 0 이상으로 잘랐습니다(사용자 결정 2026-10-14, 조문 확인 전)")
+        if res["new_cut"]:
+            out.append(f"신규공제: {res['new_cut']}라 공제하지 않았습니다(중소기업이 아닌 내국인, 법 제29조의8 제1항 단서)")
+        elif res["new_min"]:
+            out.append(f"신규공제: 최소고용증가인원수({res['new_min_n']}명) 규정에 따라 제3호 금액 {res['new_min']:,}원을 뺐습니다")
+        out.append("기존공제 2차 연도(2025 증가분)의 감소 판정은 근로자별 방식 · 간주 없음, 3차 연도(2024 증가분)는 월말 합 방식(종전 규정)입니다. "
+                   "인원 감소 추징은 신규공제 당기 증가분에는 없고 전전 · 전전전 대비 마이너스에는 있다는 사용자 정리가 있으나 근거 조문을 찾지 못해 "
+                   "엔진은 계산하지 않았습니다")
+    elif not res["in_time"]:
         out.append("2026년 12월 31일이 속하는 과세연도부터는 별지 제10호의9서식(2)와 새 산식을 씁니다. 공제가 기존공제와 신규공제로 나뉩니다. "
                    "기존공제는 2024 · 2025 과세연도 증가분의 2 · 3차 연도로 종전 규정을 따르고(부칙 <법률 제21223호> 제34조), "
                    "신규공제는 2026 과세연도 이후 증가분으로 직전 3개 과세연도 대비 새 산식(법 제29조의8 제1항)입니다. "
@@ -126,6 +139,11 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
            and r.person.left == month_end(r.person.left)]
     if eom:
         out.append(f"퇴사일이 그 달 말일인 사람: {names(eom)}. 퇴사일을 마지막 근무일로 보아 그 달을 근무개월 수에 넣었습니다")
+    for per, (now, before) in res["half"].items():
+        rows = [r for r in counts[per].rows if r.regular and r.person.kind == "단시간" and r.person.supported == "Y"]
+        out.append(f"{per} 과세연도 상시근로자 수(단시간근로자 제외) {now:.2f}명이 직전 과세연도 {before:.2f}명보다 줄어 지원요건 가목"
+                   f"(시행령 제11조의2 제8항 제2호)을 채우지 못했습니다. 「0.75 요건」 Y 인 단시간근로자 {len(rows)}명({names(rows)})을 "
+                   "0.75명이 아니라 0.5명으로 셌습니다")
     part = [r for r in cur_rows if r.regular and r.weight < 1]
     if part:
         out.append(f"단시간근로자(1개월 소정근로시간 60시간 이상) {len(part)}명을 0.5명(지원요건을 채우면 0.75명)으로 셌습니다: {names(part)}")
@@ -142,8 +160,8 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
     out += [
         "상시근로자 범위(임원 · 최대주주와 친족 · 1년 미만 계약 · 단시간)와 청년등 구분(고용형태 · 병역 · 장애 · 경력단절)은 사원명부에 "
         "적힌 값을 그대로 썼습니다. 근로계약서 · 주주명부 · 병적증명서로 확인하는 것은 회계사 몫입니다",
-        "납부 확인은 급여대장의 소득세 · 국민연금 · 건강보험 공제액으로 대신했습니다. 근로소득원천징수부와 납부 내역으로 "
-        "확인하십시오(시행령 제23조 제10항 제6호)",
+        "납부 확인: 단시간근로자가 아니면 급여가 지급된 사람은 원천징수 사실이 있는 것으로 보았고, 단시간근로자는 급여대장의 소득세 · "
+        "국민연금 · 건강보험 공제액으로 대신했습니다. 근로소득원천징수부와 납부 내역으로 확인하십시오(시행령 제26조의8 제2항 제6호)",
         "같은 과세연도에 고용증대 세액공제(제29조의7) 1차 연도 공제와 함께 신청할 수 없습니다(별지 제10호의9서식(1) 작성방법 7). "
         "다른 감면과의 중복 배제는 조서 20 공제감면의 확인 줄을 봅니다",
         "정규직 전환 추가공제(제29조의8 제4항), 합병 · 분할 · 사업 양수와 특수관계인 승계 인원(시행령 제23조 제13항 제3호), "
@@ -252,15 +270,18 @@ def main(argv: list[str] | None = None) -> int:
     rules, rates = load_rules(), load_rates()
     res = compute(inp, rules, rates)
     notes = memos(inp, res, rules)
-    wb, checks = book.build(inp, res, rules, rates, notes)
-    out = case.out_dir(WP_DIR) / OUT_XLSX
-    try:
-        wb.save(out)
-    except PermissionError:
-        print(f"{out} 가 열려 있어 쓰지 못했습니다. 엑셀을 닫고 다시 돌리세요")
-        return 1
-    excel = False if args.no_excel else recalc(out)
-    back = read_back(out, checks) if excel else None
+    if res["new26"]:
+        out, back = None, None      # 2026 과세연도는 엔진 값만(서식(2) 칸 구성 미확정)
+    else:
+        wb, checks = book.build(inp, res, rules, rates, notes)
+        out = case.out_dir(WP_DIR) / OUT_XLSX
+        try:
+            wb.save(out)
+        except PermissionError:
+            print(f"{out} 가 열려 있어 쓰지 못했습니다. 엑셀을 닫고 다시 돌리세요")
+            return 1
+        excel = False if args.no_excel else recalc(out)
+        back = read_back(out, checks) if excel else None
 
     used, src_of = res["used"], res["source"]
     head = {per: {"상시": f2(used[per][0]), "청년등": f2(used[per][1]), "청년등외": f2(used[per][0] - used[per][1]),
@@ -276,7 +297,8 @@ def main(argv: list[str] | None = None) -> int:
             "people": {per: {"사원명부": len(inp.staff), "재직": sum(1 for r in res["counts"][per].rows if any(r.worked)),
                              "상시근로자": sum(1 for r in res["counts"][per].rows if r.regular and any(r.worked))}
                        for per in PERIODS},
-            "excel": back, "confirm": notes, "workbook": case.rel(out), "input": str(src)}
+            "excel": back, "confirm": notes, "workbook": case.rel(out) if out else None, "input": str(src),
+            "new26": res["new26"], "new_min": res["new_min"]}
     case.write_json(OUT_JSON, data)
 
     wrote = False
@@ -300,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             wrote = True
 
     h = head["해당"]
-    print(f"통합고용세액공제 {won(res['total'])}원 = 1차 {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
+    print(f"통합고용세액공제 {won(res['total'])}원 = {'신규' if res['new26'] else '1차'} {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
           f"+ 추가 {won(res['extra'])}")
     print(f"상시근로자 수: 해당 {h['상시']:.2f}(청년등 {h['청년등']:.2f}) · 직전 {head['직전']['상시']:.2f}"
           f"(청년등 {head['직전']['청년등']:.2f}, {src_of['직전']}) · 증가 {f2(res['d_t']):.2f} · 방식 {res['method']}")
@@ -316,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"수식 오류 칸: {', '.join(back['errors'])}")
         if back["bad"] or failed or back["errors"]:
             code = 1
+    elif res["new26"]:
+        print("2026 과세연도 신규공제는 엔진 값만 냅니다. 워크북(서식(2))은 만들지 않았습니다")
     else:
         print("엑셀 재계산을 하지 않았습니다. 워크북을 엑셀로 열면 수식이 계산됩니다(엔진 대조 · 검산은 「목록」 시트)")
     for text in notes[:40]:
@@ -323,5 +347,5 @@ def main(argv: list[str] | None = None) -> int:
     if not args.keep and not wrote:
         print(f"신고건.json 의 「{INFO_KEY}」 는 사람이 넣은 값이라 고치지 않았습니다. 워크북 인원과 다르면 맞추십시오")
     case.mark_step("employ", code == 0, f"통합고용세액공제 {won(res['total'])}원 · 상시 {h['상시']:.2f}명 · 증가 {f2(res['d_t']):.2f}명",
-                   [case.rel(out), f"_색인/{OUT_JSON}"])
+                   ([case.rel(out)] if out else []) + [f"_색인/{OUT_JSON}"])
     return code

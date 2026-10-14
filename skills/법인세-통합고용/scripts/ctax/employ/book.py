@@ -257,15 +257,27 @@ J_MONTHS = {"해당": "months", "직전": "p_months", "직전전": "pp_months"}
 
 
 def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> None:
+    # 단시간근로자 0.75명 지원요건 가목(시행령 제11조의2 제8항 제2호): 단시간근로자를 뺀 상시근로자 수가 직전 과세연도보다 줄지 않았을 것.
+    # 비교할 직전 급여대장이 없으면 사람이 입력한 「0.75 요건」 을 그대로 쓴다
+    own = lambda col: f"${L(col)}${JUDGE_FIRST}:${L(col)}${last}"       # noqa: E731
+    base_w = ref(S_STAFF, f"${L(C_WEIGHT)}${STAFF_FIRST}:${L(C_WEIGHT)}${STAFF_FIRST + n - 1}")
+    core = (f'=SUMPRODUCT(({base_w}=1)*({own(J_REG)}="Y")*ROUNDDOWN(ROUND({own(J_MW)}/$F$4,8),2))' if n else 0)
+    i = PERIODS.index(per)
+    if i + 1 < len(PERIODS):
+        older = S_JUDGE[PERIODS[i + 1]]
+        allow = f'=IF({ref(older, "$J$4")}>0,IF($P$4>={ref(older, "$P$4")},"Y","N"),"Y")'
+    else:
+        allow = "Y"
     row = X.title(ws, f"3. 판정({per} 과세연도)",
                   "사람마다 달마다 월말 재직과 청년등 여부를 가립니다. 「서식 기준」 은 해당 과세연도에만 청년 간주를 넣은 값입니다")
     for j, (label, value, fmt) in enumerate((("과세연도 시작일", f"={k[J_START[per]]}", DATE), ("종료일", f"={k[J_END[per]]}", DATE),
                                              ("개월 수", f"={k[J_MONTHS[per]]}", "0"),
                                              ("청년 간주", f"={k['deem']}" if per == "해당" else "N", ""),
-                                             ("급여대장 줄 수", None, "0"), ("급여 없는 달 포함", f"={k['unpaid']}", ""))):
+                                             ("급여대장 줄 수", None, "0"), ("급여 없는 달 포함", f"={k['unpaid']}", ""),
+                                             ("단시간 0.75 허용", allow, ""), ("단시간 제외 상시근로자 수", core, NUM2))):
         X.cell(ws, 4, 1 + 2 * j, label, kind="total")
         X.cell(ws, 4, 2 + 2 * j, value).number_format = fmt or "General"
-    START, END, MONTHS, DEEM, PAYN, UNPAID = "$B$4", "$D$4", "$F$4", "$H$4", "$J$4", "$L$4"
+    START, END, MONTHS, DEEM, PAYN, UNPAID, ALLOW = "$B$4", "$D$4", "$F$4", "$H$4", "$J$4", "$L$4", "$N$4"
     ws[PAYN.replace("$", "")] = (f'=COUNTIFS({pay["month"]},">="&{START},{pay["month"]},"<="&{END})' if n_pay else 0)
     first = JUDGE_FIRST
     head = first - 1
@@ -298,16 +310,17 @@ def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> Non
     for i in range(n):
         r, s = first + i, STAFF_FIRST + i
         a = lambda col: f"${L(col)}{r}"   # noqa: E731
-        proof = (f'=IF({PAYN}=0,"자료없음",IF(' + "+".join(
-            f'SUMIFS({pay[x]},{pay["id"]},{a(J_ID)},{pay["month"]},">="&{START},{pay["month"]},"<="&{END})'
-            for x in ("tax", "pension", "health")) + '>0,"Y","N"))') if n_pay else "자료없음"
+        sumifs = lambda x: (f'SUMIFS({pay[x]},{pay["id"]},{a(J_ID)},{pay["month"]},">="&{START},'      # noqa: E731
+                            f'{pay["month"]},"<="&{END})')
+        proof = (f'=IF({PAYN}=0,"자료없음",IF(IF({st(7, s)}="단시간",' + "+".join(sumifs(x) for x in ("tax", "pension", "health"))
+                 + f',{sumifs("pay")})>0,"Y","N"))') if n_pay else "자료없음"
         f = {
             J_ID: f"={st(1, s)}", J_NAME: f"={st(2, s)}", J_BIRTH: f"={st(3, s)}", J_HIRED: f"={st(4, s)}",
             J_LEFT: f'=IF({st(5, s)}="","",{st(5, s)})', J_LEFTX: f'=IF({st(5, s)}="",DATE(9999,12,31),{st(5, s)})',
             J_PROOF: proof,
             J_REG: f'=IF(AND({st(C_REASON, s)}="",{a(J_PROOF)}<>"N"),"Y","N")',
             J_REASON: f'=IF({st(C_REASON, s)}<>"",{st(C_REASON, s)},IF({a(J_PROOF)}="N","{REASONS["e"]}",""))',
-            J_WEIGHT: f"={st(C_WEIGHT, s)}",
+            J_WEIGHT: f'=IF(AND({st(C_WEIGHT, s)}={k["w_sup"]},{ALLOW}="N"),{k["w_half"]},{st(C_WEIGHT, s)})',
             J_MW: f"=SUM({span(B_WORK, r)})",
             J_M20: f'=IF({a(J_REG)}="Y",{a(J_WEIGHT)}*{a(J_MW)},0)',
             J_N21: f"=ROUNDDOWN(ROUND({a(J_M20)}/{MONTHS},8),2)",
