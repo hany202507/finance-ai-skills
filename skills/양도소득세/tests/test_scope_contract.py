@@ -85,9 +85,11 @@ def test_collect_only_entries_are_real_explained_and_really_unread():
 
 
 def test_collect_only_names_the_keys_that_truly_do_not_matter():
-    """P06, A04, A20, X06 은 모를때처리가 약속하는 것이 없어 읽지 않아도 된다. 아래 다섯은 약속이 있어 엔진이 읽는다(m-3)."""
+    """P06, A04, A20 은 모를때처리가 약속하는 것이 없어 읽지 않아도 된다. 아래 다섯은 약속이 있어 엔진이 읽는다(m-3).
+    X06(토지거래허가 신청일·허가일)은 한시배제 나목 판정(judge._late_exclusion)이 읽어 이 표에서 빠졌다."""
     by_id = {q["id"]: q for q in Q.load()["문항"]}
-    for qid in ("P06", "A04", "A20", "X06"):
+    assert by_id["X06"]["키"][0] not in F.COLLECT_ONLY and _is_read(by_id["X06"]["키"][0], _engine_source())
+    for qid in ("P06", "A04", "A20"):
         assert by_id[qid]["키"][0] in F.COLLECT_ONLY, qid
     src = _engine_source()
     for qid in ("T02", "M20", "H03", "H08", "M24"):
