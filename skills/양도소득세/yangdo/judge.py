@@ -10,6 +10,7 @@ from yangdo import dates
 from yangdo import facts as F
 from yangdo.dates import to_date
 from yangdo.regions import NeedAnswer
+from yangdo.ruleset import RuleError
 
 CONTROL = "조정대상지역"
 소형신축_시작 = date(2024, 1, 10)  # 시행령 제167조의3①12호 가목. 문항 X03 을 보일지 정하는 데만 쓴다
@@ -304,6 +305,70 @@ def _exemption(f, a, rs, v, 취득, 양도):
             v["근거"] += rs.cite("비과세.조정취득거주", 양도)
 
 
+def _in_table(a, table):
+    """자산 소재지가 한시배제 나목4) 표의 지역인지. 표는 [시도, 시군구] 목록이고 띄어쓰기는 보지 않는다."""
+    loc = a.get("소재지") or {}
+    key = tuple("".join(str(loc.get(k) or "").split()) for k in ("시도", "시군구"))
+    return any(key == tuple("".join(x.split()) for x in row) for row in table)
+
+
+def _late_exclusion(f, a, rs, v, 양도, 계약, 계약금):
+    """한시배제 나목·다목(시행령 제167조의10①12의2, 제167조의3①12의2). 보유 2년 이상이고 가목 양도기한이 지난 양도에만 부른다.
+
+    나목: 토지거래허가 대상 주택부수토지에 정착된 주택. 나목.신청기한까지 허가를 신청해 허가를 받았고, 매매계약 체결일부터
+          양도개월(표 지역은 양도개월.표지역) 안에 양도. 신청기한 다음 날 이후에 계약했으면 늦은계약.양도기한(표 지역은
+          늦은계약.양도기한.표지역)까지 양도해야 한다(나목4) 단서).
+    다목: 토지거래허가 대상이 아닌 주택. 다목.계약기한까지 매매계약을 체결하고 계약금을 받았고, 계약일부터 같은 개월 수 안에 양도.
+    해당하면 확인사항과 근거를 붙이고 True. 사실을 몰라 판정하지 못하면 확인사항만 붙이고 False."""
+    try:
+        table = rs.value("중과.한시배제.표지역", 양도)
+    except RuleError:       # 나·다목이 생기기(2026-04-23 판) 전의 양도
+        return False
+    in_table = _in_table(a, table)
+    sfx = ".표지역" if in_table else ""
+    months = rs.value("중과.한시배제.양도개월" + sfx, 양도)
+    latest = to_date(rs.value("중과.한시배제.나목.늦은계약.양도기한.표지역", 양도))
+    if 양도 > latest:       # 나·다목 어느 쪽으로도 이 날 뒤의 양도는 배제되지 않는다(다목도 계약기한 + 6개월이 이 날이다)
+        return False
+    where = "나목4) 표의 지역" if in_table else "나목4) 표 밖의 지역"
+    토허 = _opt(f, a, "토지거래허가대상", "X05")
+    if 계약 is None or 계약금 is None:
+        v["확인사항"].append("양도 매매계약일 또는 계약금 수령일을 몰라 한시배제 나목·다목을 판정하지 못했다. 해당하면 중과가 빠진다")
+        return False
+    base = rs.cite("중과.한시배제.보유", 양도) + rs.cite("중과.한시배제.양도개월" + sfx, 양도) + rs.cite("중과.한시배제.표지역", 양도)
+    if 토허 == "아니오":
+        마감 = to_date(rs.value("중과.한시배제.다목.계약기한", 양도))
+        끝 = dates.add_months(계약, months)
+        if 계약 <= 마감 and 계약금 <= 마감 and 양도 <= 끝:
+            v["근거"] += base + rs.cite("중과.한시배제.다목.계약기한", 양도)
+            v["확인사항"].append("보유 2년 이상 주택을 %s 까지 계약(계약금 수령 %s)하고 계약일부터 %d개월(%s) 안인 %s 에 양도해 "
+                              "다주택 중과를 배제했다(한시배제 다목). 계약서와 계약금 증빙을 확인하라" % (마감, 계약금, months, where, 양도))
+            return True
+        return False
+    if 토허 == "예":
+        허가 = _opt(f, a, "토지거래허가", "X06")
+        신청일 = to_date((허가 or {}).get("신청일")) if isinstance(허가, dict) else None
+        허가일 = to_date((허가 or {}).get("허가일")) if isinstance(허가, dict) else None
+        if 신청일 is None or 허가일 is None:
+            v["확인사항"].append("토지거래허가 신청일 또는 허가일을 몰라 한시배제 나목을 판정하지 못했다. 해당하면 중과가 빠진다")
+            return False
+        마감 = to_date(rs.value("중과.한시배제.나목.신청기한", 양도))
+        끝 = dates.add_months(계약, months)
+        늦은계약 = 계약 > 마감
+        if 늦은계약:
+            끝 = min(끝, to_date(rs.value("중과.한시배제.나목.늦은계약.양도기한" + sfx, 양도)))
+        if 신청일 <= 마감 and 양도 <= 끝:
+            v["근거"] += base + rs.cite("중과.한시배제.나목.신청기한", 양도)
+            if 늦은계약:
+                v["근거"] += rs.cite("중과.한시배제.나목.늦은계약.양도기한" + sfx, 양도)
+            v["확인사항"].append("보유 2년 이상 토지거래허가 대상 주택을 %s 까지 허가 신청(%s)·허가(%s)받고 %s 까지 양도해 다주택 중과를 "
+                              "배제했다(한시배제 나목, %s). 허가증과 계약서·계약금 증빙을 확인하라" % (마감, 신청일, 허가일, 끝, where))
+            return True
+        return False
+    v["확인사항"].append("토지거래허가 대상인지 몰라 한시배제 나목·다목을 판정하지 못했다. 해당하면 중과가 빠진다")
+    return False
+
+
 def _heavy(f, a, houses, me, rs, reg, v, 양도):
     st = v["조정_양도일"]
     if not st["지정"] or len(houses) < 2:
@@ -331,6 +396,8 @@ def _heavy(f, a, houses, me, rs, reg, v, 양도):
         v["근거"] += rs.cite("중과.한시배제.가목.양도기한", 양도) + rs.cite("중과.한시배제.보유", 양도)
         v["확인사항"].append("보유 2년 이상 주택을 %s 까지 양도해 다주택 중과를 배제했다(한시배제 가목)" % 기한)
         return
+    if 보유충족 and _late_exclusion(f, a, rs, v, 양도, 계약, 계약금):
+        return
     if kind == "중과2":
         p = _sale_base_price(a, me)
         if p is None:
@@ -351,12 +418,6 @@ def _heavy(f, a, houses, me, rs, reg, v, 양도):
         v["근거"] += rs.cite("판정.중과배제.사유", 양도)
         v["확인사항"].append("중과배제 사유 %s 를 입력대로 인정했다. 해당 호의 요건과 증빙을 확인하라" % ", ".join(사유))
         return
-    if not 보유충족:
-        pass    # 나목·다목 안내도 보유 2년 이상일 때만 낸다(보유 2년 미만은 가·나·다목 모두 해당하지 않는다)
-    elif a.get("토지거래허가대상") == "예":
-        v["확인사항"].append("한시배제 나목(토지거래허가 대상 주택)은 계획 5 에서 판정한다. 해당하면 중과가 빠진다")
-    elif 계약 and 계약 <= 기한:
-        v["확인사항"].append("양도 매매계약이 %s 이전이라 한시배제 다목에 해당할 수 있다. 다목 판정은 계획 5 다" % 기한)
     v["중과"] = kind
     v["확인사항"].append(HEAVY_ITEM_10[kind])
     v["근거"] += rs.cite(key, 양도) + rs.cite("판정.비교과세", 양도)

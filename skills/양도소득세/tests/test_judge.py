@@ -593,20 +593,25 @@ def test_temporary_deadline_switches_on_2026_10_01(양도, 기한):
     assert _verdict(f)["처분기한"] == 기한
 
 
-def _heavy_sale(양도, 소재지=송파, 취득="2021-03-01"):
-    """송파 주택 둘 중 하나를 양도일에 판다. 계약은 양도 30일 전이라 조정대상지역 공고일 뒤다."""
+def _heavy_sale(양도, 소재지=송파, 취득="2021-03-01", 계약=None):
+    """송파 주택 둘 중 하나를 양도일에 판다. 계약은 따로 주지 않으면 양도 30일 전이라 조정대상지역 공고일 뒤다."""
     from datetime import timedelta
-    계약 = (F.dates.to_date(양도) - timedelta(days=30)).isoformat()
+    계약 = 계약 or (F.dates.to_date(양도) - timedelta(days=30)).isoformat()
     a = asset("T", "주택", 소재지, 취득, 양도, 900_000_000, 600_000_000, 양도__계약일=계약, 양도__계약금수령일=계약,
               기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}})
     return facts([a], [house("H1", 소재지, 취득, 자산id="T"), house("H8", 송파, "2010-01-01")])
 
 
-@pytest.mark.parametrize("양도,중과", [("2026-05-09", None), ("2026-05-10", "중과2")])
-def test_temporary_exclusion_ends_after_2026_05_09(양도, 중과):
-    v = _verdict(_heavy_sale(양도))
+@pytest.mark.parametrize("양도,계약,중과,목", [
+    ("2026-05-09", "2026-04-09", None, "가목"),
+    ("2026-05-10", "2026-05-10", "중과2", None),     # 가목 기한 뒤 양도이고 계약도 2026-05-09 뒤라 다목에도 걸리지 않는다
+    ("2026-05-10", "2026-04-10", None, "다목"),      # 2026-05-09 까지 계약하고 4개월 안에 양도
+])
+def test_temporary_exclusion_ends_after_2026_05_09(양도, 계약, 중과, 목):
+    v = _verdict(_heavy_sale(양도, 계약=계약))
     assert v["중과"] == 중과
-    assert any("한시배제 가목" in m for m in v["확인사항"]) is (중과 is None)
+    for x in ("가목", "다목"):
+        assert any("한시배제 %s" % x in m for m in v["확인사항"]) is (x == 목)
 
 
 @pytest.mark.parametrize("양도,기한", [("2025-02-27", "2025-05-09"), ("2025-02-28", "2026-05-09")])
@@ -754,46 +759,96 @@ def test_sold_local_cheap_house_removes_heavy(가격, 중과):
     assert v["중과"] == 중과 and bool(_note(v, "판 집이 지방 저가주택이거나")) is (중과 is None)
 
 
-# ---- 한시배제 나목·다목 안내는 보유 2년 이상일 때만(시행령 제167조의3①12호의2 본문, 정답지 사례 08) ----
+# ---- 한시배제 나목·다목(시행령 제167조의10①12의2, 제167조의3①12의2, 2026-04-23 신설) ----
+# 송파구는 나목4) 표 밖(4개월), 마포구는 표 안(6개월)이다. 보유 2년 미만은 가·나·다목 모두 해당하지 않는다(12호의2 본문, 정답지 사례 08)
 
-def _hint_sale(양도, 취득, 계약, 허가대상=False):
-    """송파 주택 둘 중 하나를 판다. 양도는 한시배제 가목 양도기한(2026-05-09) 뒤라 가목에는 걸리지 않는다."""
-    a = asset("T", "주택", 송파, 취득, 양도, 900_000_000, 600_000_000, 양도__계약일=계약, 양도__계약금수령일=계약,
-              기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}},
-              토지거래허가대상="예" if 허가대상 else "아니오")
-    return facts([a], [house("H1", 송파, 취득, 자산id="T"), house("H8", 송파, "2010-01-01")])
+def _late_sale(양도, 취득, 계약, 곳=송파, 허가대상="아니오", 허가=None, 계약금=None):
+    """같은 곳 주택 둘 중 하나를 판다. 양도는 한시배제 가목 양도기한(2026-05-09) 뒤라 가목에는 걸리지 않는다."""
+    kw = dict(양도__계약일=계약, 양도__계약금수령일=계약금 or 계약,
+              기준시가={"취득": {"주택": 400_000_000}, "양도": {"주택": 650_000_000}}, 토지거래허가대상=허가대상)
+    if 허가 is not None:
+        kw["토지거래허가"] = 허가
+    a = asset("T", "주택", 곳, 취득, 양도, 900_000_000, 600_000_000, **kw)
+    return facts([a], [house("H1", 곳, 취득, 자산id="T"), house("H8", 곳, "2010-01-01")])
 
 
-def _hint(v, 목):
+def _late_note(v, 목):
     return [m for m in v["확인사항"] if "한시배제 %s" % 목 in m]
 
 
-def test_temporary_exclusion_da_hint_only_when_held_two_years():
-    v = _verdict(_hint_sale("2026-06-05", "2021-03-01", "2026-05-06"))
-    assert v["보유년"] >= 2 and v["중과"] == "중과2" and _hint(v, "다목")
-    v = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
-    assert v["보유년"] < 2 and v["중과"] == "중과2" and not _hint(v, "다목")
+@pytest.mark.parametrize("곳,양도,중과", [
+    (송파, "2026-09-06", None), (송파, "2026-09-07", "중과2"),        # 표 밖: 계약일 2026-05-06 부터 4개월
+    (마포, "2026-11-06", None), (마포, "2026-11-07", "중과2"),        # 표 안: 6개월
+])
+def test_temporary_exclusion_da_months_by_region(곳, 양도, 중과):
+    v = _verdict(_late_sale(양도, "2021-03-01", "2026-05-06", 곳=곳))
+    assert v["중과"] == 중과
+    assert bool(_late_note(v, "다목")) is (중과 is None)
+    assert (v["장특공"] == "표1") is (중과 is None)
+
+
+@pytest.mark.parametrize("계약,계약금", [("2026-05-10", None), ("2026-05-09", "2026-05-10")])
+def test_temporary_exclusion_da_needs_contract_and_deposit_by_deadline(계약, 계약금):
+    v = _verdict(_late_sale("2026-06-05", "2021-03-01", 계약, 계약금=계약금))
+    assert v["중과"] == "중과2" and not _late_note(v, "다목")
+
+
+def test_temporary_exclusion_da_only_when_held_two_years():
+    v = _verdict(_late_sale("2026-06-05", "2025-05-01", "2026-05-06"))
+    assert v["보유년"] < 2 and v["중과"] == "중과2" and v["단기"] is not None
     assert not any("한시배제" in m for m in v["확인사항"])
 
 
-def test_temporary_exclusion_na_hint_only_when_held_two_years():
-    v = _verdict(_hint_sale("2026-06-05", "2021-03-01", "2026-05-06", 허가대상=True))
-    assert v["보유년"] >= 2 and _hint(v, "나목")
-    v = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06", 허가대상=True))
-    assert v["보유년"] < 2 and not any("한시배제" in m for m in v["확인사항"])
+def test_temporary_exclusion_holding_boundary_is_two_years_exactly():
+    """가목과 같은 값(보유년)과 같은 기준(중과.한시배제.보유)을 쓴다. 만 2년이 되는 날은 배제된다."""
+    v = _verdict(_late_sale("2026-06-05", "2024-06-05", "2026-05-06"))
+    assert v["보유년"] == 2 and v["중과"] is None and _late_note(v, "다목")
+    v = _verdict(_late_sale("2026-06-05", "2024-06-06", "2026-05-06"))
+    assert v["보유년"] == 1 and v["중과"] == "중과2"
 
 
-def test_temporary_exclusion_hint_holding_boundary_is_two_years_exactly():
-    """가목과 같은 값(보유년)과 같은 기준(중과.한시배제.보유)을 쓴다. 만 2년이 되는 날은 안내가 붙는다."""
-    v = _verdict(_hint_sale("2026-06-05", "2024-06-05", "2026-05-06"))
-    assert v["보유년"] == 2 and _hint(v, "다목")
-    v = _verdict(_hint_sale("2026-06-05", "2024-06-06", "2026-05-06"))
-    assert v["보유년"] == 1 and not _hint(v, "다목")
+@pytest.mark.parametrize("곳,계약,양도,중과", [
+    (송파, "2026-05-06", "2026-09-06", None),          # 신청기한 안 계약: 계약일부터 4개월
+    (송파, "2026-05-25", "2026-09-09", None),          # 2026-05-10 이후 계약: 4개월(9-25)보다 이른 2026-09-09 까지
+    (송파, "2026-05-25", "2026-09-10", "중과2"),
+    (마포, "2026-06-01", "2026-11-09", None),          # 표 안 늦은 계약: 6개월(12-01)보다 이른 2026-11-09 까지
+    (마포, "2026-06-01", "2026-11-10", "중과2"),
+])
+def test_temporary_exclusion_na(곳, 계약, 양도, 중과):
+    f = _late_sale(양도, "2021-03-01", 계약, 곳=곳, 허가대상="예", 허가={"신청일": "2026-05-01", "허가일": "2026-05-20"})
+    v = _verdict(f)
+    assert v["중과"] == 중과 and bool(_late_note(v, "나목")) is (중과 is None)
 
 
-def test_hint_condition_does_not_change_tax_verdict():
-    short = _verdict(_hint_sale("2026-06-05", "2025-05-01", "2026-05-06"))
-    assert short["중과"] == "중과2" and short["단기"] is not None
+def test_temporary_exclusion_na_needs_application_by_deadline():
+    f = _late_sale("2026-08-01", "2021-03-01", "2026-06-01", 허가대상="예", 허가={"신청일": "2026-05-10", "허가일": "2026-05-30"})
+    assert _verdict(f)["중과"] == "중과2"
+
+
+def test_temporary_exclusion_na_asks_permit_dates():
+    r = run(_late_sale("2026-08-01", "2021-03-01", "2026-06-01", 허가대상="예"))
+    assert [q["문항"] for q in r["질문"]] == ["X06"]
+
+
+def test_temporary_exclusion_unknown_permit_status_keeps_heavy_with_note():
+    v = _verdict(_late_sale("2026-06-05", "2021-03-01", "2026-05-06", 허가대상="모름"))
+    assert v["중과"] == "중과2" and any("토지거래허가 대상인지 몰라" in m for m in v["확인사항"])
+
+
+def test_temporary_exclusion_not_after_latest_deadline():
+    """2026-11-09 뒤 양도는 나·다목 어느 쪽으로도 배제되지 않고 토지거래허가 질문도 하지 않는다."""
+    f = _late_sale("2026-11-10", "2021-03-01", "2026-05-09", 곳=마포)
+    del f["자산"][0]["토지거래허가대상"]
+    v = _verdict(f)
+    assert v["중과"] == "중과2"
+
+
+def test_case_g2_with_contract_before_deadline_is_not_heavy():
+    """이슈 #2 의 재현. 사례 G2 의 계약일만 2026-05-01 로 당기면 다목으로 중과가 빠지고 장특공 표1(7년)이 붙는다."""
+    def early(f):
+        f["자산"][0]["양도"]["계약일"] = f["자산"][0]["양도"]["계약금수령일"] = "2026-05-01"
+    v = one("G2", early)
+    assert v["중과"] is None and v["장특공"] == "표1" and v["보유년"] == 7
 
 
 # --- 전남광주통합특별시 주소의 지방 저가주택 판정 ---
