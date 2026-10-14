@@ -24,6 +24,10 @@ OK_LAND_USE = ("사업용", "주택부수토지")
 WHOLE_MSG = "금액은 원 단위 정수로 적습니다"
 NONNEG_MSG = "금액은 0 이상이어야 합니다"
 EMPTY_MSG = "금액이 비어 있습니다"
+# 지출 항목의 증빙종류. 앞의 다섯은 필요경비로 넣고(calc.OK_EVIDENCE), 간이영수증·없음은 빼고 확인사항에 적는다.
+# 질문지 HTML 선택지의 코드(make_questionnaire_html.EVIDENCE)와 같은 글자다. 이 밖의 글자(「계좌이체 내역」 등)는 경비를 빼지 않고 다시 묻는다
+EVIDENCE_KINDS = ("세금계산서", "계산서", "카드영수증", "현금영수증", "계좌이체", "간이영수증", "없음")
+EVIDENCE_MSG = "영수증 종류는 %s 가운데 하나로 적습니다" % ", ".join(EVIDENCE_KINDS)
 SHAPE_PRICE_MSG = "기준시가는 취득과 양도 칸마다 토지·건물·주택 금액을 적습니다"
 EXPENSE_GROUPS = (("취득부대", "M08"), ("자본적지출", "M09"), ("기타", "M10"), ("양도비", "M11"))
 RESIDENCE_MSG = "거주기간은 [전입일, 전출일] 두 날짜를 한 구간으로 적습니다"
@@ -323,6 +327,8 @@ def _check_money(a):
             if not isinstance(it, dict):
                 raise Missing(문항, aid, "%s 는 지출마다 내용·지급일·금액·증빙종류·상대방을 적은 목록입니다" % group)
             _listed_money(it.get("금액"), 문항, aid)
+            if it.get("증빙종류") not in EVIDENCE_KINDS:
+                raise Missing(문항, aid, EVIDENCE_MSG)
     _money(a.get("감가상각비"), "M12", aid)
     _money(a.get("매매사례가액"), "M21", aid)
     appraisals = a.get("감정가액")

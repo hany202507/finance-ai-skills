@@ -370,6 +370,26 @@ def test_empty_amount_inside_list_asks(mutate, 문항):
     assert q["자산"] == "B" and q["내용"] == EMPTY_MSG
 
 
+EVIDENCE_MSG = "영수증 종류는 세금계산서, 계산서, 카드영수증, 현금영수증, 계좌이체, 간이영수증, 없음 가운데 하나로 적습니다"
+
+
+@pytest.mark.parametrize("mutate,문항", [
+    (_expense_raw("자본적지출", _item(증빙종류="계좌이체 내역")), "M09"),   # 질문지 도움말의 표시 글자를 그대로 적은 경우
+    (_expense_raw("취득부대", _item(증빙종류="신용카드")), "M08"),
+    (_expense_raw("기타", _item(증빙종류=None)), "M10"),
+    (_expense_raw("양도비", {k: v for k, v in _item().items() if k != "증빙종류"}), "M11"),
+])
+def test_unknown_evidence_kind_asks_instead_of_dropping(mutate, 문항):
+    q = _only(prep("B", mutate), 문항)
+    assert q["자산"] == "B" and q["내용"] == EVIDENCE_MSG
+
+
+@pytest.mark.parametrize("kind", ["세금계산서", "계산서", "카드영수증", "현금영수증", "계좌이체", "간이영수증", "없음"])
+def test_known_evidence_kind_passes(kind):
+    p = prep("B", _expense_raw("자본적지출", _item(증빙종류=kind)))
+    assert p["질문"] == [] and p["다루지않음"] == []
+
+
 def test_zero_amount_inside_list_passes():
     p = prep("B", lambda f: (_expense_item("양도비", 0)(f), _set(("감정가액",), [0, 500000000])(f)))
     assert p["질문"] == [] and p["다루지않음"] == []

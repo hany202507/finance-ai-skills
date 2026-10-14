@@ -150,9 +150,10 @@ def _node(payload):
 
 
 def test_evidence_codes_cover_what_the_engine_accepts():
-    """영수증 종류 선택지의 코드에 엔진이 경비로 받는 글자가 모두 있다."""
+    """영수증 종류 선택지의 코드에 엔진이 경비로 받는 글자가 모두 있고, 선택지 코드는 엔진이 받는 증빙종류와 같다."""
     codes = {c for c, _ in mq.EVIDENCE}
     assert set(OK_EVIDENCE) <= codes
+    assert [c for c, _ in mq.EVIDENCE] == list(F.EVIDENCE_KINDS)
 
 
 def _referenced(cond, out):
