@@ -182,6 +182,9 @@ def main():
     elif os.path.exists(mp):
         os.remove(mp)
     print("=== 결산 엔진 앵커 ===")
+    if eng.dropped:
+        print(f"[주의] {period} 에 들지 않아 뺀 행: " + " · ".join(f"{k} {v:,}건" for k, v in eng.dropped.items())
+              + " — 원천을 기간으로 거르지 않고 넣었다. 뺀 행이 이 기간 것이 아닌지 확인")
     print(f"분개장 라인 {len(eng.J)} / 전표 {eng.no} / 조정 {len(eng.ADJ)}")
     sm = eng.summary()
     print(f"매출액(계)    {sm['sales']:>15,}")

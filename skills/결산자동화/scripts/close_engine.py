@@ -66,7 +66,9 @@ class Engine:
         self.master = {}     # 거래처명 → (코드, 사업자번호)
         self._mnorm = {}     # 정규화 상호 → (코드, 사업자번호)
         self.party_miss = {}  # 해소 못한 거래처라벨 → 등장 계정 set. 업로드 사전검증이 읽는다
+        self.dropped = {}     # 결산 기간에 들지 않아 뺀 행 수. 원천 이름 → 건수
         self._load()
+        self._clip_period()
 
     # --- 거래처 해소 (더존 업로드 거래처코드·사업자번호)
     def resolve_party(self, label, acct=None):
@@ -140,6 +142,45 @@ class Engine:
             return [r for r in rows(find(self.raw, key))[1:] if r and r[0] is not None]
         except FileNotFoundError:
             return []
+
+    def period_months(self):
+        """기간라벨이 덮는 달. 2026Q2 → 04~06, 2026H1 → 01~06, 2026-05 → 05, 나머지(2026)는 1~12월"""
+        p = str(self.period)
+        if "Q" in p:
+            q = int(p.split("Q")[1]); return [f"{m:02d}" for m in range(3 * q - 2, 3 * q + 1)]
+        if "H" in p:
+            h = int(p.split("H")[1]); return [f"{m:02d}" for m in range(6 * h - 5, 6 * h + 1)]
+        if len(p) >= 7 and p[4] == "-":
+            return [p[5:7]]
+        return [f"{m:02d}" for m in range(1, 13)]
+
+    def _clip_period(self):
+        """결산 기간에 들지 않는 행을 뺀다.
+
+        Gridie 같은 DB 표에는 여러 분기가 한 표에 들어 있다. 2분기로 거르지 않고 통째로 내려받으면
+        매출·통장이 두 배로 잡히는데, 숫자끼리는 맞아서 verify_close 가 ALL PASS 를 낸다(2026-10-16
+        마루키 1·2분기 통째: 매출 684,000,000). 그래서 엔진이 직접 거르고 뺀 건수를 남긴다.
+        전기이월분개장은 기간 첫날 전의 가장 늦은 이월일 것만 쓴다(2025-12-31 · 2026-03-31 이 섞인 표).
+        """
+        ms = set(self.period_months()); y = str(self.year)
+        inside = lambda d: str(d)[:4] == y and str(d)[5:7] in ms
+        for 이름, attr in (("세금계산서", "tax"), ("은행거래내역", "bank"), ("카드승인내역", "card"),
+                         ("급여대장", "pay"), ("채널매출", "chsales"), ("정산차감", "setl")):
+            src = getattr(self, attr)
+            keep = [r for r in src if inside(r[0])]
+            if len(keep) != len(src):
+                self.dropped[이름] = len(src) - len(keep)
+                setattr(self, attr, keep)
+        start = f"{y}-{min(ms)}-01"
+        이월일 = sorted({str(r[0])[:10] for r in self.opening[1:]
+                       if r[0] is not None and r[1] == "전기이월" and str(r[0])[:10] < start})
+        if 이월일:
+            keep = [r for r in self.opening[1:]
+                    if r[0] is None or r[1] != "전기이월" or str(r[0])[:10] == 이월일[-1]]
+            n = len(self.opening) - 1 - len(keep)
+            if n:
+                self.dropped["전기이월분개장"] = n
+                self.opening = self.opening[:1] + keep
 
     def months(self):
         ms = {mm(r[0]) for r in self.tax}
