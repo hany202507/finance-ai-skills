@@ -553,9 +553,11 @@ class Engine:
         inv_open = self._by_period(self.P.상품_기초재고)
         inv_close = self._by_period(self.P.상품_기말재고_잠정)
         cogs = inv_open + cur_purchase - inv_close
-        n += 1
-        self.ADJ.append((n, last, 451, "상품매출원가", cogs, 0, f"상품매출원가 대체(기말재고 잠정 {inv_close:,} - 확인 No.1)"))
-        self.ADJ.append((n, last, 146, "상품", 0, cogs, f"상품매출원가 대체(기말재고 잠정 {inv_close:,} - 확인 No.1)"))
+        # 재고가 없는 용역 회사는 원가 대체 전표를 만들지 않는다. 0원 전표는 더존 사전검증이 반려한다
+        if inv_open or cur_purchase or inv_close:
+            n += 1
+            self.ADJ.append((n, last, 451, "상품매출원가", cogs, 0, f"상품매출원가 대체(기말재고 잠정 {inv_close:,} - 확인 No.1)"))
+            self.ADJ.append((n, last, 146, "상품", 0, cogs, f"상품매출원가 대체(기말재고 잠정 {inv_close:,} - 확인 No.1)"))
         # 3) 부가세 정리
         yesu = self._sum_journal(255, "credit")    # 부가세예수금 총
         dae = self._sum_journal(135, "debit")       # 부가세대급금 총

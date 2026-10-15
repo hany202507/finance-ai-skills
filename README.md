@@ -42,7 +42,7 @@
 python ~/.claude/skills/결산자동화/scripts/close_folder.py <원천자료폴더> 2026-06 profile_glowbeam
 ```
 
-프로파일(`scripts/profile_glowbeam.py` · `profile_maisonbloom.py`)은 가상 실습 회사에 맞춘 예시입니다. 자기 회사에 쓰려면 `profile_sample.py` 를 복사해 계정 · 거래처 · 판단 기준을 바꿉니다. 더존 SmartA 양식에서만 확인했고, 위하고 · 이카운트 등 다른 프로그램 양식은 다루지 않습니다.
+프로파일(`scripts/profile_glowbeam.py` · `profile_maisonbloom.py` · `profile_maruki.py` · `profile_nuri.py`)은 가상 실습 회사에 맞춘 예시입니다. 마루키친마켓(식품 도소매)과 누리빌딩케어(청소 용역, 재고 없음)는 `run_close.py <원천폴더> <산출폴더> 2026Q2 profile_maruki` 처럼 분기 라벨로 돌립니다. 자기 회사에 쓰려면 `profile_sample.py` 를 복사해 계정 · 거래처 · 판단 기준을 바꿉니다. 더존 SmartA 양식에서만 확인했고, 위하고 · 이카운트 등 다른 프로그램 양식은 다루지 않습니다.
 
 ## 현금흐름표
 
