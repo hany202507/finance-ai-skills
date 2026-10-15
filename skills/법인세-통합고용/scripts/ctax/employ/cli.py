@@ -1,7 +1,7 @@
 """`python -m ctax employ <신고 건 폴더>`: 급여대장 · 사원명부로 통합고용세액공제 검증 워크북을 만든다.
 
 읽는 것  00 받은자료/급여/통합고용_입력.xlsx (`--template` 빈 양식, `--sample` 시험용 스무 명, `--input` 다른 파일)
-쓰는 것  2 조서/통합고용_검증.xlsx, _색인/통합고용.json, 신고건.json 의 「상시근로자」(ctax wp 가 읽는다)
+쓰는 것  2 조서/통합고용_검증.xlsx, 2 조서/통합고용_법정서식.pdf(법제처 서식 원본 위에 값), _색인/통합고용.json, 신고건.json 의 「상시근로자」(ctax wp 가 읽는다)
 끝 코드  0 검산 모두 통과, 1 확인할 검산이 있음, 2 입력 없음
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from openpyxl import Workbook, load_workbook
 
 from .. import xlsx as X
 from ..case import WP_DIR, Case, MissingInput, won
-from . import book
+from . import book, lawform
 from .calc import compute, month_end
 from .model import (COMPANY_ROWS, INPUT_DIR, INPUT_NAME, PAY_COLS, PERIODS, STAFF_COLS, InputError, Inputs, load_data,
                     load_rules, read_inputs)
@@ -83,6 +83,11 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
                    "(시행규칙 부칙 제23호 제6조: 개정 서식으로 종전 규정의 공제를 신청할 수 없으면 종전 서식). 합계(8호(갑) 18S)는 둘을 더합니다. 기존공제 2차 연도 인원은 최초 공제연도가 2025 과세연도라 근로자별, 3차 연도는 2024 과세연도라 월말 합 방식입니다(시행령 부칙 제36127호 제11조 제1항)")
     elif res["unsupported"]:
         out.append(res["unsupported"])
+    if res["regime"] == "2026" and not res["unsupported"]:
+        out.append("2026 과세연도부터 상시근로자 범위가 바뀌었습니다(시행령 제26조의8 제2항, 대통령령 제35999호 2026-01-01 시행): "
+                   "「근로계약기간 1년 미만」 이 「근로기간 1년 미만」 으로, 단시간근로자는 「1개월 소정근로시간 60시간」 이 「해당 과세연도 총 근로시간 ÷ 근무개월 수 60시간」 으로. "
+                   "이 엔진은 사원명부의 「계약 1년 미만」 · 「월 소정근로시간」 으로 종전 기준을 씁니다. 기존공제(2024 · 2025 증가분)는 종전 범위가 맞고(부칙 제2조), "
+                   "신규공제 인원은 새 범위로 회계사가 확인하십시오(「근로기간」 이 실제 근무 기간인지는 해석례가 아직 없습니다)")
     if res["method"] == "근로자별":
         out.append("1차 연도 인원은 근로자별 방식(사람마다 근무개월 수 ÷ 과세연도 개월 수, 100분의 1 미만 버림)으로 셌습니다"
                    "(시행령 제26조의8 제6항 · 제11조의2 제8항, 부칙 <대통령령 제36127호> 제11조 제1항). 2 · 3차 연도 판정은 "
@@ -218,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--input", help=f"입력 파일(없으면 {INPUT_DIR}/{INPUT_NAME})")
     ap.add_argument("--template", action="store_true", help="빈 입력 양식을 만들고 끝낸다")
     ap.add_argument("--sample", action="store_true", help="시험용 합성 회사(스무 명) 입력을 만들고 끝낸다")
-    ap.add_argument("--sample-year", type=int, choices=(2025, 2026), default=2025, help="--sample 의 해당 과세연도(기본 2025)")
+    ap.add_argument("--sample-year", type=int, choices=(2025, 2026, 2027), default=2025, help="--sample 의 해당 과세연도(기본 2025)")
     ap.add_argument("--no-excel", action="store_true", help="엑셀 재계산과 수식 값 대조를 하지 않는다")
     ap.add_argument("--keep", action="store_true", help="신고건.json 의 「상시근로자」 를 고치지 않는다")
     args = ap.parse_args(argv)
@@ -264,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     excel = False if args.no_excel else recalc(out)
     back = read_back(out, checks) if excel else None
+    pdf_out = case.out_dir(WP_DIR) / lawform.OUT_PDF
+    try:
+        legal = lawform.write(pdf_out, inp, res, rules, case.company)
+    except PermissionError:
+        legal = {"written": False, "why": f"{pdf_out} 가 열려 있어 쓰지 못했습니다. PDF 를 닫고 다시 돌리세요"}
 
     used, src_of = res["used"], res["source"]
     head = {per: {"상시": f2(used[per][0]), "청년등": f2(used[per][1]), "청년등외": f2(used[per][0] - used[per][1]),
@@ -279,7 +289,8 @@ def main(argv: list[str] | None = None) -> int:
             "people": {per: {"사원명부": len(inp.staff), "재직": sum(1 for r in res["counts"][per].rows if any(r.worked)),
                              "상시근로자": sum(1 for r in res["counts"][per].rows if r.regular and any(r.worked))}
                        for per in PERIODS},
-            "excel": back, "confirm": notes, "workbook": case.rel(out), "input": str(src)}
+            "excel": back, "confirm": notes, "workbook": case.rel(out), "input": str(src),
+            "law_pdf": case.rel(pdf_out) if legal.get("written") else None}
     case.write_json(OUT_JSON, data)
 
     wrote = False
@@ -321,10 +332,14 @@ def main(argv: list[str] | None = None) -> int:
             code = 1
     else:
         print("엑셀 재계산을 하지 않았습니다. 워크북을 엑셀로 열면 수식이 계산됩니다(엔진 대조 · 검산은 「목록」 시트)")
+    if legal.get("written"):
+        print(f"법정서식 PDF {legal['pages']}쪽(법제처 서식 원본 위에 값 {legal['cells']}칸): {case.rel(pdf_out)}")
+    else:
+        print(f"법정서식 PDF 를 만들지 않았습니다: {legal.get('why', '')}")
     for text in notes[:40]:
         print(f"확인: {text}")
     if not args.keep and not wrote:
         print(f"신고건.json 의 「{INFO_KEY}」 는 사람이 넣은 값이라 고치지 않았습니다. 워크북 인원과 다르면 맞추십시오")
     case.mark_step("employ", code == 0, f"통합고용세액공제 {won(res['total'])}원 · 상시 {h['상시']:.2f}명 · 증가 {f2(res['d_t']):.2f}명",
-                   [case.rel(out), f"_색인/{OUT_JSON}"])
+                   [case.rel(out), f"_색인/{OUT_JSON}"] + ([case.rel(pdf_out)] if legal.get("written") else []))
     return code

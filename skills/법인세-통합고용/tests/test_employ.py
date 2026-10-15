@@ -317,3 +317,93 @@ def test_assemble_staff_company_pdfs(tmp_path):
     inp, res, _, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
     assert len(inp.staff) == 20 and res["total"] == 92_355_000
     assert res["used"]["해당"] == (Fraction("13.31"), Fraction("8.73"))
+
+
+# ---------------------------------------------------------------- 과세연도 범위 · 법정서식 PDF (2026-10-16)
+
+def _shift_inputs(inp, years: int):
+    """사람 · 급여 · 과세연도 날짜를 같은 햇수만큼 옮긴 입력."""
+    import dataclasses
+
+    def sh(d):
+        if d is None:
+            return None
+        try:
+            return d.replace(year=d.year + years)
+        except ValueError:
+            return d.replace(year=d.year + years, day=28)
+    co = dataclasses.replace(inp.company, fy_start=sh(inp.company.fy_start), fy_end=sh(inp.company.fy_end))
+    staff = [dataclasses.replace(p, birth=sh(p.birth), hired=sh(p.hired), left=sh(p.left), mil_from=sh(p.mil_from), mil_to=sh(p.mil_to))
+             for p in inp.staff]
+    pays = [dataclasses.replace(x, month=sh(x.month)) for x in inp.pays]
+    return dataclasses.replace(inp, company=co, staff=staff, pays=pays)
+
+
+def test_before_2023_is_not_integrated_credit(tmp_path):
+    """통합고용세액공제는 2023년 1월 1일 이후 개시 과세연도부터다(부칙 <법률 제19199호> 제2조 제1항). 그 전은 계산하지 않는다."""
+    from ctax.employ import lawform
+    root = tmp_path / "샘플회사" / "2025 법인세"
+    assert cli.main([str(root), "--sample"]) == 0
+    inp, _, rules, rates = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+    old = _shift_inputs(inp, -3)                                   # 2022 과세연도
+    res = calc.compute(old, rules, rates)
+    assert "2023년 1월 1일" in res["unsupported"]
+    assert (res["first"], res["second"], res["third"], res["extra"], res["total"]) == (0, 0, 0, 0, 0)
+    assert lawform.write(tmp_path / "x.pdf", old, res, rules, "샘플회사")["written"] is False
+    res23 = calc.compute(_shift_inputs(inp, -2), rules, rates)     # 2023 과세연도는 계산한다(월말 합)
+    assert not res23["unsupported"] and res23["method"] == "월말합" and res23["first"] > 0
+
+
+def test_sample_2027_second_term_and_third_year(tmp_path):
+    """2027 과세연도: 신규공제 A(직전) + B(전전, 2025 과세연도 대비). 전전전(2024)은 법 제29조의8 제1항 괄호로 비교에서 빠져 계산된다.
+    직전(2026) 증가분은 신규공제라 2차 연도가 없고, 직전전(2025) 1차 공제는 3차 연도로 이어진다(근로자별 인원)."""
+    root = tmp_path / "샘플회사" / "2027 법인세"
+    assert cli.main([str(root), "--sample", "--sample-year", "2027"]) == 0
+    inp, res, _, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+    assert not res["unsupported"] and res["regime"] == "2026"
+    a, b, c = res["new"]["terms"]
+    assert (a["n_y"], a["n_o"], a["amt_y"], a["amt_o"]) == (Fraction("1.74"), Fraction("0.25"), 12_180_000, 1_000_000)
+    assert (b["d_t"], b["n_y"], b["n_o"], b["amt_y"]) == (Fraction("1.82"), Fraction("1.82"), 0, 29_120_000)
+    assert c is None
+    assert (res["second"], res["third"], res["new_total"], res["extra"], res["total"]) == (0, 14_500_000, 42_300_000, 0, 56_800_000)
+    assert res["third_pw"] is True
+
+
+def test_law_pdf_on_official_form(tmp_path):
+    """법정서식 PDF: 법제처 서식 쪽 위에 값만 얹는다. 쪽 수와 칸 값, 서식 원문 글이 그대로인지 본다."""
+    fitz = pytest.importorskip("fitz")
+    from ctax.employ import lawform
+    want = {2025: (7, ["92,355,000", "27,355,000", "37,500,000", "14,500,000", "13.31", "강도윤", "19750402"]),
+            2026: (10, ["26,180,000", "12,180,000", "13,180,000", "37,500,000", "14,500,000"]),
+            2027: (10, ["29,120,000", "41,300,000", "14,500,000"])}
+    for year, (pages, texts) in want.items():
+        root = tmp_path / "샘플회사" / f"{year} 법인세"
+        assert cli.main([str(root), "--sample", "--sample-year", str(year)]) == 0
+        assert cli.main([str(root), "--no-excel"]) == 0
+        pdf = root / "2 조서" / lawform.OUT_PDF
+        doc = fitz.open(pdf)
+        assert doc.page_count == pages
+        text = "".join(p.get_text() for p in doc).replace(" ", "")
+        for t in texts:
+            assert t in text, (year, t)
+        assert "통합고용세액공제공제세액계산서" in text and "통합고용세액공제상시근로자명세서" in text   # 서식 원문 글이 그대로 있다
+        assert ("별지제10호의9서식(2)" in text) == (year >= 2026)
+
+
+def test_law_pdf_fields_exist_in_coords(tmp_path):
+    """값을 만드는 키가 전부 coords.json 의 칸에 있다(fields.yaml 과 lawform.py 가 어긋나면 값이 조용히 빠진다)."""
+    from ctax.employ import lawform
+    c = lawform.coords()
+    for year in (2025, 2026, 2027):
+        root = tmp_path / f"y{year}" / "샘플회사" / f"{year} 법인세"
+        assert cli.main([str(root), "--sample", "--sample-year", str(year)]) == 0
+        inp, res, rules, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+        if res["regime"] == "2026":
+            vals = {"form2": lawform.form2(inp, res, "샘플회사"), "form1": lawform.form1(inp, res, "샘플회사", legacy=True)}
+        else:
+            vals = {"form1": lawform.form1(inp, res, "샘플회사", legacy=False)}
+        vals["roster"] = lawform.roster(inp, res, rules, "샘플회사")[0]
+        for form, v in vals.items():
+            missing = [k for k in v if k not in c["fields"][form]]
+            assert not missing, (year, form, missing)
+    assert all(len(r) == 22 for per in c["rows"].values() for r in per["cells"])

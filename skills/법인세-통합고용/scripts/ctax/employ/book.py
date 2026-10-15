@@ -135,6 +135,9 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict) -> KV:
     k.put("method", "1차 연도 인원 계산 방식", f'=IF({k["fy_start"]}>=DATE(2025,1,1),"근로자별","월말합")',
           note=basis(rules, "count", "per_worker"))
     k.put("in_time", "1인당 공제금액 적용", f'=IF(YEAR({k["fy_end"]})<=2025,"Y","N")', note=e["first_year_until"]["basis"])
+    k.put("ok_year", "공제액을 계산하는 과세연도",
+          f'=IF(AND({k["fy_start"]}>=DATE(2023,1,1),YEAR({k["fy_end"]})<={rule(rules, "regime", "last_supported_year")}),"Y","N")',
+          note=basis(rules, "regime", "first_year_from") + " / " + basis(rules, "regime", "last_supported_year"))
     k.put("deem", "해당 과세연도 청년 간주", "N" if co.deem == "N" else f'=IF({k["method"]}="근로자별","Y","N")', kind="input",
           note="쓰지 않으려면 N 으로 고칩니다. " + basis(rules, "youth", "deemed_from"))
     y25, yo = r("youth", "deemed_years_2025"), r("youth", "deemed_years_other")
@@ -174,6 +177,9 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict) -> KV:
         k.put("n_min_sh_mid_a", "최소고용증가인원수 미만일 때 부족 인원 1인당(중견 직전 대비)", int(nw["min_short"]["value"]["중견기업"]["a"][1]), fmt=X.MONEY,
               note=f"{nw['min_short']['basis']} {nw['min_short']['grade']}")
         k.put("n_min_sh_gen_a", "최소고용증가인원수 미만일 때 부족 인원 1인당(일반 직전 대비)", int(nw["min_short"]["value"]["일반기업"]["a"][1]), fmt=X.MONEY)
+        k.put("n_min_ge_mid_b", "최소고용증가인원수 이상일 때 1인당(중견 전전 대비)", int(nw["min_ge"]["value"]["중견기업"]["b"]), fmt=X.MONEY)
+        k.put("n_min_sh_mid_b", "최소고용증가인원수 미만일 때 부족 인원 1인당(중견 전전 대비)", int(nw["min_short"]["value"]["중견기업"]["b"][1]), fmt=X.MONEY)
+        k.put("n_min_sh_gen_b", "최소고용증가인원수 미만일 때 부족 인원 1인당(일반 전전 대비)", int(nw["min_short"]["value"]["일반기업"]["b"][1]), fmt=X.MONEY)
     k.put("return_sme", "육아휴직 복귀자 중소기업", int(r("extra", "return_sme")), fmt=X.MONEY, note=basis(rules, "extra", "return_sme"))
     k.put("return_mid", "육아휴직 복귀자 중견기업", int(r("extra", "return_mid")), fmt=X.MONEY, note=basis(rules, "extra", "return_mid"))
 
@@ -498,7 +504,7 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
     n2("18", "⑱ 직전 과세연도 청년등 외 상시근로자 수", f"={u['직전']['o']}")
     n2("19", "⑲ 청년등 외 상시근로자 증가 인원 수(⑰-⑱)", f"=ROUND({c['17']}-{c['18']},2)")
     c.put("ok", "1차 연도 요건",
-          f'=IF(AND({k["consumer"]}<>"Y",{k["in_time"]}="Y",{u["직전"]["src"]}<>"없음",{c["13"]}>0),"충족","미충족")',
+          f'=IF(AND({k["consumer"]}<>"Y",{k["ok_year"]}="Y",{k["in_time"]}="Y",{u["직전"]["src"]}<>"없음",{c["13"]}>0),"충족","미충족")',
           note="소비성서비스업이 아니고, 2025년 12월 31일이 속하는 과세연도까지이며, 직전 인원이 있고, ⑬ 이 0 보다 큼")
     n2("n_y", "청년등 공제 인원(⑬ 한도)", f'=IF({c["ok"]}="충족",MAX(0,MIN({c["16"]},{c["13"]})),0)', e["cap"]["basis"])
     n2("n_o", "청년등 외 공제 인원(⑬ 한도)", f'=IF({c["ok"]}="충족",MAX(0,MIN({c["19"]},{c["13"]})),0)')
@@ -510,32 +516,40 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
     won("first_o", "1차 연도 청년등 외 공제액", f"=ROUND({c['n_o']}*{c['a_o']},0)")
     won("20", "⑳ 1차년도 세액공제액", f"={c['first_y']}+{c['first_o']}", kind="total")
 
-    c.section("나. 2차 연도(직전 과세연도 증가분, 월말 합 방식 인원)")
-    n2("21", "㉑ 2차년도(해당 과세연도) 상시근로자 수", f"={g['해당']['t']}")
-    n2("22", "㉒ 1차년도(직전 과세연도) 상시근로자 수", f"={g['직전']['t']}")
+    # 2 · 3차 연도 판정 인원: 최초 공제연도(직전 · 직전전)가 2025년 이후 개시면 근로자별, 그 전이면 월말 합(시행령 부칙 제36127호 제11조 제1항)
+    def pick(per, key, start):
+        return f'IF({k[start]}>=DATE(2025,1,1),{u[per][key]},{g[per][key]})'
+
+    c.section("나. 2차 연도(직전 과세연도 증가분. 직전이 2025 이후 개시면 근로자별, 그 전이면 월말 합 방식 인원)")
+    n2("21", "㉑ 2차년도(해당 과세연도) 상시근로자 수", f"={pick('해당', 't', 'p_start')}")
+    n2("22", "㉒ 1차년도(직전 과세연도) 상시근로자 수", f"={pick('직전', 't', 'p_start')}")
     n2("23", "㉓ 상시근로자 증가 인원 수(㉑-㉒)", f"=ROUND({c['21']}-{c['22']},2)")
     c.put("cut2_t", "직전 과세연도 대비 상시근로자 감소여부", f'=IF({c["21"]}<{c["22"]},"여","부")', note=e["followup"]["basis"])
-    c.put("cut2_y", "직전 과세연도 대비 청년등상시근로자 수 감소여부", f'=IF({g["해당"]["y"]}<{g["직전"]["y"]},"여","부")',
+    c.put("cut2_y", "직전 과세연도 대비 청년등상시근로자 수 감소여부",
+          f'=IF({pick("해당", "y", "p_start")}<{pick("직전", "y", "p_start")},"여","부")',
           note="청년등만 줄면 청년등 몫만 끊깁니다(제29조의8 제3항)")
     won("24", "㉔ 직전 과세연도 청년등 증가 세액공제액", f"={k['f1y']}")
     won("25", "㉕ 직전 과세연도 청년등 외 증가 세액공제액", f"={k['f1o']}")
     won("26", "㉖ 2차년도 세액공제액",
-        f'=IF(OR({k["consumer"]}="Y",{c["24"]}+{c["25"]}=0,{u["직전"]["src"]}="없음",{u["직전"]["src"]}="창업(0)",'
+        f'=IF(OR({k["consumer"]}="Y",{k["ok_year"]}<>"Y",YEAR({k["p_end"]})>2025,{c["24"]}+{c["25"]}=0,{u["직전"]["src"]}="없음",{u["직전"]["src"]}="창업(0)",'
         f'{c["cut2_t"]}="여"),0,IF({c["cut2_y"]}="여",0,{c["24"]})+{c["25"]})', kind="total")
 
     c.section("다. 3차 연도(직전전 과세연도 증가분, 중소 · 중견기업)")
-    n2("27", "㉗ 3차년도(해당 과세연도) 상시근로자 수", f"={g['해당']['t']}")
-    n2("28", "㉘ 1차년도(직전전 과세연도) 상시근로자 수", f"={g['직전전']['t']}")
+    def p3(per, key):
+        return pick(per, key, "pp_start")
+
+    n2("27", "㉗ 3차년도(해당 과세연도) 상시근로자 수", f"={p3('해당', 't')}")
+    n2("28", "㉘ 1차년도(직전전 과세연도) 상시근로자 수", f"={p3('직전전', 't')}")
     n2("29", "㉙ 상시근로자 증가 인원(㉗-㉘)", f"=ROUND({c['27']}-{c['28']},2)")
     c.put("cut3_t", "직전전 과세연도 대비 상시근로자 감소여부",
-          f'=IF(OR({g["직전"]["t"]}<{g["직전전"]["t"]},{g["해당"]["t"]}<{g["직전전"]["t"]}),"여","부")',
+          f'=IF(OR({p3("직전", "t")}<{p3("직전전", "t")},{p3("해당", "t")}<{p3("직전전", "t")}),"여","부")',
           note="직전 · 해당 어느 과세연도든 직전전보다 줄었으면 여")
     c.put("cut3_y", "직전전 과세연도 대비 청년등상시근로자 수 감소여부",
-          f'=IF(OR({g["직전"]["y"]}<{g["직전전"]["y"]},{g["해당"]["y"]}<{g["직전전"]["y"]}),"여","부")')
+          f'=IF(OR({p3("직전", "y")}<{p3("직전전", "y")},{p3("해당", "y")}<{p3("직전전", "y")}),"여","부")')
     won("30", "㉚ 직전전 과세연도 청년등 증가 세액공제액", f"={k['f2y']}")
     won("31", "㉛ 직전전 과세연도 청년등 외 증가 세액공제액", f"={k['f2o']}")
     won("32", "㉜ 3차년도 세액공제액",
-        f'=IF(OR({k["consumer"]}="Y",{c["30"]}+{c["31"]}=0,{k["size"]}="일반기업",{u["직전전"]["src"]}="없음",'
+        f'=IF(OR({k["consumer"]}="Y",{k["ok_year"]}<>"Y",YEAR({k["pp_end"]})>2025,{c["30"]}+{c["31"]}=0,{k["size"]}="일반기업",{u["직전전"]["src"]}="없음",'
         f'{u["직전"]["src"]}="없음",{u["직전"]["src"]}="창업(0)",{c["cut3_t"]}="여"),0,IF({c["cut3_y"]}="여",0,{c["30"]})+{c["31"]})',
         kind="total")
 
@@ -545,7 +559,7 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
     n2("35", "㉟ 상시근로자 증가 인원 수(㉝-㉞)", f"=ROUND({c['33']}-{c['34']},2)")
     n2("ret", "육아휴직 복귀자 인원 수", f"={k['returned']}")
     won("36", "㊱ 추가공제 세액공제액",
-        f'=IF(AND({k["consumer"]}<>"Y",{k["fy_start"]}<=DATE(2026,12,31),{u["직전"]["src"]}<>"없음",{c["35"]}>=0,'
+        f'=IF(AND({k["consumer"]}<>"Y",{k["ok_year"]}="Y",{k["fy_start"]}<=DATE(2026,12,31),{u["직전"]["src"]}<>"없음",{c["35"]}>=0,'
         f'OR({k["size"]}="중소기업",{k["size"]}="중견기업")),ROUND({c["ret"]}*IF({k["size"]}="중소기업",{k["return_sme"]},'
         f'{k["return_mid"]}),0),0)', basis(rules, "extra", "return_sme"), kind="total")
 
@@ -579,16 +593,24 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
         won("nC", "C 전전전 대비 금액", "=0", "이 워크북은 전전전 과세연도 인원을 세지 않습니다. 2027 과세연도까지는 해당 없음(전전전이 2024 이전)")
         c.put("n_min", "최소고용증가인원수", f'=IF({k["size"]}="중견기업",{k["n_min_mid"]},IF({k["size"]}="일반기업",{k["n_min_gen"]},0))',
               fmt="0", note="중소기업은 해당 없음")
-        c.put("n_gate", "최소고용증가인원수 초과 여부", f'=IF({k["size"]}="중소기업","해당 없음",IF({c["nA_t"]}>{c["n_min"]},"충족","미충족"))',
-              note="중소기업이 아니면 증가 인원이 최소고용증가인원수를 넘어야 공제합니다(직전 · 전전 대비 중 큰 증가 기준은 엔진과 같이 직전 대비로 봅니다)")
-        won("n_ded", "최소고용증가인원수 차감액(제3호)",
+        c.put("n_gate", "최소고용증가인원수 초과 여부",
+              f'=IF({k["size"]}="중소기업","해당 없음",IF(MAX(IF({c["new_p_ok"]}="Y",{c["nA_t"]},0),IF({c["new_pp_ok"]}="Y",{c["nB_t"]},0))>{c["n_min"]},"충족","미충족"))',
+              note="중소기업이 아니면 직전 · 전전 대비 증가 인원 가운데 큰 것이 최소고용증가인원수를 넘어야 공제합니다(법 제29조의8 제1항 단서)")
+        won("n_dedA", "최소고용증가인원수 차감액(제3호, 직전 대비)",
             f'=IF(OR({k["size"]}="중소기업",{c["nA_t"]}<=0,{c["new_p_ok"]}<>"Y"),0,'
             f'IF({c["nA_o"]}>={c["n_min"]},{c["n_min"]}*IF({k["size"]}="중견기업",{k["n_min_ge_mid_a"]},0),'
             f'ROUND({c["nA_o"]}*IF({k["size"]}="중견기업",{k["n_min_ge_mid_a"]},0)+({c["n_min"]}-{c["nA_o"]})*'
             f'IF({k["size"]}="중견기업",{k["n_min_sh_mid_a"]},{k["n_min_sh_gen_a"]}),0)))',
-            "직전 대비 증가분 기준. 전전 대비 증가분이 있으면 그 금액도 따로 빼야 하는데 2026 · 2027 과세연도는 전전 대비가 없거나 2024 이전을 뺍니다")
+            "법 제29조의8 제1항 제3호 가목 1) 가) · 2) 가), 나목 2) 가)")
+        won("n_dedB", "최소고용증가인원수 차감액(제3호, 전전 대비)",
+            f'=IF(OR({k["size"]}="중소기업",{c["nB_t"]}<=0,{c["new_pp_ok"]}<>"Y"),0,'
+            f'IF({c["nB_o"]}>={c["n_min"]},{c["n_min"]}*IF({k["size"]}="중견기업",{k["n_min_ge_mid_b"]},0),'
+            f'ROUND({c["nB_o"]}*IF({k["size"]}="중견기업",{k["n_min_ge_mid_b"]},0)+({c["n_min"]}-{c["nB_o"]})*'
+            f'IF({k["size"]}="중견기업",{k["n_min_sh_mid_b"]},{k["n_min_sh_gen_b"]}),0)))',
+            "법 제29조의8 제1항 제3호 가목 1) 나) · 2) 나), 나목 2) 나). 전전 과세연도가 2024 이전 개시면 비교하지 않습니다")
+        won("n_ded", "최소고용증가인원수 차감액 합계", f"={c['n_dedA']}+{c['n_dedB']}")
         won("new_total", "신규공제 세액공제액(A + B + C − 제3호)",
-            f'=IF(OR({c["new_on"]}<>"Y",{c["n_gate"]}="미충족"),0,MAX(0,{c["nA_ay"]}+{c["nA_ao"]}+{c["nB_ay"]}+{c["nB_ao"]}+{c["nC"]}-{c["n_ded"]}))',
+            f'=IF(OR({c["new_on"]}<>"Y",{k["ok_year"]}<>"Y",{c["n_gate"]}="미충족"),0,MAX(0,{c["nA_ay"]}+{c["nA_ao"]}+{c["nB_ay"]}+{c["nB_ao"]}+{c["nC"]}-{c["n_ded"]}))',
             kind="total")
         c.section("세액공제액")
         won("total", "⑥ 세액공제액(⑳ + ㉖ + ㉜ + 신규공제 + ㊱)", f"={c['20']}+{c['26']}+{c['32']}+{c['new_total']}+{c['36']}",
@@ -641,6 +663,23 @@ class Form:
         self.cell(1, text, self.cols, bold=True, fill=True)
         self.ws.row_dimensions[self.row].height = 20
         self.row += 1
+
+
+def print_like_form(ws, paper: str, orientation: str, breaks: list[int]) -> None:
+    """법정 서식과 같은 용지 · 방향으로 한 쪽 너비에 맞춰 인쇄하고, 법정 서식의 쪽이 바뀌는 곳에서 쪽을 나눈다.
+    서식(1) · (2) 는 A4 세로(210 × 297), 명세서는 A3 가로(297 × 420)다(각 서식 아래 용지 표시)."""
+    from openpyxl.worksheet.pagebreak import Break
+    from openpyxl.worksheet.properties import PageSetupProperties
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3 if paper == "A3" else ws.PAPERSIZE_A4
+    ws.page_setup.orientation = orientation
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.page_margins.left = ws.page_margins.right = 0.4
+    ws.page_margins.top = ws.page_margins.bottom = 0.5
+    ws.print_options.horizontalCentered = True
+    ws.print_area = f"A1:{L(ws.max_column)}{ws.max_row}"
+    for r in breaks:
+        ws.row_breaks.append(Break(id=r))
 
 
 V2 = {"value": True, "fmt": NUM2}
@@ -700,6 +739,7 @@ def _form(ws, k: KV, cnt: dict, c: KV, legacy: bool = False) -> dict:
         prev = at[{"12": "6_직전", "15": "7_직전", "18": "8_직전"}[codes[1]]]
         f.line([(f"={cur}", 3, V2), (f"=N({prev})", 3, V2), (f"=ROUND(A{r}-D{r},2)", 2, V2)])
         at[codes[0]], at[codes[1]], at[codes[2]] = (ref(ws.title, absolute(x, r)) for x in (1, 4, 7))
+    breaks = [f.row - 1]                                       # 법정 서식 1쪽 끝
     f.line([("4. 1차년도 세액공제액 계산", 8, G)], 18)
     f.line([("구분", 2, G), ("구분", 1, G), ("직전 과세연도 대비 상시근로자 증가 인원 수(⑬ 상시근로자 증가 인원 수를 한도로 함)", 2, G),
             ("1인당 공제금액", 1, G), ("⑳ 1차년도 세액공제액", 2, G)], 44)
@@ -752,6 +792,7 @@ def _form(ws, k: KV, cnt: dict, c: KV, legacy: bool = False) -> dict:
             "㉚ 1차년도(직전전 과세연도) 청년등상시근로자 증가 세액공제액", "㉛ 1차년도(직전전 과세연도) 청년등 외 상시근로자 증가 세액공제액",
             "㉜ 3차년도 세액공제액"), "직전전", ("cut3_t", "cut3_y"))
 
+    breaks.append(f.row - 1)                                   # 법정 서식 2쪽 끝
     f.head("➎ 추가공제 공제세액 계산내용")
     f.line([("가. 세제지원 요건 : ㉟ ≥ 0", 8, G)], 18)
     f.line([("㉝ 해당 과세연도 상시근로자 수", 3, G), ("㉞ 직전 과세연도 상시근로자 수", 3, G), ("㉟ 상시근로자 증가 인원 수(㉝-㉞)", 2, G)], 30)
@@ -780,6 +821,7 @@ def _form(ws, k: KV, cnt: dict, c: KV, legacy: bool = False) -> dict:
             value="값은 모두 5공제액 · 4인원 시트를 읽는 수식입니다. ② 사업자등록번호 · ③ 대표자 · ④ 생년월일 · ⑤ 주소는 사람이 적습니다. "
                   "서식 글은 법제처 별지 서식(별표 001009)에서 옮겼습니다").font = X.NOTE_FONT
     X.widths(ws, [13, 13, 13, 13, 13, 14, 13, 13])
+    print_like_form(ws, "A4", "portrait", breaks)
     return at
 
 
@@ -867,6 +909,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
     f.line([("3. 전전전 과세연도 대비", 10, {"bold": True})], 20)
     amount_block("youth", "c", None, "전전전 과세연도 대비", ("⑰", "⑱", "⑲"))
     t1 = total_block("youth", "⑳")
+    breaks = [f.row - 1]                                       # 법정 서식 1쪽 끝
     f.line([("나. 청년등상시근로자를 제외한 상시근로자의 증가 인원 수에 대한 금액", 10, {"bold": True, "fill": True})], 22)
     f.line([("1. 직전 과세연도 대비", 10, {"bold": True})], 20)
     amount_block("other", "a", "nA_o", "직전 과세연도 대비", ("㉑", "㉒", "㉓"))
@@ -876,7 +919,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
     amount_block("other", "c", None, "전전전 과세연도 대비", ("㉗", "㉘", "㉙"))
     t2 = total_block("other", "㉚")
     f.line([("다. 최소고용증가인원수에 대한 금액(중견기업 5명, 일반기업 10명)", 10, {"bold": True, "fill": True})], 22)
-    f.line([("이 워크북은 직전 과세연도 대비만 계산합니다. 전전 · 전전전 과세연도 대비는 2027 · 2028 과세연도부터이고 해당 줄은 비워 둡니다", 10)], 22)
+    f.line([("이 표는 직전 과세연도 대비 줄만 보입니다. 전전 과세연도 대비 차감(2027 과세연도부터)은 5공제액 시트에서 계산해 [56] 에 넣습니다", 10)], 22)
     f.line([("1. 청년등외상시근로자의 증가 인원 수가 최소고용증가인원수 이상인 경우 · 1) 직전 과세연도 대비", 10, {"bold": True})], 20)
     f.line([("구분", 2, G), ("㉚ 1인당금액", 2, G), ("㉛ 최소고용증가인원수", 3, G), ("㉜ 산출한 금액(㉚×㉛)", 3, G)], 34)
     ge_rows = []
@@ -888,6 +931,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
         f.line([(name, 2, G), (ge if ge else "-", 2, {"value": True, "fmt": X.MONEY} if ge else {}),
                 (f"={mincell}", 3, {"value": True, "fmt": "0"}), (f'=IF({cond},C{r0}*E{r0},"")' if ge else "-", 3, VW)], 22)
         ge_rows.append(r0)
+    breaks.append(f.row - 1)                                   # 법정 서식 2쪽 끝
     f.line([("2. 청년등외상시근로자의 증가 인원 수가 최소고용증가인원수 미만인 경우 · 1) 직전 과세연도 대비", 10, {"bold": True})], 20)
     f.line([("구분", 1, G), ("㊵ 1인당금액", 2, G), ("㊶ 직전 과세연도 대비 청년등외상시근로자 증가 인원 수", 2, G), ("㊷ 1인당금액", 2, G),
             ("㊸ 최소고용증가인원수", 1, G), ("㊹ 산출한 금액", 2, G)], 48)
@@ -906,7 +950,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
     min_total = f.row - 1
     rng = lambda rows: f"E{rows[0]}:E{rows[-1]}"
     f.line([("[56] 기본공제 세액공제액 {⑳ + ㉚ − (㊴ 또는 [55])}", 4, {"bold": True, "fill": True}),
-            (f'=IF(OR({c["new_on"]}<>"Y",{c["n_gate"]}="미충족"),0,MAX(0,SUM({rng(t1)})+SUM({rng(t2)})-N(E{min_total})))', 6, VW)], 34)
+            (f'=IF(OR({c["new_on"]}<>"Y",{k["ok_year"]}<>"Y",{c["n_gate"]}="미충족"),0,MAX(0,SUM({rng(t1)})+SUM({rng(t2)})-N({c["n_ded"]})))', 6, VW)], 34)
     r56 = f.row - 1
     f.head("➎ 추가공제 계산내용")
     f.line([("가. 세제지원 요건 : [59] ≥ 0", 10, {"bold": True})], 20)
@@ -934,6 +978,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
             value="값은 모두 5공제액 · 4인원 시트를 읽는 수식입니다. ② 사업자등록번호 · ③ 대표자 · ④ 생년월일 · ⑤ 주소는 사람이 적습니다. "
                   "서식 글은 법제처 별지 서식(별표 001009의 서식(2))에서 옮겼습니다. 기존공제는 종전 서식(1)에 따라 6-1 시트에 적습니다(시행규칙 부칙 제23호 제6조)").font = X.NOTE_FONT
     X.widths(ws, [13, 13, 13, 13, 13, 14, 13, 13, 13, 18])
+    print_like_form(ws, "A4", "portrait", breaks)
     return at
 
 
@@ -977,6 +1022,8 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
     st = lambda col, s: ref(S_STAFF, f"${L(col)}{s}")      # noqa: E731
     for per, title in (("해당", "2. 해당 과세연도 상시근로자별 명세"), ("직전", "3. 직전 과세연도 상시근로자별 명세")):
         period = res["periods"][per]
+        if per == "직전":
+            breaks = [row - 1]
         ws.cell(row=row, column=1, value=title).font = Font(name=X.FONT, bold=True, size=11)
         row += 1
         nos = R_NO[per]
@@ -1016,7 +1063,8 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
         row += 2
     X.note(ws, row, "과세연도와 재직 기간이 겹치는 사람만 줄이 있습니다. 사원명부의 입사일 · 퇴사일을 고쳐 대상이 바뀌면 ctax employ 를 다시 돌립니다. "
                     "주민등록번호는 넣지 않았습니다")
-    X.widths(ws, [11, 10, 8, 20, 9, 7, 8, 11, 9, 9, 9, 9, 9, 9, 9, 11, 7, 7, 8, 8, 8, 8])
+    X.widths(ws, [11, 12, 12, 20, 9, 7, 8, 11, 9, 9, 9, 9, 9, 9, 9, 11, 7, 7, 8, 8, 8, 8])   # B · C 는 과세연도 날짜가 들어간다
+    print_like_form(ws, "A3", "landscape", breaks)
     return at
 
 

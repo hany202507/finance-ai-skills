@@ -61,6 +61,8 @@ def _people(year: int, numeric: bool = False):
               {k: (_shift(v, delta) if isinstance(v, D) else v) for k, v in more.items()}, memo)
              for sid, name, b, h, l, kind, pay, more, memo in STAFF]
     company = {k: (_shift(v, delta) if isinstance(v, D) else v) for k, v in COMPANY.items()}
+    if year >= 2027:     # 직전(2026) 과세연도에 늘어난 인원은 신규공제라 1차년도 공제액이 없다. 직전전(2025) 1차 공제는 3차 연도로 이어진다
+        company["직전 1차년도 공제액 청년등"] = company["직전 1차년도 공제액 청년등 외"] = None
     return staff, company, tuple(y + delta for y in YEARS)
 
 

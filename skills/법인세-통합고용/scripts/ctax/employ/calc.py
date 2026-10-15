@@ -336,12 +336,17 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     new_reg = regime == "2026"
     last_year = int(rule(rules, "regime", "last_supported_year"))
     unsupported = ""
-    if new_reg and "youth_a" not in rates["employment_integrated_new"]:
+    first_from = date.fromisoformat(rule(rules, "regime", "first_year_from"))
+    if co.fy_start < first_from:
+        unsupported = (f"통합고용세액공제는 {first_from.year}년 {first_from.month}월 {first_from.day}일 이후 개시하는 과세연도부터 적용합니다"
+                       "(조세특례제한법 제29조의8 신설, 부칙 <법률 제19199호> 제2조 제1항). 그 전 과세연도는 고용증대 세액공제(제29조의7)와 "
+                       "중소기업 사회보험료 세액공제(제30조의4)로 계산하십시오. 공제액을 계산하지 않았습니다")
+    elif new_reg and "youth_a" not in rates["employment_integrated_new"]:
         unsupported = ("2026년 12월 31일이 속하는 과세연도부터는 신규공제 금액표가 필요한데 아직 기준 파일에 넣지 못했습니다. "
                        "공제액을 계산하지 않았습니다")
-    elif new_reg and cur.end.year > last_year + 1:
-        unsupported = (f"{last_year + 2}년 12월 31일이 속하는 과세연도부터는 전전전 과세연도 인원이 필요한데 이 워크북은 직전전 과세연도까지만 "
-                       "셉니다. 공제액을 계산하지 않았습니다")
+    elif new_reg and cur.end.year > last_year:
+        unsupported = (f"{last_year + 1}년 12월 31일이 속하는 과세연도부터는 신규공제 C(전전전 과세연도 대비)에 {last_year - 2} 과세연도 인원이 "
+                       "필요한데 이 워크북은 직전전 과세연도까지만 셉니다. 공제액을 계산하지 않았습니다")
     in_time = co.fy_start <= date(2025, 12, 31)                # 종전 규정의 1차 연도 공제는 2025년 12월 31일이 속하는 과세연도까지
 
     def filed(name: str):
@@ -384,7 +389,7 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         first_y = first_o = 0
     else:
         a_y, a_o = per_head(co.size, co.capital, rates)
-        ok = co.consumer != "Y" and in_time and prev_ok and d_t > 0
+        ok = co.consumer != "Y" and in_time and prev_ok and d_t > 0 and not unsupported
         n_y = max(Fraction(0), min(d_y, d_t)) if ok else Fraction(0)
         n_o = max(Fraction(0), min(d_o, d_t)) if ok else Fraction(0)
         first_y, first_o = round(n_y * a_y), round(n_o * a_o)
@@ -412,7 +417,9 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     second, second_cut, second_alt = 0, "", None
     f1 = (co.first_prev_youth, co.first_prev_other)
     if any(f1) and co.consumer != "Y":
-        if source["직전"] in ("없음", "창업(0)"):
+        if pers["직전"].end > date(2025, 12, 31):              # 2026 과세연도부터 늘어난 인원은 신규공제라 2차 연도가 없다
+            second_cut = "직전 과세연도 증가분은 신규공제(2차 연도 없음)"
+        elif source["직전"] in ("없음", "창업(0)"):
             second_cut = "직전 인원 없음"
         else:
             second, second_cut = judge(f1, pick("해당", "직전", per_worker=pw2), "2")
@@ -422,7 +429,9 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     third, third_cut, third_alt = 0, "", None
     f2 = (co.first_prev2_youth, co.first_prev2_other)
     if any(f2) and co.consumer != "Y":
-        if co.size == "일반기업":
+        if pers["직전전"].end > date(2025, 12, 31):
+            third_cut = "직전전 과세연도 증가분은 신규공제(3차 연도 없음)"
+        elif co.size == "일반기업":
             third_cut = "일반기업"
         elif source["직전전"] == "없음" or source["직전"] in ("없음", "창업(0)"):
             third_cut = "직전전 인원 없음"
