@@ -398,7 +398,8 @@ class Engine:
                 if (m, shop) not in agg: continue
                 gross = agg[(m, shop)][0] - agg[(m, shop)][1]
                 if gross == 0: continue
-                code, name, vat_kind = self.P.카드가맹점_계정[shop]
+                # 기간별 dict 면 이 기간 값. 전기 잠정 → 당기 확정처럼 처리가 바뀐 가맹점용
+                code, name, vat_kind = self._by_period(self.P.카드가맹점_계정[shop])
                 d = ymd(self.year, m, 14)
                 if vat_kind == "공제":
                     sup = gross * 10 // 11
