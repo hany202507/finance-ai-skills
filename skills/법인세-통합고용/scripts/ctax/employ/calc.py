@@ -173,7 +173,7 @@ def periods(co: Company, rules: dict) -> dict[str, Period]:
     """해당 · 직전 · 직전전 과세연도. 직전 · 직전전은 12개월로 본다."""
     out = {}
     start, end = co.fy_start, co.fy_end
-    new_rule = start >= date.fromisoformat(rule(rules, "youth", "deemed_from"))
+    deemed_from = date.fromisoformat(rule(rules, "youth", "deemed_from"))
     for i, name in enumerate(PERIODS):
         s = add_months(co.fy_start, -12 * i)
         e = end if i == 0 else add_months(co.fy_start, -12 * (i - 1)) - timedelta(days=1)
@@ -181,7 +181,8 @@ def periods(co: Company, rules: dict) -> dict[str, Period]:
         while month_end(m) <= e:
             ends.append(month_end(m))
             m = add_months(date(m.year, m.month, 1), 1)
-        out[name] = Period(name, s, e, ends, deemed=new_rule and i == 0 and co.deem != "N")
+        # 간주는 2025년 이후 계약만 있으므로 2025년 이후 개시 과세연도의 인원에만 의미가 있다(직전 · 직전전도 그 연도 신고서와 같게 센다)
+        out[name] = Period(name, s, e, ends, deemed=s >= deemed_from and co.deem != "N")
     return out
 
 
@@ -260,14 +261,88 @@ def per_head(size: str, capital: str, rates: dict) -> tuple[int, int]:
     return r("youth_general"), r("other_general")
 
 
+def new_rate(rates: dict, part: str, term: str, size: str, capital: str) -> int:
+    """신규공제(2026 과세연도부터) 1인당 금액. part 는 youth · other, term 은 a(직전 대비) · b(전전) · c(전전전)."""
+    d = rates["employment_integrated_new"][f"{part}_{term}"]["value"]
+    key = ("중소기업_수도권" if capital == "Y" else "중소기업_수도권밖") if size == "중소기업" else size
+    return int(d[key])
+
+
+def new_credit(size: str, capital: str, cur: tuple, priors: list, rates: dict) -> dict:
+    """조세특례제한법 제29조의8 제1항(2025.12.23 개정)의 기본공제(신규공제).
+
+    cur = (상시, 청년등), priors = [직전, 전전, 전전전] 각각 (상시, 청년등) 또는 None(비교에서 제외하거나 자료 없음).
+    A 는 직전, B 는 전전(해당 · 직전 중 적은 수), C 는 전전전(해당 · 직전 · 전전 중 가장 적은 수) 대비 증가 인원이다.
+    """
+    n = rates["employment_integrated_new"]
+    terms, base, stop = [], [cur[0], cur[1], cur[0] - cur[1]], False
+    for k, pv in zip("abc", priors):
+        if pv is None or stop:
+            stop = True
+            terms.append(None)
+            continue
+        po = pv[0] - pv[1]
+        d_t, d_y, d_o = base[0] - pv[0], base[1] - pv[1], base[2] - po
+        if d_t > 0:
+            c_y, c_o = max(Fraction(0), min(d_y, d_t)), max(Fraction(0), min(d_o, d_t))
+        else:
+            c_y = c_o = Fraction(0)
+        r_y, r_o = new_rate(rates, "youth", k, size, capital), new_rate(rates, "other", k, size, capital)
+        terms.append({"term": k, "d_t": d_t, "d_y": d_y, "d_o": d_o, "n_y": c_y, "n_o": c_o, "rate_y": r_y, "rate_o": r_o,
+                      "amt_y": round(c_y * r_y), "amt_o": round(c_o * r_o), "ded": 0, "min_rule": ""})
+        base = [min(base[0], pv[0]), min(base[1], pv[1]), min(base[2], po)]
+    got = [t for t in terms if t]
+    out = {"terms": terms, "youth": sum(t["amt_y"] for t in got), "other": sum(t["amt_o"] for t in got), "ded": 0, "min_hire": 0,
+           "gate": "해당 없음", "credit": 0}
+    if size != "중소기업":
+        m = int(n["min_hire"]["value"][size])
+        out["min_hire"] = m
+        mo, ms = n["min_ge"]["value"][size], n["min_short"]["value"][size]
+        for t in got:
+            if t["d_t"] <= 0:
+                continue
+            if t["n_o"] >= m:
+                t["ded"] = int(mo[t["term"]]) * m
+                t["min_rule"] = "청년등 외 증가 인원이 최소고용증가인원수 이상"
+            else:
+                first, second = ms[t["term"]]
+                t["ded"] = round(t["n_o"] * int(first) + (m - t["n_o"]) * int(second))
+                t["min_rule"] = "청년등 외 증가 인원이 최소고용증가인원수 미만"
+        out["ded"] = sum(t["ded"] for t in got)
+        top = max((t["d_t"] for t in got), default=Fraction(0))
+        out["gate"] = "충족" if top > m else "미충족"
+    else:
+        out["gate"] = "해당 없음"
+    if out["gate"] != "미충족":
+        out["credit"] = max(0, out["youth"] + out["other"] - out["ded"])
+    return out
+
+
+def regime_of(co: Company, rates: dict) -> str:
+    """"2025이전": 2025년 12월 31일이 속하는 과세연도까지(제29조의8 종전 규정, 서식(1)). "2026": 그 뒤 과세연도(새 규정, 서식(2))."""
+    return "2026" if co.fy_start >= date.fromisoformat(rates["employment_integrated_new"]["applies_from"]["value"]) else "2025이전"
+
+
 def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
-    """인원(세 과세연도)과 1 · 2 · 3차 연도 · 추가공제 금액."""
+    """인원(세 과세연도)과 공제액. 2025 과세연도까지는 1 · 2 · 3차 연도 · 추가공제, 2026 과세연도부터는
+    기존공제(2 · 3차 연도) · 신규공제 · 추가공제."""
     co = inp.company
     pers = periods(co, rules)
     counts = {name: count_period(inp, per, rules) for name, per in pers.items()}
     cur = pers["해당"]
-    method = "근로자별" if cur.start >= date.fromisoformat(rule(rules, "youth", "deemed_from")) else "월말합"
-    in_time = cur.end.year <= int(rates["employment_integrated"]["first_year_until"]["value"])
+    deemed_from = date.fromisoformat(rule(rules, "youth", "deemed_from"))
+    method = "근로자별" if cur.start >= deemed_from else "월말합"
+    regime = regime_of(co, rates)
+    new_reg = regime == "2026"
+    last_year = int(rule(rules, "regime", "last_supported_year"))
+    unsupported = ""
+    if new_reg and "youth_a" not in rates["employment_integrated_new"]:
+        unsupported = ("2026년 12월 31일이 속하는 과세연도부터는 신규공제 금액표가 필요한데 아직 기준 파일에 넣지 못했습니다. "
+                       "공제액을 계산하지 않았습니다")
+    elif new_reg and cur.end.year > last_year + 1:
+        unsupported = (f"{last_year + 2}년 12월 31일이 속하는 과세연도부터는 전전전 과세연도 인원이 필요한데 이 워크북은 직전전 과세연도까지만 "
+                       "셉니다. 공제액을 계산하지 않았습니다")
+    in_time = co.fy_start <= date(2025, 12, 31)                # 종전 규정의 1차 연도 공제는 2025년 12월 31일이 속하는 과세연도까지
 
     def filed(name: str):
         t = co.filed_prev_total if name == "직전" else co.filed_prev2_total
@@ -277,14 +352,14 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         t, y = floor2(Fraction(str(t))), floor2(Fraction(str(y or 0)))
         return t, y
 
-    # 서식에 쓰는 인원(1차 연도 방식)과 2 · 3차 연도 판정에 쓰는 인원(월말 합 방식)
+    # 서식에 쓰는 인원(근로자별 방식)과 월말 합 방식 인원. 직전전은 2025년 이후 개시 과세연도일 때만 근로자별로 센다
     used, legacy, source = {}, {}, {}
     for name in PERIODS:
         c = counts[name]
         f = filed(name) if name != "해당" else None
         if name == "해당" or c.period.has_payroll:
-            if method == "근로자별" and name != "직전전":
-                y = c.youth_deem if name == "해당" else c.youth_age
+            if method == "근로자별" and (name != "직전전" or pers[name].start >= deemed_from):
+                y = c.youth_deem if pers[name].deemed else c.youth_age
                 used[name] = (c.total, y)
             else:
                 used[name] = (c.me_total, c.me_youth)
@@ -302,48 +377,88 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     (t_c, y_c), (t_p, y_p) = used["해당"], used["직전"]
     o_c, o_p = t_c - y_c, t_p - y_p
     d_t, d_y, d_o = t_c - t_p, y_c - y_p, o_c - o_p
-    a_y, a_o = per_head(co.size, co.capital, rates)
     prev_ok = source["직전"] != "없음"
-    ok = co.consumer != "Y" and in_time and prev_ok and d_t > 0
-    n_y = max(Fraction(0), min(d_y, d_t)) if ok else Fraction(0)
-    n_o = max(Fraction(0), min(d_o, d_t)) if ok else Fraction(0)
-    first_y, first_o = round(n_y * a_y), round(n_o * a_o)
+    if new_reg:
+        a_y, a_o = new_rate(rates, "youth", "a", co.size, co.capital), new_rate(rates, "other", "a", co.size, co.capital)
+        n_y = n_o = Fraction(0)
+        first_y = first_o = 0
+    else:
+        a_y, a_o = per_head(co.size, co.capital, rates)
+        ok = co.consumer != "Y" and in_time and prev_ok and d_t > 0
+        n_y = max(Fraction(0), min(d_y, d_t)) if ok else Fraction(0)
+        n_o = max(Fraction(0), min(d_o, d_t)) if ok else Fraction(0)
+        first_y, first_o = round(n_y * a_y), round(n_o * a_o)
 
-    (lt_c, ly_c), (lt_p, ly_p), (lt_pp, ly_pp) = legacy["해당"], legacy["직전"], legacy["직전전"]
-    second, second_cut = 0, ""
+    # 기존공제: 2차 · 3차 연도. 인원은 최초 공제연도가 2025년 이후면 근로자별, 그 전이면 월말 합 방식으로 센다
+    def pick(*names, per_worker: bool):
+        return [(used if per_worker else legacy)[n] for n in names]
+
+    def judge(prev_amounts: tuple, vals: list, kind: str) -> tuple[int, str]:
+        """vals = 판정에 쓰는 (상시, 청년등) 목록. 2차는 [해당, 직전], 3차는 [해당, 직전, 직전전]."""
+        if kind == "2":
+            (tc, yc), (tp, yp) = vals
+            if tc < tp:
+                return 0, "전체 감소"
+            cut = yc < yp
+            return (0 if cut else prev_amounts[0]) + prev_amounts[1], ("청년등 감소" if cut and prev_amounts[0] else "")
+        (tc, yc), (tp, yp), (tpp, ypp) = vals
+        if tp < tpp or tc < tpp:
+            return 0, "전체 감소"
+        cut = yp < ypp or yc < ypp
+        return (0 if cut else prev_amounts[0]) + prev_amounts[1], ("청년등 감소" if cut and prev_amounts[0] else "")
+
+    pw2 = pers["직전"].start >= deemed_from
+    pw3 = pers["직전전"].start >= deemed_from
+    second, second_cut, second_alt = 0, "", None
     f1 = (co.first_prev_youth, co.first_prev_other)
     if any(f1) and co.consumer != "Y":
         if source["직전"] in ("없음", "창업(0)"):
             second_cut = "직전 인원 없음"
-        elif lt_c < lt_p:
-            second_cut = "전체 감소"
         else:
-            cut = ly_c < ly_p
-            second = (0 if cut else f1[0]) + f1[1]
-            second_cut = "청년등 감소" if cut and f1[0] else ""
-    third, third_cut = 0, ""
+            second, second_cut = judge(f1, pick("해당", "직전", per_worker=pw2), "2")
+            if pw2:                                              # 월말 합 방식으로 세면 판정이 달라지는지 알린다
+                alt, _ = judge(f1, pick("해당", "직전", per_worker=False), "2")
+                second_alt = alt if alt != second else None
+    third, third_cut, third_alt = 0, "", None
     f2 = (co.first_prev2_youth, co.first_prev2_other)
     if any(f2) and co.consumer != "Y":
         if co.size == "일반기업":
             third_cut = "일반기업"
         elif source["직전전"] == "없음" or source["직전"] in ("없음", "창업(0)"):
             third_cut = "직전전 인원 없음"
-        elif lt_p < lt_pp or lt_c < lt_pp:
-            third_cut = "전체 감소"
         else:
-            cut = ly_p < ly_pp or ly_c < ly_pp
-            third = (0 if cut else f2[0]) + f2[1]
-            third_cut = "청년등 감소" if cut and f2[0] else ""
+            third, third_cut = judge(f2, pick("해당", "직전", "직전전", per_worker=pw3), "3")
+            if pw3:
+                alt, _ = judge(f2, pick("해당", "직전", "직전전", per_worker=False), "3")
+                third_alt = alt if alt != third else None
+
+    # 신규공제(2026 과세연도부터): 직전 3개 과세연도 중 2024년 12월 31일 이전에 개시한 과세연도는 비교에서 뺀다
+    cutoff = date.fromisoformat(rates["employment_integrated_new"]["exclude_before"]["value"])
+    new = None
+    if new_reg and not unsupported:
+        priors = []
+        for name in ("직전", "직전전"):
+            ok_p = source[name] != "없음" and pers[name].start > cutoff
+            priors.append(used[name] if ok_p else None)
+        priors.append(None)                                      # 전전전은 이 워크북이 세지 않는다(지원 연도는 2027 까지)
+        if co.consumer == "Y" or not prev_ok:
+            priors = [None, None, None]
+        new = new_credit(co.size, co.capital, used["해당"], priors, rates)
+    new_total = new["credit"] if new else 0
 
     returned = co.returned if co.returned is not None else sum(
         1 for p in inp.staff if p.returned == "Y" and p.hired <= cur.end and (p.left or FAR) >= cur.start)
     amt_sizes = {"중소기업": int(rule(rules, "extra", "return_sme")), "중견기업": int(rule(rules, "extra", "return_mid"))}
     amt = amt_sizes.get(co.size, 0)
-    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and in_time and prev_ok and t_c >= t_p
-                                                and co.size in amt_sizes) else 0
+    return_in_time = co.fy_start <= date.fromisoformat(rates["employment_integrated_extra"]["return_until"]["value"])
+    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and return_in_time and prev_ok and t_c >= t_p
+                                                and co.size in amt_sizes and not unsupported) else 0
+    if unsupported:
+        second = third = 0
 
-    return {"periods": pers, "counts": counts, "method": method, "in_time": in_time, "used": used, "legacy": legacy,
-            "source": source, "d_t": d_t, "d_y": d_y, "d_o": d_o, "n_y": n_y, "n_o": n_o, "a_y": a_y, "a_o": a_o,
-            "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second, "second_cut": second_cut,
-            "third": third, "third_cut": third_cut, "returned": float(returned), "extra": extra,
-            "total": first_y + first_o + second + third + extra}
+    return {"periods": pers, "counts": counts, "method": method, "regime": regime, "in_time": in_time, "unsupported": unsupported,
+            "used": used, "legacy": legacy, "source": source, "d_t": d_t, "d_y": d_y, "d_o": d_o, "n_y": n_y, "n_o": n_o,
+            "a_y": a_y, "a_o": a_o, "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second,
+            "second_cut": second_cut, "second_alt": second_alt, "second_pw": pw2, "third": third, "third_cut": third_cut,
+            "third_alt": third_alt, "third_pw": pw3, "new": new, "new_total": new_total, "returned": float(returned),
+            "extra": extra, "total": first_y + first_o + second + third + new_total + extra}

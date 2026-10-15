@@ -94,3 +94,9 @@ extra:
     value: 9000000
     basis: "조세특례제한법 제29조의8 제5항 (중견기업 900만원)"
     grade: "★★★"
+
+regime:
+  last_supported_year:
+    value: 2025
+    basis: "엔진이 공제액까지 계산하는 마지막 과세연도. 2026 과세연도부터는 신규공제 금액표(credits.yaml employment_integrated_new)가 갖춰질 때까지 인원만 세고 공제액은 계산하지 않았다고 알린다"
+    grade: "★★☆"

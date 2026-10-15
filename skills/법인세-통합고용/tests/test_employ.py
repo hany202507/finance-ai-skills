@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date
 from fractions import Fraction
 from pathlib import Path
@@ -256,3 +257,63 @@ def test_sample_twenty(tmp_path):
     assert by["S12"].n_work == Fraction("0.41") and by["S15"].regular and by["S15"].n_youth_deem == 0
     assert {r.person.id for r in res["counts"]["해당"].rows if not r.regular and any(r.paid)} == {"S01", "S02", "S14", "S17"}
     assert cli.main([str(root), "--sample"]) == 0 and cli.main([str(root), "--no-excel"]) == 0      # 있는 입력은 덮어쓰지 않는다
+
+
+def _kordoc_or_skip():
+    pytest.importorskip("fitz")                                    # 합성 PDF 를 만드는 데만 쓴다
+    if not shutil.which("npx"):
+        pytest.skip("kordoc(npx) 이 없는 PC")
+
+
+def test_douzone_parse_kordoc_table():
+    """kordoc 표 JSON 에서 머리글 네 줄 · 사람마다 세 줄을 읽는다. 빈 칸은 0, 퇴사일은 셋째 줄, 지급합계는 셋째 줄의 지급합계 열."""
+    from ctax.employ import douzone_pdf
+    head = [["인적사항", "", "기본급여및제수당", "", "공제및차인지급액", "", "", ""],
+            ["사원번호", "성 명", "기본급", "휴일근로수당", "국민연금", "건강보험", "소득세", "지방소득세"],
+            ["입사일", "직 급", "", "", "건강보험정산", "", "", "공제합계"],
+            ["퇴사일", "부 서", "", "지급합계", "", "", "", "차인지급액"]]
+    body = [["113", "가 나", "2,000,000", "50,000", "90,000", "70,900", "", ""],
+            ["2023-03-01", "", "", "", "", "", "", "160,900"],
+            ["2025-10-20", "", "", "2,250,000", "", "", "", "2,089,100"],
+            ["합계(1명)", "", "", "2,250,000", "", "", "", ""]]
+    cells = [[{"text": t} for t in r] for r in head + body]
+    doc = {"blocks": [{"type": "paragraph", "text": "2025년10월분 급여대장"}, {"type": "paragraph", "text": "[귀속:2025년10월] [지급:2025년11월10일]"},
+                      {"type": "table", "table": {"cells": cells}}]}
+    rows, total = douzone_pdf.parse(doc)
+    assert total == 1
+    assert rows == [{"month": "2025-10", "사번": "113", "성명": "가나", "입사일": "2023-03-01", "퇴사일": "2025-10-20",
+                     "지급액": 2_250_000, "소득세": 0, "국민연금": 90_000, "건강보험": 70_900}]
+
+
+def test_douzone_pdfs_round_trip(tmp_path):
+    """합성 더존 급여대장 PDF(달마다 하나, 열한 명이 넘는 달은 두 쪽)를 kordoc 으로 읽으면 만든 값 그대로다."""
+    _kordoc_or_skip()
+    from ctax.employ import douzone_pdf, sample
+    pdfs = sample.write_douzone_pdfs(tmp_path / "pdf", 2025)
+    assert len(pdfs) == 24
+    want = sample.pay_rows(2025, numeric=True)
+    got = []
+    for _, rows, total in douzone_pdf.read_folder(tmp_path / "pdf"):
+        assert total == len(rows)
+        got += rows
+    key = lambda r: (r["month"], r["id"] if "id" in r else r["사번"])
+    assert [(r["month"], r["사번"], r["성명"], r["지급액"], r["소득세"], r["국민연금"], r["건강보험"]) for r in sorted(got, key=key)] ==         [(r["month"], r["id"], r["name"], r["pay"], r["tax"], r["pension"], r["health"]) for r in sorted(want, key=key)]
+    by = {r["사번"]: r for r in got}
+    assert by["1012"]["퇴사일"] == "2025-06-20" and by["1001"]["입사일"] == "2018-03-01"
+
+
+def test_assemble_staff_company_pdfs(tmp_path):
+    """사원명부 · 회사정보 · 급여대장 PDF 2년치를 assemble 로 묶으면 --sample 과 같은 공제액이 나온다."""
+    _kordoc_or_skip()
+    from ctax.employ import assemble, sample
+    kit = tmp_path / "받은 파일"
+    sample.write_staff_file(kit / "사원명부.xlsx")
+    sample.write_company_file(kit / "회사정보.xlsx")
+    sample.write_douzone_pdfs(kit / "급여대장")
+    root = tmp_path / "샘플회사" / "2025 법인세"
+    args = [str(root), "--staff", str(kit / "사원명부.xlsx"), "--company", str(kit / "회사정보.xlsx"), "--pdfs", str(kit / "급여대장")]
+    assert assemble.main(args) == 0
+    assert assemble.main(args) == 2                               # 이미 묶은 입력은 덮어쓰지 않는다
+    inp, res, _, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+    assert len(inp.staff) == 20 and res["total"] == 92_355_000
+    assert res["used"]["해당"] == (Fraction("13.31"), Fraction("8.73"))

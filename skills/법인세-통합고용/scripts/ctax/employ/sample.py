@@ -46,28 +46,60 @@ STAFF = [
 YEARS = (2024, 2025)
 
 
-def write(path: Path) -> Path:
+def _shift(d, years: int):
+    return None if d is None else d.replace(year=d.year + years)
+
+
+def numeric_id(sid: str) -> str:
+    """S01 → 1001. 더존 급여대장 PDF 는 숫자 사번만 찍으므로 여러 파일 시연은 이 사번을 쓴다."""
+    return "10" + sid[1:]
+
+
+def _people(year: int, numeric: bool = False):
+    delta = year - 2025
+    staff = [(numeric_id(sid) if numeric else sid, name, _shift(b, delta), _shift(h, delta), _shift(l, delta), kind, pay,
+              {k: (_shift(v, delta) if isinstance(v, D) else v) for k, v in more.items()}, memo)
+             for sid, name, b, h, l, kind, pay, more, memo in STAFF]
+    company = {k: (_shift(v, delta) if isinstance(v, D) else v) for k, v in COMPANY.items()}
+    return staff, company, tuple(y + delta for y in YEARS)
+
+
+def pay_rows(year: int = 2025, numeric: bool = False) -> list[dict]:
+    """급여대장 줄(달 순서, 사번 순서). write · write_douzone_pdfs · write_payroll_excels 가 같은 값을 쓴다."""
+    staff, _, years = _people(year, numeric)
+    out = []
+    for year_ in years:
+        for month in range(1, 13):
+            first, last = D(year_, month, 1), month_end(D(year_, month, 1))
+            for sid, name, _, hired, left, _, pay, _, _ in staff:
+                if hired <= last and (left is None or left >= first):
+                    out.append({"month": f"{year_}-{month:02d}", "id": sid, "name": name, "hired": hired, "left": left, "pay": pay,
+                                "tax": int(pay * 0.03) // 10 * 10, "pension": int(pay * 0.045) // 10 * 10,
+                                "health": int(pay * 0.03545) // 10 * 10})
+    return out
+
+
+def write(path: Path, year: int = 2025, payroll: bool = True, numeric: bool = False) -> Path:
+    """year 는 해당 과세연도. 2026 이면 모든 날짜를 한 해 뒤로 옮긴 같은 스무 명이다(급여대장은 2025 · 2026, 직전전 2024 는 전기 신고 인원).
+    payroll=False 면 급여대장 시트를 머리글만 남긴다(여러 파일 시연에서 급여대장을 따로 붙일 때). numeric=True 면 사번이 1001 ~ 1020 이다."""
+    staff, company, years = _people(year, numeric)
     wb = Workbook()
     ws = wb.active
     ws.title = "회사"
     ws.append(["항목", "값", "설명"])
     for label, _, _, text in COMPANY_ROWS:
-        ws.append([label, COMPANY.get(label), text])
+        ws.append([label, company.get(label), text])
     ws = wb.create_sheet("사원명부")
     head = [c[0] for c in STAFF_COLS]
     ws.append(head)
-    for sid, name, birth, hired, left, kind, _, more, memo in STAFF:
+    for sid, name, birth, hired, left, kind, _, more, memo in staff:
         row = {"사번": sid, "성명": name, "생년월일": birth, "입사일": hired, "퇴사일": left, "고용형태": kind, "비고": memo, **more}
         ws.append([row.get(h) for h in head])
     ws = wb.create_sheet("급여대장")
     ws.append([c[0] for c in PAY_COLS])
-    for year in YEARS:
-        for month in range(1, 13):
-            first, last = D(year, month, 1), month_end(D(year, month, 1))
-            for sid, name, _, hired, left, _, pay, _, _ in STAFF:
-                if hired <= last and (left is None or left >= first):
-                    ws.append([f"{year}-{month:02d}", sid, name, pay, int(pay * 0.03) // 10 * 10, int(pay * 0.045) // 10 * 10,
-                               int(pay * 0.03545) // 10 * 10])
+    if payroll:
+        for r in pay_rows(year, numeric):
+            ws.append([r["month"], r["id"], r["name"], r["pay"], r["tax"], r["pension"], r["health"]])
     for sheet in wb.worksheets:
         for col in sheet.columns:
             sheet.column_dimensions[col[0].column_letter].width = 16
@@ -79,6 +111,139 @@ def write(path: Path) -> Path:
                     c.number_format = "#,##0"
     wb["회사"].column_dimensions["A"].width = 34
     wb["회사"].column_dimensions["C"].width = 90
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
+def _by_month(rows: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["month"], []).append(r)
+    return out
+
+
+DOUZONE_HEAD = (                                   # 더존 급여대장 머리글 네 줄(실제 양식에서 칸 위치만 따왔다)
+    ("인적사항", "", "기본급여및제수당", "", "", "공제및차인지급액", "", "", "", ""),
+    ("사원번호", "성 명", "기본급", "식대", "", "국민연금", "건강보험", "고용보험", "소득세", "지방소득세"),
+    ("입사일", "직 급", "", "", "", "건강보험정산", "장기요양정산", "기타공제", "", "공제합계"),
+    ("퇴사일", "부 서", "", "", "지급합계", "", "", "", "", "차인지급액"),
+)
+
+
+def write_douzone_pdfs(folder: Path, year: int = 2025) -> list[Path]:
+    """더존 「급여대장」 PDF 를 흉내 낸 달별 PDF. 칸마다 선을 그은 표이고 머리글 네 줄 · 사람마다 세 줄이다(실제 더존 양식과 같은 짜임).
+    첫 줄: 사원번호 · 성명 · 기본급 · 식대 · 국민연금 · 건강보험 · 고용보험 · 소득세 · 지방소득세. 둘째 줄: 입사일 · 공제합계.
+    셋째 줄: 퇴사일 · 지급합계 · 차인지급액. 마지막 쪽 끝에 「합계(N명)」 줄. 한 쪽에 열한 명씩(더존과 같다)이라 열한 명이 넘는 달은 두 쪽이다."""
+    import fitz
+    folder.mkdir(parents=True, exist_ok=True)
+    x0, y0, w, h, cols = 30, 90, 78, 12, len(DOUZONE_HEAD[0])
+    per_page, out = 11, []
+    for month, rows in _by_month(pay_rows(year, numeric=True)).items():
+        doc = fitz.open()
+        for start in range(0, len(rows), per_page):
+            pg = doc.new_page(width=842, height=595)
+            pg.insert_text((x0, 50), f"{month[:4]}년{month[5:]}월분 급여대장", fontname="korea", fontsize=14)
+            pg.insert_text((x0, 68), "회사명: 샘플회사(가상)", fontname="korea", fontsize=8)
+            pg.insert_text((x0, 80), f"[귀속:{month[:4]}년{month[5:]}월] [지급:{month[:4]}년{month[5:]}월25일]", fontname="korea", fontsize=8)
+            grid = [list(r) for r in DOUZONE_HEAD]
+            for r in rows[start:start + per_page]:
+                employ = int(r["pay"] * 0.009) // 10 * 10
+                local = r["tax"] // 100 * 10
+                deduct = r["pension"] + r["health"] + employ + r["tax"] + local
+                meal = min(200_000, r["pay"])
+                grid.append([r["id"], r["name"], f"{r['pay'] - meal:,}", f"{meal:,}", "", f"{r['pension']:,}", f"{r['health']:,}",
+                             f"{employ:,}", f"{r['tax']:,}" if r["tax"] else "", f"{local:,}" if local else ""])
+                grid.append([r["hired"].isoformat()] + [""] * (cols - 2) + [f"{deduct:,}"])
+                grid.append([r["left"].isoformat() if r["left"] else "", "", "", "", f"{r['pay']:,}", "", "", "", "",
+                             f"{r['pay'] - deduct:,}"])
+            if start + per_page >= len(rows):
+                grid.append([f"합계({len(rows)}명)", "", "", "", f"{sum(r['pay'] for r in rows):,}", "", "", "", "", ""])
+            for i, line in enumerate(grid):
+                for j, text in enumerate(line):
+                    if text:
+                        pg.insert_text((x0 + j * w + 2, y0 + i * h + h - 3.5), str(text), fontname="korea", fontsize=7)
+            for i in range(len(grid) + 1):
+                pg.draw_line((x0, y0 + i * h), (x0 + cols * w, y0 + i * h), width=0.4)
+            for j in range(cols + 1):
+                pg.draw_line((x0 + j * w, y0), (x0 + j * w, y0 + len(grid) * h), width=0.4)
+        path = folder / f"급여대장_{month}.pdf"
+        doc.save(path)
+        out.append(path)
+    return out
+
+
+def write_payroll_excels(folder: Path, year: int = 2025) -> list[Path]:
+    """달별 엑셀 급여대장. 직전 과세연도와 해당 과세연도의 열 이름 · 순서 · 머리 줄 위치를 다르게 했다(급여 프로그램을 바꾼 회사).
+    맨 아래에 합계 줄이 있어 옮긴 뒤 원본 합계와 맞춰 볼 수 있다."""
+    folder.mkdir(parents=True, exist_ok=True)
+    rows_all = pay_rows(year, numeric=True)
+    first_year = min(r["month"][:4] for r in rows_all)
+    out = []
+    for month, rows in _by_month(rows_all).items():
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "급여"
+        if month[:4] == first_year:
+            ws.append(["사원코드", "사원명", "귀속월", "총지급액", "근로소득세", "국민연금", "건강보험", "고용보험"])
+            for r in rows:
+                ws.append([r["id"], r["name"], month, r["pay"], r["tax"], r["pension"], r["health"], int(r["pay"] * 0.009) // 10 * 10])
+            ws.append(["합계", f"{len(rows)}명", None, sum(r["pay"] for r in rows), sum(r["tax"] for r in rows),
+                       sum(r["pension"] for r in rows), sum(r["health"] for r in rows), None])
+        else:
+            ws.append([f"{month[:4]}년 {int(month[5:])}월 급여대장"])
+            ws.append(["샘플회사(가상)", None, None, f"지급일 {month}-25"])
+            ws.append(["사번", "성명", "지급합계", "소득세", "지방소득세", "국민연금(근로자)", "건강보험(근로자, 장기요양 포함)", "차인지급액"])
+            for r in rows:
+                ded = r["tax"] + r["tax"] // 100 * 10 + r["pension"] + r["health"]
+                ws.append([r["id"], r["name"], r["pay"], r["tax"], r["tax"] // 100 * 10, r["pension"], r["health"], r["pay"] - ded])
+            ws.append(["합계", f"{len(rows)}명", sum(r["pay"] for r in rows), sum(r["tax"] for r in rows), None,
+                       sum(r["pension"] for r in rows), sum(r["health"] for r in rows), None])
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 16
+        path = folder / f"급여대장_{month}.xlsx"
+        wb.save(path)
+        out.append(path)
+    return out
+
+
+def write_staff_file(path: Path, year: int = 2025) -> Path:
+    """인사 담당이 따로 주는 사원명부 엑셀(숫자 사번, 퇴사자 포함). 머리글은 입력 양식 「사원명부」 와 같은 이름이다."""
+    staff, _, _ = _people(year, numeric=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "사원명부"
+    ws.append([f"샘플회사(가상) 사원명부 · {year - 1} ~ {year} 재직자 전원"])
+    head = [c[0] for c in STAFF_COLS]
+    ws.append(head)
+    for sid, name, birth, hired, left, kind, _, more, memo in staff:
+        row = {"사번": sid, "성명": name, "생년월일": birth, "입사일": hired, "퇴사일": left, "고용형태": kind, "비고": memo, **more}
+        ws.append([row.get(h) for h in head])
+    for row in ws.iter_rows(min_row=3):
+        for c in row:
+            if isinstance(c.value, D):
+                c.number_format = "yyyy-mm-dd"
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 14
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
+def write_company_file(path: Path, year: int = 2025) -> Path:
+    """회사정보 엑셀(A 열 항목 · B 열 값). 항목 이름은 입력 양식 「회사」 시트와 같다. 값이 없는 항목은 적지 않았다."""
+    _, company, _ = _people(year)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "회사정보"
+    ws.append(["항목", "값"])
+    for label, *_ in COMPANY_ROWS:
+        if company.get(label) is not None:
+            ws.append([label, company[label]])
+            if isinstance(company[label], D):
+                ws.cell(row=ws.max_row, column=2).number_format = "yyyy-mm-dd"
+    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions["B"].width = 16
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path

@@ -76,11 +76,13 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
     names = lambda rows, n=8: ", ".join(r.person.name for r in rows[:n]) + (f" 외 {len(rows) - n}명" if len(rows) > n else "")  # noqa: E731
     if co.consumer == "Y":
         out.append("소비성서비스업이라 공제 대상이 아닙니다(조세특례제한법 제29조의8 제1항 괄호). 공제액을 0 으로 두었습니다")
-    if not res["in_time"]:
-        out.append("2026년 12월 31일이 속하는 과세연도부터는 별지 제10호의9서식(2)와 새 산식을 씁니다. 공제가 기존공제와 신규공제로 나뉩니다. "
-                   "기존공제는 2024 · 2025 과세연도 증가분의 2 · 3차 연도로 종전 규정을 따르고(부칙 <법률 제21223호> 제34조), "
-                   "신규공제는 2026 과세연도 이후 증가분으로 직전 3개 과세연도 대비 새 산식(법 제29조의8 제1항)입니다. "
-                   "이 워크북은 서식(1)까지만 다루어 둘 다 계산하지 않았습니다")
+    if res["regime"] == "2026" and not res["unsupported"]:
+        out.append("2026년 12월 31일이 속하는 과세연도부터는 공제가 기존공제(2024 · 2025 과세연도 증가분의 2 · 3차 연도, 종전 규정)와 "
+                   "신규공제(직전 3개 과세연도 대비 새 산식, 법 제29조의8 제1항)로 나뉩니다. 신규공제는 5공제액 시트 「마」 에서 직전 · 전전 대비를 계산했고 "
+                   "전전전 대비는 2027 과세연도까지 해당이 없습니다. 6서식10의9 시트는 별지 제10호의9서식(2) 모양이고 신규공제와 추가공제를 적습니다. 기존공제는 종전 규정으로 신청하므로 종전 서식(1)(6-1 시트)에 적습니다 "
+                   "(시행규칙 부칙 제23호 제6조: 개정 서식으로 종전 규정의 공제를 신청할 수 없으면 종전 서식). 합계(8호(갑) 18S)는 둘을 더합니다. 기존공제 2차 연도 인원은 최초 공제연도가 2025 과세연도라 근로자별, 3차 연도는 2024 과세연도라 월말 합 방식입니다(시행령 부칙 제36127호 제11조 제1항)")
+    elif res["unsupported"]:
+        out.append(res["unsupported"])
     if res["method"] == "근로자별":
         out.append("1차 연도 인원은 근로자별 방식(사람마다 근무개월 수 ÷ 과세연도 개월 수, 100분의 1 미만 버림)으로 셌습니다"
                    "(시행령 제26조의8 제6항 · 제11조의2 제8항, 부칙 <대통령령 제36127호> 제11조 제1항). 2 · 3차 연도 판정은 "
@@ -216,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--input", help=f"입력 파일(없으면 {INPUT_DIR}/{INPUT_NAME})")
     ap.add_argument("--template", action="store_true", help="빈 입력 양식을 만들고 끝낸다")
     ap.add_argument("--sample", action="store_true", help="시험용 합성 회사(스무 명) 입력을 만들고 끝낸다")
+    ap.add_argument("--sample-year", type=int, choices=(2025, 2026), default=2025, help="--sample 의 해당 과세연도(기본 2025)")
     ap.add_argument("--no-excel", action="store_true", help="엑셀 재계산과 수식 값 대조를 하지 않는다")
     ap.add_argument("--keep", action="store_true", help="신고건.json 의 「상시근로자」 를 고치지 않는다")
     args = ap.parse_args(argv)
@@ -232,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{src} 가 이미 있어 그대로 두었습니다")
             return 0
         from . import sample
-        sample.write(src)
+        sample.write(src, args.sample_year)
         print(f"시험용 입력(합성 회사 {len(sample.STAFF)}명)을 만들었습니다: {src}")
         print(f'이어서 python -m ctax employ "{args.folder}" 를 돌리십시오')
         return 0
@@ -301,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
 
     h = head["해당"]
     print(f"통합고용세액공제 {won(res['total'])}원 = 1차 {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
-          f"+ 추가 {won(res['extra'])}")
+          + (f"+ 신규 {won(res['new_total'])} " if res["regime"] == "2026" else "") + f"+ 추가 {won(res['extra'])}")
     print(f"상시근로자 수: 해당 {h['상시']:.2f}(청년등 {h['청년등']:.2f}) · 직전 {head['직전']['상시']:.2f}"
           f"(청년등 {head['직전']['청년등']:.2f}, {src_of['직전']}) · 증가 {f2(res['d_t']):.2f} · 방식 {res['method']}")
     code = 0

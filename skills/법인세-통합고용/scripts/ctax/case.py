@@ -11,6 +11,7 @@ PRIOR = "00 받은자료/전기"
 AR_DIR = "1 AR"
 WP_DIR = "2 조서"
 FORMS_DIR = "3 서식"
+FILING_DIR = "4 신고서"
 INDEX = "_색인"
 DASHBOARD = "대시보드.html"
 
