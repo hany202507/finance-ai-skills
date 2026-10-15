@@ -12,7 +12,7 @@
 import sys, os, importlib
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from close_engine import Engine, to_int
+from close_engine import Engine, to_int, 기타비유동자산
 
 HDR = Font(bold=True, color="FFFFFF")
 HFILL = PatternFill("solid", fgColor="305496")
@@ -135,7 +135,7 @@ def build(eng, out_path, period):
         if bold:
             for cc in range(1,5): wb2.cell(r,cc).font = SUB
         return r
-    assets = [c for c in codes if 100 <= c < 250]
+    assets = [c for c in codes if 100 <= c < 250 or c in 기타비유동자산]
     liabs  = [c for c in codes if 250 <= c < 331]
     equity = [c for c in codes if 331 <= c < 400]
     wb2.append(["[자산]"]); wb2.cell(wb2.max_row,1).font = SUB

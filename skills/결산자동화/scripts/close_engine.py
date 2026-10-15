@@ -18,6 +18,11 @@ from collections import defaultdict, OrderedDict
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
+# 900번대에 있는 자산 계정. 재무상태표·검산은 100~249 를 자산으로 보므로 이 코드를 따로 더한다.
+# 962 임차보증금은 더존 기타비유동자산이다. 위하고 232 는 특허권이라(references/위하고_계정과목.csv)
+# 2026-10-16 에 임차보증금을 232 에서 962 로 옮겼다. 962 는 업로드 양식 시트에 없어 회사 화면에서 확인한다
+기타비유동자산 = frozenset({962})
+
 # ---------------------------------------------------------------- 유틸
 def find(raw_dir, key):
     hits = glob.glob(os.path.join(raw_dir, f"*{key}*.xlsx"))

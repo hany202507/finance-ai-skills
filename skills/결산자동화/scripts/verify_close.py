@@ -12,6 +12,9 @@ import sys, os, json, tempfile, glob
 import formulas
 import openpyxl
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from close_engine import 기타비유동자산
+
 
 def count_formulas(path):
     """원본 파일의 수식 개수. 재계산본이 아니라 원본을 봐야 한다.
@@ -169,7 +172,8 @@ def main():
             code = int(str(v).strip())
         except (TypeError, ValueError):
             continue
-        if 400 <= code < 1000:
+        # 962 임차보증금 같은 900번대 자산은 손익이 아니다
+        if 400 <= code < 1000 and code not in 기타비유동자산:
             pl += Z(ts.cell(r, 8).value)
             found += 1
     chk("순이익=-(시산표 손익계정 기말 합)", found > 0 and ni is not None and R(ni) == -pl,
