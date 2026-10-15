@@ -10,13 +10,28 @@
 
 거래처마스터를 안 주면 <산출폴더>/raw/거래처마스터.xlsx 를 찾는다. 있으면 전표의 거래처코드가
 그 마스터에 실제로 있는지까지 본다. 더존이 제일 자주 반려하는 것이 미등록 거래처다.
+
+계정코드는 references/위하고_계정과목.csv(위하고 매입매출 업로드 양식의 계정과목 시트)와 맞춘다.
 """
-import sys, os, io, json, importlib
+import sys, os, io, re, csv, json, importlib
 import openpyxl
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+COA_CSV = os.path.join(HERE, "..", "references", "위하고_계정과목.csv")
+
+
+def load_coa():
+    """위하고 계정과목 마스터. 코드(int) → 계정과목명. 파일이 없으면 빈 dict"""
+    if not os.path.exists(COA_CSV):
+        return {}
+    with io.open(COA_CSV, encoding="utf-8") as f:
+        return {int(r["코드"]): r["계정과목"] for r in csv.DictReader(f)}
+
+
+def _nz(s):
+    return re.sub(r"[\s.·()]", "", str(s))
 
 일반전표_컬럼 = ["월", "일", "구분", "계정과목코드", "계정과목명",
                 "거래처코드", "거래처", "적요", "차변", "대변"]
@@ -100,6 +115,33 @@ def main():
                 fail(f"일반전표 {i}행 거래처코드={r[5]!r} 텍스트여야 한다(앞자리 0 유실)")
             elif not r[5].isdigit():
                 fail(f"일반전표 {i}행 거래처코드={r[5]!r} 숫자만이어야 한다")
+
+    # 계정코드가 위하고 마스터에서 다른 계정을 가리키지 않나. 엑셀올리기 기본값이 「계정코드 기준」이라
+    # 이름이 달라도 코드대로 들어간다. 이자비용을 951 로 올리면 투자자산처분손실로 잡힌다.
+    # 이름만 다른 것(회사가 고쳐 쓴 이름 등)과 마스터 시트에 없는 코드는 알림만 한다
+    coa = load_coa()
+    회사명 = {int(k): v for k, v in (getattr(P, "회사계정명", {}) or {}).items()}
+    이름코드 = {}
+    for c, n in coa.items():
+        이름코드.setdefault(_nz(n), set()).add(c)
+    잘못, 이름만다름, 마스터밖 = {}, {}, set()
+    for i, r in enumerate(G, start=2):
+        code, nm = r[3], r[4]
+        if not coa or not isinstance(code, int) or nm in (None, ""):
+            continue
+        if code not in coa:
+            마스터밖.add(code)
+            continue
+        if _nz(nm) in (_nz(coa[code]), _nz(회사명.get(code, ""))):
+            continue
+        다른코드 = 이름코드.get(_nz(nm), set()) - {code}
+        if 다른코드:
+            잘못.setdefault((code, nm), (i, sorted(다른코드)))
+        else:
+            이름만다름.setdefault(code, nm)
+    for (code, nm), (i, 다른) in sorted(잘못.items()):
+        fail(f"일반전표 {i}행 계정 {code} '{nm}' — 위하고 {code} 는 '{coa[code]}' 다. "
+             f"'{nm}' 은 위하고 {', '.join(map(str, 다른))} 이다. 프로파일 더존코드변환을 확인해야 한다")
 
     # 거래처코드가 마스터에 실제로 있나. 더존은 미등록 거래처 한 곳에 파일 전체를 반려한다
     master = None
@@ -249,6 +291,16 @@ def main():
     cctot = sum(1 for r in G if r[3] in 채권채무계정)
     bizfill = sum(1 for r in S if r[10])
     print(f"  채권채무 거래처코드 {ccfill}/{cctot} · 매입매출 사업자번호 {bizfill}/{len(S)}")
+    if coa:
+        print(f"  위하고 계정과목 대조: 다른 계정을 가리키는 코드 {len(잘못)}개")
+        if 이름만다름:
+            print("    이름만 다름(코드대로 들어간다): " + " · ".join(
+                f"{c} {n}(위하고 {coa[c]})" for c, n in sorted(이름만다름.items())))
+        if 마스터밖:
+            print(f"    마스터 시트에 없는 코드(대상 회사 계정과목 화면에서 확인): "
+                  f"{', '.join(map(str, sorted(마스터밖)))}")
+    else:
+        print("  [미설정] references/위하고_계정과목.csv 가 없어 계정코드 대조를 건너뛰었다")
     if not 해소설정:
         print("  [미설정] 이 프로파일에 거래처별칭·집합거래처가 없다. 거래처코드 빈칸을 "
               "반려로 판정하지 않았다 — 두 맵을 채우면 이 검증이 엄격해진다")
@@ -263,7 +315,10 @@ def main():
                "일반전표행": len(G), "매입매출행": len(S), "전표수": 경계,
                "채권채무_거래처코드": [ccfill, cctot],
                "사업자번호": [bizfill, len(S)],
-               "미등록거래처_검사": bool(master)},
+               "미등록거래처_검사": bool(master),
+               "계정코드_대조": {"검사": bool(coa),
+                              "이름만다름": {str(c): n for c, n in sorted(이름만다름.items())},
+                              "마스터밖": sorted(마스터밖)}},
               io.open(os.path.join(out, f"_검증_업로드_{period}.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     if F:
