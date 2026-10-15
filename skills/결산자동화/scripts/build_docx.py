@@ -15,6 +15,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from close_engine import Engine
+import review_items
 
 def shade(cell, hex_):
     from docx.oxml.ns import qn
@@ -67,57 +68,89 @@ def build(eng, out_path, period):
     r = sub.add_run("전문가 검토 완료 전제 · 자동발송·업로드 금지 · 비식별 교육용 예시")
     r.italic = True; r.font.size = Pt(9)
 
-    # 회사별 판단 항목은 프로파일이 준다. 없으면 아래 예시 기본값을 쓴다.
+    # 회사별 판단 항목은 프로파일이 준다(확인사항_요약 · 확인사항_5필드 · 전기승계_표).
     # 값이 호출 가능하면 엔진 요약 S 를 넘겨 준다(금액을 본문에 끼워 넣을 때).
-    def from_profile(attr, default):
+    # 없으면 데이터에서 뽑은 확인 항목(review_items)과 전기_확정판단으로 채운다.
+    # 예전에는 예시 회사 문구가 기본값이라 다른 회사 문서에도 그대로 실렸다(2026-10-16 고침)
+    def from_profile(attr):
         v = getattr(P, attr, None)
-        if v is None: return default
+        if v is None: return None
         return v(S) if callable(v) else v
+
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    items = review_items.collect(eng, out_dir, period)
+    ops = review_items.load_opinions(out_dir, period)
+
+    def 의견_셀(it):
+        o = (ops or {}).get(it["id"])
+        if o is None:
+            return "의견 없음", "", ""
+        if o.get("판단보류"):
+            return "판단 보류 · " + str(o.get("의견", "")), "", ""
+        g = o.get("근거", [])
+        return o["의견"], " / ".join(g) if isinstance(g, list) else str(g), o["확신도"]
 
     # ── ① 전문가 확정·회신 필요 항목(요약)
     doc.add_heading("① 전문가 확정·회신 필요 항목 (요약)", level=1)
-    for line in from_profile("확인사항_요약", [
-        "☐ No.1 기말 상품재고 40,000,000 (실사 미도착) — 실사표 회신 필요 / 원가율 잠정",
-        "☐ No.2 해외카드(META·OpenAI) 대리납부 부가세(§52) 해당 여부 — 확정 필요",
-        "☑ No.3 카드 식대·포장 매입세액 공제(과세유형 57) — 전기 Q1 승계, 이견 시 회신",
-        "☑ No.4 카드 택시(여객운송) 매입세액 불공제·전액비용 — 전기 Q1 플래그 확정",
-        "☐ No.5 법인세 분기 미계상(연말 확정) — 중간예납 대상 여부 확인",
-    ]):
+    요약 = from_profile("확인사항_요약")
+    if 요약 is None:
+        요약 = [f"☐ No.{n} {it['구분']} · {it['내용']} ({it['질문']})" for n, it in enumerate(items, 1)]
+        if not 요약:
+            요약 = ["엔진과 검증이 넘긴 확인 항목이 없다. 판단 항목의 타당성은 그래도 전문가가 본다."]
+    for line in 요약:
         doc.add_paragraph(line, style="List Bullet")
+
+    # ── ①-2 데이터에서 나온 확인 항목과 AI 1차 의견 (review_items.py)
+    doc.add_heading("①-2 데이터에서 나온 확인 항목 · AI 1차 의견", level=1)
+    if not items:
+        doc.add_paragraph("엔진과 검증이 넘긴 확인 항목이 없다.")
+    else:
+        rowsA = [[n, it["구분"], it["내용"], it["엔진처리"], *의견_셀(it)] for n, it in enumerate(items, 1)]
+        add_table(doc, ["No", "구분", "내용", "엔진 처리", "AI 의견", "근거", "확신도"], rowsA)
+        if ops is None:
+            r = doc.add_paragraph().add_run(
+                "AI 1차 의견 없음. review_items.py 로 항목을 내보내고 AI 가 "
+                f"AI의견_{period}.json 을 채우면 여기에 실린다.")
+            r.italic = True
+        errs = review_items.check_opinions(items, ops) if ops is not None else []
+        if errs:
+            r = doc.add_paragraph().add_run(
+                f"AI 의견 형식 오류 {len(errs)}건(의견 없음 · 근거 없음 · 지난 실행의 id). "
+                "review_items.py --check 로 고친다.")
+            r.bold = True
+    doc.add_paragraph(
+        "AI 의견은 회계사 확정 전 참고용이다. 숫자를 바꾸지 않았고, 확신도가 높아도 확인 대상에서 빠지지 않는다. "
+        "받아들인 판단만 프로파일 규칙에 넣고 엔진을 다시 돌린다.", style="List Bullet")
 
     # ── ② 판단 항목 상세(5필드)
     doc.add_heading("② 판단 항목 상세 (5필드)", level=1)
-    rows5 = from_profile("확인사항_5필드", [
-        ["1","기말재고(원가대체)","실사표 미도착. 기초 40,000,000·당기매입 126,000,000",
-         "①실사확정 ②원가율 잠정","잠정 40,000,000 유지(전기 수준) — 확정 시 매출원가 재계산",
-         f"매출원가·순이익 변동(현 매출원가 상품 {won(S['cogs']-45000000)})"],
-        ["2","해외카드 대리납부","META·OpenAI 해외결제 전액비용 처리",
-         "①대리납부 대상 ②비대상","비대상 잠정(추가자료 시 재검토)","부가세 납부세액 변동 가능"],
-        ["3","카드 식대·포장 공제","가맹점 사업자번호 확보 → 과세유형 57 공제",
-         "①공제 ②불공제","공제(전기 Q1 No.5 승계)",f"매입세액 +{won(S['card_deduct'])}(미지급세금 감소)"],
-    ])
-    add_table(doc, ["No","항목","상황(근거)","선택지","추천안과 근거","재무제표 영향"], rows5)
+    rows5 = from_profile("확인사항_5필드")
+    if rows5 is None:
+        doc.add_paragraph("이 회사 프로파일에는 판단 항목 상세가 없다. ①-2 의 항목과 AI 의견을 본다.")
+    else:
+        add_table(doc, ["No","항목","상황(근거)","선택지","추천안과 근거","재무제표 영향"], rows5)
 
     # ── ③ 전기 방식 승계·편차
     doc.add_heading("③ 전기 방식 승계·편차", level=1)
-    seung = from_profile("전기승계_표", [
-        ["1","카드 식대·포장 매입세액","공제(과세유형 57)","공제 동일","승계"],
-        ["2","카드 택시(여객운송)","잠정 공제 → 재분류 플래그(Q1 No.8)","불공제·전액비용 확정","편차(플래그 확정)"],
-        ["3","4대보험 회사부담분","복리후생비","복리후생비","승계"],
-        ["4","감가·무형 상각","정액 5년","정액 5년","승계"],
-        ["5","이자 현금흐름","수익=영업 / 비용=재무","동일","승계"],
-        ["6","법인세","분기 미계상","분기 미계상","승계"],
-    ])
+    seung = from_profile("전기승계_표")
+    if seung is None:
+        seung = [[n, x, "전기 확정", "프로파일 규칙 그대로 적용", "승계"]
+                 for n, x in enumerate(getattr(P, "전기_확정판단", []), 1)]
     add_table(doc, ["No","항목","전기 방식","당기 처리","승계/편차"], seung)
 
     # ── ④ 채권·채무 기말잔액
     doc.add_heading("④ 채권·채무 기말잔액", level=1)
+    # 차입처와 금리는 프로파일 차입금에서 계산한다(예전에는 예시 회사의 「국민은행 연6%」 고정)
+    차입 = getattr(P, "차입금", {}) or {}
+    차입비고 = 차입.get("거래처", "")
+    if S["loan"] and 차입.get("월이자"):
+        차입비고 += f" 연{차입['월이자'] * 12 / S['loan'] * 100:g}%"
     debt = [
         ["외상매출금(108)", won(S["ar"]), ""],
         ["외상매입금(251)", won(S["ap"]), ""],
         ["미지급금-카드(253)", won(S["card_ap"]), ""],
         ["예수금(254)", won(S["yesu"]), "4대보험·원천세"],
-        ["단기차입금(260)", won(S["loan"]), "국민은행 연6%"],
+        ["단기차입금(260)", won(S["loan"]), 차입비고],
         ["미지급세금(261)", won(S["vat_payable"]), "1기 확정 부가세, 7/25 납부"],
     ]
     add_table(doc, ["계정","기말잔액","비고"], debt)
@@ -175,7 +208,7 @@ def build(eng, out_path, period):
     for line in [
         f"결산확정_{period}.xlsx · 일반전표_업로드_더존_{period}.xlsx · 매입매출전표_업로드_더존_{period}.xlsx · 본 확인사항_{period}.docx",
         "더존 재업로드 시 기존 자동분개 삭제 후 올릴 것(중복 방지).",
-        "잠정 항목(기말재고·해외카드) 확정 전 더존 업로드 금지.",
+        "잠정 항목(①-2 의 잠정 처리 · 미분류 거래) 확정 전 더존 업로드 금지.",
     ]:
         p = doc.add_paragraph(line, style="List Bullet")
     doc.save(out_path)
