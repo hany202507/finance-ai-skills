@@ -130,7 +130,21 @@ class Site:
         return summary_text(self.get(f"{BASE}/bi/popup/billSummary.do?billId={urllib.parse.quote(bill_id)}"))
 
 
-def find(site, law, jos, age, keywords=(), workers=4):
+def pick(text, pats, keywords, need_kw=False):
+    """요약에 걸린 조문·키워드를 돌려준다. 고르지 않으면 None.
+
+    need_kw 이면 키워드가 하나라도 나와야 고른다. 정의 조항처럼 넓은 조문에 관계없는 법안이 걸리는 것을 막는다.
+    """
+    hit = [j for j, p in pats if p.search(text)]
+    kw = [k for k in keywords if k in text]
+    if need_kw and not kw:
+        return None
+    if not hit and not kw:
+        return None
+    return hit, kw
+
+
+def find(site, law, jos, age, keywords=(), workers=4, need_kw=False):
     rows, page, total = [], 1, None
     while True:
         t, got = parse_rows(site.search(law, age, page))
@@ -146,10 +160,10 @@ def find(site, law, jos, age, keywords=(), workers=4):
 
     def look(r):
         text = site.summary(r["billId"]) if r["billId"] else ""
-        hit = [j for j, p in pats if p.search(text)]
-        kw = [k for k in keywords if k in text]
-        if not hit and not kw:
+        got = pick(text, pats, keywords, need_kw)
+        if not got:
             return None
+        hit, kw = got
         sent = next((s for s in re.split(r"(?<=[.다])\s", text)
                      if any(p.search(s) for _, p in pats) or any(k in s for k in kw)), "")
         return {"법령": law, "구분": stage(r), "번호": f"의안번호 {r['의안번호']}", "공포일": "", "시행일": "",
@@ -166,6 +180,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="국회 계류·통과 법안 중 결론 조문을 고치는 것 찾기")
     ap.add_argument("--대상", required=True, action="append", help="법령:조문,조문 (예: 소득세법:제89조)")
     ap.add_argument("--키워드", action="append", default=[], help="요약에 이 말이 있어도 고른다 (예: 1세대 1주택)")
+    ap.add_argument("--키워드필수", action="store_true", help="키워드가 요약에 나온 법안만 남긴다(정의 조항처럼 넓은 조문)")
     ap.add_argument("--대수", default="22")
     ap.add_argument("--오늘", default=None)
     ap.add_argument("--출력", required=True)
@@ -175,6 +190,9 @@ def main(argv=None):
         except (OSError, ValueError):
             pass
     a = ap.parse_args(argv)
+    if a.키워드필수 and not a.키워드:
+        print("입력 오류: --키워드필수 에는 --키워드 가 하나 이상 있어야 한다", file=sys.stderr)
+        return 2
     try:
         targets = parse_targets(a.대상)
         for _, jos in targets:
@@ -191,7 +209,7 @@ def main(argv=None):
     try:
         site = Site()
         for law, jos in targets:
-            items, memo = find(site, law, jos, a.대수, a.키워드)
+            items, memo = find(site, law, jos, a.대수, a.키워드, need_kw=a.키워드필수)
             out["항목"] += items
             out["메모"].append(memo)
     except Exception as e:  # noqa: BLE001 — 어떤 실패든 「확인 불가」로 남겨야 한다

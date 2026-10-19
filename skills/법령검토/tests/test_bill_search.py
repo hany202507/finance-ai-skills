@@ -72,3 +72,17 @@ def test_summary_text_reads_print_pre_only():
     assert got.startswith("현행법은 1세대 1주택") and got.endswith("(안 제89조의2 신설 등)")
     assert "glb_ctxPathJS" not in got
     assert bs.summary_text("<p>없음</p>") == ""
+
+
+def test_pick_with_and_without_required_keyword():
+    pats = [("제2조", bs.jo_pattern("제2조"))]
+    wide = "근로자의 정의를 넓히려는 것임(안 제2조)."
+    on_topic = "통상임금의 정의를 법률에 두려는 것임(안 제2조)."
+    assert bs.pick(wide, pats, ["통상임금"]) == (["제2조"], [])
+    assert bs.pick(wide, pats, ["통상임금"], need_kw=True) is None
+    assert bs.pick(on_topic, pats, ["통상임금"], need_kw=True) == (["제2조"], ["통상임금"])
+    assert bs.pick("관계없는 내용", pats, ["통상임금"]) is None
+
+
+def test_required_keyword_needs_a_keyword(tmp_path):
+    assert bs.main(["--대상", "근로기준법:제2조", "--키워드필수", "--출력", str(tmp_path / "x.json")]) == 2
