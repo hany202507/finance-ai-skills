@@ -1,0 +1,20 @@
+{
+  "name": "finance-ai-skills",
+  "owner": {
+    "name": "hany202507",
+    "url": "https://github.com/hany202507"
+  },
+  "metadata": {
+    "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬",
+    "version": "0.11.4"
+  },
+  "plugins": [
+    {
+      "name": "finance-ai-skills",
+      "source": "./",
+      "description": "현금흐름표, 세법자문-회신, 회계기준검토, 리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 결산자동화, 법령검토, 양도소득세, 법인세-통합고용, AI면접점검 스킬",
+      "version": "0.11.4",
+      "license": "MIT"
+    }
+  ]
+}

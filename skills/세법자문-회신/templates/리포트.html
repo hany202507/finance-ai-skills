@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 채울 곳: 제목 -->
+<title>세무 검토 회신</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm; }
+
+  :root {
+    --ink:      #16181d;
+    --ink-soft: #4a5058;
+    --line:     #d8dce2;
+    --accent:   #1f4e79;
+    --box:      #f4f6f9;
+    --warn:     #8a5a00;
+    --warn-bg:  #fdf6e7;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0 auto;
+    max-width: 190mm;
+    padding: 24px 20px 60px;
+    background: #fff;
+    color: var(--ink);
+    font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo",
+                 system-ui, -apple-system, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.75;
+    word-break: keep-all;
+  }
+
+  header {
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 14px;
+    margin-bottom: 26px;
+  }
+  header .kicker {
+    font-size: 9pt;
+    letter-spacing: .12em;
+    color: var(--accent);
+    font-weight: 700;
+    margin: 0 0 6px;
+  }
+  h1 {
+    font-size: 17pt;
+    line-height: 1.4;
+    margin: 0 0 14px;
+    font-weight: 700;
+  }
+
+  .meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 16px;
+    font-size: 9.5pt;
+    color: var(--ink-soft);
+  }
+  .meta dt { font-weight: 600; color: var(--ink); }
+  .meta dd { margin: 0; }
+
+  section { margin-bottom: 24px; }
+  section { break-inside: avoid; }
+
+  h2 {
+    font-size: 11.5pt;
+    font-weight: 700;
+    margin: 0 0 10px;
+    padding-left: 9px;
+    border-left: 3px solid var(--accent);
+  }
+
+  p { margin: 0 0 10px; }
+
+  .conclusion {
+    background: var(--box);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 14px 16px;
+  }
+  .conclusion p:last-child { margin-bottom: 0; }
+  .conclusion strong { color: var(--accent); }
+
+  ul.grounds { margin: 0; padding-left: 0; list-style: none; }
+  ul.grounds > li {
+    padding: 10px 0 10px 14px;
+    border-left: 2px solid var(--line);
+    margin-bottom: 10px;
+  }
+  ul.grounds .cite {
+    font-weight: 700;
+    display: block;
+    margin-bottom: 3px;
+  }
+  ul.grounds .eff {
+    font-weight: 400;
+    color: var(--ink-soft);
+    font-size: 9pt;
+  }
+  ul.grounds blockquote {
+    margin: 6px 0;
+    padding: 6px 12px;
+    background: var(--box);
+    border-radius: 3px;
+    font-size: 9.5pt;
+    color: var(--ink-soft);
+  }
+  ul.grounds .plain { margin: 0; font-size: 10pt; }
+
+  ul.plainlist { margin: 0 0 10px; padding-left: 20px; }
+  ul.plainlist li { margin-bottom: 5px; }
+
+  .caution {
+    background: var(--warn-bg);
+    border: 1px solid #ecd9a8;
+    border-left: 3px solid var(--warn);
+    border-radius: 4px;
+    padding: 12px 16px;
+  }
+  .caution h2 { border-left: none; padding-left: 0; color: var(--warn); }
+  .caution p:last-child { margin-bottom: 0; }
+
+  footer {
+    margin-top: 34px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 9pt;
+    color: var(--ink-soft);
+  }
+  footer p { margin: 0 0 4px; }
+
+  a { color: var(--accent); }
+
+  @media print {
+    body { padding: 0; max-width: none; }
+    a { text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="kicker">세무 검토 회신</p>
+  <!-- 채울 곳: 쟁점 한 줄 -->
+  <h1>제목을 여기에 적는다</h1>
+  <dl class="meta">
+    <dt>의뢰인</dt><dd><!-- 채울 곳 -->○○○ 귀중</dd>
+    <dt>과세기간</dt><dd><!-- 채울 곳 -->YYYY년 제○기</dd>
+    <dt>검토 기준일</dt><dd><!-- 채울 곳 -->YYYY-MM-DD</dd>
+    <dt>작성</dt><dd><!-- 채울 곳 -->이름 (자격·소속)</dd>
+  </dl>
+</header>
+
+<section>
+  <h2>질의요지</h2>
+  <!-- 채울 곳: 무엇을 물었나. 1~3문장. 과세기간 명시 -->
+  <p>질의 내용을 1~3문장으로 적는다.</p>
+</section>
+
+<section>
+  <h2>결론</h2>
+  <div class="conclusion">
+    <!-- 채울 곳: 바로 쓸 수 있는 답. 단정적으로 -->
+    <p><strong>결론 문장을 여기에 적는다.</strong></p>
+    <p>필요하면 한두 문장을 덧붙인다.</p>
+  </div>
+</section>
+
+<section>
+  <h2>근거</h2>
+  <ul class="grounds">
+    <!-- 채울 곳: 조문마다 li 하나. 없는 조문은 적지 않는다 -->
+    <li>
+      <span class="cite">「법령명」 제○조제○항 <span class="eff">(시행 YYYY.MM.DD)</span></span>
+      <blockquote>조문 원문을 그대로 인용한다.</blockquote>
+      <p class="plain">쉬운 말로 한 문장 풀이.</p>
+    </li>
+    <li>
+      <span class="cite">적용시점</span>
+      <p class="plain">부칙 취지를 한 문장으로. 예: 이 규정은 2026.1.1. 이후 공급하는 분부터 적용됩니다.</p>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>실무 유의</h2>
+  <!-- 채울 곳: 처리 방법 + 놓치기 쉬운 점 + 경정청구·기한후신고 가능 여부 -->
+  <ul class="plainlist">
+    <li>처리 방법.</li>
+    <li>놓치기 쉬운 점.</li>
+    <li>경정청구·기한후신고 가능 여부와 기한.</li>
+  </ul>
+</section>
+
+<!-- 확인 못 한 것이 없으면 아래 section 을 통째로 지운다 -->
+<section class="caution">
+  <h2>확인이 필요한 사항</h2>
+  <!-- 채울 곳: 내부검토에서 확인하지 못한 것을 문장으로 -->
+  <p>본 회신은 국세를 기준으로 검토했으며, 지방소득세 해당 여부는 별도 확인이 필요합니다.</p>
+</section>
+
+<footer>
+  <p>※ 본 회신은 검토 시점의 법령을 기준으로 작성되었습니다. 법령 개정이나 사실관계 변동이 있으면 결론이 달라질 수 있습니다.</p>
+  <p>※ 최종 판단과 책임은 담당 세무사·회계사에게 있습니다.</p>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<!-- 이 파일 안의 스크립트와 스타일만 쓰고 나머지 요청(스크립트, 그림, 글꼴, 전송)은 브라우저가 막게 한다. 근거 조문 링크는 눌렀을 때 새 창으로 열린다. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>양도소득세 질문지</title>
+<!-- 이 파일은 scripts/make_questionnaire_html.py 가 질문지/문항.json 에서 만든다. 직접 고치지 않는다. -->
+<style>
+@@STYLE@@
+</style>
+</head>
+<body>
+<noscript><p class="warn">이 질문지는 브라우저에서 자바스크립트를 켜야 쓸 수 있습니다.</p></noscript>
+<header class="top">
+  <p class="brand">Gridie 양도소득세</p>
+  <h1>양도소득세 질문지</h1>
+  <ul class="notice">
+    <li>이 파일은 인터넷에 연결하지 않고 이 브라우저 안에서만 동작합니다. 입력한 내용은 어디로도 전송되지 않습니다.</li>
+    <li>이름, 주민등록번호, 전화번호, 계좌번호는 묻지 않습니다. 신고서를 만들 때 따로 받습니다.</li>
+    <li>아는 만큼만 답하셔도 됩니다. 모르는 문항은 「모르겠어요」를 고르시면 회계사가 확인합니다.</li>
+    <li>앞 답을 계산해 봐야 필요한지 알 수 있는 질문(금액, 거주 기간 등)에는 「회계사가 확인합니다」 표시가 붙습니다.</li>
+    <li>해당하면 답해 주세요. 보기 번거로우면 위의 「회계사가 확인하는 항목 숨기기」를 눌러도 됩니다.</li>
+    <li>숨긴 항목은 회계사가 나중에 묻습니다.</li>
+    <li>다 쓰셨으면 아래 「답변 내려받기」로 파일을 저장해 회계사에게 보내 주세요.</li>
+    <li>입력한 내용은 이 브라우저에 임시로 저장됩니다. 공용 컴퓨터에서는 마친 뒤 「모두 지우고 다시 시작」을 눌러 주세요.</li>
+  </ul>
+</header>
+<div class="bar" id="bar">
+  <span id="progress" class="progress" aria-live="polite"></span>
+  <label class="toggle"><input type="checkbox" id="hide-pending"><span id="pending-label">회계사가 확인하는 항목 숨기기</span></label>
+  <button type="button" id="download-top" class="primary">답변 내려받기</button>
+</div>
+<main id="main">
+  <section id="sec-top" class="sec">
+    <h2>1. 신고 범위</h2>
+    <div id="zone-top"></div>
+  </section>
+  <section id="sec-assets" class="sec">
+    <h2>2. 양도한 부동산</h2>
+    <p class="lead">판 부동산마다 아래 질문에 답해 주세요. 두 건 이상 팔았으면 「양도한 부동산 추가」를 눌러 주세요.</p>
+    <div id="zone-assets"></div>
+    <p><button type="button" id="add-asset" class="add">양도한 부동산 추가</button></p>
+  </section>
+  <section id="sec-house" class="sec">
+    <h2>3. 세대와 보유 주택</h2>
+    <div id="zone-house"></div>
+  </section>
+  <section id="sec-done" class="sec">
+    <h2>4. 마무리</h2>
+    <div id="done-errors"></div>
+    <div id="done-open"></div>
+    <p class="actions">
+      <button type="button" id="download" class="primary">답변 내려받기</button>
+      <button type="button" id="reset" class="plain">모두 지우고 다시 시작</button>
+    </p>
+    <p class="small">내려받은 파일 이름은 양도소득세_답변.json 입니다. 회계사가 이 파일로 이어서 확인하고 계산합니다.</p>
+    <details class="preview"><summary>내려받을 내용 미리 보기</summary><pre id="preview"></pre></details>
+  </section>
+</main>
+<footer>
+  <p>이 질문지의 답으로 계산한 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다.</p>
+</footer>
+<script id="defs" type="application/json">@@DEFS@@</script>
+<script id="conditions" type="application/json">@@CONDITIONS@@</script>
+<script id="core">
+@@CORE@@
+</script>
+<script id="app">
+@@APP@@
+</script>
+</body>
+</html>

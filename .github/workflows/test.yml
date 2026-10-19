@@ -1,0 +1,113 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu 와 windows 에서 돈다. 아래 식은 저장소가 private 이면 ubuntu 만 고른다
+        os: ${{ github.event.repository.private && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: skills/현금흐름표
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tests
+      - name: 합성 자료로 실행(엑셀 재계산 없이)
+        run: python scripts/run.py --분개장 tests/fixtures/합성_분개장.xlsx --재무상태표 tests/fixtures/합성_재무상태표.xlsx --계정 tests/fixtures/합성_계정.xlsx --회사 합성 --출력 out --엑셀대조생략
+
+  skills:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu 와 windows 에서 돈다. 아래 식은 저장소가 private 이면 ubuntu 만 고른다
+        os: ${{ github.event.repository.private && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        python: ["3.10", "3.13"]
+        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령검토, 양도소득세, 법인세-통합고용]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: skills/${{ matrix.skill }}
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # 양도소득세 질문지의 화면 논리 시험은 node 로 돈다. CI 에서는 node 가 없으면 건너뛰지 않고 실패한다
+      - if: matrix.skill == '양도소득세'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tests
+      # 양도소득세: 합성 사례 A 로 신고서 PDF 를 만들고(SKILL.md 「시험해 보기」와 같은 입력) 출력 폴더에 파일이 셋만 남았는지 본다.
+      # 셸마다 중간 명령의 실패를 다루는 법이 달라 명령 하나에 단계 하나를 둔다
+      - name: 양도소득세 합성 입력 만들기
+        if: matrix.skill == '양도소득세'
+        run: python tests/sample_inputs.py A ci_sample
+      - name: 양도소득세 합성 사례로 신고서 만들기
+        if: matrix.skill == '양도소득세'
+        run: python scripts/make_return.py --사실관계 ci_sample/a.json --신고인 ci_sample/a_신고인.json --출력 ci_out --오늘 2026-12-20
+      - name: 양도소득세 출력 폴더에 신고서 PDF 두 벌과 계산근거 엑셀만 있는지 확인
+        if: matrix.skill == '양도소득세'
+        run: python tests/check_outputs.py ci_out 신고서
+
+  close:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu 와 windows 에서 돈다. 아래 식은 저장소가 private 이면 ubuntu 만 고른다
+        os: ${{ github.event.repository.private && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: skills/결산자동화
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q scripts/tests
+
+  mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp/korean-law
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: node --check index.js && node --check tools.mjs && node --check lib.mjs && node --check selftest.mjs
+      - name: 단위 시험(네트워크 없음)
+        run: npm test
+      - name: 세법 훅 selftest
+        working-directory: hooks
+        run: node tax-source-guard.mjs --selftest
+      - name: OC 없이 띄우면 바로 종료해야 한다
+        run: |
+          if node index.js; then echo "LAW_OC 없이 떴다"; exit 1; fi

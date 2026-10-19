@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<!-- 이 파일 안의 스크립트와 스타일만 쓰고 나머지 요청(스크립트, 그림, 글꼴, 전송)은 브라우저가 막게 한다. 근거 조문 링크는 눌렀을 때 새 창으로 열린다. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>양도소득세 질문지</title>
+<!-- 이 파일은 scripts/make_questionnaire_html.py 가 질문지/문항.json 에서 만든다. 직접 고치지 않는다. -->
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #1c2230; --sub: #5a6478; --line: #d8dde6;
+  --accent: #1f5fbf; --accent-ink: #ffffff; --warn: #a15c00; --warn-bg: #fff6e5;
+  --err: #b3261e; --err-bg: #fdecea; --pend: #8a6d1f; --pend-bg: #fffaf0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d; --card: #1d222b; --ink: #e8ebf1; --sub: #a3adbf; --line: #323a49;
+    --accent: #6ea4ff; --accent-ink: #0b1220; --warn: #f0b862; --warn-bg: #2a2315;
+    --err: #ff8a80; --err-bg: #3a1d1b; --pend: #e3c26b; --pend-bg: #262114;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { font-size: 16px; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  line-height: 1.6;
+}
+header.top, main, footer { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+header.top { padding-top: 28px; }
+.brand { margin: 0; color: var(--sub); font-size: 0.9rem; letter-spacing: 0.02em; }
+h1 { margin: 4px 0 12px; font-size: 1.7rem; }
+h2 { margin: 0 0 8px; font-size: 1.25rem; }
+h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.notice { margin: 0 0 16px; padding: 12px 16px 12px 32px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; font-size: 0.93rem; }
+.notice li + li { margin-top: 4px; }
+.warn { padding: 12px 16px; background: var(--warn-bg); color: var(--warn); border-radius: 8px; }
+.bar {
+  position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+  padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line);
+}
+.progress { font-weight: 600; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; font-size: 0.92rem; color: var(--sub); }
+.bar .primary { margin-left: auto; }
+.sec { margin: 24px 0; }
+.lead { margin: 0 0 12px; color: var(--sub); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 0 0 16px; }
+.card > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.grp { margin: 16px 0 0; }
+.grp > h4 { margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); font-size: 0.95rem; color: var(--sub); }
+.q { margin: 0 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.card .q { background: transparent; }
+.q.pending { border-style: dashed; border-color: var(--pend); background: var(--pend-bg); }
+.pnote { margin: 6px 0 0; font-size: 0.85rem; color: var(--pend); }
+.q:not(.pending) .pnote { display: none; }
+.qhead { display: flex; gap: 8px; align-items: baseline; }
+.qid { flex: none; font-size: 0.75rem; color: var(--sub); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.qtext { font-weight: 600; }
+.help { margin: 6px 0 0; font-size: 0.88rem; color: var(--sub); }
+.field { margin-top: 8px; }
+.opts { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.opts.col { flex-direction: column; gap: 4px; }
+.opt { display: inline-flex; gap: 6px; align-items: flex-start; }
+.opt input { margin-top: 5px; }
+input[type=text], input[type=date], select {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; min-width: 0; max-width: 100%;
+}
+input[type=text]:focus, input[type=date]:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.inwrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.unit { color: var(--sub); font-size: 0.9rem; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend { padding: 0; font-size: 0.88rem; color: var(--sub); }
+.obj { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 12px; }
+.obj > .fld { min-width: 0; }
+.obj > .wide { grid-column: 1 / -1; }
+.fld { display: block; }
+.flabel { display: block; font-size: 0.85rem; color: var(--sub); }
+.addr { display: flex; flex-wrap: wrap; gap: 6px; }
+.addr input, .addr select { flex: 1 1 150px; }
+.share { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.list .row { margin: 8px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.rowhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 0.9rem; }
+.mo { margin-top: 8px; font-size: 0.9rem; color: var(--sub); }
+.q.is-mo .field { opacity: 0.45; }
+.why { margin-top: 8px; font-size: 0.85rem; color: var(--sub); }
+.why summary { cursor: pointer; }
+.why p { margin: 4px 0; }
+.why a { color: var(--accent); }
+.err { margin: 8px 0 0; padding: 6px 10px; background: var(--err-bg); color: var(--err); border-radius: 6px; font-size: 0.88rem; }
+.err p { margin: 0; }
+.sub { margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--pend); border-radius: 8px; background: var(--pend-bg); }
+.sub .subq { margin: 0 0 6px; font-size: 0.85rem; color: var(--sub); }
+.info { margin: 0 0 6px; font-size: 0.88rem; color: var(--sub); }
+button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+button.add { border-style: dashed; }
+button.danger, button.plain { font-size: 0.88rem; padding: 3px 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.small, footer p { font-size: 0.85rem; color: var(--sub); }
+footer { padding-bottom: 40px; }
+pre { overflow: auto; max-height: 360px; padding: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; font-size: 0.8rem; }
+#done-open ul, #done-errors ul { margin: 4px 0 12px; padding-left: 20px; }
+#done-errors { color: var(--err); }
+#done-errors a { color: var(--err); }
+@media (max-width: 560px) {
+  h1 { font-size: 1.4rem; }
+  .bar .primary { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<noscript><p class="warn">이 질문지는 브라우저에서 자바스크립트를 켜야 쓸 수 있습니다.</p></noscript>
+<header class="top">
+  <p class="brand">Gridie 양도소득세</p>
+  <h1>양도소득세 질문지</h1>
+  <ul class="notice">
+    <li>이 파일은 인터넷에 연결하지 않고 이 브라우저 안에서만 동작합니다. 입력한 내용은 어디로도 전송되지 않습니다.</li>
+    <li>이름, 주민등록번호, 전화번호, 계좌번호는 묻지 않습니다. 신고서를 만들 때 따로 받습니다.</li>
+    <li>아는 만큼만 답하셔도 됩니다. 모르는 문항은 「모르겠어요」를 고르시면 회계사가 확인합니다.</li>
+    <li>앞 답을 계산해 봐야 필요한지 알 수 있는 질문(금액, 거주 기간 등)에는 「회계사가 확인합니다」 표시가 붙습니다.</li>
+    <li>해당하면 답해 주세요. 보기 번거로우면 위의 「회계사가 확인하는 항목 숨기기」를 눌러도 됩니다.</li>
+    <li>숨긴 항목은 회계사가 나중에 묻습니다.</li>
+    <li>다 쓰셨으면 아래 「답변 내려받기」로 파일을 저장해 회계사에게 보내 주세요.</li>
+    <li>입력한 내용은 이 브라우저에 임시로 저장됩니다. 공용 컴퓨터에서는 마친 뒤 「모두 지우고 다시 시작」을 눌러 주세요.</li>
+  </ul>
+</header>
+<div class="bar" id="bar">
+  <span id="progress" class="progress" aria-live="polite"></span>
+  <label class="toggle"><input type="checkbox" id="hide-pending"><span id="pending-label">회계사가 확인하는 항목 숨기기</span></label>
+  <button type="button" id="download-top" class="primary">답변 내려받기</button>
+</div>
+<main id="main">
+  <section id="sec-top" class="sec">
+    <h2>1. 신고 범위</h2>
+    <div id="zone-top"></div>
+  </section>
+  <section id="sec-assets" class="sec">
+    <h2>2. 양도한 부동산</h2>
+    <p class="lead">판 부동산마다 아래 질문에 답해 주세요. 두 건 이상 팔았으면 「양도한 부동산 추가」를 눌러 주세요.</p>
+    <div id="zone-assets"></div>
+    <p><button type="button" id="add-asset" class="add">양도한 부동산 추가</button></p>
+  </section>
+  <section id="sec-house" class="sec">
+    <h2>3. 세대와 보유 주택</h2>
+    <div id="zone-house"></div>
+  </section>
+  <section id="sec-done" class="sec">
+    <h2>4. 마무리</h2>
+    <div id="done-errors"></div>
+    <div id="done-open"></div>
+    <p class="actions">
+      <button type="button" id="download" class="primary">답변 내려받기</button>
+      <button type="button" id="reset" class="plain">모두 지우고 다시 시작</button>
+    </p>
+    <p class="small">내려받은 파일 이름은 양도소득세_답변.json 입니다. 회계사가 이 파일로 이어서 확인하고 계산합니다.</p>
+    <details class="preview"><summary>내려받을 내용 미리 보기</summary><pre id="preview"></pre></details>
+  </section>
+</main>
+<footer>
+  <p>이 질문지의 답으로 계산한 결과는 검토용입니다. 신고 전 최종 판단은 세무 전문가가 합니다.</p>
+</footer>
+<script id="defs" type="application/json">{"questions":[{"id":"P01","sec":"S0","text":"집을 판 날(잔금 받은 날) 기준으로 한국에 주소를 두고 살고 계셨나요? 해외에 1년 넘게 나가 살고 있었다면 '아니오'입니다.","help":"","form":"예아니오","unit":"전역","zone":"top","keys":["신고인.거주자"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["계산 범위 확인","1세대1주택 비과세","장특공 표2"],"law":[{"t":"소득세법 제121조② 단서(비거주자에게 제89조①3호·4호, 제95조② 표 외 단서 미적용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C121%EC%A1%B0"}],"docs":["주민등록초본","출입국에 관한 사실증명(해외 체류 이력이 있을 때)"],"where":["정부24 출입국에 관한 사실증명"]}},{"id":"P02","sec":"S0","text":"이번에 판(팔) 것은 무엇인가요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].종류"],"spec":{"t":"choice","opts":[["주택","주택(아파트·빌라·단독·사람이 사는 오피스텔 포함)"],["토지","토지"],["건물","주택이 아닌 건물(상가·사무실·공장 등)"],["겸용주택","주택과 가게가 한 건물에 있는 겸용주택"],["입주권","재개발·재건축 조합원입주권"],["분양권","아파트 분양권"],["기타자산","주식·회원권 등 그 밖의 자산"]]},"moreum":false,"why":{"used":["계산 범위 확인","과세대상 분류","세율 그룹(주택등·토지건물)"],"law":[{"t":"소득세법 제94조①1호·2호(토지·건물, 부동산에 관한 권리)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C94%EC%A1%B0"},{"t":"소득세법 제88조7호(주택: 사실상 주거용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C88%EC%A1%B0"},{"t":"소득세법 제104조①2호·3호 괄호(주택·입주권·분양권 단기세율)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"}],"docs":["건축물대장","토지대장"],"where":["정부24 건축물대장·토지대장 열람"]}},{"id":"P03","sec":"S0","text":"어떤 방식으로 넘겼나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].양도.원인"],"spec":{"t":"choice","opts":[["매매","돈을 받고 판 매매"],["교환","다른 부동산과 맞바꾼 교환"],["수용","공공사업에 수용·협의매수"],["경매","경매·공매로 넘어감"],["부담부증여","가족에게 증여하면서 대출·전세보증금을 넘김(부담부증여)"],["기타","그 밖의 원인"]]},"moreum":false,"why":{"used":["계산 범위 확인","양도가액","양도 시기","예정신고 기한"],"law":[{"t":"소득세법 제88조1호(부담부증여 채무 인수분은 양도)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C88%EC%A1%B0"},{"t":"소득세법 제105조①3호(부담부증여 채무분 신고기한 말일부터 3개월)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C105%EC%A1%B0"}],"docs":["양도 매매계약서(교환계약서, 수용재결서·보상계약서)"],"where":[]}},{"id":"P04","sec":"S0","text":"이 부동산을 다른 사람과 함께 갖고 있었나요? 함께 갖고 있었다면 본인 지분은 얼마인가요? (예: 1/2)","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].지분"],"spec":{"t":"share","opts":[["단독","혼자 소유"],["공동","공동 소유(지분 입력)"]]},"moreum":false,"why":{"used":["양도가액·취득가액 지분 안분","고가주택 판정(전체 가액 기준)"],"law":[{"t":"소득세법 시행령 제156조①(일부 양도 시 전체 실지거래가액으로 고가주택 판정)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C156%EC%A1%B0"}],"docs":["등기사항증명서(갑구 공유자 지분)"],"where":["인터넷등기소 등기사항증명서"]}},{"id":"P05","sec":"S0","text":"같은 해(1월~12월)에 다른 부동산이나 분양권·입주권을 이미 팔았거나 팔 예정인가요?","help":"","form":"예아니오","unit":"전역","zone":"top","keys":["연간.다른양도"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["기본공제·연간 합산","제104조⑤ 합산 비교","확정신고 필요 여부"],"law":[{"t":"소득세법 제103조①·②(연 250만원, 먼저 양도한 자산부터)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C103%EC%A1%B0"},{"t":"소득세법 제104조⑤(둘 이상 양도 시 큰 세액)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 제110조④ 단서(누진세율 자산 예정신고 2회 이상이면 확정신고)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C110%EC%A1%B0"}],"docs":["다른 건의 매매계약서·신고서 접수증"],"where":["홈택스 신고내역 조회(접수증·납부서)"]}},{"id":"P06","sec":"S0","text":"그중 이미 예정신고한 건이 있으면, 신고서의 양도소득금액과 결정세액을 알려 주세요.","help":"","form":"금액","unit":"전역","zone":"top","keys":["연간.기신고"],"spec":{"t":"list","as":"rows","noun":"예정신고 건","row":{"t":"obj","fields":[{"n":"양도소득금액","label":"신고서의 양도소득금액","s":{"t":"int"}},{"n":"결정세액","label":"신고서의 결정세액","s":{"t":"int"}}],"req":["양도소득금액","결정세액"]},"add":"예정신고 건 추가","none":"해당 없음"},"moreum":false,"why":{"used":["기본공제·연간 합산","기신고 양도소득금액 합산"],"law":[{"t":"소득세법 제110조④","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C110%EC%A1%B0"},{"t":"소득세법 제103조②","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C103%EC%A1%B0"}],"docs":["이전 예정신고서 사본","접수증"],"where":["홈택스 신고내역 조회"]}},{"id":"P07","sec":"S0","text":"같은 날 주택을 두 채 이상 팔았나요?","help":"같은 날 판 집이 둘 이상이면 예입니다. 이 경우 어느 집을 먼저 판 것으로 보는지(시행령 제154조⑨)를 반영하지 못해 계산하지 않고 다루지 않는 항목으로 알려 드립니다.","form":"예아니오","unit":"전역","zone":"top","keys":["연간.같은날양도순서"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["1세대1주택 비과세","다주택 중과"],"law":[{"t":"소득세법 시행령 제154조⑨(같은 날 양도는 거주자가 선택한 순서)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행령 제167조의3⑥(중과 판정에 준용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"}],"docs":[],"where":[]}},{"id":"A01","sec":"S1","text":"판 부동산의 주소를 시·도, 시·군·구, 읍·면·동까지 알려 주세요. 번지는 필요 없습니다.","help":"","form":"주소","unit":"자산","zone":"asset","keys":["자산[].소재지"],"spec":{"t":"addr"},"moreum":false,"why":{"used":["조정대상지역(취득일·양도일·신규주택 취득일 기준)","다주택 중과","주택 수 제외(수도권·광역시·세종 밖 3억 이하)","한시배제 표 지역","부수토지 배율(수도권 여부)","일시적 2주택 처분기한"],"law":[{"t":"소득세법 시행령 제154조①(취득 당시 조정대상지역이면 거주 2년)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 제104조⑦(조정대상지역 다주택 중과)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 시행령 제167조의10①1호·제167조의3①1호(수도권·광역시·특별자치시 외 3억원 이하)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"},{"t":"소득세법 시행령 제155조①1호(종전·신규 모두 조정대상지역이면 2년)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 제154조⑦(부수토지 배율)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["등기사항증명서","건축물대장"],"where":["인터넷등기소 등기사항증명서(표제부 소재지)","정부24 건축물대장"]}},{"id":"A02","sec":"S1","text":"이 부동산이 다음 지구 안에 있나요? (엔진이 지구 이름을 채워 묻는다. 예: 화성 동탄2 택지개발지구)","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].지구해당"],"spec":{"t":"choice","opts":[["예","예"],["아니오","아니오"],["모름","모름"]]},"moreum":true,"why":{"used":["조정대상지역(지구 단위로 지정된 기간)"],"law":[{"t":"소득세법 시행령 제154조② 표(2017-08-03~11-09 화성시는 택지개발지구로 한정)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"관보 공고 조정대상지역 지정 공고 중 지구 단위 지정분(동탄2·광교·고양 7개 지구·창원 감계·무동 등)","h":null}],"docs":["토지이용계획확인서(지구 지정 표시)"],"where":["토지이음 토지이용계획 열람","시·군·구청 도시계획 부서"]}},{"id":"A03","sec":"S1","text":"집을 살 때 주소(그때의 동·구 이름)가 지금과 달랐다면 그때 주소를 알려 주세요.","help":"","form":"주소","unit":"자산","zone":"asset","keys":["자산[].취득당시소재지"],"spec":{"t":"addr"},"moreum":false,"why":{"used":["조정대상지역(취득일 기준)"],"law":[{"t":"설계서 행정구역 개편: 행정구역_대응.json 에 없는 주소는 질문으로 되돌림","h":null}],"docs":["등기사항증명서(표제부 변경 이력)","건축물대장"],"where":["인터넷등기소","정부24 건축물대장"]}},{"id":"A04","sec":"S1","text":"어떤 형태의 주택인가요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].주택유형"],"spec":{"t":"choice","opts":[["아파트","아파트"],["연립다세대","연립·다세대(빌라)"],["단독주택","단독주택"],["다가구주택","다가구주택"],["주거용오피스텔","사람이 사는 오피스텔"],["주거용근생","상가·근린생활시설 등을 집으로 쓰는 경우"]]},"moreum":false,"why":{"used":["주택 해당 여부","부수토지 문항 필요 여부","다가구 매매단위","보유기간 기산(주거용 사용일)"],"law":[{"t":"소득세법 제88조7호(사실상 주거용으로 사용하는 건물)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C88%EC%A1%B0"},{"t":"소득세법 시행령 제154조⑤(주택 아닌 건물을 주거용으로 쓴 경우 보유기간은 주거용 사용일부터)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행령 제155조⑮(다가구주택 매매단위)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"}],"docs":["건축물대장(용도)"],"where":["정부24 건축물대장"]}},{"id":"A05","sec":"S1","text":"이 건물을 집으로 쓰기 시작한 날은 언제인가요? (오피스텔에 전입한 날, 상가를 주택으로 바꾼 날 등)","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].주거사용개시일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["보유기간 기산","장특공 공제율 합산 상한"],"law":[{"t":"소득세법 시행령 제154조⑤","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 제95조⑤(비주택을 주택으로 쓴 경우 공제율 합산 상한 100분의 40)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C95%EC%A1%B0"}],"docs":["주민등록초본(전입일)","임대차계약서","건축물대장 용도변경 이력"],"where":["정부24 주민등록초본","정부24 건축물대장(변동사항)"]}},{"id":"A06","sec":"S1","text":"다가구주택을 한 사람에게 통째로 팔았나요, 호실별로 나눠 팔았나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].다가구일괄양도"],"spec":{"t":"choice","opts":[["일괄","통째로 한 번에"],["호실별","호실별로 나눠서"]]},"moreum":false,"why":{"used":["주택 수(다가구 1주택 여부)","고가주택 판정 단위"],"law":[{"t":"소득세법 시행령 제155조⑮","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 제156조③(다가구주택은 전체를 하나의 주택으로 봄)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C156%EC%A1%B0"}],"docs":["양도 매매계약서"],"where":[]}},{"id":"A07","sec":"S1","text":"이 부동산을 살 때 본인 이름으로 소유권이전등기를 마쳤나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].등기"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["미등기 세율 70%","장특공 배제","기본공제 배제","비과세 배제","개산공제율 0.3%"],"law":[{"t":"소득세법 제104조③(미등기양도자산 정의)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 제104조①10호(100분의 70)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 제91조①(미등기 비과세 배제)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C91%EC%A1%B0"},{"t":"소득세법 제95조②(미등기양도자산 장특공 제외)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C95%EC%A1%B0"},{"t":"소득세법 제103조① 단서","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C103%EC%A1%B0"},{"t":"소득세법 시행령 제163조⑥(미등기 개산공제 1천분의 3)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C163%EC%A1%B0"}],"docs":["등기사항증명서(갑구 소유권이전 등기)"],"where":["인터넷등기소 등기사항증명서"]}},{"id":"A08","sec":"S1","text":"등기를 못 한 이유가 다음 중 무엇인가요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].미등기사유"],"spec":{"t":"choice","opts":[["장기할부","장기할부로 사서 계약상 아직 등기할 수 없었음"],["법률상불가","법률이나 법원 결정 때문에 등기할 수 없었음"],["무허가1주택","건축허가 없이 지은 집이라 등기할 수 없었고 1세대1주택 요건을 갖춤"],["도시개발미완료","도시개발사업이 끝나지 않아 토지 등기를 못 함"],["체비지","건설사업자가 공사대금으로 받은 체비지"],["농지교환자경","농지 교환·8년 자경 감면 대상 토지"],["미이행","등기할 수 있었지만 하지 않음"]]},"moreum":false,"why":{"used":["미등기양도 제외 자산 여부"],"law":[{"t":"소득세법 시행령 제168조①1~4·6·7호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C168%EC%A1%B0"}],"docs":["할부 매매계약서","판결문·결정문","사업시행 확인서"],"where":[]}},{"id":"A09","sec":"S1","text":"팔 때 매매계약서를 쓴 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].양도.계약일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["중과 한시배제 나·다목","조정대상지역 공고 전 양도계약(중과 배제)","용도변경 특약 시 양도일"],"law":[{"t":"소득세법 시행령 제167조의10①11호·12의2(계약 체결, 계약금 수령)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"},{"t":"소득세법 시행령 제167조의3①11호·12의2","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행령 제154조① 괄호(용도변경 조건 매매는 매매계약일을 양도일로 봄)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["양도 매매계약서"],"where":["국토교통부 실거래가 공개시스템(계약일)","부동산거래신고 필증"]}},{"id":"A10","sec":"S1","text":"팔 때 계약금을 받은 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].양도.계약금수령일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["중과 한시배제 나·다목","조정대상지역 공고 전 양도계약(중과 배제)"],"law":[{"t":"소득세법 시행령 제167조의10①11호, 12의2 나목3)·다목1)(계약금을 지급받은 사실이 증빙서류로 확인)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"}],"docs":["계약금 입금 통장 거래내역"],"where":["본인 은행 거래내역"]}},{"id":"A11","sec":"S1","text":"팔 때 잔금을 받은 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].양도.잔금일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["양도 시기","보유기간","적용 규칙세트(2025-01-01 이후 양도만 계산)","예정신고 기한","일시적 2주택 처분기한"],"law":[{"t":"소득세법 제98조(대금을 청산한 날)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C98%EC%A1%B0"},{"t":"소득세법 시행령 제162조①1호·2호(청산일 불분명 또는 청산 전 등기는 등기접수일)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"},{"t":"소득세법 제105조①1호(양도일이 속하는 달의 말일부터 2개월)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C105%EC%A1%B0"}],"docs":["양도 매매계약서","잔금 영수증 또는 입금 통장 내역"],"where":["본인 은행 거래내역"]}},{"id":"A12","sec":"S1","text":"사는 사람 앞으로 소유권이전등기가 접수된 날을 알면 알려 주세요.","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].양도.등기접수일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["양도 시기(잔금 전 등기, 청산일 불분명)"],"law":[{"t":"소득세법 시행령 제162조①1호·2호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"}],"docs":["등기사항증명서(접수일)"],"where":["인터넷등기소 등기사항증명서(갑구 접수 일자)"]}},{"id":"A13","sec":"S1","text":"매매계약서에 '사는 사람이 이 집을 주택이 아닌 용도로 바꾼다'는 조건이 있었나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].양도.용도변경특약"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["1세대1주택 판정 기준일(양도일 대신 매매계약일)"],"law":[{"t":"소득세법 시행령 제154조① 괄호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["양도 매매계약서 특약"],"where":[]}},{"id":"A14","sec":"S1","text":"사는 사람이 내 양도소득세를 대신 내 주기로 약속했나요? 그렇다면 금액은 얼마인가요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].양도.매수인부담세액"],"spec":{"t":"int","hint":"없으면 0"},"moreum":false,"why":{"used":["양도가액"],"law":[{"t":"소득세법 제98조(양수자 부담 양도소득세는 대금에서 제외)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C98%EC%A1%B0"}],"docs":["매매계약서 특약","납부 영수증"],"where":[]}},{"id":"A15","sec":"S1","text":"이 부동산은 어떻게 갖게 되었나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].취득.원인"],"spec":{"t":"choice","opts":[["매매","돈을 주고 매매"],["분양","건설사·조합에서 분양받음"],["신축","땅에 직접 지음(신축)"],["경매","경매·공매로 낙찰"],["공공매입","공공기관·국가·지자체에서 매입"],["상속","상속받음"],["증여","증여받음"],["부담부증여","대출·보증금을 떠안고 증여받음(부담부증여)"],["조합원","재개발·재건축 조합원으로 새 집을 받음"],["기타","교환·그 밖의 원인"]]},"moreum":false,"why":{"used":["취득 시기","취득가액 확인 경로","보유기간 기산(상속·이월과세)","계산 범위 확인"],"law":[{"t":"소득세법 시행령 제162조①4호·5호·8호(자가건설, 상속·증여, 미완성 자산)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"},{"t":"소득세법 제97조의2(이월과세)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0%EC%9D%982"},{"t":"소득세법 제95조④(이월과세 자산 보유기간 기산)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C95%EC%A1%B0"},{"t":"소득세법 제104조②(상속은 피상속인 취득일, 이월과세는 증여자 취득일)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"}],"docs":["취득 매매계약서·분양계약서","건축물 사용승인서","매각허가결정·대금완납증명","상속·증여 등기"],"where":["인터넷등기소 등기사항증명서(등기원인)"]}},{"id":"A16","sec":"S1","text":"살 때 매매계약(분양계약)을 맺은 날과 계약금을 낸 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].취득.계약일","자산[].취득.계약금지급일"],"spec":{"t":"obj","fields":[{"n":"계약일","label":"매매계약을 맺은 날","s":{"t":"date"}},{"n":"계약금지급일","label":"계약금을 낸 날","s":{"t":"date"}}]},"moreum":false,"why":{"used":["조정대상지역 공고 전 계약 무주택자 거주요건 면제"],"law":[{"t":"소득세법 시행령 제154조①5호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행령 제155조①1호 괄호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 부칙 <제36737호, 2026.9.30> 제2조②2호(2026-08-03 이전 신규주택 매매계약·계약금 지급은 종전 규정)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9"}],"docs":["취득 매매계약서","계약금 이체 내역"],"where":["본인 은행 거래내역","국토교통부 실거래가 공개시스템(2006년 이후 신고분)"]}},{"id":"A17","sec":"S1","text":"살 때 잔금을 낸 날과 본인 이름으로 등기가 접수된 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].취득.잔금일","자산[].취득.등기접수일"],"spec":{"t":"obj","fields":[{"n":"잔금일","label":"잔금을 낸 날","s":{"t":"date"}},{"n":"등기접수일","label":"본인 이름으로 등기가 접수된 날","s":{"t":"date"}}]},"moreum":false,"why":{"used":["취득 시기","보유기간","일시적 2주택 취득 간격(1년)","단기세율","장특공 보유기간"],"law":[{"t":"소득세법 제98조","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C98%EC%A1%B0"},{"t":"소득세법 시행령 제162조①1호·2호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"},{"t":"소득세법 제95조④(보유기간은 취득일부터 양도일까지)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C95%EC%A1%B0"}],"docs":["취득 매매계약서","잔금 이체 내역","등기사항증명서(접수일)"],"where":["인터넷등기소 등기사항증명서","본인 은행 거래내역"]}},{"id":"A18","sec":"S1","text":"분양받거나 직접 지은 건물의 사용승인일(사용검사일)과 실제로 쓰기 시작한 날(입주일, 임시사용승인일)은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].취득.사용승인일","자산[].취득.사실상사용일"],"spec":{"t":"obj","fields":[{"n":"사용승인일","label":"사용승인일(사용검사일)","s":{"t":"date"}},{"n":"사실상사용일","label":"실제로 쓰기 시작한 날(입주일, 임시사용승인일)","s":{"t":"date"}}]},"moreum":false,"why":{"used":["취득 시기(자가건설·미완성 자산)","환산가액 가산세 5년 기간"],"law":[{"t":"소득세법 시행령 제162조①4호(사용승인서 교부일, 그 전 사실상 사용·임시사용승인은 빠른 날)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"},{"t":"소득세법 시행령 제162조①8호(완성일)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"}],"docs":["건축물대장(사용승인일)","분양 잔금 영수증"],"where":["정부24 건축물대장"]}},{"id":"A19","sec":"S1","text":"경매·공매로 받았다면 낙찰대금을 다 낸 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].취득.대금완납일"],"spec":{"t":"date"},"moreum":false,"why":{"used":["취득 시기"],"law":[{"t":"국세청 작성요령 양도소득금액 계산명세서 ④⑤ 거래일: 경락은 경매대금 완납일","h":null},{"t":"소득세법 시행령 제162조(경락 관련 호)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"}],"docs":["매각대금 완납증명","매각허가결정문"],"where":[]}},{"id":"A20","sec":"S1","text":"토지 면적과 건물 면적(㎡)을 알려 주세요. 공동소유면 전체 면적과 본인 지분을 함께 적습니다.","help":"","form":"숫자","unit":"자산","zone":"asset","keys":["자산[].면적"],"spec":{"t":"obj","fields":[{"n":"토지","label":"토지 전체 면적","s":{"t":"num","unit":"㎡"}},{"n":"건물","label":"건물 전체 면적","s":{"t":"num","unit":"㎡"}}]},"moreum":false,"why":{"used":["서식 기재(총면적·양도면적·취득면적)","기준시가 계산"],"law":[{"t":"소득세법 시행령 제154조⑦","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"국세청 작성요령 부표1 ⑥ 총면적 ⑦ 양도면적 ⑧ 취득면적","h":null}],"docs":["토지대장","건축물대장","등기사항증명서"],"where":["정부24 토지대장·건축물대장"]}},{"id":"A21","sec":"S1","text":"판 토지는 갖고 있는 동안 주로 어떻게 쓰였나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].토지사용현황"],"spec":{"t":"choice","opts":[["주택부수토지","집이 딸린 땅(주택 부수토지)"],["자경농지","직접 농사지은 농지"],["비자경농지","농사짓지 않은 농지"],["임야","임야"],["사업용","건물·주차장·공장 등 사업에 쓴 땅"],["나대지","아무것도 짓지 않은 빈 땅"],["기타","그 밖의 용도"]]},"moreum":false,"why":{"used":["비사업용 토지 해당 가능성(세율 +10%p)","8년 자경 감면 해당 가능성"],"law":[{"t":"소득세법 제104조①8호(비사업용 토지 세율)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 제104조의3①(소유기간 중 일정 기간 비사업용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0%EC%9D%983"}],"docs":["토지대장(지목)","토지이용계획확인서","농지대장"],"where":["정부24 토지대장","토지이음 토지이용계획 열람"]}},{"id":"A22","sec":"S1","text":"토지와 건물을 함께 팔았다면, 계약서에 토지 가격과 건물 가격이 나뉘어 적혀 있나요? 나뉘어 있다면 각각 얼마인가요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].토지건물구분"],"spec":{"t":"obj","fields":[{"n":"토지","label":"토지 가격","s":{"t":"int"}},{"n":"건물","label":"건물 가격","s":{"t":"int"}}],"req":["토지","건물"]},"moreum":false,"why":{"used":["토지·건물 가액 안분","건물 신축 시 토지·건물 취득 시기 구분"],"law":[{"t":"소득세법 제100조②·③(구분 불분명 시 안분, 기준시가 안분가액과 100분의 30 이상 차이면 불분명으로 봄)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C100%EC%A1%B0"},{"t":"국세청 잘못 신고하기 쉬운 사례 토지·건물 일괄양도 시 임의 안분 과소신고","h":null}],"docs":["양도 매매계약서","세금계산서(건물분 부가가치세)"],"where":["매매계약서","감정평가서"]}},{"id":"H01","sec":"S2","text":"판 날 기준으로 배우자가 있었나요? 법적으로 이혼했어도 실제로 함께 생활했다면 '예'입니다.","help":"","form":"예아니오","unit":"전역","zone":"house","keys":["세대.배우자"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["1세대 구성","세대 주택 수"],"law":[{"t":"소득세법 제88조6호(1세대 정의)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C88%EC%A1%B0"},{"t":"국세청 점검표 1세대: 부부는 세대를 달리 구성해도 동일 세대","h":null}],"docs":["가족관계증명서","주민등록등본"],"where":["정부24 주민등록등본","대법원 전자가족관계등록시스템"]}},{"id":"H02","sec":"S2","text":"배우자가 없다면 다음 중 해당하는 것을 모두 고르세요.","help":"","form":"복수선택","unit":"전역","zone":"house","keys":["세대.1세대요건"],"spec":{"t":"multi","opts":[["30세이상","판 날 기준 만 30세 이상"],["배우자사망이혼","배우자가 사망했거나 이혼함"],["소득독립","직접 버는 소득으로 따로 생계를 꾸림(기준 중위소득 40% 이상)"],["해당없음","해당 없음"]],"alone":["해당없음"]},"moreum":false,"why":{"used":["1세대 구성"],"law":[{"t":"소득세법 시행령 제152조의3 1~3호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C152%EC%A1%B0%EC%9D%983"}],"docs":["주민등록초본","소득금액증명원"],"where":["홈택스 소득금액증명","정부24 주민등록초본"]}},{"id":"H03","sec":"S2","text":"판 날 기준으로 같은 주민등록에 있던 가족과, 주소는 달라도 생계를 같이 하던 가족을 모두 알려 주세요. 각 사람이 집·분양권·입주권을 갖고 있었는지도 알려 주세요.","help":"관계(배우자·자녀·부모 등), 같은 주민등록인지, 주택·분양권·입주권 보유 여부. 학교·직장·요양 때문에 잠시 따로 사는 가족도 세대원입니다.","form":"목록","unit":"전역","zone":"house","keys":["세대.세대원"],"spec":{"t":"list","as":"rows","noun":"세대원","row":{"t":"obj","fields":[{"n":"관계","label":"관계","s":{"t":"choice","opts":[["배우자","배우자"],["자녀","자녀"],["부모","부모"],["형제자매","형제자매"],["다른 가족","다른 가족"]]}},{"n":"같은주민등록","label":"주민등록상 같은 세대인가요","s":{"t":"bool"}},{"n":"주택보유","label":"집을 갖고 있나요","s":{"t":"bool"}},{"n":"입주권분양권보유","label":"입주권이나 분양권을 갖고 있나요","s":{"t":"bool"}}],"req":["관계"]},"add":"세대원 추가","none":"해당 없음(다른 세대원이 없습니다)"},"moreum":false,"why":{"used":["1세대 구성","세대 주택 수"],"law":[{"t":"소득세법 제88조6호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C88%EC%A1%B0"},{"t":"국세청 점검표 취학·근무·사업상 형편·질병 요양으로 일시 퇴거한 사람도 세대원","h":null}],"docs":["주민등록등본(세대원 포함)","가족관계증명서"],"where":["정부24 주민등록등본"]}},{"id":"H04","sec":"S2","text":"판 날 기준으로 세대 전체(본인·배우자·세대원)가 갖고 있던 집을 판 집까지 포함해 모두 적어 주세요. 사람이 사는 오피스텔도 집입니다.","help":"집마다: 누구 명의인지, 주소(시·군·구, 읍·면·동), 형태, 산 날(잔금일), 어떻게 갖게 됐는지(매매·상속·증여·분양 등), 지분, 임대사업자로 등록했는지","form":"목록","unit":"전역","zone":"house","keys":["세대.주택목록"],"spec":{"t":"houses"},"moreum":false,"why":{"used":["세대 주택 수","1세대1주택 비과세","일시적 2주택(종전·신규 구분)","다주택 중과","주택 수 제외"],"law":[{"t":"소득세법 시행령 제154조①(양도일 현재 국내 1주택)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 제89조①3호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C89%EC%A1%B0"},{"t":"소득세법 제104조⑦","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 시행령 제167조의3①·제167조의10①(주택 수 계산과 배제)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행령 제167조의3②(다가구·공동상속주택·매매업자 재고 주택 수 계산)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"}],"docs":["주택마다 등기사항증명서"],"where":["인터넷등기소 등기사항증명서","위택스 재산세 과세내역(세목별 과세증명)","정부24 주택소유확인"]}},{"id":"H05","sec":"S2","text":"H04 의 집 가운데 상속받은 집, 임대사업자로 등록한 집, 혼인이나 부모 봉양으로 합치면서 생긴 집이 있나요?","help":"","form":"복수선택","unit":"전역","zone":"house","keys":["세대.특례주택"],"spec":{"t":"multi","opts":[["상속주택","상속받은 집"],["임대등록","임대사업자(민간임대주택)로 등록한 집"],["혼인합가","혼인으로 합치면서 2채가 됨"],["동거봉양","60세 이상 부모를 모시려고 합치면서 2채가 됨"],["농어촌주택","수도권 밖 농어촌 주택(상속·이농·귀농)"],["없음","없음"]],"alone":["없음"]},"moreum":false,"why":{"used":["1세대1주택 특례(상속·동거봉양·혼인·농어촌·장기임대 거주주택)","중과 배제(상속 5년, 장기임대)"],"law":[{"t":"소득세법 시행령 제155조②·④·⑤·⑦·<20>","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 제167조의3①2호·7호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행령 제167조의3⑪(아파트 장기임대 양도기한 2027-12-31)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"}],"docs":["상속 등기","임대사업자등록증·임대차계약서","혼인관계증명서","주민등록초본(합가일)"],"where":[]}},{"id":"H06","sec":"S2","text":"판 날 기준으로 세대가 재개발·재건축 조합원입주권이나 아파트 분양권을 갖고 있었나요? 있다면 각각 언제 취득했나요?","help":"","form":"목록","unit":"전역","zone":"house","keys":["세대.입주권분양권"],"spec":{"t":"list","as":"rows","noun":"입주권·분양권","row":{"t":"obj","fields":[{"n":"종류","label":"종류","s":{"t":"choice","opts":[["조합원입주권","재개발·재건축 조합원입주권"],["분양권","아파트 분양권"]]}},{"n":"취득일","label":"취득한 날","s":{"t":"date"}}],"req":["종류"]},"add":"입주권·분양권 추가","none":"해당 없음"},"moreum":false,"why":{"used":["1세대1주택 비과세 배제","다주택 중과(주택+입주권·분양권)"],"law":[{"t":"소득세법 제89조②(입주권·분양권 보유 중 주택 양도 시 제89조①3호 미적용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C89%EC%A1%B0"},{"t":"소득세법 제104조⑦2호·4호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C104%EC%A1%B0"},{"t":"소득세법 부칙 분양권은 2021-01-01 이후 취득분부터 주택 수에 포함","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95"}],"docs":["분양계약서","관리처분계획인가 통지서·조합원 지위 확인서"],"where":[]}},{"id":"H07","sec":"S2","text":"판 집에 주민등록을 두고 산 기간을 모두 알려 주세요. 여러 번 들어오고 나갔다면 구간마다 전입일과 전출일을 적어 주세요.","help":"","form":"목록","unit":"자산","zone":"asset","keys":["자산[].거주기간"],"spec":{"t":"list","as":"pairs","noun":"거주 기간","row":{"t":"obj","fields":[{"n":"a","label":"전입일","s":{"t":"date"}},{"n":"b","label":"전출일","s":{"t":"date"}}]},"add":"거주 기간 추가","none":"이 집에 주민등록을 두고 산 적이 없습니다"},"moreum":false,"why":{"used":["1세대1주택 거주요건(취득 당시 조정대상지역이면 2년)","장특공 표2 거주 공제율","표2 적용 요건(보유 중 거주 2년)"],"law":[{"t":"소득세법 시행령 제154조①·⑥(주민등록표 등본의 전입일부터 전출일까지)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행령 제159조의4","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C159%EC%A1%B0%EC%9D%984"},{"t":"소득세법 제95조② 표2","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C95%EC%A1%B0"}],"docs":["주민등록초본(주소 변동 이력 전체)"],"where":["정부24 주민등록초본(과거 주소 변동사항 포함으로 발급)"]}},{"id":"H08","sec":"S2","text":"그 기간 중 세대원 일부가 학교·직장·질병 치료 때문에 따로 산 적이 있나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].거주_일부미거주"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["거주요건 충족 여부"],"law":[{"t":"소득세법 시행규칙 제71조③(취학·근무상 형편·1년 이상 치료·학교폭력 전학)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C71%EC%A1%B0"},{"t":"소득세법 시행령 제154조①1호 괄호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["재학증명서","재직증명서","요양증명서"],"where":[]}},{"id":"H09","sec":"S2","text":"이 집을 사려고 계약금을 낸 날, 세대 전체에 집이 한 채도 없었나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].취득.계약금지급일_무주택"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["조정대상지역 공고 전 계약 무주택자 거주요건 면제"],"law":[{"t":"소득세법 시행령 제154조①5호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"국세청 잘못 신고하기 쉬운 사례 계약금 지급일 현재 무주택 세대가 2017-08-02 이전 계약","h":null}],"docs":["취득 매매계약서","계약금 이체 내역","그 무렵 주민등록등본·재산세 과세내역"],"where":[]}},{"id":"H10","sec":"S2","text":"보유 2년 또는 거주 2년을 못 채웠다면, 다음 중 해당하는 사정이 있나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].보유거주예외"],"spec":{"t":"choice","opts":[["공공임대5년","공공건설임대·공공매입임대 주택을 분양받아 임차일부터 세대 전원이 5년 이상 거주"],["수용","공익사업으로 수용·협의매수(사업인정고시일 전에 취득)"],["해외이주","해외이주로 세대 전원이 출국(출국 후 2년 안에 양도)"],["해외취학근무","1년 이상 해외 취학·근무로 세대 전원이 출국(출국 후 2년 안에 양도)"],["부득이1년","1년 이상 산 집을 취학·직장·1년 이상 치료·학교폭력 전학 때문에 다른 시·군으로 이사하며 팖"],["해당없음","해당 없음"]]},"moreum":false,"why":{"used":["보유·거주기간 제한 없는 비과세 예외"],"law":[{"t":"소득세법 시행령 제154조①1호·2호·3호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행규칙 제71조③·④","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C71%EC%A1%B0"}],"docs":["임대차계약서","수용 확인서","해외이주신고확인서","재학·재직·요양증명서"],"where":["외교부 해외이주신고확인서","학교·직장 발급"]}},{"id":"H11","sec":"S2","text":"출국한 날 또는 이사한 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].보유거주예외일자"],"spec":{"t":"date"},"moreum":false,"why":{"used":["예외 요건의 기한(출국일부터 2년)"],"law":[{"t":"소득세법 시행령 제154조①2호 나목·다목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행규칙 제71조⑥(현지이주는 영주권 등 취득일)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C71%EC%A1%B0"}],"docs":["출입국에 관한 사실증명","주민등록초본"],"where":["정부24 출입국에 관한 사실증명"]}},{"id":"H12","sec":"S2","text":"해외에 살던 중(비거주자일 때) 이 집을 3년 이상 갖고 살다가 그 상태로 한국 거주자가 되었나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].비거주자전환"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["보유·거주기간 통산","보유요건 3년"],"law":[{"t":"소득세법 시행령 제154조①(제8항2호 거주자는 3년)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"소득세법 시행령 제154조⑧2호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["출입국에 관한 사실증명","주민등록초본"],"where":[]}},{"id":"H13","sec":"S2","text":"갖고 있는 동안 불이 나거나 무너지거나 낡아서 집을 헐고 다시 지은 적이 있나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].재건축통산"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["보유·거주기간 통산(멸실 전후)"],"law":[{"t":"소득세법 시행령 제154조⑧1호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"}],"docs":["건축물대장(멸실·신축 이력)"],"where":["정부24 건축물대장"]}},{"id":"T01","sec":"S3","text":"나중에 산 집(새 집)의 매매계약일과 계약금을 낸 날은 언제인가요?","help":"","form":"날짜","unit":"신규","zone":"row","keys":["세대.주택목록[신규].계약일","세대.주택목록[신규].계약금지급일"],"spec":{"t":"obj","fields":[{"n":"계약일","label":"매매계약을 맺은 날","s":{"t":"date"}},{"n":"계약금지급일","label":"계약금을 낸 날","s":{"t":"date"}}]},"moreum":false,"why":{"used":["일시적 2주택 처분기한 2년·3년","신규주택 공고 전 계약 예외","2026-08-03 이전 계약 부칙 경계"],"law":[{"t":"소득세법 시행령 제155조①1호 괄호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 부칙 <제36737호, 2026.9.30> 제2조①·②","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9"}],"docs":["새 집 매매계약서","계약금 이체 내역"],"where":["본인 은행 거래내역"]}},{"id":"T02","sec":"S3","text":"새 집은 어떻게 갖게 되었나요?","help":"","form":"선택","unit":"신규","zone":"row","keys":["세대.주택목록[신규].취득원인"],"spec":{"t":"choice","opts":[["매매","매매(잔금 지급)"],["분양","분양권으로 분양받아 완공 후 입주"],["신축","직접 지음"],["조합원","재개발·재건축 조합원으로 받음"]]},"moreum":false,"why":{"used":["신규주택 취득일","계산 범위 확인"],"law":[{"t":"소득세법 시행령 제155조①(자기가 건설하여 취득한 경우 포함)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 제162조①4호·8호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C162%EC%A1%B0"}],"docs":["매매계약서 또는 분양계약서","건축물대장(사용승인일)"],"where":[]}},{"id":"T03","sec":"S3","text":"처분기한 안에 팔지 못했다면, 기한 안에 다음 절차를 시작했나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].처분기한연장사유"],"spec":{"t":"choice","opts":[["자산관리공사","한국자산관리공사에 매각 의뢰"],["경매신청","법원에 경매 신청"],["공매","국세징수법에 따른 공매 진행 중"],["현금청산소송","재개발·재건축 현금청산금 소송 또는 수용재결·매도청구 진행 중"],["해당없음","해당 없음"]]},"moreum":false,"why":{"used":["일시적 2주택 처분기한 연장 사유"],"law":[{"t":"소득세법 시행령 제155조① 괄호(제18항 사유 포함)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"},{"t":"소득세법 시행령 제155조<18>1~5호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"}],"docs":["매각의뢰 확인서","경매신청 접수증명","공매 공고","소송·재결 서류"],"where":[]}},{"id":"T04","sec":"S3","text":"다니던 회사나 공공기관이 수도권 밖으로 옮겨 가서 그 지역(또는 붙어 있는 시·군)에 새 집을 샀나요?","help":"","form":"예아니오","unit":"전역","zone":"house","keys":["세대.기관이전종사자"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["일시적 2주택 처분기한 3년을 5년으로","취득 간격 1년 요건 면제"],"law":[{"t":"소득세법 시행령 제155조<16>","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C155%EC%A1%B0"}],"docs":["재직증명서","법인·기관 이전 확인 자료"],"where":[]}},{"id":"L01","sec":"S4","text":"단독·다가구주택이라면 땅 전체 면적, 건물이 땅을 덮고 있는 면적(건축면적), 땅의 용도지역을 알려 주세요.","help":"용도지역은 토지이용계획확인서에 '제1종일반주거지역', '자연녹지지역', '계획관리지역'처럼 적혀 있습니다.","form":"숫자","unit":"자산","zone":"asset","keys":["자산[].부수토지"],"spec":{"t":"obj","fields":[{"n":"대지면적","label":"땅 전체 면적","s":{"t":"num","unit":"㎡","positive":true}},{"n":"정착면적","label":"건축면적(건물이 땅을 덮고 있는 면적)","s":{"t":"num","unit":"㎡","positive":true}},{"n":"용도지역","label":"용도지역","s":{"t":"choice","opts":[["제1종전용주거지역","제1종전용주거지역"],["제2종전용주거지역","제2종전용주거지역"],["제1종일반주거지역","제1종일반주거지역"],["제2종일반주거지역","제2종일반주거지역"],["제3종일반주거지역","제3종일반주거지역"],["준주거지역","준주거지역"],["중심상업지역","중심상업지역"],["일반상업지역","일반상업지역"],["근린상업지역","근린상업지역"],["유통상업지역","유통상업지역"],["전용공업지역","전용공업지역"],["일반공업지역","일반공업지역"],["준공업지역","준공업지역"],["보전녹지지역","보전녹지지역"],["생산녹지지역","생산녹지지역"],["자연녹지지역","자연녹지지역"],["보전관리지역","보전관리지역"],["생산관리지역","생산관리지역"],["계획관리지역","계획관리지역"],["농림지역","농림지역"],["자연환경보전지역","자연환경보전지역"]]}}],"req":["대지면적","정착면적","용도지역"]},"moreum":false,"why":{"used":["부수토지 비과세 한도(수도권 도시지역 주거·상업·공업 3배, 수도권 녹지 5배, 수도권 밖 도시지역 5배, 그 밖 10배)"],"law":[{"t":"소득세법 시행령 제154조⑦","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C154%EC%A1%B0"},{"t":"국세청 점검표 부수토지: 주택정착면적의 5배(수도권 도시지역 주거·상업·공업 3배, 도시지역 밖 10배) 초과는 비사업용","h":null}],"docs":["토지대장","건축물대장(건축면적)","토지이용계획확인서"],"where":["토지이음 토지이용계획 열람","정부24 토지대장·건축물대장"]}},{"id":"M01","sec":"S5","text":"판 금액(계약서에 적힌 전체 금액)은 얼마인가요? 공동소유여도 전체 금액을 적어 주세요.","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].전체양도가액"],"spec":{"t":"int"},"moreum":false,"why":{"used":["양도가액","고가주택 판정(12억원)","고가주택 안분"],"law":[{"t":"소득세법 제96조①(실지거래가액)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C96%EC%A1%B0"},{"t":"소득세법 제89조①3호(실지거래가액 합계 12억원 초과는 고가주택)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C89%EC%A1%B0"},{"t":"소득세법 시행령 제156조①","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C156%EC%A1%B0"},{"t":"소득세법 시행령 제160조①","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C160%EC%A1%B0"}],"docs":["양도 매매계약서"],"where":["국토교통부 실거래가 공개시스템","부동산거래신고 필증"]}},{"id":"M02","sec":"S5","text":"산 사람은 나와 어떤 관계인가요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].매수인관계"],"spec":{"t":"choice","opts":[["타인","모르는 사람(타인)"],["배우자","배우자"],["직계","부모·자녀·조부모·손자녀"],["친족","형제자매 등 그 밖의 친족"],["법인","내가 주주이거나 임원인 회사"],["기타특수관계","그 밖에 특별한 관계"]]},"moreum":false,"why":{"used":["부당행위계산(시가 적용)","서식 기재(양수인과의 관계)"],"law":[{"t":"소득세법 제101조","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C101%EC%A1%B0"},{"t":"소득세법 시행령 제167조③·④(시가와 차이가 3억원 이상이거나 시가의 100분의 5 이상)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0"}],"docs":["가족관계증명서(친족일 때)"],"where":[]}},{"id":"M03","sec":"S5","text":"판 날 앞뒤 3개월 안에 같은 단지·비슷한 집이 거래된 금액이나 감정평가 금액을 아나요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].시가참고"],"spec":{"t":"int"},"moreum":false,"why":{"used":["부당행위계산(시가 적용)"],"law":[{"t":"소득세법 시행령 제167조⑤(상증법 평가 준용, 양도일 전후 각 3개월)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0"}],"docs":["감정평가서","실거래가 조회 화면"],"where":["국토교통부 실거래가 공개시스템","감정평가법인"]}},{"id":"M04","sec":"S5","text":"살 때와 팔 때 계약서에 적힌 금액이 실제로 주고받은 금액과 같나요?","help":"","form":"예아니오","unit":"자산","zone":"asset","keys":["자산[].계약금액일치"],"spec":{"t":"bool"},"moreum":false,"why":{"used":["비과세·감면 제한(거래가액을 다르게 적은 경우)"],"law":[{"t":"소득세법 제91조②","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C91%EC%A1%B0"},{"t":"국세청 잘못 신고하기 쉬운 사례 다운계약서 작성 시 비과세 배제","h":null}],"docs":[],"where":[]}},{"id":"M05","sec":"S5","text":"살 때 낸 금액을 확인할 수 있나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].취득가액_확인"],"spec":{"t":"choice","opts":[["계약서","매매계약서(분양계약서)가 있음"],["기타자료","계약서는 없지만 금액을 보여 줄 자료가 있음(통장, 대출 서류, 등기부의 거래가액 등)"],["모름","모름"]]},"moreum":true,"why":{"used":["취득가액(실가 우선, 확인 불가 시에만 매매사례·감정·환산)"],"law":[{"t":"소득세법 제97조①1호 가목·나목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0"},{"t":"소득세법 시행령 제176조의2③(매매사례 → 감정 → 환산 → 기준시가)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C176%EC%A1%B0%EC%9D%982"},{"t":"부동산등기법 제68조(부동산 거래신고 대상 계약을 원인으로 한 소유권이전등기는 거래가액을 기록)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EB%B6%80%EB%8F%99%EC%82%B0%EB%93%B1%EA%B8%B0%EB%B2%95/%EC%A0%9C68%EC%A1%B0"}],"docs":["취득 매매계약서","분양계약서","취득세 신고서"],"where":["인터넷등기소 등기사항증명서(갑구 거래가액)","국토교통부 실거래가 공개시스템","분양한 건설사·조합(분양계약서 재발급)","위택스 취득세 신고·납부 내역"]}},{"id":"M06","sec":"S5","text":"산 금액(계약서 전체 금액)은 얼마인가요? 분양 때 할인을 받았다면 할인 뒤 실제 낸 금액을 적어 주세요.","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].전체취득가액"],"spec":{"t":"int"},"moreum":false,"why":{"used":["취득가액"],"law":[{"t":"소득세법 제97조①1호 가목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0"},{"t":"국세청 잘못 신고하기 쉬운 사례 할인분양은 할인 뒤 금액","h":null}],"docs":["취득 매매계약서·분양계약서","할인 확인 서류"],"where":[]}},{"id":"M07","sec":"S5","text":"살 때 낸 취득세는 얼마인가요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].필요경비.취득세"],"spec":{"t":"int"},"moreum":false,"why":{"used":["필요경비(취득가액에 포함)"],"law":[{"t":"국세청 작성요령 취득가액 및 필요경비 명세서 ① 취득세·등록세(실제 납부한 지방세)","h":null},{"t":"소득세법 시행령 제163조①","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C163%EC%A1%B0"}],"docs":["취득세 영수증·납부확인서"],"where":["위택스 납부내역","홈택스 신고 화면의 국세청 자료(취등록세 신고납부내역)"]}},{"id":"M08","sec":"S5","text":"살 때 낸 중개수수료와 법무사 비용은 얼마인가요?","help":"지출마다 대금을 받은 곳의 사업자등록번호(숫자 10자리)도 적어 주세요. 법무사 비용과 중개수수료는 전자신고 파일에서 사업자번호가 필수입니다.","form":"금액","unit":"자산","zone":"asset","keys":["자산[].필요경비.취득부대"],"spec":{"t":"list","as":"rows","noun":"지출","row":{"t":"obj","fields":[{"n":"내용","label":"내용","s":{"t":"text","suggest":["중개수수료","법무사비용"]}},{"n":"지급일","label":"낸 날","s":{"t":"date"}},{"n":"금액","label":"금액","s":{"t":"int"}},{"n":"증빙종류","label":"받은 영수증 종류","s":{"t":"choice","opts":[["세금계산서","세금계산서"],["계산서","계산서(면세 거래)"],["카드영수증","카드영수증"],["현금영수증","현금영수증"],["계좌이체","계좌이체 내역"],["간이영수증","간이영수증"],["없음","없음"]]}},{"n":"상대방","label":"대금을 지급한 상대(업체·사람)","s":{"t":"text"}},{"n":"사업자번호","label":"그 업체의 사업자등록번호","s":{"t":"text","digits":10,"hint":"숫자 10자리, 모르면 비워 두세요"}}],"req":["내용","금액","증빙종류"]},"add":"지출 추가","none":"해당 없음"},"moreum":false,"why":{"used":["필요경비(취득부대비용)","전자신고 파일(07 필요경비 명세의 지급처 사업자번호)"],"law":[{"t":"국세청 작성요령 취득가액 및 필요경비 명세서 기타부대비용(법무사비용, 중개수수료)","h":null}],"docs":["현금영수증·카드영수증·세금계산서","이체 내역"],"where":["홈택스 신고 화면의 국세청 자료(현금영수증 발급된 중개·법무사 수수료)"]}},{"id":"M09","sec":"S5","text":"갖고 있는 동안 집 가치를 높인 공사를 했다면 공사마다 내용, 낸 날, 금액, 받은 영수증 종류, 공사업체와 그 업체의 사업자등록번호를 알려 주세요.","help":"영수증 종류는 세금계산서, 계산서, 카드영수증, 현금영수증, 계좌이체, 간이영수증, 없음 가운데 하나로 적습니다. 이체 확인증이나 통장 거래내역만 있으면 계좌이체입니다. 사업자등록번호는 숫자 10자리이고 전자신고 파일에서 필수입니다.","form":"목록","unit":"자산","zone":"asset","keys":["자산[].필요경비.자본적지출"],"spec":{"t":"list","as":"rows","noun":"공사","row":{"t":"obj","fields":[{"n":"내용","label":"내용","s":{"t":"choice","opts":[["발코니확장","발코니 확장"],["샷시","샷시 설치·교체"],["보일러","보일러·난방장치 교체"],["승강기냉난방","엘리베이터·냉난방 설치"],["용도변경개조","용도 변경 개조"],["재해복구","재해 복구"],["기타가치증가","그 밖의 가치 증가 공사"],["일반수선","도배·장판·싱크대·타일 수리 같은 일반 수선(경비로 인정되지 않음)"]]}},{"n":"지급일","label":"낸 날","s":{"t":"date"}},{"n":"금액","label":"금액","s":{"t":"int"}},{"n":"증빙종류","label":"받은 영수증 종류","s":{"t":"choice","opts":[["세금계산서","세금계산서"],["계산서","계산서(면세 거래)"],["카드영수증","카드영수증"],["현금영수증","현금영수증"],["계좌이체","계좌이체 내역"],["간이영수증","간이영수증"],["없음","없음"]]}},{"n":"상대방","label":"대금을 지급한 상대(업체·사람)","s":{"t":"text"}},{"n":"사업자번호","label":"그 업체의 사업자등록번호","s":{"t":"text","digits":10,"hint":"숫자 10자리, 모르면 비워 두세요"}}],"req":["내용","금액","증빙종류"]},"add":"공사 추가","none":"해당 없음"},"moreum":false,"why":{"used":["필요경비(자본적지출)","환산 시 개산공제와 비교(제97조②2호 단서)","전자신고 파일(07 필요경비 명세의 지급처 사업자번호)"],"law":[{"t":"소득세법 시행령 제163조③·⑤(증명서류 수취·보관 또는 금융거래로 확인되는 경우만 인정)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C163%EC%A1%B0"},{"t":"국세청 작성요령 ⑥ 자본적지출액: 2016-02-17 이후 지출분은 법정 증빙, 금융거래 증명은 2018-04-01 이후 양도분","h":null},{"t":"소득세법 제97조②2호 단서","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0"}],"docs":["세금계산서·계산서·카드·현금영수증","계좌이체 내역","공사계약서"],"where":["카드사·은행 거래내역","공사업체 재발행"]}},{"id":"M10","sec":"S5","text":"개발부담금·재건축부담금, 소유권 다툼 소송비용, 도로 개설 비용처럼 땅·집과 관련해 낸 다른 비용이 있나요?","help":"지출마다 대금을 받은 곳의 사업자등록번호(숫자 10자리)도 적어 주세요. 소송 변호사 비용, 철거비, 도로 개설 비용은 전자신고 파일에서 사업자번호가 필수입니다.","form":"목록","unit":"자산","zone":"asset","keys":["자산[].필요경비.기타"],"spec":{"t":"list","as":"rows","noun":"지출","row":{"t":"obj","fields":[{"n":"내용","label":"내용","s":{"t":"text","suggest":["개발부담금","재건축부담금","소송비용","도로 개설 비용"]}},{"n":"지급일","label":"낸 날","s":{"t":"date"}},{"n":"금액","label":"금액","s":{"t":"int"}},{"n":"증빙종류","label":"받은 영수증 종류","s":{"t":"choice","opts":[["세금계산서","세금계산서"],["계산서","계산서(면세 거래)"],["카드영수증","카드영수증"],["현금영수증","현금영수증"],["계좌이체","계좌이체 내역"],["간이영수증","간이영수증"],["없음","없음"]]}},{"n":"상대방","label":"대금을 지급한 상대(업체·사람)","s":{"t":"text"}},{"n":"사업자번호","label":"그 업체의 사업자등록번호","s":{"t":"text","digits":10,"hint":"숫자 10자리, 모르면 비워 두세요"}}],"req":["내용","금액","증빙종류"]},"add":"지출 추가","none":"해당 없음"},"moreum":false,"why":{"used":["필요경비(기타비용)","전자신고 파일(07 필요경비 명세의 지급처 사업자번호)"],"law":[{"t":"국세청 작성요령 ⑥ 재개발·재건축부담금, ⑦ 취득 후 쟁송비용, ⑧ 수익자부담금·토지장애철거비·도로시설비","h":null}],"docs":["부담금 납부 영수증","소송비용 영수증"],"where":[]}},{"id":"M11","sec":"S5","text":"팔 때 낸 비용(중개수수료, 계약서·신고서 작성비, 공증비·인지대)과, 살 때 산 국민주택채권을 바로 팔아 생긴 손해를 알려 주세요.","help":"지출마다 대금을 받은 곳의 사업자등록번호(숫자 10자리)도 적어 주세요. 중개수수료는 전자신고 파일에서 사업자번호가 필수입니다.","form":"목록","unit":"자산","zone":"asset","keys":["자산[].필요경비.양도비"],"spec":{"t":"list","as":"rows","noun":"지출","row":{"t":"obj","fields":[{"n":"내용","label":"내용","s":{"t":"text","suggest":["중개수수료","계약서·신고서 작성비","공증비","인지대","국민주택채권 매각 손실"]}},{"n":"지급일","label":"낸 날","s":{"t":"date"}},{"n":"금액","label":"금액","s":{"t":"int"}},{"n":"증빙종류","label":"받은 영수증 종류","s":{"t":"choice","opts":[["세금계산서","세금계산서"],["계산서","계산서(면세 거래)"],["카드영수증","카드영수증"],["현금영수증","현금영수증"],["계좌이체","계좌이체 내역"],["간이영수증","간이영수증"],["없음","없음"]]}},{"n":"상대방","label":"대금을 지급한 상대(업체·사람)","s":{"t":"text"}},{"n":"사업자번호","label":"그 업체의 사업자등록번호","s":{"t":"text","digits":10,"hint":"숫자 10자리, 모르면 비워 두세요"}}],"req":["내용","금액","증빙종류"]},"add":"지출 추가","none":"해당 없음"},"moreum":false,"why":{"used":["필요경비(양도비)","환산 시 개산공제와 비교","전자신고 파일(07 필요경비 명세의 지급처 사업자번호)"],"law":[{"t":"국세청 작성요령 ⑩ 양도 시 중개수수료 등 직접지출비용, ⑪ 국민주택채권 매각차손(금융기관 양도분 한도)","h":null},{"t":"소득세법 시행령 제163조⑤","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C163%EC%A1%B0"}],"docs":["중개수수료 현금영수증·카드영수증","채권 매각 거래내역"],"where":["홈택스 국세청 자료(현금영수증 발급분)","증권사·은행 채권 매도 내역"]}},{"id":"M12","sec":"S5","text":"이 부동산으로 임대사업을 하면서 종합소득세 신고 때 감가상각비를 경비로 넣은 적이 있나요? 있다면 모두 합한 금액은 얼마인가요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].감가상각비"],"spec":{"t":"int"},"moreum":false,"why":{"used":["취득가액에서 감가상각비 차감"],"law":[{"t":"소득세법 제97조③","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0"},{"t":"국세청 작성요령 ④ 차감항목 감가상각비(환산·감정·매매사례 적용 시에도 차감, 기준시가 제외)","h":null},{"t":"소득세법 시행령 제169조①1호 사목(감가상각비명세서 첨부)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C169%EC%A1%B0"}],"docs":["과거 종합소득세 신고서","감가상각비 명세서"],"where":["홈택스 신고내역 조회(종합소득세)","담당 세무사 장부"]}},{"id":"M20","sec":"S5","text":"누구에게서 샀나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].취득.상대방유형"],"spec":{"t":"choice","opts":[["개인","개인"],["분양","건설사·조합(분양)"],["공공기관","국가·지자체·LH 같은 공공기관"],["경매","경매·공매"],["모름","기억나지 않음"]]},"moreum":true,"why":{"used":["취득가액 확인 가능성(환산 전 확인)"],"law":[{"t":"국세청 잘못 신고하기 쉬운 사례 국가 등 공공기관에서 취득한 토지는 취득가액 확인 가능, 환산 과다신고 사례","h":null},{"t":"소득세법 제97조①1호 나목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C97%EC%A1%B0"}],"docs":[],"where":["분양 건설사·조합","LH·지자체 매각 담당 부서","법원 경매 기록"]}},{"id":"M21","sec":"S5","text":"산 날 앞뒤 3개월 안에 같은 단지·같은 조건의 다른 거래 금액(매매사례가액)이나 감정평가 금액이 있나요?","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].매매사례가액","자산[].감정가액"],"spec":{"t":"obj","fields":[{"n":"매매사례가액","label":"매매사례가액(같은 단지·조건의 다른 거래 금액)","s":{"t":"int"}},{"n":"감정가액","label":"감정평가 금액(여러 건이면 추가)","s":{"t":"list","as":"scalars","noun":"감정가액","row":{"t":"int"},"add":"감정가액 추가"}}]},"moreum":false,"why":{"used":["취득가액 순서(매매사례 → 감정 → 환산 → 기준시가)"],"law":[{"t":"소득세법 시행령 제176조의2③1호(전후 각 3개월 이내 매매사례가액)·2호(감정가액, 기준시가 10억원 이하는 1곳 가능)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C176%EC%A1%B0%EC%9D%982"},{"t":"국세청 작성요령 ⑩ 감정가액은 감정평가 2개 이상 평균","h":null}],"docs":["감정평가서(평가기준일이 취득일 전후 3개월)","실거래 사례 자료"],"where":["국토교통부 실거래가 공개시스템(2006년 이후 신고분)","감정평가법인 소급감정"]}},{"id":"M22","sec":"S5","text":"산 날 기준과 판 날 기준의 공시가격(기준시가)을 알려 주세요. 아파트·빌라·단독주택은 주택공시가격, 토지는 개별공시지가와 면적, 상가·오피스텔·일반 건물은 국세청 기준시가입니다.","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].기준시가"],"spec":{"t":"obj","fields":[{"n":"취득","label":"산 날 기준","s":{"t":"obj","fields":[{"n":"토지","label":"토지","s":{"t":"int"}},{"n":"건물","label":"건물","s":{"t":"int"}},{"n":"주택","label":"주택","s":{"t":"int"}}]}},{"n":"양도","label":"판 날 기준","s":{"t":"obj","fields":[{"n":"토지","label":"토지","s":{"t":"int"}},{"n":"건물","label":"건물","s":{"t":"int"}},{"n":"주택","label":"주택","s":{"t":"int"}}]}}]},"moreum":false,"why":{"used":["환산취득가액(양도 실가 × 취득 기준시가 / 양도 기준시가)","개산공제(기준시가 × 3%, 미등기 0.3%)","토지·건물 가액 안분(법 제100조②)","2주택 중과 배제(양도주택 기준시가 1억원 이하)"],"law":[{"t":"소득세법 시행령 제176조의2②2호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C176%EC%A1%B0%EC%9D%982"},{"t":"소득세법 시행령 제163조⑥","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C163%EC%A1%B0"},{"t":"국세청 작성요령 ⑲~㉒ 기준시가: 개별·공동주택은 국토부 공시가격, 일반건물·오피스텔·상업용은 국세청 고시, 토지는 개별공시지가×면적, 최초 고시 전 취득은 환산","h":null}],"docs":["공시가격 열람 화면 출력","개별공시지가 확인서"],"where":["부동산공시가격 알리미(공동주택가격·개별단독주택가격·개별공시지가)","홈택스 기준시가 조회(오피스텔·상업용 건물, 일반 건물)"]}},{"id":"M23","sec":"S5","text":"이 건물을 직접 짓거나 85㎡를 넘게 늘려 지은 적이 있나요? 있다면 사용승인일(증축일)과 늘린 면적을 알려 주세요.","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].신축증축"],"spec":{"t":"obj","fields":[{"n":"사용승인일","label":"사용승인일(증축일)","s":{"t":"date"}},{"n":"증축면적","label":"늘린 면적","s":{"t":"num","unit":"㎡"}}]},"moreum":false,"why":{"used":["환산·감정가액 가산세 5%(취득·증축일부터 5년 이내 양도)"],"law":[{"t":"소득세법 제114조의2①·②(산출세액이 없어도 적용)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C114%EC%A1%B0%EC%9D%982"},{"t":"국세청 잘못 신고하기 쉬운 사례 신축 후 5년 이내 양도하며 환산 신고 시 5% 가산세","h":null}],"docs":["건축물대장(사용승인일·증축 이력)"],"where":["정부24 건축물대장"]}},{"id":"M24","sec":"S5","text":"토지를 1990년 8월 29일 이전에 샀다면, 1990년 1월 1일 기준 개별공시지가와 그때의 토지등급을 알려 주세요.","help":"","form":"금액","unit":"자산","zone":"asset","keys":["자산[].토지등급"],"spec":{"t":"obj","fields":[{"n":"개별공시지가","label":"1990-01-01 기준 개별공시지가","s":{"t":"int"}},{"n":"토지등급","label":"그 당시의 토지등급(1990-01-01 기준)","s":{"t":"int"}}]},"moreum":false,"why":{"used":["취득 당시 토지 기준시가 환산"],"law":[{"t":"국세청 작성요령 ㉒ 취득일이 '90.8.29 이전이면 '90.1.1 기준 개별공시지가를 토지등급으로 취득 시로 환산","h":null},{"t":"소득세법 시행령 제164조(토지 기준시가 환산)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C164%EC%A1%B0"}],"docs":["토지대장(등급 이력)","개별공시지가 확인서"],"where":["시·군·구청 토지 담당 부서"]}},{"id":"X01","sec":"S6","text":"H04 의 집 가운데 수도권·광역시·세종 동 지역 밖에 있는 집이 있다면, 판 날 기준 그 집의 공시가격을 알려 주세요.","help":"","form":"금액","unit":"주택","zone":"row","keys":["세대.주택목록[].양도당시기준시가"],"spec":{"t":"int"},"moreum":false,"why":{"used":["주택 수 제외(3억원 이하)","중과 배제(3억원 이하 지방 주택 양도)"],"law":[{"t":"소득세법 시행령 제167조의3①1호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행령 제167조의10①1호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"}],"docs":["공시가격 열람 화면"],"where":["부동산공시가격 알리미"]}},{"id":"X02","sec":"S6","text":"판 집의 공시가격이 1억원 이하라면, 그 집이 재개발·재건축 정비구역이나 소규모주택정비 사업구역 안에 있나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].정비구역"],"spec":{"t":"choice","opts":[["예","예"],["아니오","아니오"],["모름","모름"]]},"moreum":true,"why":{"used":["2주택 중과 배제(기준시가 1억원 이하, 정비구역 제외)"],"law":[{"t":"소득세법 시행령 제167조의10①9호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"}],"docs":["토지이용계획확인서"],"where":["토지이음 토지이용계획 열람","구청 재개발·재건축 담당 부서"]}},{"id":"X03","sec":"S6","text":"2024년 1월 10일 이후 산 집이 있다면, 그 집이 다음에 해당하나요?","help":"","form":"선택","unit":"주택","zone":"row","keys":["세대.주택목록[].제12호해당"],"spec":{"t":"choice","opts":[["소형신축","건설사에서 처음 산 전용 60㎡ 이하 새 집(아파트 아님, 6억원 이하, 수도권 밖 3억원 이하, 2024-01-10~2027-12-31 준공)"],["준공후미분양","수도권 밖 준공 후 미분양 주택(전용 85㎡ 이하, 7억원 이하, 시·군·구청 미분양 확인 날인)"],["인구감소지역","2026년 이후 산 인구감소지역·인구감소관심지역 주택(공시가격 요건 충족)"],["해당없음","해당 없음"]]},"moreum":false,"why":{"used":["주택 수 제외","중과 배제"],"law":[{"t":"소득세법 시행령 제167조의3①12호 가목·나목·다목·라목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행규칙 제82조①~③(소형 신축·준공 후 미분양 요건과 확인 날인 절차)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C82%EC%A1%B0"}],"docs":["분양(매매)계약서","준공 후 미분양주택 확인 날인 매매계약서(별지 제83호의7)","건축물대장"],"where":["시·군·구청(미분양 확인)","행정안전부 인구감소지역 고시"]}},{"id":"X04","sec":"S6","text":"판 집이 다음에 해당하나요? (해당하는 것을 모두 고르세요)","help":"","form":"복수선택","unit":"자산","zone":"asset","keys":["자산[].중과배제_사유"],"spec":{"t":"multi","opts":[["장기임대등록","임대사업자로 등록해 장기임대한 집"],["조특법감면주택","조세특례제한법 감면 대상 임대주택·신축·미분양 주택"],["사원용","종업원에게 10년 이상 무상으로 빌려준 사원용 집"],["문화유산","국가유산(문화유산)으로 지정·등록된 집"],["상속5년","상속받은 지 5년이 안 된 집"],["저당권3년","저당권 실행이나 빚 대신 받은 지 3년이 안 된 집"],["어린이집","5년 이상 어린이집으로 쓴 집(그만둔 지 6개월 안)"],["부득이3억","학교·직장·질병 때문에 다른 시·군에서 산 공시가격 3억원 이하 집(1년 이상 거주, 사유 해소 3년 안)"],["소송3년","소유권 소송 중이거나 판결로 받은 지 3년이 안 된 집"],["해당없음","해당 없음"]],"alone":["해당없음"]},"moreum":false,"why":{"used":["중과 배제 사유"],"law":[{"t":"소득세법 시행령 제167조의3①2~8호·8의2호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"소득세법 시행령 제167조의10①2호·3호·7호","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"},{"t":"소득세법 시행규칙 제83조(부득이한 사유는 제71조③ 준용, 증명서류)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EA%B7%9C%EC%B9%99/%EC%A0%9C83%EC%A1%B0"}],"docs":["임대사업자등록증·임대차계약서","감면 확인 서류","상속 등기","경락·대물변제 서류","어린이집 인가증","재학·재직·요양증명서","소송 서류"],"where":[]}},{"id":"X05","sec":"S6","text":"판 집의 땅이 토지거래허가를 받아야 하는 곳이었나요?","help":"","form":"선택","unit":"자산","zone":"asset","keys":["자산[].토지거래허가대상"],"spec":{"t":"choice","opts":[["예","예"],["아니오","아니오"],["모름","모름"]]},"moreum":true,"why":{"used":["중과 한시배제 나목(토지거래허가 대상)·다목(대상 아님)"],"law":[{"t":"소득세법 시행령 제167조의10①12의2 나목·다목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"},{"t":"소득세법 시행령 제167조의3①12의2 나목·다목","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%983"},{"t":"부동산 거래신고 등에 관한 법률 제11조(토지거래허가)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EB%B6%80%EB%8F%99%EC%82%B0%EA%B1%B0%EB%9E%98%EC%8B%A0%EA%B3%A0%EB%93%B1%EC%97%90%EA%B4%80%ED%95%9C%EB%B2%95%EB%A5%A0/%EC%A0%9C11%EC%A1%B0"}],"docs":["토지거래계약 허가증"],"where":["토지이음 토지이용계획 열람(토지거래계약에 관한 허가구역 표시)","시·군·구청 토지정보 부서"]}},{"id":"X06","sec":"S6","text":"토지거래허가를 신청한 날과 허가를 받은 날은 언제인가요?","help":"","form":"날짜","unit":"자산","zone":"asset","keys":["자산[].토지거래허가"],"spec":{"t":"obj","fields":[{"n":"신청일","label":"허가를 신청한 날","s":{"t":"date"}},{"n":"허가일","label":"허가를 받은 날","s":{"t":"date"}}]},"moreum":false,"why":{"used":["중과 한시배제 나목 1)·2)","예정신고 기한(허가 전 대금 청산 시 허가일 기준)"],"law":[{"t":"소득세법 시행령 제167조의10①12의2 나목1)·2)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C167%EC%A1%B0%EC%9D%9810"},{"t":"소득세법 제105조①1호 단서(토지거래허가 전 대금 청산은 허가일 기준)","h":"https://www.law.go.kr/%EB%B2%95%EB%A0%B9/%EC%86%8C%EB%93%9D%EC%84%B8%EB%B2%95/%EC%A0%9C105%EC%A1%B0"}],"docs":["토지거래계약 허가 신청서 접수증","허가증"],"where":[]}}],"sections":{"S0":"범위와 신고 단위","S1":"판 자산과 날짜","S2":"세대와 보유 주택, 거주","S3":"일시적 2주택","S4":"고가주택·부수토지","S5":"금액(양도가액·취득가액·필요경비·환산)","S6":"다주택 중과"},"sido":["서울특별시","부산광역시","대구광역시","인천광역시","광주광역시","대전광역시","울산광역시","세종특별자치시","경기도","강원특별자치도","충청북도","충청남도","전북특별자치도","전라남도","경상북도","경상남도","제주특별자치도","전남광주통합특별시"],"assetKind":{"q":"P02","house":"주택"},"houseQuestion":"H04","houseRow":{"main":[{"n":"소유자","label":"누구 명의인가요","s":{"t":"choice","opts":[["본인","본인"],["배우자","배우자"],["세대원","다른 세대원"]]}},{"n":"소재지","label":"주소(시·도, 시·군·구, 읍·면·동)","s":{"t":"addr"},"sold":false},{"n":"유형","label":"주택 형태","s":{"t":"choice","opts":[["아파트","아파트"],["연립다세대","연립·다세대(빌라)"],["단독주택","단독주택"],["다가구주택","다가구주택"],["주거용오피스텔","사람이 사는 오피스텔"],["주거용근생","상가·근린생활시설 등을 집으로 쓰는 경우"]]},"sold":false},{"n":"취득일","label":"산 날(잔금일)","s":{"t":"date"},"sold":false},{"n":"취득원인","label":"어떻게 갖게 됐나요","s":{"t":"choice","opts":[["매매","돈을 주고 매매"],["분양","건설사·조합에서 분양받음"],["신축","땅에 직접 지음(신축)"],["경매","경매·공매로 낙찰"],["공공매입","공공기관·국가·지자체에서 매입"],["상속","상속받음"],["증여","증여받음"],["부담부증여","대출·보증금을 떠안고 증여받음(부담부증여)"],["조합원","재개발·재건축 조합원으로 새 집을 받음"],["기타","교환·그 밖의 원인"]]},"sold":false},{"n":"지분","label":"지분","s":{"t":"share","opts":[["단독","혼자 소유"],["공동","공동 소유(지분 입력)"]]},"sold":false},{"n":"등록임대","label":"임대사업자로 등록한 집인가요","s":{"t":"bool"}}],"extra":[{"n":"계약일","label":"새 집 매매계약일","s":{"t":"date"},"q":"T01","qtext":"나중에 산 집(새 집)의 매매계약일과 계약금을 낸 날은 언제인가요?"},{"n":"계약금지급일","label":"새 집 계약금을 낸 날","s":{"t":"date"},"q":"T01","qtext":""},{"n":"양도당시기준시가","label":"판 날 기준 공시가격","s":{"t":"int"},"q":"X01","qtext":"H04 의 집 가운데 수도권·광역시·세종 동 지역 밖에 있는 집이 있다면, 판 날 기준 그 집의 공시가격을 알려 주세요."},{"n":"제12호해당","label":"2024-01-10 이후 산 집이라면 해당하는 유형","s":{"t":"choice","opts":[["소형신축","건설사에서 처음 산 전용 60㎡ 이하 새 집(아파트 아님, 6억원 이하, 수도권 밖 3억원 이하, 2024-01-10~2027-12-31 준공)"],["준공후미분양","수도권 밖 준공 후 미분양 주택(전용 85㎡ 이하, 7억원 이하, 시·군·구청 미분양 확인 날인)"],["인구감소지역","2026년 이후 산 인구감소지역·인구감소관심지역 주택(공시가격 요건 충족)"],["해당없음","해당 없음"]]},"q":"X03","qtext":"2024년 1월 10일 이후 산 집이 있다면, 그 집이 다음에 해당하나요?"}]},"sig":"124333ac20110798"}</script>
+<script id="conditions" type="application/json">{"P01":"항상","P02":"항상","P03":"항상","P04":"항상","P05":"항상","P06":{"모두":[["P05","==",true]]},"P07":{"모두":[["P02","==","주택"],["P05","==",true]]},"A01":"항상","A02":{"모두":[["엔진.지구확인필요","==",true]]},"A03":{"모두":[["엔진.행정구역대응없음","==",true]]},"A04":{"모두":[["P02","==","주택"]]},"A05":{"모두":[["A04","in",["주거용오피스텔","주거용근생"]]]},"A06":{"모두":[["A04","==","다가구주택"]]},"A07":"항상","A08":{"모두":[["A07","==",false]]},"A09":{"하나라도":[["엔진.중과후보","==",true],["A13","==",true]]},"A10":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true]]},"A11":"항상","A12":"항상","A13":{"모두":[["P02","==","주택"]]},"A14":{"모두":[["엔진.과세","==",true]]},"A15":"항상","A16":{"모두":[["A15","in",["매매","분양","공공매입"]],["엔진.비과세후보","==",true],["엔진.조정_취득일","==",true],["엔진.거주년","<",2]]},"A17":"항상","A18":{"모두":[["A15","in",["분양","신축"]]]},"A19":{"모두":[["A15","==","경매"]]},"A20":{"모두":[["엔진.과세","==",true]]},"A21":{"모두":[["P02","==","토지"]]},"A22":{"모두":[["P02","==","건물"]]},"H01":{"모두":[["P02","==","주택"]]},"H02":{"모두":[["P02","==","주택"],["H01","==",false]]},"H03":{"모두":[["P02","==","주택"]]},"H04":{"모두":[["P02","==","주택"]]},"H05":{"모두":[["P02","==","주택"],["엔진.세대주택수",">=",2]]},"H06":{"모두":[["P02","==","주택"]]},"H07":{"모두":[["P02","==","주택"],["엔진.비과세후보","==",true]]},"H08":{"모두":[["P02","==","주택"],["엔진.비과세후보","==",true],["엔진.조정_취득일","==",true]]},"H09":{"모두":[["P02","==","주택"],["엔진.조정_취득일","==",true],["엔진.거주년","<",2],["엔진.계약일_공고일이전","==",true]]},"H10":{"모두":[["P02","==","주택"],["엔진.보유거주미충족","==",true]]},"H11":{"모두":[["H10","in",["해외이주","해외취학근무"]]]},"H12":{"모두":[["P02","==","주택"],["엔진.보유거주미충족","==",true]]},"H13":{"모두":[["P02","==","주택"],["A04","in",["단독주택","다가구주택"]]]},"T01":{"모두":[["P02","==","주택"],["엔진.일시적2주택후보","==",true]]},"T02":{"모두":[["P02","==","주택"],["엔진.일시적2주택후보","==",true]]},"T03":{"모두":[["P02","==","주택"],["엔진.일시적2주택후보","==",true],["엔진.처분기한초과","==",true]]},"T04":{"모두":[["P02","==","주택"],["엔진.일시적2주택후보","==",true],["엔진.종전수도권_신규수도권밖","==",true]]},"L01":{"모두":[["P02","==","주택"],["A04","in",["단독주택","다가구주택"]]]},"M01":"항상","M02":"항상","M03":{"모두":[["M02","!=","타인"]]},"M04":"항상","M05":{"모두":[["엔진.과세","==",true],["A15","in",["매매","분양","신축","경매","공공매입","기타"]]]},"M06":{"모두":[["엔진.과세","==",true],["M05","!=","모름"]]},"M07":{"모두":[["엔진.과세","==",true],["M05","!=","모름"]]},"M08":{"모두":[["엔진.과세","==",true],["M05","!=","모름"]]},"M09":{"모두":[["엔진.과세","==",true]]},"M10":{"모두":[["엔진.과세","==",true]]},"M11":{"모두":[["엔진.과세","==",true]]},"M12":{"모두":[["엔진.과세","==",true],["P02","!=","토지"]]},"M20":{"모두":[["M05","==","모름"]]},"M21":{"모두":[["M05","==","모름"]]},"M22":{"하나라도":[["M05","==","모름"],["엔진.중과후보","==",true],["엔진.토지건물안분필요","==",true]]},"M23":{"모두":[["P02","!=","토지"],{"하나라도":[["M05","==","모름"],["엔진.감정가액사용","==",true]]}]},"M24":{"모두":[["M05","==","모름"],["엔진.취득일","<=","1990-08-29"]]},"X01":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true],["엔진.지방소재주택있음","==",true],["주택.지방소재","==",true]]},"X02":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true],["엔진.세대주택수_중과","==",2],["엔진.양도주택기준시가_1억이하","==",true]]},"X03":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true],["엔진.2024-01-10이후취득주택있음","==",true],["주택.2024-01-10이후취득","==",true]]},"X04":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true]]},"X05":{"모두":[["P02","==","주택"],["엔진.중과후보","==",true],["엔진.보유년",">=",2],["엔진.양도일",">=","2026-05-10"],["엔진.양도일","<=","2026-11-09"]]},"X06":{"모두":[["X05","==","예"]]}}</script>
+<script id="core">
+/* 질문지 핵심 논리. 화면(DOM)을 쓰지 않는다. node 시험이 이 파일만 떼어 파이썬 판정과 견준다.
+ *
+ * 조건 문법은 질문지/문항.json 머리의 「조건표기」와 yangdo/questions.py 의 판정과 같다.
+ *   '항상' 이거나 {'모두': [...]} 또는 {'하나라도': [...]}. 항목은 [문항 id 나 엔진값, 연산자, 값].
+ * 파이썬 엔진만 아는 값(엔진.이름, 주택.이름)은 이 화면이 모른다. 그런 항목은 'E'(회계사가 확인)로 둔다.
+ *
+ * 한 문항의 상태
+ *   T 보인다.  F 숨긴다.  U 앞 답을 기다린다(숨김).  E 엔진 값이 있어야 정해진다(회계사가 확인).
+ */
+function makeCore(defs, conds) {
+  'use strict';
+  var Q = defs.questions;
+  var byId = {};
+  Q.forEach(function (q, i) { q.idx = i; byId[q.id] = q; });
+  var OPS = { '==': 1, '!=': 1, 'in': 1, 'not_in': 1, '>=': 1, '<=': 1, '<': 1, '>': 1 };
+
+  // ---- 조건 판정 -----------------------------------------------------------
+  function compare(op, a, b) {
+    switch (op) {
+      case '==': return a === b;
+      case '!=': return a !== b;
+      case 'in': return Array.isArray(b) ? b.indexOf(a) >= 0 : null;
+      case 'not_in': return Array.isArray(b) ? b.indexOf(a) < 0 : null;
+      default:
+        if (typeof a !== typeof b) return null;
+        if (op === '>=') return a >= b;
+        if (op === '<=') return a <= b;
+        if (op === '<') return a < b;
+        return a > b;
+    }
+  }
+
+  function itemState(it, ctx, qid) {
+    if (it && typeof it === 'object' && !Array.isArray(it)) return condState(it, ctx, qid);
+    if (!(Array.isArray(it) && it.length === 3 && typeof it[0] === 'string' && typeof it[1] === 'string' && OPS[it[1]])) {
+      throw new Error(qid + ' 의 보이는조건 항목 모양을 모른다: ' + JSON.stringify(it));
+    }
+    var left = it[0];
+    if (left.indexOf('엔진.') === 0 || left.indexOf('주택.') === 0) return 'E';
+    var val = ctx.get(left);
+    if (val === undefined || val === null) return 'U';
+    var r = compare(it[1], val, it[2]);
+    return r === null ? 'U' : (r ? 'T' : 'F');
+  }
+
+  function condState(cond, ctx, qid) {
+    if (cond === '항상') return 'T';
+    var names = cond && typeof cond === 'object' ? Object.keys(cond) : [];
+    if (names.length !== 1 || (names[0] !== '모두' && names[0] !== '하나라도') || !Array.isArray(cond[names[0]])) {
+      throw new Error(qid + ' 의 보이는조건 모양을 모른다: ' + JSON.stringify(cond));
+    }
+    var rs = cond[names[0]].map(function (it) { return itemState(it, ctx, qid); });
+    var has = function (x) { return rs.indexOf(x) >= 0; };
+    if (names[0] === '모두') return has('F') ? 'F' : has('U') ? 'U' : has('E') ? 'E' : 'T';
+    return has('T') ? 'T' : has('U') ? 'U' : has('E') ? 'E' : 'F';
+  }
+
+  // 자산이 여럿이면 자산 하나라도 참일 때 묻는다(questions.py 의 _units 와 같은 규칙)
+  function anyState(rs) {
+    return rs.indexOf('T') >= 0 ? 'T' : rs.indexOf('E') >= 0 ? 'E' : rs.indexOf('U') >= 0 ? 'U' : 'F';
+  }
+
+  // ---- 답 읽기 -------------------------------------------------------------
+  function holderOf(store, q, assetId) {
+    if (q.unit === '자산') {
+      for (var i = 0; i < store.assets.length; i++) if (store.assets[i].id === assetId) return store.assets[i];
+      return null;
+    }
+    return store.glob;
+  }
+
+  function scalar(v) {
+    return v === undefined || v === null || v === '' || typeof v === 'object' ? undefined : v;
+  }
+
+  // 모든 문항의 상태. st[문항 id][단위] 단위는 자산 id 이거나 '' 이다.
+  // 조건은 뒤에 있는 문항도 가리키므로(A09 가 A13 을 본다) 필요한 문항의 상태를 그때그때 구해 둔다.
+  function compute(store) {
+    var assets = store.assets;
+    var memo = {}, busy = {};
+    function rawOf(q, unit) {
+      var h = holderOf(store, q, unit);
+      if (!h) return undefined;
+      if (h.mo && h.mo[q.id]) return undefined;
+      return h.ans[q.id];
+    }
+    function ctxFor(a) {
+      return {
+        get: function (qid2) {
+          var q2 = byId[qid2];
+          if (!q2) return undefined;
+          var unit2;
+          if (q2.unit === '자산') { if (!a) return undefined; unit2 = a.id; }
+          else if (q2.unit === '전역') unit2 = '';
+          else return undefined;          // 집 단위 문항은 이 화면이 조건에 쓰지 않는다
+          var s2 = stateOf(q2, unit2);
+          if (s2 !== 'T' && s2 !== 'E') return undefined;
+          return scalar(rawOf(q2, unit2));
+        }
+      };
+    }
+    function stateOf(q, unit) {
+      var key = q.id + '|' + unit;
+      if (memo[key] !== undefined) return memo[key];
+      if (busy[key]) return 'U';
+      busy[key] = true;
+      var s;
+      if (q.unit === '자산') {
+        var a = holderOf(store, q, unit);
+        s = a ? condState(conds[q.id], ctxFor(a), q.id) : 'F';
+      } else {
+        s = anyState((assets.length ? assets : [null]).map(function (x) { return condState(conds[q.id], ctxFor(x), q.id); }));
+      }
+      busy[key] = false;
+      memo[key] = s;
+      return s;
+    }
+    var st = {};
+    Q.forEach(function (q) {
+      st[q.id] = {};
+      if (q.unit === '자산') assets.forEach(function (a) { st[q.id][a.id] = stateOf(q, a.id); });
+      else st[q.id][''] = stateOf(q, '');
+    });
+    return { st: st };
+  }
+
+  // ---- 답을 사실관계 값으로 ------------------------------------------------
+  var ISO = /^\d{4}-\d{2}-\d{2}$/;
+  function validDate(s) {
+    if (!ISO.test(s)) return false;
+    var y = +s.slice(0, 4), m = +s.slice(5, 7), d = +s.slice(8, 10);
+    var t = new Date(Date.UTC(y, m - 1, d));
+    return y >= 1900 && t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+  }
+  function blank(v) { return v === undefined || v === null || (typeof v === 'string' && v.trim() === ''); }
+
+  // spec 하나를 값으로 바꾼다. 비었으면 undefined. 틀린 값은 err(문장) 으로 알린다.
+  function toOut(spec, v, err) {
+    var t = spec.t;
+    if (t === 'houses') return undefined;      // 집 목록은 buildFacts 가 따로 만든다
+    if (t === 'bool') return typeof v === 'boolean' ? v : undefined;
+    if (t === 'choice' || t === 'sido') return typeof v === 'string' && v ? v : undefined;
+    if (t === 'multi') return Array.isArray(v) && v.length ? v.slice() : undefined;
+    if (t === 'text') {
+      if (blank(v)) return undefined;
+      var tx = String(v).trim();
+      if (spec.digits) {      // 번호 칸: 하이픈과 공백은 빼 주고 ASCII 숫자 N자리가 아니면 알린다
+        tx = tx.replace(/[-\s]/g, '');
+        if (!new RegExp('^[0-9]{' + spec.digits + '}$').test(tx)) { err('숫자 ' + spec.digits + '자리로 적어 주세요(하이픈은 빼도 됩니다)'); return undefined; }
+      }
+      return tx;
+    }
+    if (t === 'date') {
+      if (blank(v)) return undefined;
+      v = String(v).trim();
+      if (!validDate(v)) { err('날짜는 달력에 있는 날로 적어 주세요(예: 2026-11-20)'); return undefined; }
+      return v;
+    }
+    if (t === 'int') {
+      if (blank(v)) return undefined;
+      var s = String(v).replace(/[,\s원]/g, '');
+      if (!/^\d+$/.test(s) || +s > 9007199254740991) { err('금액은 원 단위 숫자로 적어 주세요(0 이상, 소수점 없음)'); return undefined; }
+      return +s;
+    }
+    if (t === 'num') {
+      if (blank(v)) return undefined;
+      var n = String(v).replace(/[,\s]/g, '');
+      if (!/^\d+(\.\d+)?$/.test(n)) { err('숫자로 적어 주세요(0 이상)'); return undefined; }
+      n = parseFloat(n);
+      if (spec.positive && !(n > 0)) { err('0보다 큰 숫자로 적어 주세요'); return undefined; }
+      return n;
+    }
+    if (t === 'addr') {
+      v = v || {};
+      var a = {};
+      ['시도', '시군구', '읍면동'].forEach(function (k) { if (!blank(v[k])) a[k] = String(v[k]).trim(); });
+      if (!Object.keys(a).length) return undefined;
+      if (!a['시도'] || !a['시군구']) { err('시·도와 시·군·구는 꼭 적어 주세요'); return undefined; }
+      return a;
+    }
+    if (t === 'share') {
+      if (!v || !v.kind) return undefined;
+      if (v.kind === '단독') return '단독';
+      var p = String(v.n === undefined ? '' : v.n).trim(), q = String(v.d === undefined ? '' : v.d).trim();
+      if (!/^\d+$/.test(p) || !/^\d+$/.test(q) || +p <= 0 || +p > +q) {
+        err('공동 소유는 지분을 분자와 분모로 적어 주세요(예: 1과 2). 분자는 0보다 크고 분모를 넘을 수 없습니다.');
+        return undefined;
+      }
+      return { '구분': '공동', '분자': +p, '분모': +q };
+    }
+    if (t === 'obj') {
+      var out = {}, any = false;
+      v = v || {};
+      spec.fields.forEach(function (f) {
+        var x = toOut(f.s, v[f.n], function (m) { err(f.label + ': ' + m); });
+        if (x !== undefined) { out[f.n] = x; any = true; }
+      });
+      if (!any) return undefined;
+      var miss = (spec.req || []).filter(function (n) { return out[n] === undefined; });
+      if (miss.length) {
+        var lab = spec.fields.filter(function (f) { return miss.indexOf(f.n) >= 0; }).map(function (f) { return f.label; });
+        err('빠진 값이 있습니다: ' + lab.join(', '));
+        return undefined;
+      }
+      return out;
+    }
+    if (t === 'list') {
+      v = v || {};
+      if (v.none) return [];
+      var rows = (v.rows || []).map(function (r, i) {
+        if (spec.as === 'scalars') return toOut(spec.row, r, function (m) { err((i + 1) + '번째: ' + m); });
+        if (spec.as === 'pairs') {
+          var la = spec.row.fields[0].label, lb = spec.row.fields[1].label;
+          var a1 = toOut({ t: 'date' }, r && r.a, function (m) { err((i + 1) + '번째 ' + la + ': ' + m); });
+          var b1 = toOut({ t: 'date' }, r && r.b, function (m) { err((i + 1) + '번째 ' + lb + ': ' + m); });
+          if (a1 === undefined && b1 === undefined) return undefined;
+          if (a1 === undefined || b1 === undefined) { err((i + 1) + '번째: ' + la + '과 ' + lb + '을 모두 적어 주세요'); return undefined; }
+          if (b1 < a1) { err((i + 1) + '번째: ' + lb + '이 ' + la + '보다 빠릅니다'); return undefined; }
+          return [a1, b1];
+        }
+        return toOut(spec.row, r, function (m) { err((i + 1) + '번째: ' + m); });
+      }).filter(function (x) { return x !== undefined; });
+      return rows.length ? rows : undefined;
+    }
+    throw new Error('알 수 없는 spec: ' + t);
+  }
+
+  function isAnswered(q, holder) {
+    if (holder.mo && holder.mo[q.id]) return true;
+    return toOut(q.spec, holder.ans[q.id], function () {}) !== undefined;
+  }
+
+  // ---- 사실관계 JSON ------------------------------------------------------
+  function writeKey(root, asset, house, key, value) {
+    var parts = key.split('.'), node, rest;
+    if (parts[0] === '자산[]') { node = asset; rest = parts.slice(1); }
+    else if (parts[0] === '세대' && (parts[1] === '주택목록[]' || parts[1] === '주택목록[신규]')) { node = house; rest = parts.slice(2); }
+    else { node = root; rest = parts; }
+    for (var i = 0; i < rest.length - 1; i++) {
+      if (typeof node[rest[i]] !== 'object' || node[rest[i]] === null) node[rest[i]] = {};
+      node = node[rest[i]];
+    }
+    node[rest[rest.length - 1]] = value;
+  }
+
+  function putQuestion(q, holder, unit, root, asset, errors, moList) {
+    if (holder.mo && holder.mo[q.id]) { moList.push(q.id + ':' + unit); return; }
+    var raw = holder.ans[q.id];
+    var val = toOut(q.spec, raw, function (m) { errors.push({ qid: q.id, unit: unit, msg: m }); });
+    if (val === undefined) return;
+    if (q.keys.length === 1) { writeKey(root, asset, null, q.keys[0], val); return; }
+    q.keys.forEach(function (k) {
+      var name = k.slice(k.lastIndexOf('.') + 1);
+      if (val[name] !== undefined) writeKey(root, asset, null, k, val[name]);
+    });
+  }
+
+  // 판 집의 취득일: 자산 답에서 가장 앞선 날짜 하나를 찾는다(자산id 로 이어진 집은 엔진이 자산의 취득 시기를 쓴다)
+  function firstOf(o, names) {
+    for (var i = 0; i < names.length; i++) if (o && o[names[i]]) return o[names[i]];
+    return undefined;
+  }
+
+  function houseOut(store, h, assetOut, errors) {
+    var spec = defs.houseRow;
+    var f = h.f || {};
+    var o = { id: h.id };
+    var err = function (m) { errors.push({ qid: 'H04', unit: '', msg: h.id + ' ' + m }); };
+    var simple = function (name) {
+      var fld = spec.main.filter(function (x) { return x.n === name; })[0];
+      return fld ? toOut(fld.s, f[name], function (m) { err(fld.label + ': ' + m); }) : undefined;
+    };
+    if (h.asset) {
+      o['자산id'] = h.asset;
+      if (assetOut) {
+        if (assetOut['소재지']) o['소재지'] = assetOut['소재지'];
+        if (assetOut['주택유형']) o['유형'] = assetOut['주택유형'];
+        var 취득 = assetOut['취득'] || {};
+        var d = firstOf(취득, ['잔금일', '등기접수일', '사용승인일', '사실상사용일', '대금완납일']);
+        if (d) o['취득일'] = d;
+        if (취득['원인']) o['취득원인'] = 취득['원인'];
+        if (assetOut['지분'] !== undefined) o['지분'] = assetOut['지분'];
+      }
+      ['소유자', '등록임대'].forEach(function (n) {
+        var x = simple(n);
+        if (x !== undefined) o[n] = x;
+      });
+    } else {
+      ['소유자', '소재지', '유형', '취득일', '취득원인', '지분', '등록임대'].forEach(function (n) {
+        var x = simple(n);
+        if (x !== undefined) o[n] = x;
+      });
+      if (!o['소재지']) err('집의 주소(시·도, 시·군·구)를 적어 주세요');
+      if (!o['취득일']) err('집을 산 날을 적어 주세요');
+    }
+    spec.extra.forEach(function (fld) {
+      var x = toOut(fld.s, f[fld.n], function (m) { err(fld.label + ': ' + m); });
+      if (x !== undefined) o[fld.n] = x;
+    });
+    return o;
+  }
+
+  function buildFacts(store, c) {
+    c = c || compute(store);
+    var st = c.st;
+    var errors = [], mo = [];
+    var f = {};
+    Q.forEach(function (q) {
+      if (q.unit !== '전역' || q.spec.t === 'houses') return;
+      var s = st[q.id][''];
+      if (s !== 'T' && s !== 'E') return;
+      putQuestion(q, store.glob, '', f, null, errors, mo);
+    });
+    var outAssets = store.assets.map(function (a) {
+      var o = { id: a.id };
+      Q.forEach(function (q) {
+        if (q.unit !== '자산') return;
+        var s = st[q.id][a.id];
+        if (s !== 'T' && s !== 'E') return;
+        putQuestion(q, a, a.id, f, o, errors, mo);
+      });
+      return o;
+    });
+    var h04 = byId[defs.houseQuestion];
+    if (h04 && (st[h04.id][''] === 'T' || st[h04.id][''] === 'E')) {
+      var byAsset = {};
+      outAssets.forEach(function (o) { byAsset[o.id] = o; });
+      var rows = store.houses.map(function (h) { return houseOut(store, h, h.asset ? byAsset[h.asset] : null, errors); });
+      if (rows.length) {
+        if (typeof f['세대'] !== 'object' || f['세대'] === null) f['세대'] = {};
+        f['세대']['주택목록'] = rows;
+      }
+    }
+    f['자산'] = outAssets;
+    if (mo.length) f['모름'] = mo;
+    return { facts: f, errors: errors };
+  }
+
+  return { Q: Q, byId: byId, condState: condState, compute: compute, toOut: toOut, isAnswered: isAnswered,
+           buildFacts: buildFacts, validDate: validDate, houseOut: houseOut };
+}
+</script>
+<script id="app">
+/* 질문지 화면. 문항 정의(defs)와 조건(conditions)을 읽어 양식을 그리고, 답을 사실관계 JSON 으로 내려받는다.
+ * 네트워크를 쓰지 않는다. 입력은 이 브라우저의 localStorage 에만 임시로 남는다.
+ */
+(function () {
+  'use strict';
+  var defs = JSON.parse(document.getElementById('defs').textContent);
+  var conds = JSON.parse(document.getElementById('conditions').textContent);
+  var core = makeCore(defs, conds);
+  var STORE_KEY = 'gridie-yangdo-questionnaire-v1';
+  var FILE_NAME = '양도소득세_답변.json';
+
+  // ---- 저장소 -------------------------------------------------------------
+  function fresh() {
+    return { v: 1, sig: defs.sig, nextAsset: 2, nextHouse: 1, hidePending: false,
+             glob: { ans: {}, mo: {} }, assets: [{ id: '자산1', ans: {}, mo: {} }], houses: [] };
+  }
+  function loadStore() {
+    try {
+      var s = JSON.parse(window.localStorage.getItem(STORE_KEY));
+      if (s && s.v === 1 && s.sig === defs.sig && Array.isArray(s.assets) && s.assets.length && Array.isArray(s.houses) && s.glob) return s;
+    } catch (e) { /* 저장소를 못 쓰는 환경은 빈 양식으로 시작한다 */ }
+    return null;
+  }
+  function saveStore() {
+    try { window.localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 저장 못 해도 계속한다 */ }
+  }
+  var store = loadStore() || fresh();
+
+  // ---- 작은 도구 ----------------------------------------------------------
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false) return;
+      if (k === 'class') e.className = v;
+      else if (k === 'text') e.textContent = v;
+      else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v);
+      else e.setAttribute(k, v === true ? '' : v);
+    });
+    (kids || []).forEach(function (c) { if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return e;
+  }
+  var uidN = 0;
+  function uid(p) { uidN += 1; return p + uidN; }
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function copyObj(o) { return Object.assign({}, o || {}); }
+
+  var recs = [];          // 화면에 그린 문항 {q, unit, el, err, grp}
+  var groups = [];        // 소제목 묶음 {el, recs}
+  var renderHouses = function () {};
+  var subBoxes = [];      // 집 행의 「회계사가 확인한 뒤 묻는 항목」 상자
+
+  var building = false;   // 양식을 짜는 동안에는 갱신하지 않는다(빈 첫 줄을 넣는 입력도 여기서 일어난다)
+  function touch() { if (building) return; saveStore(); refresh(); }
+
+  // ---- 입력 위젯 ----------------------------------------------------------
+  function usesSelect(spec, opt) { return spec.opts.length > 6 || !!(opt && opt.compact); }
+
+  function wBool(get, put) {
+    var name = uid('b'), box = el('div', { class: 'opts' });
+    [[true, '예'], [false, '아니오']].forEach(function (p) {
+      var inp = el('input', { type: 'radio', name: name });
+      inp.checked = get() === p[0];
+      inp.addEventListener('change', function () { if (inp.checked) put(p[0]); });
+      box.appendChild(el('label', { class: 'opt' }, [inp, el('span', { text: p[1] })]));
+    });
+    return box;
+  }
+
+  function wChoice(spec, get, put, opt) {
+    if (usesSelect(spec, opt)) {
+      var sel = el('select');
+      sel.appendChild(el('option', { value: '', text: '선택하세요' }));
+      spec.opts.forEach(function (o) { sel.appendChild(el('option', { value: o[0], text: o[1] })); });
+      sel.value = get() || '';
+      sel.addEventListener('change', function () { put(sel.value || undefined); });
+      return sel;
+    }
+    var name = uid('c'), box = el('div', { class: 'opts col' });
+    spec.opts.forEach(function (o) {
+      var inp = el('input', { type: 'radio', name: name });
+      inp.checked = get() === o[0];
+      inp.addEventListener('change', function () { if (inp.checked) put(o[0]); });
+      box.appendChild(el('label', { class: 'opt' }, [inp, el('span', { text: o[1] })]));
+    });
+    return box;
+  }
+
+  function wMulti(spec, get, put) {
+    var box = el('div', { class: 'opts col' });
+    var cbs = [];
+    spec.opts.forEach(function (o) {
+      var inp = el('input', { type: 'checkbox' });
+      inp.checked = (get() || []).indexOf(o[0]) >= 0;
+      inp.addEventListener('change', function () {
+        var cur = (get() || []).slice();
+        var i = cur.indexOf(o[0]);
+        if (inp.checked && i < 0) cur.push(o[0]);
+        if (!inp.checked && i >= 0) cur.splice(i, 1);
+        // 「해당 없음」 류는 다른 선택과 함께 둘 수 없다
+        if (inp.checked && spec.alone && spec.alone.indexOf(o[0]) >= 0) {
+          cur = [o[0]];
+          cbs.forEach(function (c) { if (c.value !== o[0]) c.inp.checked = false; });
+        } else if (inp.checked && spec.alone) {
+          cur = cur.filter(function (x) { return spec.alone.indexOf(x) < 0; });
+          cbs.forEach(function (c) { if (spec.alone.indexOf(c.value) >= 0) c.inp.checked = false; });
+        }
+        put(cur);
+      });
+      cbs.push({ value: o[0], inp: inp });
+      box.appendChild(el('label', { class: 'opt' }, [inp, el('span', { text: o[1] })]));
+    });
+    return box;
+  }
+
+  function wInput(kind, spec, get, put) {
+    var inp = el('input', { type: kind === 'date' ? 'date' : 'text' });
+    if (kind === 'int') { inp.setAttribute('inputmode', 'numeric'); inp.setAttribute('placeholder', spec.hint || '숫자만'); }
+    if (kind === 'num') { inp.setAttribute('inputmode', 'decimal'); inp.setAttribute('placeholder', spec.hint || '숫자만'); }
+    if (kind === 'text' && spec.hint) inp.setAttribute('placeholder', spec.hint);
+    if (kind === 'text' && spec.digits) inp.setAttribute('inputmode', 'numeric');
+    var v = get();
+    inp.value = v === undefined || v === null ? '' : String(v);
+    inp.addEventListener('input', function () { put(inp.value); });
+    if (kind === 'int') {
+      inp.addEventListener('blur', function () {
+        var s = inp.value.replace(/[,\s원]/g, '');
+        if (/^\d+$/.test(s)) { inp.value = Number(s).toLocaleString('en-US'); put(inp.value); }
+      });
+    }
+    var kids = [inp];
+    if (kind === 'text' && spec.suggest) {
+      var id = uid('dl');
+      inp.setAttribute('list', id);
+      var dl = el('datalist', { id: id });
+      spec.suggest.forEach(function (s) { dl.appendChild(el('option', { value: s })); });
+      kids.push(dl);
+    }
+    var unit = kind === 'int' ? '원' : (spec.unit || '');
+    if (unit) kids.push(el('span', { class: 'unit', text: unit }));
+    return el('span', { class: 'inwrap' }, kids);
+  }
+
+  function wAddr(get, put) {
+    var v = copyObj(get());
+    var sel = el('select', { 'aria-label': '시·도' });
+    sel.appendChild(el('option', { value: '', text: '시·도 선택' }));
+    defs.sido.forEach(function (s) { sel.appendChild(el('option', { value: s, text: s })); });
+    sel.value = v['시도'] || '';
+    var gu = el('input', { type: 'text', placeholder: '시·군·구 (예: 성동구)', 'aria-label': '시·군·구' });
+    var dong = el('input', { type: 'text', placeholder: '읍·면·동 (예: 성수동)', 'aria-label': '읍·면·동' });
+    gu.value = v['시군구'] || '';
+    dong.value = v['읍면동'] || '';
+    sel.addEventListener('change', function () { v['시도'] = sel.value; put(copyObj(v)); });
+    gu.addEventListener('input', function () { v['시군구'] = gu.value; put(copyObj(v)); });
+    dong.addEventListener('input', function () { v['읍면동'] = dong.value; put(copyObj(v)); });
+    return el('div', { class: 'addr' }, [sel, gu, dong]);
+  }
+
+  function wShare(spec, get, put) {
+    var v = copyObj(get());
+    var name = uid('s'), box = el('div', { class: 'share' });
+    var n = el('input', { type: 'text', inputmode: 'numeric', placeholder: '분자', size: 4, 'aria-label': '지분 분자' });
+    var d = el('input', { type: 'text', inputmode: 'numeric', placeholder: '분모', size: 4, 'aria-label': '지분 분모' });
+    n.value = v.n || ''; d.value = v.d || '';
+    var frac = el('span', { class: 'inwrap' }, [n, el('span', { class: 'unit', text: '/' }), d]);
+    function show() { frac.hidden = v.kind !== '공동'; }
+    spec.opts.forEach(function (o) {
+      var inp = el('input', { type: 'radio', name: name });
+      inp.checked = v.kind === o[0];
+      inp.addEventListener('change', function () { if (inp.checked) { v.kind = o[0]; show(); put(copyObj(v)); } });
+      box.appendChild(el('label', { class: 'opt' }, [inp, el('span', { text: o[1] })]));
+    });
+    n.addEventListener('input', function () { v.n = n.value; put(copyObj(v)); });
+    d.addEventListener('input', function () { v.d = d.value; put(copyObj(v)); });
+    box.appendChild(frac);
+    show();
+    return box;
+  }
+
+  function isGroupType(s, opt) {
+    return s.t === 'obj' || s.t === 'addr' || s.t === 'share' || s.t === 'bool' || s.t === 'multi' || s.t === 'list' ||
+           (s.t === 'choice' && !usesSelect(s, opt));
+  }
+
+  function wObj(spec, get, put, opt) {
+    var box = el('div', { class: 'obj' });
+    spec.fields.forEach(function (fd) {
+      var child = widget(fd.s, function () { return (get() || {})[fd.n]; }, function (v) {
+        var o = copyObj(get()); o[fd.n] = v; put(o);
+      }, { compact: true });
+      var wrap;
+      if (isGroupType(fd.s, { compact: true })) {
+        wrap = el('fieldset', { class: 'fld' + (fd.s.t === 'obj' || fd.s.t === 'addr' ? ' wide' : '') },
+                  [el('legend', { text: fd.label }), child]);
+      } else {
+        wrap = el('label', { class: 'fld' }, [el('span', { class: 'flabel', text: fd.label }), child]);
+      }
+      box.appendChild(wrap);
+    });
+    return box;
+  }
+
+  function wList(spec, get, put) {
+    var box = el('div', { class: 'list' });
+    var rowsBox = el('div', { class: 'rows' });
+    var addBtn = el('button', { type: 'button', class: 'add', text: spec.add || '추가' });
+    var noneCb = el('input', { type: 'checkbox' });
+    function cur() { var v = get(); return v && Array.isArray(v.rows) ? v : { rows: [], none: false }; }
+    function save(rows, none) { put({ rows: rows, none: none }); }
+    function render() {
+      rowsBox.textContent = '';
+      var v = cur();
+      noneCb.checked = !!v.none;
+      rowsBox.hidden = !!v.none;
+      addBtn.hidden = !!v.none;
+      v.rows.forEach(function (r, i) {
+        var del = el('button', { type: 'button', class: 'danger', text: '삭제' });
+        del.addEventListener('click', function () {
+          var rows = cur().rows.slice(); rows.splice(i, 1); save(rows, false); render();
+        });
+        var body = widget(spec.row, function () { return cur().rows[i]; }, function (nv) {
+          var rows = cur().rows.slice(); rows[i] = nv; save(rows, false);
+        }, { compact: true });
+        rowsBox.appendChild(el('div', { class: 'row' }, [
+          el('div', { class: 'rowhead' }, [el('strong', { text: (spec.noun || '항목') + ' ' + (i + 1) }), del]), body]));
+      });
+    }
+    addBtn.addEventListener('click', function () {
+      var rows = cur().rows.slice(); rows.push(spec.as === 'scalars' ? '' : {}); save(rows, false); render();
+    });
+    noneCb.addEventListener('change', function () {
+      if (noneCb.checked) save(cur().rows, true); else save(cur().rows, false);
+      render();
+    });
+    if (!cur().rows.length && !cur().none) { var first = cur().rows.slice(); first.push(spec.as === 'scalars' ? '' : {}); put({ rows: first, none: false }); }
+    render();
+    box.appendChild(rowsBox);
+    box.appendChild(addBtn);
+    if (spec.none) box.appendChild(el('label', { class: 'mo' }, [noneCb, ' ' + spec.none]));
+    return box;
+  }
+
+  function widget(spec, get, put, opt) {
+    switch (spec.t) {
+      case 'bool': return wBool(get, put);
+      case 'choice': return wChoice(spec, get, put, opt);
+      case 'sido': return wChoice({ opts: defs.sido.map(function (s) { return [s, s]; }) }, get, put, { compact: true });
+      case 'multi': return wMulti(spec, get, put);
+      case 'date': return wInput('date', spec, get, put);
+      case 'int': return wInput('int', spec, get, put);
+      case 'num': return wInput('num', spec, get, put);
+      case 'text': return wInput('text', spec, get, put);
+      case 'addr': return wAddr(get, put);
+      case 'share': return wShare(spec, get, put);
+      case 'obj': return wObj(spec, get, put, opt);
+      case 'list': return wList(spec, get, put);
+    }
+    throw new Error('알 수 없는 spec: ' + spec.t);
+  }
+
+  // ---- 문항 한 개 ---------------------------------------------------------
+  function whyBox(q) {
+    var w = q.why, parts = [];
+    if (w.used.length) parts.push(el('p', { text: '이 답이 쓰이는 곳: ' + w.used.join(', ') }));
+    if (w.law.length) {
+      var p = el('p', { text: '근거: ' });
+      w.law.forEach(function (g, i) {
+        if (i) p.appendChild(document.createTextNode(' / '));
+        if (g.h) p.appendChild(el('a', { href: g.h, target: '_blank', rel: 'noopener noreferrer', text: g.t }));
+        else p.appendChild(document.createTextNode(g.t));
+      });
+      parts.push(p);
+    }
+    if (w.docs.length) parts.push(el('p', { text: '준비하면 좋은 서류: ' + w.docs.join(', ') }));
+    if (w.where.length) parts.push(el('p', { text: '모를 때 확인하는 곳: ' + w.where.join(', ') }));
+    if (!parts.length) return null;
+    return el('details', { class: 'why' }, [el('summary', { text: '왜 묻는지, 근거, 준비 서류' })].concat(parts));
+  }
+
+  function questionBlock(q, holder, unit) {
+    var node = el('div', { class: 'q', id: 'q-' + q.id + '-' + unit });
+    node.setAttribute('data-q', q.id);
+    node.setAttribute('data-u', unit);
+    node.appendChild(el('div', { class: 'qhead' }, [el('span', { class: 'qid', text: q.id }), el('span', { class: 'qtext', text: q.text })]));
+    if (q.help) node.appendChild(el('p', { class: 'help', text: q.help }));
+    var moCb = null;
+    var fieldBox = el('div', { class: 'field' });
+    if (q.spec.t === 'houses') {
+      fieldBox.appendChild(housesWidget(q));
+    } else {
+      fieldBox.appendChild(widget(q.spec, function () { return holder.ans[q.id]; }, function (v) {
+        holder.ans[q.id] = v;
+        if (holder.mo[q.id]) { delete holder.mo[q.id]; if (moCb) moCb.checked = false; node.classList.remove('is-mo'); }
+        touch();
+      }, {}));
+    }
+    node.appendChild(fieldBox);
+    if (q.spec.t !== 'list' && q.spec.t !== 'houses' && !q.moreum) {
+      moCb = el('input', { type: 'checkbox' });
+      moCb.checked = !!holder.mo[q.id];
+      if (moCb.checked) node.classList.add('is-mo');
+      moCb.addEventListener('change', function () {
+        if (moCb.checked) holder.mo[q.id] = true; else delete holder.mo[q.id];
+        node.classList.toggle('is-mo', moCb.checked);
+        touch();
+      });
+      node.appendChild(el('label', { class: 'mo' }, [moCb, ' 모르겠어요 (회계사가 확인합니다)']));
+    }
+    var why = whyBox(q);
+    if (why) node.appendChild(why);
+    node.appendChild(el('p', { class: 'pnote', text: '이 질문이 필요한지는 회계사가 확인합니다. 해당하면 답해 주세요.' }));
+    var err = el('div', { class: 'err', role: 'alert' });
+    err.hidden = true;
+    node.appendChild(err);
+    var rec = { q: q, unit: unit, el: node, err: err, holder: holder };
+    recs.push(rec);
+    return { node: node, rec: rec };
+  }
+
+  // ---- 집 목록(H04) -------------------------------------------------------
+  function assetLabel(id) {
+    for (var i = 0; i < store.assets.length; i++) if (store.assets[i].id === id) return '양도한 부동산 ' + (i + 1);
+    return id;
+  }
+
+  function houseRow(h, i) {
+    var spec = defs.houseRow, sold = !!h.asset;
+    var row = el('div', { class: 'row house' });
+    var head = el('div', { class: 'rowhead' }, [el('strong', { text: sold ? '판 집 (' + assetLabel(h.asset) + ')' : '집 ' + (i + 1) })]);
+    if (!sold) {
+      var del = el('button', { type: 'button', class: 'danger', text: '삭제' });
+      del.addEventListener('click', function () {
+        store.houses = store.houses.filter(function (x) { return x !== h; });
+        renderHouses(); touch();
+      });
+      head.appendChild(del);
+    }
+    row.appendChild(head);
+    if (sold) row.appendChild(el('p', { class: 'info', text: '주소, 형태, 산 날, 갖게 된 경위, 지분은 위에서 적은 값이 그대로 들어갑니다.' }));
+    function fieldOf(fd) {
+      return widget(fd.s, function () { return (h.f || {})[fd.n]; }, function (v) { h.f = h.f || {}; h.f[fd.n] = v; touch(); }, { compact: true });
+    }
+    var obj = el('div', { class: 'obj' });
+    spec.main.forEach(function (fd) {
+      if (sold && fd.sold === false) return;
+      var child = fieldOf(fd);
+      var wrap = isGroupType(fd.s, { compact: true })
+        ? el('fieldset', { class: 'fld' + (fd.s.t === 'addr' ? ' wide' : '') }, [el('legend', { text: fd.label }), child])
+        : el('label', { class: 'fld' }, [el('span', { class: 'flabel', text: fd.label }), child]);
+      obj.appendChild(wrap);
+    });
+    row.appendChild(obj);
+    var sub = el('div', { class: 'sub' }, [el('p', { class: 'info', text: '이 항목이 필요한지는 회계사가 확인합니다. 해당하면 답해 주세요.' })]);
+    var lastQ = null;
+    var subObj = el('div', { class: 'obj' });
+    spec.extra.forEach(function (fd) {
+      var child = fieldOf(fd);
+      var kids = [];
+      if (fd.q !== lastQ) { kids.push(el('span', { class: 'subq', text: fd.q + ' ' + fd.qtext })); lastQ = fd.q; }
+      var wrap = isGroupType(fd.s, { compact: true })
+        ? el('fieldset', { class: 'fld wide' }, [el('legend', { text: fd.label }), child])
+        : el('label', { class: 'fld' }, [el('span', { class: 'flabel', text: fd.label }), child]);
+      var cell = el('div', { class: 'fld wide' }, kids.concat([wrap]));
+      subObj.appendChild(cell);
+    });
+    sub.appendChild(subObj);
+    sub.hidden = !!store.hidePending;
+    subBoxes.push(sub);
+    row.appendChild(sub);
+    return row;
+  }
+
+  function housesWidget(q) {
+    var box = el('div', { class: 'houses list' });
+    var list = el('div', { class: 'rows' });
+    var add = el('button', { type: 'button', class: 'add', text: '집 추가' });
+    var doneCb = el('input', { type: 'checkbox' });
+    doneCb.checked = !!(store.glob.ans[q.id] && store.glob.ans[q.id].done);
+    doneCb.addEventListener('change', function () { store.glob.ans[q.id] = { done: doneCb.checked }; touch(); });
+    renderHouses = function () {
+      list.textContent = '';
+      subBoxes = [];
+      store.houses.forEach(function (h, i) { list.appendChild(houseRow(h, i)); });
+    };
+    add.addEventListener('click', function () {
+      store.houses.push({ id: 'H' + store.nextHouse++, asset: null, f: {} });
+      renderHouses(); touch();
+    });
+    renderHouses();
+    box.appendChild(list);
+    box.appendChild(add);
+    box.appendChild(el('label', { class: 'mo' }, [doneCb, ' 세대가 가진 집은 위에 적은 것이 전부입니다']));
+    return box;
+  }
+
+  // 판 집(주택)마다 목록에 한 줄이 있어야 한다. 자산의 종류 답이 바뀌면 맞춘다.
+  function syncHouses(c) {
+    var changed = false, need = {};
+    var kq = defs.assetKind.q;
+    store.assets.forEach(function (a) {
+      if (c.st[kq][a.id] === 'T' && a.ans[kq] === defs.assetKind.house && !(a.mo && a.mo[kq])) need[a.id] = true;
+    });
+    var keep = store.houses.filter(function (h) { return !h.asset || need[h.asset]; });
+    if (keep.length !== store.houses.length) { store.houses = keep; changed = true; }
+    var have = {};
+    store.houses.forEach(function (h) { if (h.asset) have[h.asset] = true; });
+    var add = [];
+    store.assets.forEach(function (a) {
+      if (need[a.id] && !have[a.id]) add.push({ id: 'H' + store.nextHouse++, asset: a.id, f: {} });
+    });
+    if (add.length) { store.houses = add.concat(store.houses); changed = true; }
+    return changed;
+  }
+
+  // ---- 쪽 짜기 ------------------------------------------------------------
+  function groupedBlocks(list, holder, unit, withHeading) {
+    var frag = document.createDocumentFragment(), cur = null, lastSec = null;
+    list.forEach(function (q) {
+      if (withHeading && q.sec !== lastSec) {
+        cur = { el: el('div', { class: 'grp' }, [el('h4', { text: defs.sections[q.sec] || q.sec })]), recs: [] };
+        groups.push(cur);
+        frag.appendChild(cur.el);
+        lastSec = q.sec;
+      }
+      var b = questionBlock(q, holder, unit);
+      if (cur) { cur.el.appendChild(b.node); cur.recs.push(b.rec); } else frag.appendChild(b.node);
+    });
+    return frag;
+  }
+
+  function assetCard(a, i) {
+    var card = el('section', { class: 'card' });
+    var head = el('header', null, [el('h3', { text: '양도한 부동산 ' + (i + 1) })]);
+    if (store.assets.length > 1) {
+      var del = el('button', { type: 'button', class: 'danger', text: '이 부동산 삭제' });
+      del.addEventListener('click', function () {
+        if (!window.confirm('이 부동산에 적은 답을 모두 지웁니다. 계속하려면 확인을 누르세요.')) return;
+        store.assets = store.assets.filter(function (x) { return x !== a; });
+        buildAll(); touch();
+      });
+      head.appendChild(del);
+    }
+    card.appendChild(head);
+    card.appendChild(groupedBlocks(core.Q.filter(function (q) { return q.zone === 'asset'; }), a, a.id, true));
+    return card;
+  }
+
+  function buildAll() {
+    building = true;
+    try {
+      recs = []; groups = []; subBoxes = [];
+      var top = document.getElementById('zone-top'), assets = document.getElementById('zone-assets'), house = document.getElementById('zone-house');
+      top.textContent = ''; assets.textContent = ''; house.textContent = '';
+      top.appendChild(groupedBlocks(core.Q.filter(function (q) { return q.zone === 'top'; }), store.glob, '', false));
+      store.assets.forEach(function (a, i) { assets.appendChild(assetCard(a, i)); });
+      house.appendChild(groupedBlocks(core.Q.filter(function (q) { return q.zone === 'house'; }), store.glob, '', false));
+    } finally {
+      building = false;
+    }
+  }
+
+  // ---- 갱신 ---------------------------------------------------------------
+  function answeredRec(r) {
+    if (r.q.spec.t === 'houses') {
+      var d = store.glob.ans[r.q.id];
+      return !!(d && d.done);
+    }
+    return core.isAnswered(r.q, r.holder);
+  }
+
+  function refresh() {
+    var c = core.compute(store);
+    if (syncHouses(c)) { renderHouses(); saveStore(); c = core.compute(store); }
+    var built = core.buildFacts(store, c);
+    var errBy = {};
+    built.errors.forEach(function (e) { var k = e.qid + '|' + e.unit; (errBy[k] = errBy[k] || []).push(e.msg); });
+    var total = 0, done = 0, open = [];
+    recs.forEach(function (r) {
+      var s = (c.st[r.q.id] && c.st[r.q.id][r.unit]) || 'U';
+      var visible = s === 'T' || (s === 'E' && !store.hidePending);
+      r.visible = visible;
+      r.el.hidden = !visible;
+      r.el.classList.toggle('pending', s === 'E');
+      var msgs = errBy[r.q.id + '|' + r.unit] || [];
+      r.err.textContent = '';
+      msgs.forEach(function (m) { r.err.appendChild(el('p', { text: m })); });
+      r.err.hidden = !msgs.length;
+      if (s === 'T') { total += 1; if (answeredRec(r)) done += 1; else open.push(r); }
+    });
+    groups.forEach(function (g) { g.el.hidden = !g.recs.some(function (r) { return r.visible; }); });
+    var zoneShown = { top: false, house: false };
+    recs.forEach(function (r) { if (r.visible && zoneShown.hasOwnProperty(r.q.zone)) zoneShown[r.q.zone] = true; });
+    document.getElementById('sec-top').hidden = !zoneShown.top;
+    document.getElementById('sec-house').hidden = !zoneShown.house;
+    subBoxes.forEach(function (b) { b.hidden = !!store.hidePending; });
+    var pend = 0;
+    core.Q.forEach(function (q) {
+      Object.keys(c.st[q.id]).forEach(function (u) { if (c.st[q.id][u] === 'E') pend += 1; });
+    });
+    document.getElementById('progress').textContent = '답한 문항 ' + done + ' / 해당 문항 ' + total;
+    document.getElementById('pending-label').textContent = '회계사가 확인하는 항목 숨기기 (' + pend + '개)';
+    document.getElementById('hide-pending').checked = !!store.hidePending;
+    // 마무리
+    var errBox = document.getElementById('done-errors'), openBox = document.getElementById('done-open');
+    errBox.textContent = ''; openBox.textContent = '';
+    if (built.errors.length) {
+      var ul = el('ul');
+      built.errors.forEach(function (e) {
+        var target = e.qid === defs.houseQuestion ? 'q-' + e.qid + '-' : 'q-' + e.qid + '-' + e.unit;
+        ul.appendChild(el('li', null, [el('a', { href: '#' + target, text: e.qid }), ' ' + e.msg]));
+      });
+      errBox.appendChild(el('p', { text: '내려받기 전에 고쳐야 할 입력란이 있습니다.' }));
+      errBox.appendChild(ul);
+    }
+    if (open.length) {
+      var ol = el('ul');
+      open.forEach(function (r) {
+        ol.appendChild(el('li', null, [el('a', { href: '#' + r.el.id, text: r.q.id }), ' ' + r.q.text]));
+      });
+      openBox.appendChild(el('p', { text: '아직 답하지 않은 문항 ' + open.length + '개. 비워 둔 채 내려받아도 됩니다. 회계사가 이어서 묻습니다.' }));
+      openBox.appendChild(ol);
+    }
+    var blocked = built.errors.length > 0;
+    ['download', 'download-top'].forEach(function (id) { document.getElementById(id).disabled = blocked; });
+    document.getElementById('preview').textContent = JSON.stringify(built.facts, null, 2);
+    return built;
+  }
+
+  // ---- 내려받기 -----------------------------------------------------------
+  function download() {
+    var built = refresh();
+    if (built.errors.length) return;
+    var text = JSON.stringify(built.facts, null, 2) + '\n';
+    var blob = new Blob([text], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = el('a', { href: url, download: FILE_NAME });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  // ---- 시작 ---------------------------------------------------------------
+  document.getElementById('add-asset').addEventListener('click', function () {
+    store.assets.push({ id: '자산' + store.nextAsset++, ans: {}, mo: {} });
+    buildAll(); touch();
+  });
+  document.getElementById('hide-pending').addEventListener('change', function (e) { store.hidePending = e.target.checked; touch(); });
+  document.getElementById('download').addEventListener('click', download);
+  document.getElementById('download-top').addEventListener('click', download);
+  document.getElementById('reset').addEventListener('click', function () {
+    if (!window.confirm('입력한 내용을 모두 지우고 다시 시작합니다. 계속하려면 확인을 누르세요.')) return;
+    try { window.localStorage.removeItem(STORE_KEY); } catch (e) { /* 무시 */ }
+    store = fresh();
+    buildAll(); touch();
+  });
+
+  try {
+    buildAll();
+    refresh();
+  } catch (e) {
+    // 임시로 남은 답이 지금 양식과 맞지 않으면 버리고 빈 양식으로 다시 시작한다
+    try { window.localStorage.removeItem(STORE_KEY); } catch (e2) { /* 무시 */ }
+    store = fresh();
+    buildAll();
+    refresh();
+  }
+
+  // 점검과 시험이 같은 논리를 부를 수 있게 둔다(네트워크와 무관)
+  window.gridieYangdo = {
+    core: core,
+    getStore: function () { return store; },
+    setStore: function (s) { store = s; buildAll(); touch(); },
+    facts: function () { return core.buildFacts(store).facts; },
+    refresh: refresh
+  };
+})();
+</script>
+</body>
+</html>

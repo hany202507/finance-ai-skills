@@ -1,0 +1,25 @@
+{
+ "id": "5a31d2b036008e24",
+ "파일": {
+  "../efile/codes_c116300.json": "839aa48df72a6e77fd59b205da631f2fa66ea21fd2d83d80b44e023fe0fe9a87",
+  "../efile/법정동코드.json": "81e155e0dc5257cfa8e37c8bb138d2f028a9907046b20730528ae856dfd6ee24",
+  "../forms/매핑/본지.json": "99587c7521553871370e5cb1c0daa24227158aa44698a2dd0b99dd0ff09a34da",
+  "../forms/매핑/부표1.json": "5be6fcb56b669490c55d0f7a5f3db259a9a9e94c8e50f5123d86666000736b2d",
+  "../forms/매핑/부표3.json": "179fe9e01129900becadaf089594315132ca55f15e1755dbda8735456294af6d",
+  "../forms/매핑/지방.json": "2527f33348eeb32f83f1d59627cb09675b756cdb549007edb6ab93ad8fd35001",
+  "../forms/서식판.json": "6f07923ae2253c2de425232f379894019fc4cca310024bf483dd132194fcb3f7",
+  "../forms/필드목록/필드목록_별지84_신고및납부계산서.json": "0041e686ca436d9b7fa279b7493663d5b79335d7079d38d67e06418e343f1869",
+  "../forms/필드목록/필드목록_별지84부표1_양도소득금액계산명세서.json": "ea62bd6eb9e53b8a07e0efdbf0141a53fafdaa99188ec75874ece46e8dad5113",
+  "../forms/필드목록/필드목록_별지84부표3_2_취득가액및필요경비계산상세명세서.json": "a101c3ac4ceb005ad798acd107024d0c0ce702c56b65ea896a7afb3d81fcc99b",
+  "../forms/필드목록/필드목록_별지84부표3_취득가액및필요경비계산상세명세서.json": "efe8663da9c36d9467ac21b32ea06ae18682095fb0b0c59f804773d4ee364bb3",
+  "../forms/필드목록/필드목록_지방세_별지40의11_신고및납부계산서.json": "c8d3f8c6d84ed3d8e62dc6100c8c34e526b4902123e002e2be278aec62da6fa7",
+  "ruleset.json": "2fa5ea30db1bcd7b34faa2bfac513a8ad0b0ecf29509c2d197f2fa1a739bbc08",
+  "고시/조정대상지역.json": "bfca44562d5457182976b27363c0062e474054a9462d7da6fc71e269eca80cff",
+  "고시/투기과열지구.json": "7b26b4b5f6d64d2ec9a03b0fba41741a47843bf9b6c85f1439c3a7abb05c3066",
+  "고시/투기지역.json": "93dd90d7c6813b8a109357fde66a80373d88a48a95d5a5262a1f1960c2e9c7fb",
+  "공휴일.json": "79036596ec9596dd2b0383dd8e874c919eec3f896046cd057404fd6c0375453b",
+  "코드표.json": "cc13ee60829c2d585bdbb386a2682e1b90085ba34d7f7e21d2ba9b76344fdca2",
+  "행정구역_대응.json": "0112576f05caad8658502efff7f45f1252fa5c21b1522d29bc25b9978c56c5c4"
+ },
+ "확인일": "2026-10-13"
+}

@@ -1,0 +1,11 @@
+
+==== 법령검토 · 세법자문-회신 스킬을 쓰려면 (처음 한 번) ====
+1) 법제처 OPEN API 인증값(OC): https://open.law.go.kr 회원가입 -> OPEN API 신청 (승인 1~2일)
+   OC 는 가입 아이디(이메일 @ 앞부분). 법령 본문·부칙, 행정규칙, 판례·해석례·헌재결정례, 별표·서식, 조세심판원을 모두 체크
+2) korean-law 서버 등록 (<본인OC> 를 바꿔 넣는다):
+   claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "{MCP_INDEX}"
+3) 세법을 볼 때 TaxDoctor: https://taxdoctorai.com 무료 가입 -> 클로드 설정 > 커넥터 > 커스텀 커넥터 추가
+   주소 https://mcp.taxdoctorai.com/mcp
+4) 앱을 다시 열고 "민법 제162조 원문 찾아줘" 로 확인
+자세한 안내: https://github.com/hany202507/finance-ai-skills/tree/main/skills/%EB%B2%95%EB%A0%B9%EA%B2%80%ED%86%A0 (준비 절)
+
