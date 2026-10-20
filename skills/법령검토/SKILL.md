@@ -18,12 +18,12 @@ description: 한국 법령(노무·근로기준법, 상법·회사법, 민법, �
 | 필요한 것 | 언제 | 없으면 |
 |---|---|---|
 | korean-law 법령 서버(로컬, 법제처 OPEN API 인증값 OC 필요) | 늘 | 조문을 읽을 수 없다 |
-| 법제처 통합검색 커넥터(`https://mcp.gomdori.app/law`) | 행정해석·판례 본문 검색·고시 | 고용노동부 행정해석과 판례 본문 검색을 못 한다 |
+| 법제처 통합검색 커넥터(korean-law-mcp, 주소 끝에 `?oc=<본인OC>`) | 행정해석·판례 본문 검색·고시 | 고용노동부 행정해석과 판례 본문 검색을 못 한다 |
 | TaxDoctor 커넥터 | 세법을 볼 때 | 세법 조문이 ★★☆ 까지만 된다 |
 | Node.js 18 이상, 파이썬 3.10 이상 | korean-law 서버, 최신화 점검 스크립트 | 서버가 뜨지 않거나 판 목록 대조를 못 한다 |
 
 1. **설치 스크립트.** 스킬 폴더와 korean-law 서버(`~/.claude/mcp/korean-law`)를 함께 넣는다. 윈도우 PowerShell 은 `irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex`, 맥·리눅스는 `curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh`
-2. **법제처 OPEN API 인증값(OC).** `open.law.go.kr` 회원가입 → 「OPEN API 신청」에서 활용신청을 한다. 승인까지 하루 이틀 걸린다. OC 는 가입 아이디다(이메일이 `hong@gmail.com` 이면 `hong`)
+2. **법제처 OPEN API 인증값(OC).** `open.law.go.kr` 회원가입 → 「OPEN API 신청」에서 활용신청을 한다. 승인까지 하루 이틀 걸린다. OC 는 가입 아이디다(이메일이 `hong@gmail.com` 이면 `hong`). 같은 OC 를 korean-law 서버(3번)와 법제처 통합검색(4번)에 넣는다
    - 신청 화면에서 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크한다. 좁게 신청하면 오류 없이 0건이 나온다
    - IP 칸이 있으면 쓰는 PC 의 공인 IP 를 넣는다. 2026-07 법제처 답변으로는 아이디로 호출한다고 하니 신청 화면 안내를 따른다. 문의는 02-2109-6446
 3. **korean-law 등록.** 경로는 절대경로로 적는다. `~` 를 쓰면 연결이 안 된다
@@ -43,11 +43,14 @@ description: 한국 법령(노무·근로기준법, 상법·회사법, 민법, �
    }
    ```
 
-4. **법제처 통합검색.** 클로드 설정 → 커넥터 → 커스텀 커넥터 추가에 `https://mcp.gomdori.app/law` 를 넣는다
+4. **법제처 통합검색(korean-law-mcp).** 클로드 설정 → 커넥터 → 커스텀 커넥터 추가에 `https://mcp.gomdori.app/law?oc=<본인OC>` 를 넣는다. 터미널에서는 `claude mcp add -s user --transport http law-search "https://mcp.gomdori.app/law?oc=<본인OC>"`
+   - `?oc=` 를 빼면 키 없는 사용자 모두가 서버 키 한도 하나를 나눠 써서 요청 한도 초과(429)가 잦다. 통합검색이 429 를 내면 사용자에게 주소의 `?oc=` 를 확인하라고 알린다
+   - 커넥터 주소는 고칠 수 없다. `?oc=` 없이 넣었으면 지우고 다시 추가한다
+   - OC 가 이 서버(외부 운영)로 넘어간다. 꺼리면 korean-law-mcp 를 PC 에 직접 설치한다(패키지 README 「내 컴퓨터에 직접 설치」)
 5. **TaxDoctor(세법을 볼 때).** `taxdoctorai.com` 에서 무료 가입한 뒤 커스텀 커넥터 추가에 `https://mcp.taxdoctorai.com/mcp` 를 넣는다. 터미널에서는 `claude mcp add --transport http taxdoctor https://mcp.taxdoctorai.com/mcp`
 6. **확인.** 앱을 껐다 켜고 「민법 제162조 원문 찾아줘」를 묻는다. 법령명·시행일·`law.go.kr` 링크가 나오면 된다
 
-두 서버가 모두 자기 이름을 korean-law 라고 한다. 로컬 서버 도구는 `mcp__korean-law__…` 이고, 통합검색 도구는 `mcp__<id>__…` 이며 설명이 「Korean-law-mcp」로 시작한다. ToolSearch 로 `search_decisions moel` 을 찾으면 통합검색 쪽이 나온다.
+두 서버가 모두 자기 이름을 korean-law 라고 한다. 로컬 서버 도구는 `mcp__korean-law__…` 이다. 통합검색 도구는 커넥터로 넣으면 `mcp__<id>__…`, 터미널로 넣으면 `mcp__law-search__…` 이고 설명이 「Korean-law-mcp」로 시작한다. ToolSearch 로 `search_decisions moel` 을 찾으면 통합검색 쪽이 나온다.
 
 ## 리서치 시간: 최대 10분
 

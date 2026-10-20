@@ -88,7 +88,7 @@ claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈 폴더 절�
 
 세법자문-회신 스킬은 세법 조사를 [TaxDoctor](https://taxdoctorai.com) 커넥터로 합니다. 법령검토 스킬도 세법 조문은 TaxDoctor 와 한 번 더 대조합니다(민법·상법 같은 법은 korean-law 만으로 됩니다). 무료 가입 뒤 클로드 설정 → 커넥터 → 커스텀 커넥터 추가에 `https://mcp.taxdoctorai.com/mcp` 를 넣습니다.
 
-법령검토 스킬로 노무·상법을 볼 때는 고용노동부 행정해석과 판례 본문 검색을 법제처 통합검색 커넥터로 합니다. 커스텀 커넥터 추가에 `https://mcp.gomdori.app/law` 를 넣습니다.
+법령검토 스킬로 노무·상법을 볼 때는 고용노동부 행정해석과 판례 본문 검색을 법제처 통합검색 커넥터로 합니다. 커스텀 커넥터 추가에 `https://mcp.gomdori.app/law?oc=<본인OC>` 를 넣습니다(korean-law-mcp, korean-law 서버와 같은 OC). `?oc=` 를 빼면 키 없는 사용자가 함께 쓰는 한도에 걸려 요청이 자주 막힙니다.
 
 등록한 뒤 앱을 다시 열고 「민법 제162조 원문 찾아줘」를 물어 법령명·시행일·`law.go.kr` 링크가 나오면 됩니다.
 
