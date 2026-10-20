@@ -286,7 +286,7 @@ def _fill(page, fields: dict, values: dict, page_no: int) -> int:
     return n
 
 
-def write(path: Path, inp: Inputs, res: dict, rules: dict, company: str) -> dict:
+def write(path: Path, inp: Inputs, res: dict, rules: dict, company: str, stamp: str = "") -> dict:
     """법정서식 PDF 를 쓴다. 쓴 서식과 쪽 수, 넣은 칸 수를 돌려준다. 공제액을 계산하지 않은 과세연도면 쓰지 않는다."""
     if res["unsupported"]:
         return {"written": False, "why": res["unsupported"]}
@@ -331,6 +331,9 @@ def write(path: Path, inp: Inputs, res: dict, rules: dict, company: str) -> dict
                     put(page, box, text, "c", ROW_SIZE)
                     filled += 1 if text else 0
         made.append(f"roster_{per}")
+    if stamp:                                                  # 잠정치는 쪽마다 맨 위에 표시한다
+        for page in out:
+            put(page, (20, 3, page.rect.width - 20, 17), stamp, "c", 9)
     path.parent.mkdir(parents=True, exist_ok=True)
     out.subset_fonts()
     out.save(path, garbage=3, deflate=True)

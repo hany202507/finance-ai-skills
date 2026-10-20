@@ -36,7 +36,7 @@ def make_input(path: Path, company: dict | None = None, staff=STAFF, years=(2024
     wb = Workbook()
     ws = wb.active
     ws.title = "회사"
-    values = {"과세연도 시작일": D(2025, 1, 1), "과세연도 종료일": D(2025, 12, 31), "기업 구분": "중소기업", "증가 지역 수도권": "Y",
+    values = {"과세연도 시작일": D(2025, 1, 1), "과세연도 종료일": D(2025, 12, 31), "기업 구분": "중소기업", "증가 지역 수도권": "Y", "사원명부 범위 확인": "Y",
               "직전 1차년도 공제액 청년등": 14500000, "직전 1차년도 공제액 청년등 외": 8500000,
               "직전전 1차년도 공제액 청년등 외": 8500000, "전기 신고 직전전 상시근로자 수": 3.0, "전기 신고 직전전 청년등 수": 1.0}
     values.update(company or {})
@@ -407,3 +407,24 @@ def test_law_pdf_fields_exist_in_coords(tmp_path):
             missing = [k for k in v if k not in c["fields"][form]]
             assert not missing, (year, form, missing)
     assert all(len(r) == 22 for per in c["rows"].values() for r in per["cells"])
+
+
+def test_scope_unconfirmed_is_provisional(tmp_path, capsys):
+    """사원명부 범위(임원 · 최대주주·친족 · 계약기간)를 확인했다는 표시가 없으면 잠정치로 알리고 끝 코드 1 로 끝낸다."""
+    root = tmp_path / "가상회사" / "2025 법인세"
+    make_input(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx", company={"사원명부 범위 확인": None})
+    code = cli.main([str(root), "--no-excel"])
+    out = capsys.readouterr().out
+    data = json.loads((root / "_색인" / "통합고용.json").read_text(encoding="utf-8"))
+    assert code == 1 and data["provisional"] is True and "【잠정치】" in out
+    assert data["confirm"][0].startswith("잠정치입니다")
+    part = [t for t in data["confirm"] if t.startswith("1개월 소정근로시간 60시간 이상")]
+    assert len(part) == 1 and "한단시" in part[0] and "강장애" not in part[0]                  # 0.75 요건이 Y 가 아닌 단시간만
+    assert not any(t.startswith("기간제 · 파견") for t in data["confirm"])                    # 기간제 정기간은 계약 1년 미만 Y 라 해당 없음
+    assert (root / "2 조서" / "통합고용_법정서식.pdf").exists()
+
+
+def test_scope_confirmed_is_final(case_dir, capsys):
+    assert cli.main([str(case_dir), "--no-excel"]) == 0
+    data = json.loads((case_dir / "_색인" / "통합고용.json").read_text(encoding="utf-8"))
+    assert data["provisional"] is False and "【잠정치】" not in capsys.readouterr().out

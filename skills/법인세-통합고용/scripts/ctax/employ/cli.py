@@ -2,7 +2,7 @@
 
 읽는 것  00 받은자료/급여/통합고용_입력.xlsx (`--template` 빈 양식, `--sample` 시험용 스무 명, `--input` 다른 파일)
 쓰는 것  2 조서/통합고용_검증.xlsx, 2 조서/통합고용_법정서식.pdf(법제처 서식 원본 위에 값), _색인/통합고용.json, 신고건.json 의 「상시근로자」(ctax wp 가 읽는다)
-끝 코드  0 검산 모두 통과, 1 확인할 검산이 있음, 2 입력 없음
+끝 코드  0 검산 모두 통과, 1 확인할 검산이 있음 또는 사원명부 범위 미확인(잠정치), 2 입력 없음
 """
 from __future__ import annotations
 
@@ -66,6 +66,30 @@ def write_template(path: Path, case: Case) -> None:
     X.widths(ws, [12, 20, 8, 90])
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
+
+
+# ---------------------------------------------------------------- 사원명부 범위 확인
+
+def scope_pending(inp: Inputs) -> list[str]:
+    """상시근로자 범위를 정하는 열(임원 · 최대주주·친족 · 계약 1년 미만 · 0.75 요건)은 급여대장에서 알 수 없다.
+    빈칸은 「아니오」 로 읽히므로, 회사 시트 「사원명부 범위 확인」 이 Y 가 아니면 사람 이름과 함께 잠정치라고 알린다."""
+    if inp.company.scope == "Y":
+        return []
+    st = inp.staff
+    short = [p for p in st if p.kind in ("기간제", "파견") and p.short != "Y"]
+    part = [p for p in st if p.kind == "단시간" and (p.hours or 0) >= 60 and p.supported != "Y"]
+    names = lambda ps: ", ".join(p.name for p in ps[:8]) + (f" 외 {len(ps) - 8}명" if len(ps) > 8 else "")  # noqa: E731
+    out = ["잠정치입니다: 회사 시트 「사원명부 범위 확인」 이 Y 가 아닙니다. 임원 · 최대주주·친족 · 계약 1년 미만 · 0.75 요건은 "
+           "급여대장으로 알 수 없고, 사원명부에서 비운 칸은 「아니오」 로 셌습니다. 근로계약서 · 등기부 · 주주명부로 확인해 사원명부에 적고 "
+           "「사원명부 범위 확인」 을 Y 로 바꾼 뒤 다시 돌리십시오(옛 양식이라 회사 시트에 그 항목이 없으면 항목 · 값 한 줄을 덧붙입니다)"]
+    off, own = sum(p.officer == "Y" for p in st), sum(p.owner == "Y" for p in st)
+    out.append(f"임원 {off}명 · 최대주주·친족 {own}명으로 적혀 있습니다(사원명부 {len(st)}명). 이 열이 원본에 없었다면 임원과 최대주주·친족은 "
+               "상시근로자에서 빠지므로 인원과 공제액이 줄어듭니다")
+    if short:
+        out.append(f"기간제 · 파견 {len(short)}명이 계약 1년 미만이 아닌 것으로 되어 있습니다: {names(short)}. 계약기간이 1년 미만이면 상시근로자가 아닙니다")
+    if part:
+        out.append(f"1개월 소정근로시간 60시간 이상인 단시간근로자 {len(part)}명을 0.5명으로 셌습니다: {names(part)}. 0.75 요건을 채우면 0.75명입니다")
+    return out
 
 
 # ---------------------------------------------------------------- 확인할 것
@@ -259,7 +283,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     rules, rates = load_rules(), load_rates()
     res = compute(inp, rules, rates)
-    notes = memos(inp, res, rules)
+    pending = scope_pending(inp)
+    notes = pending + memos(inp, res, rules)
     wb, checks = book.build(inp, res, rules, rates, notes)
     out = case.out_dir(WP_DIR) / OUT_XLSX
     try:
@@ -271,7 +296,8 @@ def main(argv: list[str] | None = None) -> int:
     back = read_back(out, checks) if excel else None
     pdf_out = case.out_dir(WP_DIR) / lawform.OUT_PDF
     try:
-        legal = lawform.write(pdf_out, inp, res, rules, case.company)
+        legal = lawform.write(pdf_out, inp, res, rules, case.company,
+                              "잠정 · 사원명부 범위(임원 · 최대주주·친족 · 계약기간) 확인 전" if pending else "")
     except PermissionError:
         legal = {"written": False, "why": f"{pdf_out} 가 열려 있어 쓰지 못했습니다. PDF 를 닫고 다시 돌리세요"}
 
@@ -289,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             "people": {per: {"사원명부": len(inp.staff), "재직": sum(1 for r in res["counts"][per].rows if any(r.worked)),
                              "상시근로자": sum(1 for r in res["counts"][per].rows if r.regular and any(r.worked))}
                        for per in PERIODS},
-            "excel": back, "confirm": notes, "workbook": case.rel(out), "input": str(src),
+            "excel": back, "confirm": notes, "provisional": bool(pending), "workbook": case.rel(out), "input": str(src),
             "law_pdf": case.rel(pdf_out) if legal.get("written") else None}
     case.write_json(OUT_JSON, data)
 
@@ -314,11 +340,13 @@ def main(argv: list[str] | None = None) -> int:
             wrote = True
 
     h = head["해당"]
+    if pending:
+        print("【잠정치】 사원명부 범위(임원 · 최대주주·친족 · 계약 1년 미만 · 0.75 요건)를 확인하기 전 값입니다. 확정으로 쓰지 마십시오")
     print(f"통합고용세액공제 {won(res['total'])}원 = 1차 {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
           + (f"+ 신규 {won(res['new_total'])} " if res["regime"] == "2026" else "") + f"+ 추가 {won(res['extra'])}")
     print(f"상시근로자 수: 해당 {h['상시']:.2f}(청년등 {h['청년등']:.2f}) · 직전 {head['직전']['상시']:.2f}"
           f"(청년등 {head['직전']['청년등']:.2f}, {src_of['직전']}) · 증가 {f2(res['d_t']):.2f} · 방식 {res['method']}")
-    code = 0
+    code = 1 if pending else 0
     if back:
         failed = [t for t in back["tests"] if t["result"] == "확인"]
         print(f"엔진 대조 {back['total']}개 중 {back['matched']}개 일치 · 검산 {len(back['tests'])}개 중 {len(back['tests']) - len(failed)}개 통과")
