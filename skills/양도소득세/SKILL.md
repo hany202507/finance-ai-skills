@@ -42,6 +42,19 @@ python scripts/make_return.py --사실관계 sample/a.json --신고인 sample/a_
 
 화면에 `신고서 PDF 두 벌(양도소득세_신고서.pdf, 지방소득세_신고서.pdf)을 만들었다 (종료코드 0)` 이 나오고 `out/` 에는 신고서 PDF 두 벌과 `양도소득세_계산근거.xlsx` 만 있습니다.
 
+## 설치 뒤 점검
+
+세액 계산은 `rules/` 규칙세트로 하고, 근거 조문을 더 찾거나 기준정보를 갱신할 때(5절) 아래 네 가지를 씁니다. 설치를 마치면 이 세션에서 도구가 보이는지 ToolSearch 로 확인하고, 없는 것만 사용자에게 알립니다. 저장소 설치 스크립트(README 「설치」)로 깔았으면 끝에 같은 내용의 「법령 서버 점검」이 나옵니다.
+
+| 확인할 것 | 있으면 보이는 도구 | 없을 때 알릴 것 |
+|---|---|---|
+| korean-law 법령 서버 | `mcp__korean-law__get_law_text` | 설치 경로는 `<홈 폴더 절대경로>/.claude/mcp/korean-law/index.js` 입니다(저장소 설치 스크립트가 넣습니다). 그 경로에 `index.js` 가 없으면 저장소의 `mcp/korean-law` 폴더를 그 경로로 복사하고 Node 패키지를 설치합니다(Node.js 18 이상). 그다음 Claude 앱에 「korean-law 법령 서버를 사용자 범위로 등록해 줘. 실행은 node "<그 경로>", 환경변수 LAW_OC 는 <본인OC>」를 보내고 앱을 껐다 켭니다 |
+| 법제처 OC | korean-law 첫 조회가 인증 오류 없이 응답 | `https://open.law.go.kr` 회원가입 → 「OPEN API 신청」에서 활용신청(승인 1~2일). 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크합니다. OC 는 가입한 이메일의 @ 앞부분인 아이디입니다(`hong@gmail.com` 이면 `hong`) |
+| TaxDoctor | `search_tax`, `get_article` | `https://taxdoctorai.com` 무료 가입 → Claude 설정 → 커넥터 → 커스텀 커넥터 추가, 주소 `https://mcp.taxdoctorai.com/mcp` |
+| 법제처 통합검색(korean-law-mcp) | `legal_research`, `get_annexes` | 커스텀 커넥터 추가, 주소 `https://mcp.gomdori.app/law?oc=<본인OC>`. `?oc=` 를 빼면 OC 없는 사용자끼리 나눠 쓰는 한도에 걸려 자주 막힙니다 |
+
+korean-law 서버가 없으면 OC 가 있는지 먼저 묻습니다. OC 가 없으면 OC 줄부터 알리고, 승인된 뒤 korean-law 등록과 통합검색 주소에 같은 OC 를 넣게 합니다. 다 갖춘 뒤에는 앱을 껐다 켠 뒤 「민법 제162조 원문 찾아줘」로 확인합니다.
+
 ## 0. 기준정보
 
 기준정보(규칙세트, 고시 이력, 코드표, 공휴일 표)는 `rules/` 에 있고 운영자가 만듭니다. 사용자 작업에서는 고치지 않습니다.

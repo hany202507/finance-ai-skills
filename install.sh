@@ -46,4 +46,22 @@ echo "register the hook once in ~/.claude/settings.json (UserPromptSubmit). see 
 if [ -f "$src/install-guide.txt" ]; then
   sed "s|{MCP_INDEX}|$mcpdest/index.js|" "$src/install-guide.txt"
 fi
+# law server check (same text and rules as install.ps1): korean-law and its LAW_OC from ~/.claude.json,
+# TaxDoctor and the law search connector only when added from the terminal (app connectors print as "check")
+if [ -f "$src/install-check.txt" ]; then
+  cfg="$HOME/.claude.json"
+  [ -f "$cfg" ] || cfg=/dev/null
+  kl=missing; oc=missing; td=check; gl=check
+  if grep -q '"korean-law"[[:space:]]*:[[:space:]]*{' "$cfg"; then
+    kl=ok
+    if grep -A12 '"korean-law"[[:space:]]*:[[:space:]]*{' "$cfg" | grep -q '"LAW_OC"[[:space:]]*:[[:space:]]*"[^"<][^"<]*"'; then oc=ok; fi
+  fi
+  if [ -n "${LAW_OC:-}" ]; then oc=ok; fi
+  if grep -q 'taxdoctorai\.com' "$cfg"; then td=ok; fi
+  if grep -q 'mcp\.gomdori\.app' "$cfg"; then gl=ok; fi
+  for k in head "korean-law-$kl" "oc-$oc" "taxdoctor-$td" "gomdori-$gl" tail; do
+    awk -v k="[$k]" '{ sub(/\r$/, "") } $0 == k { p = 1; next } /^\[[a-z-]+\]$/ { p = 0 } p' "$src/install-check.txt" |
+      sed "s|{MCP_INDEX}|$mcpdest/index.js|"
+  done
+fi
 echo "done. restart Claude Code."

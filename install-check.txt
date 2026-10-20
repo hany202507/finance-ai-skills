@@ -1,0 +1,46 @@
+[head]
+
+==== 법령 서버 점검 ====
+양도소득세 · 세법자문-회신 · 법령검토 스킬은 아래 네 가지로 법령 원문을 읽습니다. 없는 것에만 설치 방법을 붙입니다.
+
+[korean-law-ok]
+[있음] korean-law 법령 서버: {MCP_INDEX}
+
+[korean-law-missing]
+[없음] korean-law 법령 서버가 등록돼 있지 않습니다
+  설치 경로: {MCP_INDEX} (이번 설치로 들어갔습니다)
+  등록: Claude 앱에 아래 문장을 보냅니다. <본인OC> 는 아래 법제처 OC 항목에서 받은 OC 로 바꿉니다
+    korean-law 법령 서버를 사용자 범위로 등록해 줘. 실행은 node "{MCP_INDEX}", 환경변수 LAW_OC 는 <본인OC>
+  등록한 뒤 앱을 껐다 켭니다
+
+[oc-ok]
+[있음] 법제처 OC: korean-law 서버 설정에 들어 있습니다
+
+[oc-missing]
+[없음] 법제처 OPEN API 인증값(OC)을 찾지 못했습니다
+  1) https://open.law.go.kr 회원가입 → 「OPEN API 신청」에서 활용신청을 합니다(승인 1~2일)
+  2) 신청 화면에서 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크합니다. 일부만 체크하면 오류 없이 0건이 나옵니다
+  3) OC 는 가입한 이메일의 @ 앞부분인 아이디입니다(hong@gmail.com 이면 hong)
+  4) 승인되면 korean-law 등록 문장과 법제처 통합검색 주소의 <본인OC> 에 넣습니다
+  문의: 법제처 02-2109-6446
+
+[taxdoctor-ok]
+[있음] TaxDoctor: 이 PC 설정에 등록돼 있습니다
+
+[taxdoctor-check]
+[확인] TaxDoctor (세법 조문·예규·판례)
+  Claude 앱 커넥터는 설치 스크립트가 볼 수 없습니다. Claude 설정 → 커넥터에 TaxDoctor 가 없으면 넣습니다
+  1) https://taxdoctorai.com 무료 가입
+  2) 커스텀 커넥터 추가 → 주소 https://mcp.taxdoctorai.com/mcp
+
+[gomdori-ok]
+[있음] 법제처 통합검색(korean-law-mcp): 이 PC 설정에 등록돼 있습니다
+
+[gomdori-check]
+[확인] 법제처 통합검색(korean-law-mcp, 행정해석·판례 본문·고시 검색)
+  Claude 설정 → 커넥터에 없으면 커스텀 커넥터 추가 → 주소 https://mcp.gomdori.app/law?oc=<본인OC>
+  ?oc= 를 빼면 OC 없는 사용자끼리 나눠 쓰는 한도에 걸려 요청이 자주 막힙니다
+
+[tail]
+
+다 갖췄으면 앱을 껐다 켠 뒤 「민법 제162조 원문 찾아줘」를 보냅니다. 법령명 · 시행일 · law.go.kr 링크가 나오면 연결된 것입니다.

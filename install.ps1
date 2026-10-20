@@ -59,6 +59,37 @@ try {
         $text = [IO.File]::ReadAllText($guide, [Text.Encoding]::UTF8)
         Write-Host $text.Replace('{MCP_INDEX}', (Join-Path $mcpDest 'index.js'))
     }
+    # law server check: korean-law (local MCP) and its LAW_OC are read from ~/.claude.json. TaxDoctor and the law
+    # search connector are found there only when added from the terminal; Claude app connectors live in the account,
+    # so they are printed as "check". The text lives in install-check.txt (UTF-8), one [section] per state
+    $check = Join-Path $root 'install-check.txt'
+    if (Test-Path $check) {
+        $sec = @{}
+        $cur = $null
+        foreach ($line in [IO.File]::ReadAllLines($check, [Text.Encoding]::UTF8)) {
+            if ($line -match '^\[([a-z-]+)\]$') { $cur = $Matches[1]; $sec[$cur] = New-Object Collections.Generic.List[string]; continue }
+            if ($cur) { $sec[$cur].Add($line) }
+        }
+        $cfg = ''
+        $cfgPath = Join-Path $HOME '.claude.json'
+        if (Test-Path $cfgPath) { $cfg = [IO.File]::ReadAllText($cfgPath, [Text.Encoding]::UTF8) }
+        $kl = [regex]::Match($cfg, '"korean-law"\s*:\s*\{')
+        $oc = [bool]$env:LAW_OC
+        if ($kl.Success) {
+            $block = $cfg.Substring($kl.Index, [Math]::Min(600, $cfg.Length - $kl.Index))
+            if ([regex]::IsMatch($block, '"LAW_OC"\s*:\s*"[^"<]+"')) { $oc = $true }
+        }
+        $keys = @('head',
+            $(if ($kl.Success) { 'korean-law-ok' } else { 'korean-law-missing' }),
+            $(if ($oc) { 'oc-ok' } else { 'oc-missing' }),
+            $(if ($cfg -match 'taxdoctorai\.com') { 'taxdoctor-ok' } else { 'taxdoctor-check' }),
+            $(if ($cfg -match 'mcp\.gomdori\.app') { 'gomdori-ok' } else { 'gomdori-check' }),
+            'tail')
+        $index = Join-Path $mcpDest 'index.js'
+        foreach ($k in $keys) {
+            if ($sec.ContainsKey($k)) { foreach ($l in $sec[$k]) { Write-Host $l.Replace('{MCP_INDEX}', $index) } }
+        }
+    }
     Write-Host "done. restart Claude Code."
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

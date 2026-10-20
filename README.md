@@ -73,7 +73,11 @@ curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/i
 
 `~/.claude/skills/` 아래에 스킬 폴더가 들어가고, 법령 조회 서버는 `~/.claude/mcp/korean-law` 에, 세법 훅은 `~/.claude/hooks/tax-source-guard.mjs` 에 들어갑니다. Claude Code 를 다시 열면 잡힙니다. 회계·세무 스킬은 파이썬 3.10 이상, 법령 서버는 Node.js 18 이상이 필요합니다. 새 판이 나오면 같은 줄을 다시 실행하면 덮어씁니다.
 
-세법자문-회신·법령검토 스킬을 쓰려면 법령 서버를 한 번 등록합니다. 설치 스크립트가 끝에 같은 안내를 띄웁니다.
+양도소득세 · 세법자문-회신 · 법령검토 스킬은 korean-law 법령 서버, 법제처 OC(OPEN API 인증값), TaxDoctor 커넥터, 법제처 통합검색 커넥터로 법령 원문을 읽습니다. 설치 스크립트는 끝에 「법령 서버 점검」을 띄워, 없는 것만 설치 경로와 주소를 붙여 알려 줍니다. TaxDoctor 와 법제처 통합검색은 Claude 앱 커넥터라 스크립트가 볼 수 없어서, 터미널로 등록한 경우가 아니면 늘 `[확인]` 으로 나옵니다.
+
+Claude 앱에 「hany202507/finance-ai-skills 의 스킬을 설치해 줘」라고 보내 설치해도 됩니다(스킬 하나만 골라도 됩니다). 설치를 마치면 Claude 가 이 대화에서 korean-law(`get_law_text`) · TaxDoctor(`search_tax`) · 법제처 통합검색(`legal_research`) 도구가 보이는지 확인하고, 없는 것만 아래 순서로 안내합니다. 같은 내용을 양도소득세 SKILL.md 「설치 뒤 점검」 절과 세법자문-회신 · 법령검토 SKILL.md 「준비」 절에도 적었습니다.
+
+법령 서버는 한 번만 등록합니다.
 
 1. 법제처 OPEN API 인증값(OC)을 받습니다. [open.law.go.kr](https://open.law.go.kr) 에 회원가입하고 「OPEN API 신청」에서 활용신청을 합니다(승인 1~2일). OC 는 가입 아이디입니다(이메일이 `hong@gmail.com` 이면 `hong`).
 2. 신청 화면에서 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크합니다. 좁게 신청하면 오류 없이 0건이 나옵니다.
