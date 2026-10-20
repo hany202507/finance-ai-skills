@@ -1,0 +1,157 @@
+# 계정 매핑 사전 (R3, 2026-10-05). audit/analysis 가 읽는다.
+#
+# 시산표 계정 → accounts id(분석 규칙이 부르는 이름) → 4000 영역 · 구분(section) · 표시과목 기본값
+# → 전기 재무제표 과목 이름 맞춤. 표시과목은 회사제시 시산표의 표시과목 열이 먼저다. 이 파일의 label 은 그 열이 없을 때만 쓴다.
+#
+# 매핑 순서(결정적)
+#   1. 계정명(공백 · 괄호를 지운 이름)이 names 의 정규식에 맞는 id. 둘 이상이면 codes 에 계정코드 앞 3글자가 있는 쪽
+#   2. 이름이 안 맞으면 codes(더존 계정코드 앞 3글자)
+#   3. 그래도 없으면 id 없음. section 은 코드 범위로 정하고 area 는 비운다(분석.json unmapped 에 남기고 회계사 확인을 받는다)
+#   names 는 위에서부터 본다. 매출원가처럼 다른 이름을 품는 이름은 앞에 둔다.
+#
+# 전기 과목 이름 맞춤
+#   전기 재무제표 과목은 당기 표시과목과 이름 · 묶음이 다를 수 있다(예: 전기 '예수금·부가세예수금·미지급법인세' 한 줄).
+#   과목 이름을 '·' 와 ',' 로 나눈 낱말마다 (가) 당기 표시과목, (나) 계정명, (다) 아래 label_aliases 의 같은 뜻 이름 중
+#   하나와 같으면 그 계정에 잇는다. 이어진 당기 과목과 전기 과목을 한 비교 줄로 묶는다(2120A · 8100B 전기 열).
+#   subtotals 의 과목은 합계 줄이라 계정에 잇지 않고 엔진 합계와 따로 대사한다.
+#
+# 영역(area): 4000 계정별 조서 번호의 영문 부분. folder_standard.yaml 의 4000 조서 목록과 같다. CL 은 우발부채 · 약정사항(주석)
+
+areas:
+  A: 현금및현금성자산
+  B: 유가증권
+  C: 매출채권
+  D: 기타유동자산
+  E: 재고자산
+  G: 유형자산
+  H: 무형자산
+  AA: 매입채무
+  BBDD: 차입금
+  CC: 기타유동부채
+  EE: 급여
+  FF: 충당부채
+  GG: 자본
+  P: 매출
+  Q: 매출원가
+  R: 판매비와관리비
+  T: 법인세
+  CF: 현금흐름표
+  CL: 우발부채·약정사항
+
+# 더존 계정코드 앞 3글자 범위로 정하는 구분(매핑이 안 된 계정용)
+code_sections:
+  - {from: 101, to: 250, section: 자산}
+  - {from: 251, to: 330, section: 부채}
+  - {from: 331, to: 400, section: 자본}
+  - {from: 401, to: 450, section: 수익}
+  - {from: 451, to: 900, section: 비용}
+  - {from: 901, to: 930, section: 수익}
+  - {from: 931, to: 999, section: 비용}
+
+# 이름 · 코드로 매핑되지 않은 계정을 코드 범위로 잇는다(R8, 2026-10-06). 회사가 지은 매출 계정 이름(예: '○○국내매출')을
+# 매출로 보는 단계다. 근거: 더존 표준 계정체계 매출 401~430(reader 의 매출액 사실과 같은 범위). 이름에 '원가' 가 있으면 잇지 않는다
+code_ranges:
+  - {from: 401, to: 430, id: revenue, not_names: ['원가']}
+
+# 표시과목 열이 없는 시산표의 재무제표 표시과목(R8, 2026-10-06). 보고(8810 · 8800)와 조서(3650A · 4000 영역)가 쓴다.
+# 위 accounts 의 label 은 분석 비교 줄(2120A)용 큰 묶음(기타유동자산 · 판매비와관리비 등)이라 재무제표 과목으로는 너무 굵다.
+# 그래서 일반기업회계기준 제2장 표시 과목 이름으로 계정을 묶는 규칙만 여기 따로 둔다. 맞는 규칙이 없으면 계정명이 표시과목이다.
+#   근거: 현금및현금성자산 · 매출채권 · 단기투자자산(단기예금) 실2.25 · 실2.26, 자본금 보통주 · 우선주 구분 2.36,
+#        급여(임원급여 · 급료 · 임금 · 제수당 포함) · 세금과공과 · 무형자산상각비 실2.47, 매입채무(외상매입금 · 지급어음),
+#        당기법인세자산(선납세금) · 당기법인세부채(미지급법인세) 제22장 법인세 표시 과목, 미처분이익잉여금 · 미처리결손금 2.33 이익잉여금(결손금)
+#   names 는 공백 · 괄호를 지운 계정명에 대한 정규식이다. only_with: 그 이름의 계정이 시산표에 함께 있을 때만 적용
+#   보조계정: 이름이 '부모계정_꼬리'(예: 부가세대급금_JP)이고 부모 계정이 시산표에 있으면 부모 계정의 표시과목을 쓴다
+display_lines:
+  - {line: 현금및현금성자산, names: ['^현금$', '보통예금', '당좌예금', '^제예금$', '외화예금', '^현금성자산$']}
+  - {line: 단기금융상품, names: ['^정기예금$', '^정기적금$', '^정기예\.?적금$', '^정기예적금$']}
+  - {line: 매출채권, names: ['^외상매출금$', '^받을어음$']}
+  - {line: 당기법인세자산, names: ['^선납세금$']}
+  - {line: 매입채무, names: ['^외상매입금$', '^지급어음$']}
+  - {line: 당기법인세부채, names: ['^미지급법인세$']}
+  - {line: 보통주자본금, names: ['^자본금$'], only_with: 우선주자본금}
+  - {line: 미처분이익잉여금, names: ['^이월이익잉여금$', '^미처분이익잉여금$']}
+  - {line: 미처리결손금, names: ['^이월결손금$', '^미처리결손금$']}
+  - {line: 급여, names: ['^직원급여$', '^임원급여$', '^상여금$', '^급료', '^제수당$', '^급여$']}
+  - {line: 세금과공과, names: ['^세금과공과']}
+  - {line: 무형자산상각비, names: ['^무형고정자산상각', '^무형자산상각']}
+
+# 같은 뜻의 과목 이름(전기 재무제표와 당기 표시과목을 맞출 때만 쓴다)
+label_aliases:
+  - [매출액, 매출, 수익]
+  - [금융원가, 금융비용, 이자비용]
+  - [당기법인세부채, 미지급법인세]
+  - [자본잉여금, 주식발행초과금]
+  - [현금및현금성자산, 현금및현금등가물]
+  - [판매비와관리비, 판매관리비, 판관비]
+  - [법인세비용, 법인세등]
+  - [선수금, 계약부채]
+
+# 전기 재무제표의 합계 줄. 계정에 잇지 않는다
+subtotals: [자산총계, 부채총계, 자본총계, 부채와자본총계, 부채및자본총계, 매출총이익, 영업이익, 영업손실,
+            법인세비용차감전순이익, 법인세차감전순이익, 법인세비용차감전순손실, 법인세차감전순손실, 당기순이익, 당기순손실,
+            유동자산, 비유동자산, 유동부채, 비유동부채]
+
+accounts:
+  # ------------------------------------------------------------ 자산
+  - {id: cash, label: 현금및현금성자산, section: 자산, area: A, names: ['^현금$', '보통예금', '당좌예금', '제예금', '외화예금'], codes: ['101', '102', '103']}
+  # R8: 단기예금은 단기투자자산(일반기업회계기준 실2.26). 4000A 에서 본다(workpapers.yaml line_areas 단기금융상품 A)
+  - {id: short_term_deposits, label: 단기금융상품, section: 자산, area: A, names: ['^정기예금$', '^정기적금$', '^정기예\.?적금$'], codes: ['105', '106']}
+  - {id: allowance_doubtful, label: 매출채권, section: 자산, area: C, contra: true, names: ['대손충당금'], codes: ['109', '111']}
+  - {id: accounts_receivable, label: 매출채권, section: 자산, area: C, names: ['외상매출금', '받을어음', '^매출채권$'], codes: ['108', '110']}
+  - {id: loans_receivable, label: 단기대여금, section: 자산, area: D, names: ['대여금'], codes: ['114', '179']}
+  - {id: other_receivables, label: 기타유동자산, section: 자산, area: D, names: ['^미수금$', '^미수수익$'], codes: ['120', '116']}
+  - {id: advances, label: 선급금, section: 자산, area: D, names: ['^선급금$'], codes: ['131']}
+  - {id: prepaid_expenses, label: 기타유동자산, section: 자산, area: D, names: ['선급비용'], codes: ['133']}
+  - {id: prepaid_income_tax, label: 당기법인세자산, section: 자산, area: T, names: ['^선납세금$'], codes: ['136']}
+  - {id: suspense_payments, label: 가지급금, section: 자산, area: D, names: ['가지급금', '전도금'], codes: ['134']}
+  - {id: vat_input, label: 기타유동자산, section: 자산, area: D, names: ['부가세대급금', '부가가치세대급금'], codes: ['135']}
+  - {id: inventory, label: 재고자산, section: 자산, area: E, names: ['재고자산', '^제품$', '^상품$', '원재료', '재공품', '부재료', '저장품'], codes: ['146', '150', '153', '162', '169']}
+  - {id: investments, label: 투자자산, section: 자산, area: B, names: ['투자증권', '유가증권', '매도가능증권', '지분법', '단기매매증권'], codes: ['107', '178', '180']}
+  - {id: accumulated_depreciation, label: 유형자산, section: 자산, area: G, contra: true, names: ['감가상각누계액'], codes: ['203', '205', '207', '209', '211', '213']}
+  - {id: ppe, label: 유형자산, section: 자산, area: G, names: ['^토지$', '^건물$', '구축물', '기계장치', '차량운반구', '공구와기구', '^비품$', '건설중인자산', '^시설장치$'], codes: ['201', '202', '204', '206', '208', '210', '212', '214']}
+  # 「경상연구개발비」 · 「연구개발비」 는 비용이다. 이름만으로 맞출 때(전기 재무제표 과목 맞춤) 무형자산 「개발비」 와 섞이지 않게 앞에 「연구」 가 붙은 것은 뺀다(2026-10-18)
+  - {id: intangibles, label: 무형자산, section: 자산, area: H, names: ['(?<!연구)개발비', '^소프트웨어$', '영업권', '특허권', '산업재산권', '건설중인무형자산'], codes: ['226', '231', '232', '239']}
+  # 보증금은 4000D(workpapers.yaml line_areas 보증금 · 임차보증금 D). 2026-10-13 가온정밀 시산표에서 매핑이 빠져 조서에서 조용히 빠지던 것을 넣었다
+  - {id: lease_deposits, label: 임차보증금, section: 자산, area: D, names: ['^임차보증금$'], codes: []}
+  - {id: other_deposits, label: 기타보증금, section: 자산, area: D, names: ['^기타보증금$', '^보증금$'], codes: []}
+  # ------------------------------------------------------------ 부채
+  - {id: accounts_payable, label: 매입채무, section: 부채, area: AA, names: ['외상매입금', '지급어음', '^매입채무$'], codes: ['251', '252']}
+  - {id: other_payables, label: 기타유동부채, section: 부채, area: CC, names: ['^미지급금$'], codes: ['253']}
+  - {id: withholding_payable, label: 기타유동부채, section: 부채, area: CC, names: ['^예수금$'], codes: ['254']}
+  - {id: vat_output, label: 기타유동부채, section: 부채, area: CC, names: ['부가세예수금', '부가가치세예수금'], codes: ['255']}
+  - {id: advances_received, label: 기타유동부채, section: 부채, area: CC, names: ['^선수금$'], codes: ['259']}
+  - {id: accrued_expenses, label: 기타유동부채, section: 부채, area: CC, names: ['미지급비용'], codes: ['262']}
+  - {id: income_tax_payable, label: 당기법인세부채, section: 부채, area: T, names: ['미지급법인세', '당기법인세부채'], codes: ['261']}
+  - {id: dividends_payable, label: 기타유동부채, section: 부채, area: GG, names: ['미지급배당금'], codes: ['265']}
+  - {id: borrowings, label: 차입금, section: 부채, area: BBDD, names: ['단기차입금', '장기차입금', '유동성장기부채', '^차입금$', '^사채$'], codes: ['260', '264', '291', '293']}
+  - {id: retirement_liability, label: 퇴직급여충당부채, section: 부채, area: EE, names: ['퇴직급여충당부채', '퇴직급여부채'], codes: ['295']}
+  # 충당부채는 FF(workpapers.yaml line_areas 충당부채 FF)
+  - {id: restoration_provision, label: 복구충당부채, section: 부채, area: FF, names: ['복구충당부채', '^충당부채$', '판매보증충당부채', '하자보수충당부채'], codes: []}
+  # ------------------------------------------------------------ 자본
+  - {id: capital_stock, label: 자본금, section: 자본, area: GG, names: ['^자본금$', '보통주자본금', '우선주자본금'], codes: ['331', '332']}
+  - {id: share_premium, label: 자본잉여금, section: 자본, area: GG, names: ['주식발행초과금', '자본잉여금'], codes: ['341']}
+  # 주식기준보상(2026-10-19 가상 회사 세트에서 미매핑으로 남음). 부여 · 취소 · 가득 재계산은 자본 조서(4000GG)에서 함께 본다.
+  # 비용 쪽도 같은 영역에 둔다(4000EE 로 옮길지는 회계사 확인, docs/specs/2026-10-19-감사-가상회사-두시즌-결과.md)
+  - {id: stock_options, label: 기타자본, section: 자본, area: GG, names: ['주식매수선택권', '주식선택권'], codes: []}
+  - {id: subscription_deposit, label: 신주청약증거금, section: 자본, area: GG, names: ['신주청약증거금'], codes: []}
+  - {id: retained_earnings, label: 이익잉여금, section: 자본, area: GG, names: ['이월이익잉여금', '미처분이익잉여금', '이익잉여금', '이익준비금', '결손금'], codes: ['351', '375', '377']}
+  # ------------------------------------------------------------ 손익
+  - {id: cogs, label: 매출원가, section: 비용, area: Q, names: ['매출원가'], codes: ['451', '455']}
+  - {id: revenue, label: 매출액, section: 수익, area: P, names: ['^(제품|상품|용역|공사)?매출$', '^매출액$'], codes: ['401', '404', '411']}
+  - {id: wages_cost, label: 매출원가, section: 비용, area: EE, names: ['^임금$', '^노무비$'], codes: ['504']}
+  - {id: retirement_expense, label: 판매비와관리비, section: 비용, area: EE, names: ['퇴직급여'], codes: ['508', '806']}
+  - {id: salaries, label: 판매비와관리비, section: 비용, area: EE, names: ['^급여$', '임원급여', '직원급여', '^급료', '상여금', '제수당'], codes: ['801', '802', '803']}
+  - {id: depreciation, label: 판매비와관리비, section: 비용, area: G, names: ['^감가상각비$'], codes: ['518', '818']}
+  - {id: rnd_expense, label: 판매비와관리비, section: 비용, area: H, names: ['연구개발비', '경상연구개발비', '연구비'], codes: ['823']}
+  # 무형자산상각비는 무형자산 명세(상각비 명세 · 대장)의 당기 상각비와 맞춘다(analytics.yaml X-ia-amort, 2026-10-18).
+  # 영역은 sga_other 에 있을 때와 같은 R 이다(4000H 로 옮길지는 회계사 판단)
+  - {id: amortization, label: 판매비와관리비, section: 비용, area: R, names: ['무형고정자산상각', '무형자산상각'], codes: ['840']}
+  - {id: share_based_comp, label: 판매비와관리비, section: 비용, area: GG, names: ['주식보상비용', '주식기준보상비용'], codes: []}
+  - {id: sga_other, label: 판매비와관리비, section: 비용, area: R, names: ['복리후생비', '여비교통비', '접대비', '기업업무추진비', '통신비', '세금과공과', '임차료', '보험료', '차량유지비', '운반비', '지급수수료', '광고선전비', '소모품비', '수선비', '교육훈련비', '도서인쇄비', '대손상각비', '건물관리비', '판매수수료'], codes: ['811', '812', '813', '814', '817', '819', '820', '821', '822', '824', '826', '830', '831', '833', '835']}
+  # 소프트웨어사용료는 영업비용으로 보고 4000R 에 둔다(회사 표시과목이 따로 있어 라벨은 계정명). 영역이 맞는지는 회계사 확인 사항
+  - {id: software_fees, label: 소프트웨어사용료, section: 비용, area: R, names: ['^소프트웨어사용료$'], codes: []}
+  - {id: interest_income, label: 금융수익, section: 수익, area: P, names: ['이자수익'], codes: ['901']}
+  - {id: other_income, label: 기타수익, section: 수익, area: P, names: ['잡이익', '유형자산처분이익', '외환차익', '외화환산이익'], codes: ['907', '914', '930']}
+  - {id: interest_expense, label: 금융원가, section: 비용, area: BBDD, names: ['이자비용'], codes: ['931', '951']}
+  - {id: other_expense, label: 기타비용, section: 비용, area: R, names: ['잡손실', '기부금', '유형자산처분손실', '외환차손', '외화환산손실'], codes: ['933', '953', '960', '970']}
+  - {id: income_tax_expense, label: 법인세비용, section: 비용, area: T, names: ['법인세비용', '법인세등'], codes: ['998', '999']}

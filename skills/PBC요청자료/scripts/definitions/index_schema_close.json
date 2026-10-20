@@ -1,0 +1,54 @@
+{
+  "보관.json": {
+    "$comment": "R5 종결(2026-10-05). _보관/<보고서일>/ 보관본마다 한 줄. 해시목록.json 자체의 sha256 을 여기 두어 목록을 바꾸면 verify 가 잡는다. 감사조서는 감사종료 시점부터 8년 보존(외감법 제19조 제2항), 위조·변조·훼손·파기 금지(제19조 제3항)",
+    "type": "object",
+    "required": ["format_version", "archives"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "archives": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["report_date", "archived_at", "path", "hash_list", "hash_list_sha256", "files", "total_size",
+                       "audit_end", "assembly_deadline", "retention_until", "forced", "verifications"],
+          "additionalProperties": false,
+          "properties": {
+            "report_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+            "archived_at": {"type": "string"},
+            "path": {"type": "string", "description": "감사 폴더 기준 보관본 폴더(_보관/<보고서일>[_n])"},
+            "hash_list": {"type": "string"},
+            "hash_list_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "files": {"type": "integer", "minimum": 0},
+            "total_size": {"type": "integer", "minimum": 0},
+            "read_only": {"type": "boolean"},
+            "audit_end": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+            "audit_end_basis": {"enum": ["8700 감사종료일", "감사보고서일"]},
+            "assembly_deadline": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+            "assembled_within_deadline": {"type": "boolean"},
+            "retention_until": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+            "forced": {"type": "boolean"},
+            "force_reason": {"type": ["string", "null"]},
+            "not_reviewed": {"type": "array", "items": {"type": "string"}},
+            "verifications": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["at", "ok"],
+                "additionalProperties": false,
+                "properties": {
+                  "at": {"type": "string"},
+                  "ok": {"type": "boolean"},
+                  "list_ok": {"type": "boolean"},
+                  "changed": {"type": "array", "items": {"type": "string"}},
+                  "missing": {"type": "array", "items": {"type": "string"}},
+                  "new": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

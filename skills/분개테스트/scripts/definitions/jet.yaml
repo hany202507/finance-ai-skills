@@ -1,0 +1,151 @@
+# 분개 테스트(3600-JET) 시험 정의 (R4 실행, 2026-10-05)
+#
+# audit/workpapers/jet.py 가 읽는다. 분개장 전수를 엔진이 판독하고 시험마다 걸린 전표를 결과 목록에 적는다.
+# 시험 문구의 근거: 감사기준서 240(부정) 문단 32(a) · A41~A44, 한공회 3600 부정의 검토 분개 테스트 절차.
+# 기준값(일수 · 비율 · 횟수)은 탐지 감도다. 판단 기준이 아니다. 대표 블라인드 대조로 조정하고 날짜와 까닭을 남긴다.
+#
+# review: required 면 결과 목록의 전표마다 검토 결과를 적어야 검사를 통과한다. optional 이면 시험 단위 확인만 받는다.
+
+version: 1
+
+# 더존 계정코드 앞 세 자리 기준 계정 묶음. 회사 계정코드가 다르면 names 낱말로 찾는다
+accounts:
+  revenue: {ranges: [[401, 430]], names: [매출]}
+  receivable: {ranges: [[108, 110]], names: [외상매출금, 받을어음, 매출채권]}
+  cash: {ranges: [[101, 106]], names: [현금, 예금]}
+  vat_output: {ranges: [[255, 255]], names: [부가세예수금]}
+  other_payable: {ranges: [[253, 253]], names: [미지급금]}
+  asset: {ranges: [[101, 250]]}
+  expense: {ranges: [[451, 899], [951, 999]]}
+
+tests:
+  - id: weekend
+    title: 주말 · 공휴일 전표
+    condition: 전표 일자가 토요일 · 일요일 또는 아래 공휴일
+    review: optional
+  - id: post_ye_reversal
+    title: 기말 후 취소 · 역분개
+    condition: 결산일 후 전표 가운데 결산일 전 window_before 일 안의 전표와 계정 · 거래처 · 금액이 같고 차대가 반대인 것. 원 전표와 짝으로 적는다. 짝이 없어도 결산일 후 매출 차변 전표는 따로 적는다
+    window_before: 45
+    window_after: 60
+    review: required
+  - id: near_ye_large
+    title: 결산일 근처 큰 금액
+    condition: 결산일 전 days 일 안의 전표 가운데 전표 금액이 수행중요성 × ratio 이상
+    days: 15
+    ratio: 0.5
+    review: required
+  - id: rare_pair
+    title: 드문 계정 조합
+    condition: 차변 계정 묶음 · 대변 계정 묶음이 당기에 max_count 번 이하 나온 전표, 또는 아래 rules 에 걸린 전표
+    max_count: 1
+    rules:
+      - {title: 매출 상대 계정이 매출채권 · 현금 · 부가세예수금이 아님, credit: revenue, debit_not: [receivable, cash, revenue]}
+      - {title: 매출 대 미지급금, any_of: [revenue], with: [other_payable]}
+      - {title: 비용을 자산으로 대체, credit: expense, debit: asset}
+      - {title: 부가세예수금 없는 외상 매출, debit: receivable, credit: revenue, without: vat_output}
+    review: required
+  - id: round
+    title: 끝자리 0 반복
+    condition: 전표 금액이 unit 원 단위로 떨어지고 min_amount 원 이상
+    unit: 10000000
+    min_amount: 100000000
+    review: optional
+  - id: no_memo
+    title: 적요 없음
+    condition: 적요가 비어 있는 행이 있는 전표
+    review: optional
+  - id: manual_adjust
+    title: 수기 조정 전표
+    condition: 입력구분 열이 수기 · 수동 · 조정이면 그 전표. 그 열이 없으면 결산일 전 days 일 안에서 적요에 keywords 가 든 전표(열이 없어 적요로 대신함을 시트에 적는다)
+    columns: [입력구분, 전표구분, 입력방법, 작성구분]
+    values: [수기, 수동, 조정, 결산]
+    keywords: [조정, 정산, 대체, 수정, 자산화, 실사]
+    days: 15
+    review: required
+
+# 관공서의 공휴일에 관한 규정(대통령령)과 한국천문연구원 월력요항의 공휴일 · 대체공휴일 · 임시공휴일 · 선거일.
+# 주말은 따로 보므로 주말과 겹친 날은 적지 않았다. 2026 은 월력요항(2025-06 발표)으로 다시 확인할 것.
+holidays:
+  - 2024-01-01
+  - 2024-02-09
+  - 2024-02-12
+  - 2024-03-01
+  - 2024-04-10
+  - 2024-05-06
+  - 2024-05-15
+  - 2024-06-06
+  - 2024-08-15
+  - 2024-09-16
+  - 2024-09-17
+  - 2024-09-18
+  - 2024-10-01
+  - 2024-10-03
+  - 2024-10-09
+  - 2024-12-25
+  - 2025-01-01
+  - 2025-01-27
+  - 2025-01-28
+  - 2025-01-29
+  - 2025-01-30
+  - 2025-03-03
+  - 2025-05-05
+  - 2025-05-06
+  - 2025-06-03
+  - 2025-06-06
+  - 2025-08-15
+  - 2025-10-03
+  - 2025-10-06
+  - 2025-10-07
+  - 2025-10-08
+  - 2025-10-09
+  - 2025-12-25
+  - 2026-01-01
+  - 2026-02-16
+  - 2026-02-17
+  - 2026-02-18
+  - 2026-03-02
+  - 2026-05-05
+  - 2026-05-25
+  - 2026-06-03
+  - 2026-08-17
+  - 2026-09-24
+  - 2026-09-25
+  - 2026-10-05
+  - 2026-10-09
+  - 2026-12-25
+
+# ---------------------------------------------------------------------------
+# 결산조정 전표 유형(R9 묶음 B3, 2026-10-06). 3600-JET 「결산조정 전표」 시트가 쓴다. 시험(걸림)이 아니라 분류표다.
+# 샘플 진단 §6.2: 사람 조서는 결산조정 전표를 유형(미수수익 · 선급비용 반대분개, 감가상각, 대손, 퇴직급여, 외화환산, 원가결산)으로 나눠 본다.
+# 계정 묶음(closing_accounts): ranges(더존 코드 앞 세 자리) · names(계정명에 든 낱말) · exact(계정명 전체) 가운데 하나라도 맞으면 그 묶음이다.
+# 유형(closing_types): pairs 는 [차변 묶음, 대변 묶음]. either 가 참이면 반대 방향(반대분개 · 환입)도 같은 유형이다.
+#   lines 는 그 묶음 계정이 한 줄이라도 있으면 그 유형이다. 위에서부터 처음 맞는 유형 하나만 붙인다.
+closing_accounts:
+  accrued_income: {names: [미수수익]}
+  income: {names: [이자수익, 배당금수익, 임대료수익, 수입수수료]}
+  prepaid: {names: [선급비용]}
+  expense: {ranges: [[801, 899], [931, 960]]}
+  depreciation: {names: [감가상각비, 무형자산상각비, 상각비]}
+  accumulated: {names: [감가상각누계액, 상각누계액]}
+  intangibles: {ranges: [[226, 240]]}
+  bad_debt: {names: [대손상각비, 대손충당금환입]}
+  allowance: {names: [대손충당금]}
+  retirement: {names: [퇴직급여]}
+  retirement_provision: {names: [퇴직급여충당부채, 퇴직연금운용자산, 퇴직보험예치금]}
+  fx: {names: [외화환산이익, 외화환산손실]}
+  cogs: {ranges: [[451, 470]], names: [매출원가]}
+  inventory: {ranges: [[146, 175]], exact: [재고자산, 상품, 제품, 원재료, 부재료, 재공품, 저장품, 반제품]}
+  mfg_cost: {ranges: [[501, 799]]}
+closing_types:
+  - {id: depreciation, title: 감가상각 · 무형자산상각, pairs: [[depreciation, accumulated], [depreciation, intangibles]]}
+  - {id: accrued_income, title: 미수수익 계상 · 반대분개, pairs: [[accrued_income, income]], either: true}
+  - {id: prepaid, title: 선급비용 계상 · 반대분개, pairs: [[prepaid, expense]], either: true}
+  - {id: bad_debt, title: 대손충당금 설정 · 환입, pairs: [[bad_debt, allowance]], either: true}
+  - {id: retirement, title: 퇴직급여충당부채 설정, pairs: [[retirement, retirement_provision]], either: true}
+  - {id: fx, title: 외화환산, lines: [fx]}
+  - {id: cost_close, title: 원가결산(매출원가 · 재고 · 제조원가 대체), pairs: [[cogs, inventory], [inventory, mfg_cost], [cogs, mfg_cost]], either: true}
+# 결산월: 결산일이 든 달. 유형표는 당기 전체와 결산월을 따로 센다
+# 전표 출처: 분개장에 아래 열이 있으면 그 값별로 전표를 세고, manual_values 낱말이 든 값은 수기로 본다(없으면 자동)
+source_columns: [입력구분, 전표구분, 입력방법, 작성구분]
+manual_values: [수기, 수동, 조정, 결산]

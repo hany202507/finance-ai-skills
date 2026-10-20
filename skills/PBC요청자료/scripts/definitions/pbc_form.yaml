@@ -1,0 +1,753 @@
+# 요청자료(PBC) 양식 (2026-10-13)
+#
+# 실제 초도감사 요청자료 목록(Drive 샘플문서 「PBC_초도감사_중간감사_요청자료_20260913.xlsx」)의 구조와 항목을 일반화했다.
+# 회사 이름 · 연도는 지우고 {fy} {py} {ny}(결산 연도 · 전년 · 다음 해, 네 자리)와 {fy2} {py2} {ny2}(두 자리)로 바꿨다.
+# audit/pbcform.py 가 읽어 PBC 조서(1000 감사계약/PBC_요청자료목록.xlsx)의 네 시트를 쓴다.
+#
+#   cat               구분. 초도감사(1차) · 감사계획 · 중간감사 · 기말감사
+#   name · detail     요청자료명 · 요청세부내역(detail 이 비면 name 만)
+#   form              요청형태(Excel file · PDF file …)
+#   engine            pbc_match.yaml row 번호. 이 줄이 그 자료의 받음 · 빠짐 판정을 따른다(같은 번호 첫 줄이 빠진 자료 문구가 된다)
+#   first_year_only   계속감사에서는 뺀다(초도감사에서만 점검하는 결산 인프라 · 통제 설명 자료)
+#   half_only         감사건에 반기 기준일(half_year_end)이 있을 때만 낸다. 원 양식은 다음 해 6월에 하는 초도감사 기준이라
+#                     다음 해 반기 · 6월 · 2분기 · 6개월을 묻는 줄이 있다. 반기 기준일이 없는 기말감사에서는 빼거나 fy_detail 로 바꾼다(2026-10-18)
+#   fy_detail         반기 기준일이 없을 때 쓰는 결산 연도 기준 문구(12월말 · 연간 · 결산일 후 감사보고서일까지)
+#   area              4000 영역(accounts.yaml areas). 시산표 · 재무제표에 그 영역 잔액이 당기 · 전기 모두 없으면
+#                     pbc_match.yaml no_balance.drop 영역은 줄을 빼고, 나머지는 엔진 판정 칸에 「해당 없음 후보」 를 적는다
+#   글자 자리          {fy} {py} {ny} {fy2} {py2} {ny2}, {fs_k}(사업연도 시작일 「2024년 1월 1일」), {fem}(결산 월),
+#                     {after1}(결산일 다음 달 「2025년 1월」). 반기 기준일이 있으면 {ny} {ny2} 는 그 기준일의 연도다
+#   it_questionnaire  3. 전산환경 질의서 문항(major=Ⅰ · Ⅱ, group=번호 제목, item=문항)
+#
+# 문구 규칙: 줄표를 쓰지 않는다. 물음표로 끝내지 않는다는 규칙은 이 양식에 적용하지 않는다(회사에 보내는 질의서 원문이다).
+version: 1
+sheet_names:
+  first_year: 1. 초도감사및중간감사
+  continuing: 1. 감사계획및중간감사
+titles:
+  first_year: 초도감사 요청자료
+  continuing: 감사 요청자료
+notes:
+- 아래 요청자료 중 해당사항 없는 자료인 경우에는 '제공일자'에 N/A로 기재해 주시면 되겠습니다.
+- 또한, 가능한 자료는 Excel file로 제공해 주시고, 제공해주신 File 명칭을 I열에 기재해 주시기 바랍니다.
+rows:
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 재무상태표'
+  form: Excel file
+  engine: 1
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 손익계산서'
+  form: Excel file
+  engine: 1
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 자본변동표'
+  form: Excel file
+  engine: 1
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 현금흐름표'
+  form: Excel file
+  engine: 1
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 합계잔액시산표'
+  form: Excel file
+  engine: 2
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 회계프로그램에서 다운받은 계정별원장 -  Excel file 형태로 Sheet 1개에 계정과목코드, 계정과목명, 전표번호가 표시되도록 다운로드 필요'
+  form: Excel file
+  engine: 3
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 현금흐름정산표'
+  form: Excel file
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: '{fy}년도 계정명세서'
+  form: Excel file
+  engine: 4
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: 결산업무 (전표 작성/검토/승인 및 재무제표 작성 관련 업무)에 대한 업무분장 내역 (담당자명, 담당업무(구체적))
+  form: Excel file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: 회계부서/자금부서/세무부서의 업무분장 내역 (담당자명, 담당업무(구체적))
+  form: Excel file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: 회계 프로그램에 대한 설명자료 및 향후 고도화/신규도입 계획
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 결산 인프라 점검
+  detail: 결산업무를 위해 이용하는 전산정보 및 회계프로그램으로의 인터페이스 현황 (ex, 재고자산의 수불부 - 자체개발한 ERP 이용, 프랜차이즈 가맹점에 대한 매출 관리는 외주프로그램 이용 등등)
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 세무 이슈 점검
+  detail: '{fy}년도 및 {py}년도 법인세 세무조정계산서'
+  form: PDF file
+  engine: 7
+- cat: 초도감사(1차)
+  name: 세무 이슈 점검
+  detail: 최근 세무조사시 추징 내역
+  form: PDF file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 개별 회계이슈 점검
+  detail: 매출 유형별로 수익인식 요건 검토한 문서 - 매출 유형별로 매출처와 체결한 계약서 사 및 회계처리 사례 포함
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 개별 회계이슈 점검
+  detail: 해외 투자주식(지분증권)이 있으면 피투자회사의 {fy}년도 재무제표
+  area: B
+  form: PDF file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 개별 회계이슈 점검
+  detail: 차입원가자본화 여부 및 자본화시 {fy}년도 및 {py}년도 계산내역
+  form: Excel file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: '{fy}년 1월 1일~{ny}년 6월 30일까지 개최된 이사회 및 주주총회의 의사록 사본'
+  fy_detail: '{fs_k}부터 감사보고서일까지 개최된 이사회 및 주주총회의 의사록 사본'
+  form: PDF file
+  engine: 8
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 법인인감 날인대장 ({fy}년 1월 1일~{ny}년 6월 30일)
+  fy_detail: 법인인감 날인대장 ({fs_k}~감사보고서일)
+  form: PDF file
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 사용인감 날인대장 ({fy}년 1월 1일~{ny}년 6월 30일)
+  fy_detail: 사용인감 날인대장 ({fs_k}~감사보고서일)
+  form: PDF file
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 법인인감증명서 교부대장 ({fy}년 1월 1일~{ny}년 6월 30일)
+  fy_detail: 법인인감증명서 교부대장 ({fs_k}~감사보고서일)
+  form: PDF file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 자금사용 및 조달에 관한 일별, 주간별, 월별 보고자료 1건씩
+  form: PDF file
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 인터넷 뱅킹 이용 현황 (금융기관, 이용업무 범위, 자금부서내 업무 분장 내역 포함)
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 자금 집행/지급업무(계좌간 이체 포함)에 대한 설명 자료
+  first_year_only: true
+- cat: 초도감사(1차)
+  name: 자금 통제활동 점검
+  detail: 대금 수금/회수업무(계좌간 이체 포함)에 대한 설명 자료
+  first_year_only: true
+- cat: 감사계획
+  name: 법인등기부등본
+  detail: 법인등기부등본
+  form: PDF file
+- cat: 감사계획
+  name: 사업자등록증
+  detail: 사업자등록증(본점, 지점 All)
+  form: PDF file
+- cat: 감사계획
+  name: 정관
+  detail: 정관
+  form: PDF file
+  engine: 9
+- cat: 감사계획
+  name: 회사 소개자료
+  detail: 회사 소개자료 (PPT 등)
+  form: PDF file
+- cat: 감사계획
+  name: 회계정책집
+  detail: 회사의 회계정책집
+  form: PDF file
+- cat: 감사계획
+  name: 주요계약서
+  detail: 임차계약, 총판/유통계약, 라이선스(상표권) 계약, 플랫폼 입점계약 등 주요 계약서
+- cat: 감사계획
+  name: 매출채권 Aging자료
+  detail: '{fy}년말 매출채권 Aging 자료'
+  area: C
+  form: Excel file
+  engine: 12
+- cat: 감사계획
+  name: 매출채권 대손충당금
+  detail: '{fy}년말 매출채권에 대한 대손충당금 산정내역'
+  area: C
+  form: Excel file
+- cat: 감사계획
+  name: 재고자산수불부
+  detail: '{fy}년도 재고자산 수불부 (타처보관재고자산의 경우 구분 표시)'
+  area: E
+  form: Excel file
+- cat: 감사계획
+  name: 유형자산 상각 상세
+  detail: '{fy}년도 유형자산 상각 File'
+  area: G
+  form: Excel file
+- cat: 감사계획
+  name: 퇴직연금규약
+  detail: 퇴직연금규약
+  form: PDF file
+- cat: 감사계획
+  name: '{ny2}년 반기 재무제표'
+  detail: '{ny}년 반기 재무제표'
+  half_only: true
+  form: Excel file
+- cat: 감사계획
+  name: '{ny2}년 반기 결산명세서'
+  detail: '{ny}년 반기 결산명세서/계정명세서,  (excel file) (작성되어 있는 경우에만)'
+  half_only: true
+  form: Excel file
+- cat: 감사계획
+  name: '{ny2}년 반기 분개장'
+  detail: '{ny}년 반기 분개장 (상세 수준)'
+  half_only: true
+  form: Excel file
+- cat: 감사계획
+  name: '{ny2}년 반기 합계잔액시산표'
+  detail: '{ny}년 반기 합계잔액시산표 (excel file)'
+  half_only: true
+  form: Excel file
+- cat: 감사계획
+  name: 재고자산수불부
+  detail: 기중 재고실사 리스트(excel file)와 실사 차이내역 소명자료(실사일별)
+  area: E
+  form: Excel file
+  engine: 13
+- cat: 중간감사
+  name: 주주명부
+  detail: 주주명부
+  form: PDF file
+- cat: 중간감사
+  name: 조직도
+  detail: 조직도 ({fy2}년말 및 {ny2}년 6월 현재)
+  fy_detail: 조직도 ({fy2}년말 현재)
+  form: PDF file/Excel file
+- cat: 중간감사
+  name: 주요 규정
+  detail: 업무위임전결규정
+- cat: 중간감사
+  name: 급여규정
+  detail: 급여 규정
+- cat: 중간감사
+  name: 퇴직급 규정
+  detail: 퇴직금 지급 규정
+- cat: 중간감사
+  name: 임원퇴직금 규정
+  detail: 임원퇴직금 지급 규정
+- cat: 중간감사
+  name: 퇴직연금규약
+  detail: 퇴직연금규약
+- cat: 중간감사
+  name: 지출 규정
+  detail: 지출 규정
+- cat: 중간감사
+  name: 회계정책집
+  detail: 회사의 회계정책집(수익인식, 재고평가, 감가상각 등)
+- cat: 중간감사
+  name: 특수관계자 거래 {fy2}년
+  detail: 특수관계자와의 거래내역 및 채권채무 내역 ({fy2}년) - 근거자료 포함(계정별원장 등)
+- cat: 중간감사
+  name: 특수관계자 거래 {ny2}년
+  detail: 특수관계자와의 거래내역 및 채권채무 내역 ({ny2}년 2분기) - 근거자료 포함(계정별원장 등)
+  half_only: true
+- cat: 중간감사
+  name: 매출채권 증감내역
+  detail: 매출처별 매출채권 증감 내역 ({fy2}년 12개월, {ny2}년 6개월 - 2개기간, 거래처명/사업자번호 포함)
+  fy_detail: 매출처별 매출채권 증감 내역 ({fy2}년 12개월, 거래처명/사업자번호 포함)
+  area: C
+- cat: 중간감사
+  name: 매출채권 신용/회수 조건
+  detail: 주요 매출거래처의 신용부여 내역/결제조건 (ex, 국내 - 세금계산서 발행후 XX일 어음/현금 등, 해외 - 선적후 XX일 등)
+  area: C
+- cat: 중간감사
+  name: 매출채권연령표
+  detail: 매출채권 연령표 ({fy2}년말, {ny2}년 6월말 - 2개 시점)
+  fy_detail: 매출채권 연령표 ({fy2}년말)
+  area: C
+  engine: 12
+- cat: 중간감사
+  name: 매출채권 대손정책
+  detail: 매출채권 대손설정 정책 설명
+  area: C
+- cat: 중간감사
+  name: 대손충당금 설정내역
+  detail: 매출채권에 대한 대손충당금 설정내역 ({fy2}년말, {ny2}년 6월말 - 2개 시점)
+  fy_detail: 매출채권에 대한 대손충당금 설정내역 ({fy2}년말)
+  area: C
+- cat: 중간감사
+  name: 재고자산수불부
+  detail: 재고자산 수불부({py2}년, {fy2}년, {ny2}년 6월 - 3개기간) (타처보관재고자산의 경우 구분 표시)
+  fy_detail: 재고자산 수불부({py2}년, {fy2}년 - 2개기간) (타처보관재고자산의 경우 구분 표시)
+  area: E
+- cat: 중간감사
+  name: 재고평가정책
+  detail: 재고자산 평가정책 설명(반품 정책 및 반품충당부채(또는 매출차감) 산정 근거 포함)
+  area: E
+- cat: 중간감사
+  name: 제품원가계산자료
+  detail: '{ny}년 6월 제품원가계산 자료'
+  fy_detail: '{fy}년 {fem}월 제품원가계산 자료'
+  area: E
+- cat: 중간감사
+  name: 타처보관재고
+  detail: 타처보관 재고자산 내역 ({fy2}년말, {ny2}년 6월말)
+  fy_detail: 타처보관 재고자산 내역 ({fy2}년말)
+  area: E
+- cat: 중간감사
+  name: 유무형자산 명세
+  detail: ( {fy2}년말 및 {ny2}년 6월말) 유형자산 명세 , 상표권·라이선스 등 무형자산 명세 및 손상검토 자료
+  fy_detail: ({fy2}년말) 유형자산 명세 , 상표권·라이선스 등 무형자산 명세 및 손상검토 자료
+  engine: 14
+- cat: 중간감사
+  name: 감가상각 세부자료
+  detail: 유형자산, 무형자산 상각 File ({fy}년도, {ny}년 6개월 기간)
+  fy_detail: 유형자산, 무형자산 상각 File ({fy}년도)
+- cat: 중간감사
+  name: 대금지급 조건
+  detail: 주요 매입처의 매입처별 대금지급 조건 (ex, 검수후 XX일 현금/전자어음, 100% 선금 등)
+  area: AA
+- cat: 중간감사
+  name: 매입채무 증감내역
+  detail: 매입처별 매입채무 증감 내역 ({fy2}년 12개월, {ny2}년 6개월 - 2개 기간, 거래처명/사업자번호 포함)
+  fy_detail: 매입처별 매입채무 증감 내역 ({fy2}년 12개월, 거래처명/사업자번호 포함)
+  area: AA
+- cat: 중간감사
+  name: 미지급금 증감내역
+  detail: 매입처별 미지급금 증감 내역 ({fy2}년 12개월, {ny2}년 6개월 - 2개 기간, 거래처명/사업자번호 포함)
+  fy_detail: 매입처별 미지급금 증감 내역 ({fy2}년 12개월, 거래처명/사업자번호 포함)
+- cat: 중간감사
+  name: 급여대장
+  detail: '{ny2}년 1월~6월 급여대장 (상여 포함)'
+  fy_detail: '{fy}년 월별 급여대장 (12개월, 상여 포함)'
+  engine: 16
+- cat: 중간감사
+  name: 연차수당내역
+  detail: 연차수당 계산내역 ({fy2}년말, {ny2}년 6월말) - 단, 6월말은 작성되는 경우에만 제출 요청 드립니다.
+  fy_detail: 연차수당 계산내역 ({fy2}년말)
+- cat: 중간감사
+  name: 퇴직급여충당부채 설정내역
+  detail: 퇴직급여충당부채 계산내역 ({fy2}년말, {ny2}년 6월말)
+  fy_detail: 퇴직급여충당부채 계산내역 ({fy2}년말)
+- cat: 중간감사
+  name: 예금/차입금 등 명세
+  detail: 차입금 약정서, 이자율·상환조건, 약정사항/담보제공내역 명세 ({fy2}년 12월말 및 {ny2}년 6월말)
+  fy_detail: 차입금 약정서, 이자율·상환조건, 약정사항/담보제공내역 명세 ({fy2}년 {fem}월말)
+  area: BBDD
+  engine: 11
+- cat: 중간감사
+  name: 신규 차입금
+  detail: 신규 차입금에 대한 차입약정서, 입금증빙
+  area: BBDD
+- cat: 중간감사
+  name: 차입금 만기
+  detail: 차입금 상환스케줄
+  area: BBDD
+- cat: 중간감사
+  name: 사업계획 실적 분석
+  detail: '{ny}년 사업계획 대비 상반기 누적 실적 분석 자료'
+  half_only: true
+- cat: 중간감사
+  name: 원가계산
+  detail: 제품원가계산 설명자료
+  area: E
+- cat: 중간감사
+  name: 주요 매출항목
+  detail: '{fy2}년 연간 및 {ny2}년 6개월 매출 상위 10개 품목 리스트 (품목명, 금액, 주요 매출처)'
+  fy_detail: '{fy2}년 연간 매출 상위 10개 품목 리스트 (품목명, 금액, 주요 매출처)'
+- cat: 중간감사
+  name: 주요 매입항목
+  detail: '{fy2}년 연간 및 {ny2}년 6개월 원재료 매입 상위 10개 품목 리스트 (품목명, 금액, 주요 매입처)'
+  fy_detail: '{fy2}년 연간 원재료 매입 상위 10개 품목 리스트 (품목명, 금액, 주요 매입처)'
+- cat: 중간감사
+  name: 매출마감
+  detail: 당기 6개월 매출 세부내역 (마감자료)
+  fy_detail: 당기 12개월 매출 세부내역 (월별 마감자료)
+- cat: 중간감사
+  name: 매입마감
+  detail: 당기 6개월 매입 세부 내역 (마감자료)
+  fy_detail: 당기 12개월 매입 세부 내역 (월별 마감자료)
+- cat: 중간감사
+  name: 소송사건
+  detail: 당기에 종료되었거나 현재 진행중인 소송사건 현황
+  engine: 17
+- cat: 중간감사
+  name: 윤리서약서
+  detail: 윤리규정 및 윤리서약서
+- cat: 중간감사
+  name: 인원현황
+  detail: 인원 현황 ({fy2}년말~{ny2}년 6월까지 월별 변동내역 포함)
+  fy_detail: 인원 현황 ({fy2}년 월별 변동내역 포함)
+- cat: 중간감사
+  name: 업무흐름도(Flow chart)
+  detail: 매출, 매입(구매), 생산/재고, 자금, 인사 및 결산 프로세스별 업무흐름도(Flow chart)
+- cat: 중간감사
+  name: 부정에 대한 경영진 질문서
+  detail: 질의서 송부하오니 작성하여 송부바랍니다.
+  form: PDF
+- cat: 중간감사
+  name: 전산일반환경
+  detail: '"3. 전산환경" sheet의 질문지에 대한 답변 및 각 샘플문서 요청 드립니다.'
+- cat: 중간감사
+  name: 전산보안
+  detail: 회사의 데이터 백업 및 패스워드 관리 현황에 대해 "4. 보완" sheet 작성 요청 드립니다.
+- cat: 감사계획
+  name: 부가가치세 신고서
+  detail: '{fy}년 부가가치세 신고서(1기·2기, 예정·확정)와 부속서류'
+  form: PDF file
+  engine: 5
+- cat: 감사계획
+  name: 원천징수이행상황신고서
+  detail: '{fy}년 원천징수이행상황신고서(1~12월)'
+  form: PDF file
+  engine: 6
+- cat: 감사계획
+  name: 금융기관 거래 목록
+  detail: 금융기관 거래 목록(기중 해지 계좌 포함)과 {fy}년 말 잔액증명
+  form: Excel file
+  engine: 10
+- cat: 중간감사
+  name: 개발 프로젝트 목록
+  detail: 개발 프로젝트 목록과 개발비 자산화 근거(있는 경우)
+  area: H
+  engine: 15
+- cat: 기말감사
+  name: 보험가입 리스트
+  detail: 회사 보험가입 현황(보험사, 보험종류, 피보험 자산, 보험기간, 보험금액)과 보험증권 사본
+  form: Excel file
+- cat: 기말감사
+  name: 복구충당부채 산정내역
+  detail: '{fy2}년말 복구충당부채 산정내역(임차 계약별 복구 예상비용, 할인율, 사용기간)'
+  form: Excel file
+  area: FF
+- cat: 기말감사
+  name: 정부보조금 관리대장
+  detail: '{fy}년 정부보조금 수령 · 사용 관리대장과 협약서(과제별 수령액, 사용액, 반환 의무)'
+  form: Excel file
+- cat: 기말감사
+  name: 결산체크리스트
+  detail: '{fy}년 결산체크리스트(결산 절차별 담당자, 완료일, 검토자)'
+  form: Excel file
+- cat: 기말감사
+  name: 월 · 분기 결산 보고자료
+  detail: '{fy}년 월별 · 분기별 결산 보고자료(경영진 · 이사회 보고본)'
+  form: PDF file/Excel file
+- cat: 기말감사
+  name: 매출 레콘
+  detail: '매출 원장, 결제(PG · 입금) 내역, 세금계산서, 부가세 신고 매출을 맞춘 대사표({fy}년 분기별)'
+  form: Excel file
+- cat: 기말감사
+  name: 해외 자회사 투자 증빙
+  detail: 해외 자회사 출자 · 증자 송금증과 해외직접투자 신고서(당기 중 거래분)
+  form: PDF file
+  area: B
+- cat: 기말감사
+  name: 사업계획 대비 실적 · 다음 해 사업계획
+  detail: '{fy}년 사업계획 대비 실적 분석과 {ny}년 사업계획 · 손익 추정(계속기업 검토용)'
+  form: Excel file
+- cat: 기말감사
+  name: 재무보고 전표 승인 · 사용자 권한 기록
+  detail: 회계프로그램 사용자 권한 설정 화면, 전표 승인 · 승인 해제 통제 화면, 분기별 전표 승인 기록
+  form: PDF file/화면 캡처
+- cat: 기말감사
+  name: 결산일 후 분개장
+  detail: '{after1} 분개장(결산일 후 1개월, 기간귀속 · 미기록부채 검토용, 계정코드 · 전표번호 · 거래처 포함)'
+  form: Excel file
+  engine: 3
+- cat: 기말감사
+  name: 회사 작성 공시 재무제표(DSD)
+  detail: 회사가 작성한 공시용 재무제표 · 주석 초안(DART 편집기 dsd 파일)
+  form: dsd file
+- cat: 기말감사
+  name: 서면진술서
+  detail: 경영진 서면진술서 초안 확인
+  form: PDF file
+  engine: 18
+it_questionnaire:
+- text: Ⅰ. 일반통제
+  kind: major
+- text: '1. 일반사항 : 전산환경에 대한 일반적 정보'
+  kind: group
+- text: (1) 전산실의 조직과 전산화 Master Plan의 징구
+  kind: item
+- text: (2) 당년도중 시스템 신규개발계획이나 변경계획 유무 확인
+  kind: item
+- text: (3) 전기이후 중요한 변경이 된 프로그램 리스트 징구
+  kind: item
+- text: (4) 현재 전산처리되고 있는 업무분야의 리스트 징구
+  kind: item
+- text: (5) 주전산기의 형태
+  kind: item
+- text: '- 설치장소'
+  kind: item
+- text: '- 본체'
+  kind: item
+- text: '제작사 : IBM, HP, UNISYS, Fuzitz, VAX, 더존, 기타( )'
+  kind: item
+- text: '시스템 모델 :'
+  kind: item
+- text: '소유형태 : 임차, 매입, 리스'
+  kind: item
+- text: (6) 보조전산기 형태
+  kind: item
+- text: 사용목적과 분야
+  kind: item
+- text: '제작사 : IBM, HP, UNISYS, Fuzitz, VAX, 기타( )'
+  kind: item
+- text: '시스템 모델 :'
+  kind: item
+- text: '소유형태 : 임차, 매입, 리스'
+  kind: item
+- text: 'Main Memory 크기 :'
+  kind: item
+- text: 'Operating System :'
+  kind: item
+- text: (7) Back-Up장비
+  kind: item
+- text: '- 설치장소 :'
+  kind: item
+- text: '- 본체'
+  kind: item
+- text: '제작사 :'
+  kind: item
+- text: '시스템 모델 :'
+  kind: item
+- text: '용량 : (MB, GB, TB)'
+  kind: item
+- text: '- Back-Up 주기 :'
+  kind: item
+- text: '- Back-Up 분야 :'
+  kind: item
+- text: (8) Network 형태
+  kind: item
+- text: '- Network 방식 : 이더넷, 토큰링, 토큰버시, SNA, 기타( )'
+  kind: item
+- text: '- Network Operating System 종류'
+  kind: item
+- text: '- Network 크기'
+  kind: item
+- text: 'Host Server 대수 :'
+  kind: item
+- text: '단말기 대수 :'
+  kind: item
+- text: '- 보안장비'
+  kind: item
+- text: (9) 응용프로그램의 리스트 징구
+  kind: item
+- text: 2. 조직 및 운용통제
+  kind: group
+- text: (1) 전산부서와 이용자부서의 기능이 분리되어 있는가?
+  kind: item
+- text: '   - 겸직자가 있다면 성명, 부서명, 기능, 권한을 기술하라'
+  kind: item
+- text: (2) 전산부서가 담당하지 말아야 할 기능이 제한되어 있는가?
+  kind: item
+- text: '- 현금화 할 수 있는 문서의 작성'
+  kind: item
+- text: '- 전산자원 이외의 자산에 대한 입출고 문서의 작성, 승인, 처리'
+  kind: item
+- text: '- 제한되지 않았다면 성명, 기능, 문서명을 기술하라.'
+  kind: item
+- text: (3) 전산부서내의 다음 기능이 상호 분리가 되어 있는가?
+  kind: item
+- text: '- 업무분석기능'
+  kind: item
+- text: '- System설계기능'
+  kind: item
+- text: '- Programing 기능'
+  kind: item
+- text: '- Program 기능'
+  kind: item
+- text: '- Operating 기능'
+  kind: item
+- text: 분리되어 있지 않다면 겸직하고 있는 기능을 기술하고 위험을 평가하라.
+  kind: item
+- text: (4) 전산부서 운영에 대한 다음의 절차가 구비되고 실행되는가?
+  kind: item
+- text: '- 담당분야별 Program에 대한 접근제한 절차'
+  kind: item
+- text: '- 전산요원에 대한 주기적인 강제 휴가제'
+  kind: item
+- text: '- 전산부서 조직도상 모든 요원은 충원되어 있는가?'
+  kind: item
+- text: '- 신입 및 기존직원에 대한 공식적인 교육훈련계획이 마련되어 있는가?'
+  kind: item
+- text: '- 전산부서 업무Manual이 있으며, 변경 즉시 개정되고 있는가?'
+  kind: item
+- text: '- 전산부서를 통제하는 부서의 기능은 정기적으로 수행되고 있는가?'
+  kind: item
+- text: '- 이용자부서의 개선 및 요구사항을 접수하는 공식적인 절차가 구비되어 있는가?'
+  kind: item
+- text: 3. 시스템개발과 개발문서 통제
+  kind: group
+- text: (1) 시스템개발(구입포함) 단계별로 이용부서가 적극적으로 참여하는가?
+  kind: item
+- text: (2) 이용자부서를 위한 다음과 같은 개발문서가 구비되어 있으며, 이용자부서의 검토, 승인절차가 존재하는가?
+  kind: item
+- text: '- 분야별 시스템 설명서와 Flwochart'
+  kind: item
+- text: '- Input Layout'
+  kind: item
+- text: '- Out Layout'
+  kind: item
+- text: '- 중요 Code 설명서'
+  kind: item
+- text: '- 시스템운용 Manual'
+  kind: item
+- text: (3) 시스템개발 및 변경을 위한 다음의 문서가 작성되고 유지관리 되고 있는가?
+  kind: item
+- text: '- 분야별 시스템 설명서와 Flowchart'
+  kind: item
+- text: '- DFD(Data Flow Diagram)'
+  kind: item
+- text: '- ERD(Entity Relationship Diagram)'
+  kind: item
+- text: '- Code 설계서'
+  kind: item
+- text: '- Program List와 Spec.'
+  kind: item
+- text: '- Program Source Code'
+  kind: item
+- text: '- Input 설계서'
+  kind: item
+- text: '- Output 설계서'
+  kind: item
+- text: '- 운용 Manual'
+  kind: item
+- text: '- TABLE List'
+  kind: item
+- text: (4) 시스템 Testing후 경영자와 이용자부서의 최종승인 절차가 있는가?
+  kind: item
+- text: (5) 기존 File 또는 Database의 전환에 따르는 경우 정확성을 보장하는 통제절차가 있는가?
+  kind: item
+- text: (6) 시스템 가동 이후 모든 Program의 변경에 대한 검토, 승인, 문서화 절차가 마련되어 있는가?
+  kind: item
+- text: (7) 시스템 개발에 따른 모든 문서의 정확한 작성, 유지, 개정, 보관을 위한 절차가 마련되어 있는가?
+  kind: item
+- text: (8) 시스템 Testing을 위한 표준절차가 마련되어 있는가?
+  kind: item
+- text: 4. 하드웨어와 시스템 소프트웨어 통제
+  kind: group
+- text: (1) H/W 및 S/W에 대한 운용 및 기능오류 탐지를 위한 통제가 마련되어 있는가?
+  kind: item
+- text: (2) H/W 및 S/W 오류를 관리하기 위한 오류일지가 작성, 유지되고 있는가?
+  kind: item
+- text: (3) H/W 및 S/W 운용시 자동적인 LOG File이 작성되고 이를 주기적으로 출력하여 정당한 사용여부를 검토하는가?
+  kind: item
+- text: (4) System S/W의 변경에 대한 검토, 승인절차가 마련되고 이를 적정히 준수하고 있는가?
+  kind: item
+- text: 5. 접근통제
+  kind: group
+- text: (1) System 개발문서에 대한 접근제한 절차가 마련되어 있는가?
+  kind: item
+- text: (2) Data File 및 Program에 대한 접근 제한 절차가 있는가?
+  kind: item
+- text: (3) H/W에 대한 접근 제한 절차가 마련되어 있는가?
+  kind: item
+- text: 6. 자료 및 절차통제
+  kind: group
+- text: (1) H/W의 물리적 안전대책을 위한 절차가 마련되어 있는가?
+  kind: item
+- text: '- 물리적 파손에 대한 보험가입여부?'
+  kind: item
+- text: '- 전산요원에 대한 재정보증'
+  kind: item
+- text: '- 리스한 H/W의 경우 파손시 책임한계'
+  kind: item
+- text: (2) 전산기 가동중단에 대한 안전대책이 마련되어 있는가?
+  kind: item
+- text: (3) Program 및 Data File의 Back-up절차가 마련되어 있는가?
+  kind: item
+- text: (4) Operating Manual의 작성유지에 대한 책임이 명확히 부여되고 지속적으로 검토되는가?
+  kind: item
+- text: (5) System개발단계에서의 개발단계별 통제절차가 마련되어 있는가?
+  kind: item
+- text: '- 업무분석 단계'
+  kind: item
+- text: '- System설계 단계'
+  kind: item
+- text: '- 구현(Programing) 단계'
+  kind: item
+- text: '- Testing 단계'
+  kind: item
+- text: '- System운용 단계'
+  kind: item
+- text: '- System유지보수 단계'
+  kind: item
+- text: Ⅱ. 응용통제
+  kind: major
+- text: 1. 입력통제
+  kind: group
+- text: (1) 입력자료의 타당성 통제
+  kind: item
+- text: '- 입력자료는 승인과정이 존재하는가?'
+  kind: item
+- text: '- 입력된 자료의 완전성을 확인할 수 있는 통제장치가 있는가?'
+  kind: item
+- text: '- 입력자료 접수과정에서 누락을 확인할 수 있는 절차가 있는가?'
+  kind: item
+- text: (2) 사용되는 중요코드를 검증하는 절차
+  kind: item
+- text: '- 중요코드의 입력오류를 Check할 수 있는 기능이 있는가?'
+  kind: item
+- text: (3) 자료전환과정에서의 통제절차가 존재하는가?
+  kind: item
+- text: (4) 자료이동과정(처리단계간 또는 부서간)에 관한 통제절차가 존재하는가?
+  kind: item
+- text: (5) 입력오류의 수정절차에 대한 통제절차가 있는가?
+  kind: item
+- text: '- Error Report의 출력'
+  kind: item
+- text: 2. 처리통제
+  kind: group
+- text: (1) 입력된 거래의 처리누락 또는 중복처리에 대한 방지절차가 존재하는가?
+  kind: item
+- text: (2) 부당한 Data File을 사용하거나 갱신을 방지하기 위한 절차가 존재하는가?
+  kind: item
+- text: (3) 비논리적, 비합리적인 입력자료에 대한 통제절차가 존재하는가?
+  kind: item
+- text: (4) 처리과정중 자료의 상실이나 부당변경을 방지하는 절차가 존재하는가?
+  kind: item
+- text: (5) 모든 보조저장장치(Tape, Disk)에는 Label이 부착되고 File No 및 보존기한이 기록되어 있는가?
+  kind: item
+- text: 3. 출력통제
+  kind: group
+- text: (1) 출력된 자료의 정확성을 검증할 수 있는 절차가 존재하는가?
+  kind: item
+- text: (2) 원시증빙과 출력문서를 대조하는 절차가 존재하는가?
+  kind: item
+- text: (3) 출력물의 출력시기와 배부 등을 통제하는 절차가 마련되어 있는가?
+  kind: item
+backup:
+  backup:
+    title: 1. 데이터의 백업
+    heads:
+    - 구분
+    - 데이터 백업 주기
+    - 백업자료 보관장소
+    - 운영데이터 보관장소
+    systems:
+    - 그룹웨어
+    - ERP
+  password:
+    title: 2. 패스워드 관리
+    heads:
+    - 구분
+    - 패스워드 작성 규칙 (ex, 8글자 이상, 대문자/특수기호 포함 등)
+    - 변경 주기
+    - 모니터링 방법
+    systems:
+    - 그룹웨어
+    - ERP

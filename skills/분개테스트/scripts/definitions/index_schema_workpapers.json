@@ -1,0 +1,75 @@
+{
+  "$comment": "R4 실행 단계 색인 파일 형식(2026-10-05). _색인/조회.json 은 3320 외부조회 대장이다. `python -m audit wp make <폴더> 3320` 이 쓰고, 회계사가 3320 엑셀 대장에 적은 발송일 · 회신일 · 회신 금액 · 결과를 다음 make 때 되읽어 합친다. 장부 금액은 엔진, 회신 금액은 엔진(엑셀 회신) · 회계사(기입란) 만 넣는다. PDF 회신은 'AI 판독 필요' 로 남긴다. 은행조회는 별도 은행조회 회신 프로그램이 정본이라 대상과 결과 확인만 둔다.",
+  "조회.json": {
+    "type": "object",
+    "required": ["format_version", "updated_at", "confirmations"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "updated_at": {"type": "string"},
+      "as_of": {"type": ["string", "null"], "description": "조회 기준일(결산일)"},
+      "bank_list_file": {"type": ["string", "null"], "description": "은행조회 회신 프로그램에 넘길 대상 목록 파일(감사 폴더 기준 상대경로)"},
+      "confirmations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["no", "kind", "target", "why", "amount", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "no": {"type": "integer", "minimum": 1},
+            "kind": {"enum": ["매출채권", "매입채무", "은행", "변호사", "기타"]},
+            "target": {"type": "string", "minLength": 1},
+            "why": {"type": "array", "items": {"type": "string"}, "description": "선정 이유(잔액 상위, 신규 거래처, 수행중요성 이상, 표본, 이슈 번호, 분개장 거래 등)"},
+            "account": {"type": ["string", "null"]},
+            "amount": {"type": ["integer", "number", "null"], "description": "장부 금액(엔진). 은행은 은행조회 프로그램 회신과 대사하므로 비워 둘 수 있다"},
+            "amount_basis": {"type": ["string", "null"]},
+            "method": {"type": ["string", "null"], "description": "발송 방법(우편 · 전자우편 · 은행조회 프로그램)"},
+            "sent_at": {"type": ["string", "null"]},
+            "replied_at": {"type": ["string", "null"]},
+            "reply_amount": {"type": ["integer", "number", "null"]},
+            "reply_basis": {"enum": ["엔진", "회계사", "AI 판독 필요", null]},
+            "reply_file": {"type": ["string", "null"]},
+            "difference": {"type": ["integer", "number", "null"], "description": "회신 금액 − 장부 금액"},
+            "alternative": {"type": ["string", "null"], "description": "미회신 · 차이 때 대체 절차와 결과(회계사)"},
+            "result": {"type": ["string", "null"], "description": "확인 결과(회계사 기입란)"},
+            "status": {"enum": ["발송 전", "발송", "회신 일치", "회신 차이", "AI 판독 필요", "은행조회 프로그램"]},
+            "issue": {"type": ["integer", "null"], "description": "차이로 올린 이슈 번호"},
+            "drafts": {"type": "array", "items": {"type": "string"}, "description": "조회서 워드 초안 · 메일 초안 경로"},
+            "accounts": {"type": "array", "description": "채권채무 조회서에 적은 거래처의 계정(R9 B5, 계정명세서 거래처 시트)",
+                         "items": {"type": "object", "required": ["side", "account", "amount"]}}
+          }
+        }
+      }
+    }
+  },
+  "절차제안.json": {
+    "description": "4000 표지 절차의 해당 여부 AI 제안(2026-10-12). `python -m audit wp suggest <폴더> <patch.json>` 만 쓴다. 제안은 확인 전(confirmed false)이고 조서 기입란에는 들어가지 않는다. wp make 가 표지의 「AI 제안(확인 전)」 열에 적는다. 해당 여부는 감사인이 조서 노란 칸에 적는다.",
+    "type": "object",
+    "required": ["format_version", "updated_at", "suggestions"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "updated_at": {"type": ["string", "null"]},
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["workpaper", "part", "step", "suggest", "reason", "sources", "basis", "confirmed", "at"],
+          "additionalProperties": false,
+          "properties": {
+            "workpaper": {"type": "string", "pattern": "^4000[A-Z]+[0-9]*$"},
+            "part": {"enum": [1, 2], "description": "1 한공회 4000 Part 1 절차 예시, 2 Part 2 추가 고려 절차"},
+            "step": {"type": "string", "minLength": 1, "description": "절차 이름(절차 글 첫 줄의 앞 30자). 표지 기입란 이름에 쓰는 것과 같다"},
+            "step_no": {"type": ["integer", "null"], "description": "절차 번호"},
+            "suggest": {"enum": ["해당", "해당 없음", "판단 자료 없음"]},
+            "reason": {"type": "string", "minLength": 1, "description": "근거 문장. 금액으로 보이는 숫자는 넣지 못한다"},
+            "sources": {"type": "array", "items": {"type": "string"}, "description": "근거로 본 받은자료(문서목록의 경로)"},
+            "basis": {"const": "AI"},
+            "confirmed": {"const": false},
+            "at": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

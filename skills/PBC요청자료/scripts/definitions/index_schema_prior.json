@@ -1,0 +1,125 @@
+{
+  "$comment": "전기조서 내용 색인(2026-10-12). audit/priorwp.py 가 쓴다. 전기조서의 글(계정의 주요 성격 · 메모 · 절차 · 발견사항 · 결론 · 수정사항)을 영역마다 출처(파일 · 시트 · 칸)와 함께 둔다. basis 엔진은 라벨로 읽은 글이나 작년 엔진 조서의 기입란 되읽기, AI 는 AI 판독이고 confirmed false 로 시작한다. 숫자는 전기 잔액 원천으로 쓰지 않는다.",
+  "전기조서.json": {
+    "type": "object",
+    "required": ["format_version", "read_at", "files", "areas"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "read_at": {"type": "string"},
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["path", "source", "area", "blocks"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {"type": "string"},
+            "source": {"enum": ["손 조서", "작년 감사 폴더"]},
+            "area": {"type": ["string", "null"]},
+            "area_basis": {"type": "string"},
+            "sheets": {"type": "integer"},
+            "hidden_skipped": {"type": "integer"},
+            "blocks": {"type": "integer"},
+            "labels": {"type": "integer", "description": "라벨로 찾은 글 블록과 절차 목록 줄 수(기타 블록 제외)"},
+            "need_ai": {"type": "boolean"},
+            "error": {"type": "string"}
+          }
+        }
+      },
+      "areas": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": ["files", "blocks", "procedures", "adjustments"],
+          "additionalProperties": false,
+          "properties": {
+            "files": {"type": "array", "items": {"type": "string"}},
+            "blocks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["kind", "title", "lines", "source", "basis", "confirmed"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {"enum": ["nature", "memo", "purpose", "procedure", "result", "findings", "conclusion", "section"]},
+                  "title": {"type": "string"},
+                  "lines": {"type": "array", "items": {"type": "string"}},
+                  "truncated": {"type": "integer"},
+                  "role": {"enum": ["lead", "procedure"]},
+                  "source": {"$ref": "#/$defs/source"},
+                  "basis": {"enum": ["엔진", "AI"]},
+                  "confirmed": {"type": "boolean"}
+                }
+              }
+            },
+            "procedures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "source", "basis", "confirmed"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {"type": "string"},
+                  "ref": {"type": ["string", "null"]},
+                  "applies": {"type": ["string", "null"]},
+                  "result": {"type": ["string", "null"]},
+                  "source": {"$ref": "#/$defs/source"},
+                  "basis": {"enum": ["엔진", "AI"]},
+                  "confirmed": {"type": "boolean"}
+                }
+              }
+            },
+            "adjustments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["dr", "dr_amount", "cr", "cr_amount", "source"],
+                "additionalProperties": false,
+                "properties": {
+                  "dr": {"type": "string"},
+                  "dr_amount": {"type": "number"},
+                  "cr": {"type": "string"},
+                  "cr_amount": {"type": "number"},
+                  "note": {"type": ["string", "null"]},
+                  "source": {"$ref": "#/$defs/source"}
+                }
+              }
+            }
+          }
+        }
+      },
+      "general": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": ["source", "inputs"],
+          "additionalProperties": false,
+          "properties": {
+            "source": {"type": "string"},
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["sheet", "label", "value"],
+                "additionalProperties": false,
+                "properties": {"sheet": {"type": "string"}, "label": {"type": "string"}, "value": {"type": "string"}, "cell": {"type": "string"}}
+              }
+            }
+          }
+        }
+      },
+      "assigned": {"type": "object", "additionalProperties": {"type": "string"}},
+      "need_ai": {"type": "array", "items": {"type": "string"}},
+      "warnings": {"type": "array", "items": {"type": "string"}}
+    },
+    "$defs": {
+      "source": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {"path": {"type": "string"}, "sheet": {"type": "string"}, "cell": {"type": "string"}}
+      }
+    }
+  }
+}
