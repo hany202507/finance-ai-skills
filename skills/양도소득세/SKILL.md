@@ -30,7 +30,7 @@ python tests/sample_inputs.py A sample
 python scripts/run.py --사실관계 sample/a.json --출력 out
 ```
 
-화면에 `산출세액 2,565,000원, 지방소득세 256,500원, 검산 통과` 와 자산별 판정이 나오고 `out/` 에 `양도소득세_계산근거.xlsx` 가 생깁니다. 테스트는 `python -m pytest -q tests`.
+화면에 `산출세액 2,565,000원, 지방소득세 256,500원, 검산 통과` 와 자산별 판정이 나오고 `out/` 에 `양도소득세_계산근거.xlsx` 가 생깁니다. 설치 확인은 이 한 건이면 됩니다. `tests/` 의 전체 시험은 몇 분 걸려서 설치할 때는 돌리지 않습니다. 스킬 코드를 고친 사람이 `python -m pytest -q tests` 로 돌리고, GitHub 에 올리면 Actions 가 자동으로 돌립니다.
 
 같은 사례로 신고서까지 만들어 봅니다. `sample/a_신고인.json` 은 `tests/filers.py` 의 합성 신고인입니다.
 
