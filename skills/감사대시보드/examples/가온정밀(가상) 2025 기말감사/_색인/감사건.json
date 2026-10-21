@@ -1,0 +1,13 @@
+{
+ "format_version": 1,
+ "company": {
+  "name": "가온정밀(가상)",
+  "dart_corp_code": null,
+  "industry": "제조업(정밀 기계부품)",
+  "basis": "폴더 이름 · 전기 감사보고서 회사명 일치 · 세무신고 업종 칸"
+ },
+ "fiscal_year_end": "2025-12-31",
+ "engagement_kind": "계속감사",
+ "company_version": "v1.1",
+ "stage": "준비"
+}

@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>감사 대시보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 왼쪽 단계 · 세부 항목, 오른쪽 상세 두 단 */
+:root{
+  --background:oklch(1 0 0); --foreground:oklch(0.145 0 0);
+  --primary:oklch(0.527 0.154 150.069); --primary-foreground:oklch(0.982 0.018 155.826); --primary-soft:oklch(0.962 0.044 156.743);
+  --muted:oklch(0.97 0 0); --muted-foreground:oklch(0.50 0 0);
+  --border:oklch(0.922 0 0); --sidebar:oklch(0.985 0 0);
+  --destructive:oklch(0.577 0.245 27.325); --cell:#fff7cc; --cell-line:#e3d48a; --cell-ink:#7a6a1a;
+  --r-xl:0.875rem; --r-2xl:1.125rem;
+  --font:"Inter","Noto Sans KR",ui-sans-serif,system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font);font-size:14px;line-height:20px}
+button{font:inherit;color:inherit}
+.muted{color:var(--muted-foreground)} .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.small{font-size:12px} .b{font-weight:600} .mono{font-family:var(--mono);font-size:12px}
+.app{min-height:100vh;display:flex;flex-direction:column}
+
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;padding:10px 24px;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;cursor:pointer;background:none;border:0;padding:0}
+.logo{display:grid;place-items:center;width:28px;height:28px;border-radius:var(--r-xl);background:var(--foreground);color:var(--background);font-size:13px;font-weight:700}
+.co{display:flex;flex-wrap:wrap;gap:4px 8px;color:var(--muted-foreground)} .co b{color:var(--foreground);font-weight:500}
+.hright{margin-left:auto;display:flex;align-items:center;gap:8px}
+.notice{padding:8px 24px;background:var(--cell);border-bottom:1px solid var(--cell-line);color:var(--cell-ink);font-size:13px}
+
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.badge.done{background:var(--primary);color:var(--primary-foreground)}
+.badge.pass{background:var(--primary-soft);color:oklch(0.39 0.11 152)}
+.badge.req{box-shadow:inset 0 0 0 1px var(--cell-line);background:var(--cell);color:var(--cell-ink)}
+.badge.draft{background:var(--muted);color:var(--foreground)}
+.badge.none{box-shadow:inset 0 0 0 1px var(--border);color:var(--muted-foreground)}
+.badge.issue{box-shadow:inset 0 0 0 1px oklch(0.85 0.08 27);color:var(--destructive);background:oklch(0.97 0.02 27)}
+.badge.out{box-shadow:inset 0 0 0 1px var(--border);color:var(--foreground)}
+
+.body{flex:1;display:flex;flex-wrap:wrap;align-items:stretch}
+aside.panel{flex:1 1 300px;max-width:340px;min-width:0;background:var(--sidebar);border-right:1px solid var(--border);padding:20px 16px 28px}
+section.data{flex:999 1 560px;min-width:0;padding:24px 28px 48px}
+.prog{height:8px;border-radius:999px;background:var(--muted);overflow:hidden} .prog i{display:block;height:100%;background:var(--primary);border-radius:999px}
+.prog.thin{height:6px}
+.ptop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.ptop span:first-child{font-weight:600}
+
+.nav{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:2px}
+.step{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--r-xl);background:none;border:0;width:100%;text-align:left;cursor:pointer;color:var(--foreground)}
+.step:hover{background:var(--muted)}
+.step.on{background:var(--background);box-shadow:0 0 0 1px var(--border);font-weight:600}
+.step .dot{display:grid;place-items:center;width:22px;height:22px;border-radius:999px;font-size:11px;box-shadow:inset 0 0 0 1px var(--border);flex:none;color:var(--muted-foreground);background:var(--background)}
+.step.ok .dot{background:var(--primary);color:var(--primary-foreground);box-shadow:none}
+.step.cur .dot{box-shadow:inset 0 0 0 2px var(--primary);color:var(--primary);font-weight:700}
+.step .cnt{margin-left:auto;font-size:12px;color:var(--muted-foreground);font-weight:400}
+.subs{list-style:none;margin:2px 0 8px 19px;padding:0 0 0 12px;border-left:1px solid var(--border);display:grid;gap:1px}
+.sub{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border:0;background:none;border-radius:10px;text-align:left;cursor:pointer;font-size:13px;color:var(--foreground)}
+.sub:hover{background:var(--muted)}
+.sub.on{background:var(--background);box-shadow:0 0 0 1px var(--border);font-weight:600}
+.sub .sd{width:8px;height:8px;border-radius:999px;flex:none;box-shadow:inset 0 0 0 1.5px var(--border)}
+.sub .sd.ok{background:var(--primary);box-shadow:none} .sub .sd.part{background:linear-gradient(90deg,var(--primary) 50%,var(--muted) 50%);box-shadow:inset 0 0 0 1px var(--primary)}
+.sub .sd.req{background:#e0b93b;box-shadow:none}
+.sub .ib{margin-left:auto;font-size:11px;color:var(--destructive);font-weight:500}
+.step:focus-visible,.sub:focus-visible,.row:focus-visible,.brand:focus-visible,.lnk:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+h1{font-size:20px;line-height:28px;margin:0 0 4px;font-weight:600}
+h2{font-size:15px;margin:28px 0 10px;font-weight:600;display:flex;align-items:center;gap:8px}
+.crumb{font-size:13px;color:var(--muted-foreground);margin-bottom:6px}
+.crumb button{background:none;border:0;padding:0;cursor:pointer;color:var(--muted-foreground);text-decoration:underline;text-underline-offset:3px}
+.lede{color:var(--muted-foreground);margin:0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+.card{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px}
+.card .k{font-size:12px;color:var(--muted-foreground)} .card .v{font-size:22px;line-height:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.card .s{font-size:12px;color:var(--muted-foreground)}
+.tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-2xl)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-weight:500;color:var(--muted-foreground);text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--sidebar)}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.row{cursor:pointer} tr.row:hover td{background:var(--muted)}
+.skills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;background:var(--muted);font-size:12px;font-weight:500}
+.chip i{width:7px;height:7px;border-radius:999px;background:var(--primary);display:inline-block}
+.chip.idle i{background:var(--border)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.box{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px;min-width:0}
+.box h3{margin:0 0 8px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.box ul{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.box li{display:flex;gap:8px;font-size:13px;line-height:19px}
+.box li .mk{flex:none;width:16px;text-align:center;color:var(--muted-foreground)}
+.box li .mk.ok{color:var(--primary);font-weight:700}
+.box li .d{display:block;font-size:12px;color:var(--muted-foreground);margin-top:2px}
+.cmd{font-family:var(--mono);font-size:12px;background:var(--muted);border-radius:8px;padding:2px 6px}
+.out{margin:6px 0 0;padding:8px 10px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:11.5px;line-height:17px;white-space:pre-wrap;word-break:break-all;color:oklch(0.3 0 0)}
+.empty{color:var(--muted-foreground);font-size:13px}
+.iss{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px;margin-bottom:12px}
+.iss .top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.iss .t{font-weight:600}
+.iss .meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 10px;font-size:12px;color:var(--muted-foreground)}
+.iss .meta b{color:var(--foreground);font-weight:500}
+.iss table{font-size:12px} .iss th,.iss td{padding:7px 10px}
+.pats{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.lnk{background:none;border:0;padding:0;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font:inherit}
+.miss li .mk{color:var(--destructive)}
+@media (max-width:760px){
+  header{padding:10px 16px} .notice{padding:8px 16px}
+  aside.panel{max-width:none;flex-basis:100%;border-right:0;border-bottom:1px solid var(--border);padding:16px}
+  section.data{padding:20px 16px 40px}
+  .hide-sm{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <button class="brand" id="home"><span class="logo">감</span>외부감사</button>
+    <div class="co" id="co"></div>
+    <div class="hright" id="hright"></div>
+  </header>
+  <div class="notice" id="notice" hidden></div>
+  <div class="body">
+    <aside class="panel" id="side"></aside>
+    <section class="data" id="main" aria-live="polite"></section>
+  </div>
+</div>
+<script>
+const D = /*__DATA__*/null;
+const DONE = ["검토 끝", "검사 통과"];
+const AS = {"E/O":"실재 · 발생","C":"완전성","A/V":"평가 · 배분","CO":"기간귀속","RO":"권리와 의무","P/CL":"표시 · 분류"};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const won = n => n == null ? "" : Number(n).toLocaleString("ko-KR");
+const badge = st => `<span class="badge ${({"검토 끝":"done","검사 통과":"pass","검토 요청":"req","초안":"draft"})[st] || "none"}">${esc(st)}</span>`;
+const ref = r => /^https?:/.test(r) ? `<a href="${esc(r)}" target="_blank" rel="noopener">감리지적사례</a>` : esc(String(r).replace(/^tb:(\d+)$/, "시산표 $1").replace(/^gl:cur:/, "분개장 ").replace(/^gl:prior:/, "전기 분개장 "));
+let state = {view: "home", s: null, i: null}, open = new Set();
+
+// 집계
+const allW = D.stages.flatMap(s => s.items.flatMap(i => i.wps));
+const doneOf = ws => ws.filter(w => DONE.includes(w.status)).length;
+const stDone = s => { const ws = s.items.flatMap(i => i.wps); return ws.length && doneOf(ws) === ws.length; };
+const curStage = D.stages.findIndex(s => !stDone(s));
+D.stages.forEach((s, k) => { if (k === curStage) open.add(k); });
+const itemCls = it => {
+  if (!it.wps.length) return it.ai.every(a => a.done) ? "ok" : "";
+  const d = doneOf(it.wps);
+  if (d === it.wps.length) return "ok";
+  if (it.wps.some(w => w.status === "검토 요청")) return "req";
+  return d ? "part" : "";
+};
+const openIssues = () => { const m = new Map(); D.stages.forEach(s => s.items.forEach(i => i.issues.forEach(x => m.set(x.no, x)))); return [...m.values()].sort((a, b) => a.no - b.no); };
+const homeOf = no => { for (const [k, s] of D.stages.entries()) for (const [j, it] of s.items.entries()) if (it.issues.some(x => x.no === no && x.role === "대응")) return [k, j]; return null; };
+const cpaCount = () => D.stages.reduce((n, s) => n + s.items.reduce((m, i) => m + i.cpa.length, 0), 0);
+
+function go(v, s = null, i = null) {
+  state = {view: v, s, i};
+  if (s != null) open.add(s);
+  location.hash = v === "home" ? "" : v === "stage" ? `s${s + 1}` : `s${s + 1}-${i + 1}`;
+  render();
+  // 휴대폰 폭에서는 사이드바가 위에 쌓이므로 고른 내용으로 내려간다
+  if (v !== "home" && matchMedia("(max-width:760px)").matches) $("#main").scrollIntoView(); else window.scrollTo({top: 0});
+}
+
+function side() {
+  const tot = allW.length, dn = doneOf(allW);
+  let h = `<div class="ptop"><span>전체 진행</span><span class="muted small">${curStage < 0 ? 5 : curStage} / 5 단계 끝 · 조서 ${dn} / ${tot}</span></div>
+    <div class="prog"><i style="width:${Math.round(dn / tot * 100)}%"></i></div><ul class="nav">`;
+  D.stages.forEach((s, k) => {
+    const ws = s.items.flatMap(i => i.wps), ok = stDone(s), cur = k === curStage;
+    const on = state.view === "stage" && state.s === k;
+    h += `<li><button class="step ${ok ? "ok" : ""} ${cur ? "cur" : ""} ${on ? "on" : ""}" data-s="${k}" aria-expanded="${open.has(k)}">
+      <span class="dot">${ok ? "✓" : k + 1}</span>${esc(s.name)}<span class="cnt">${cur ? "하는 중 · " : ""}${doneOf(ws)}/${ws.length}</span></button>`;
+    if (open.has(k)) {
+      h += `<ul class="subs">` + s.items.map((it, j) => {
+        const on2 = state.view === "item" && state.s === k && state.i === j;
+        const ni = it.issues.filter(x => x.role === "대응").length;
+        return `<li><button class="sub ${on2 ? "on" : ""}" data-s="${k}" data-i="${j}"><span class="sd ${itemCls(it)}"></span>${esc(it.name)}${ni ? `<span class="ib">이슈 ${ni}</span>` : ""}</button></li>`;
+      }).join("") + `</ul>`;
+    }
+    h += `</li>`;
+  });
+  return h + `</ul>`;
+}
+
+function home() {
+  const iss = openIssues(), tot = allW.length, dn = doneOf(allW);
+  let h = `<h1>${esc(D.company)} ${esc(String(D.fy_end).slice(0, 4))} 기말감사</h1><p class="lede">왼쪽에서 단계나 세부 항목을 누르면 조서번호, 스킬 적용 현황, 이슈가 나옵니다.</p>
+  <div class="cards">
+    <div class="card"><div class="k">조서</div><div class="v">${dn} / ${tot}</div><div class="s">검토 끝이나 검사 통과</div></div>
+    <div class="card"><div class="k">열린 이슈</div><div class="v">${iss.length}</div><div class="s">합계 ${won(iss.reduce((a, x) => a + (x.amount || 0), 0))}</div></div>
+    <div class="card"><div class="k">빠진 자료</div><div class="v">${D.missing_total}</div><div class="s">회사에 요청할 것</div></div>
+    <div class="card"><div class="k">회계사 확인</div><div class="v">${cpaCount()}</div><div class="s">판단 칸 · 검토의견</div></div>
+  </div>
+  <h2>단계별 진행</h2><div class="tw"><table><thead><tr><th>단계</th><th>하는 일</th><th style="width:30%">진행</th><th class="num">조서</th></tr></thead><tbody>`;
+  D.stages.forEach((s, k) => {
+    const ws = s.items.flatMap(i => i.wps), d = doneOf(ws);
+    h += `<tr class="row" tabindex="0" data-s="${k}"><td class="b">${k + 1}. ${esc(s.name)}</td><td class="muted">${esc(s.what)}</td>
+      <td><div class="prog thin"><i style="width:${Math.round(d / ws.length * 100)}%"></i></div></td><td class="num">${d} / ${ws.length}</td></tr>`;
+  });
+  h += `</tbody></table></div><h2>열린 이슈 <span class="badge issue">${iss.length}</span></h2><div class="tw"><table><thead><tr><th>번호</th><th>내용</th><th class="hide-sm">계정</th><th class="num">금액</th><th>대응 조서</th></tr></thead><tbody>`;
+  iss.forEach(x => {
+    const hm = homeOf(x.no);
+    h += `<tr class="row" tabindex="0" ${hm ? `data-s="${hm[0]}" data-i="${hm[1]}"` : ""}><td>${x.no}</td><td>${esc(x.title)}</td><td class="hide-sm muted">${esc(x.account)}</td><td class="num">${won(x.amount)}</td><td>${esc(x.response)}</td></tr>`;
+  });
+  return h + `</tbody></table></div>`;
+}
+
+function stage(k) {
+  const s = D.stages[k], ws = s.items.flatMap(i => i.wps), d = doneOf(ws);
+  let h = `<div class="crumb"><button data-home>전체</button> / ${k + 1}단계</div><h1>${esc(s.name)}</h1><p class="lede">${esc(s.what)}</p>
+  <div class="cards"><div class="card"><div class="k">조서</div><div class="v">${d} / ${ws.length}</div><div class="prog thin" style="margin-top:6px"><i style="width:${Math.round(d / ws.length * 100)}%"></i></div></div>
+  <div class="card"><div class="k">세부 항목</div><div class="v">${s.items.length}</div><div class="s">끝난 항목 ${s.items.filter(i => itemCls(i) === "ok").length}</div></div>
+  <div class="card"><div class="k">이 단계에서 대응할 이슈</div><div class="v">${s.items.reduce((n, i) => n + i.issues.filter(x => x.role === "대응").length, 0)}</div></div></div>
+  <h2>세부 항목</h2><div class="tw"><table><thead><tr><th>항목</th><th>조서번호</th><th>스킬</th><th class="num">진행</th><th class="num">이슈</th></tr></thead><tbody>`;
+  s.items.forEach((it, j) => {
+    const ni = it.issues.filter(x => x.role === "대응").length;
+    h += `<tr class="row" tabindex="0" data-s="${k}" data-i="${j}"><td class="b">${esc(it.name)}</td><td class="mono">${it.wps.map(w => esc(w.no)).join(" · ") || "<span class=muted>조서 없음</span>"}</td>
+      <td class="small">${it.skills.map(esc).join("<br>")}</td><td class="num">${it.wps.length ? doneOf(it.wps) + " / " + it.wps.length : (itemCls(it) === "ok" ? "끝" : "")}</td><td class="num">${ni || ""}</td></tr>`;
+  });
+  return h + `</tbody></table></div>`;
+}
+
+function issueCard(x) {
+  const ev = x.evidence.map(e => `<tr><td>${esc(e.title)}</td><td class="num">${won(e.left)}</td><td class="num">${won(e.right)}</td><td class="num b">${won(e.diff)}</td><td class="small muted">${e.refs.map(ref).join("<br>")}</td></tr>`).join("");
+  return `<div class="iss"><div class="top"><span class="badge issue">이슈 ${x.no}</span><span class="t">${esc(x.title)}</span><span class="badge out" style="margin-left:auto">${esc(x.status)}</span></div>
+  <div class="meta"><span>계정 <b>${esc(x.account)}</b></span><span>금액 <b>${won(x.amount)}</b></span><span>경영진주장 <b>${x.assertions.map(a => AS[a] || a).join(", ")}</b></span>
+  <span>출처 <b>${esc(x.source)}</b></span><span>발견 <b>${esc(x.origin)}</b> → 대응 <b>${esc(x.response)}</b></span></div>
+  ${ev ? `<div class="tw"><table><thead><tr><th>엔진 근거</th><th class="num">장부</th><th class="num">비교 자료</th><th class="num">차이</th><th>출처</th></tr></thead><tbody>${ev}</tbody></table></div>` : ""}
+  ${x.patterns.length ? `<div class="pats"><span class="small muted">비슷한 감리지적 유형</span>${x.patterns.map(p => `<span class="chip idle">${esc(p)}</span>`).join("")}</div>` : ""}</div>`;
+}
+
+function item(k, j) {
+  const s = D.stages[k], it = s.items[j];
+  const ran = new Set(it.runs.flatMap(r => r.skills)), made = it.wps.some(w => w.file);
+  const resp = it.issues.filter(x => x.role === "대응"), found = it.issues.filter(x => x.role === "발견");
+  let h = `<div class="crumb"><button data-home>전체</button> / <button data-s="${k}">${k + 1}. ${esc(s.name)}</button></div><h1>${esc(it.name)}</h1>
+  <div class="cards">
+    <div class="card"><div class="k">조서</div><div class="v">${it.wps.length ? doneOf(it.wps) + " / " + it.wps.length : "없음"}</div><div class="s">${it.wps.length ? "검토 끝이나 검사 통과" : "받은자료 색인만 갱신"}</div></div>
+    <div class="card"><div class="k">AI 몫</div><div class="v">${it.ai.filter(a => !a.done).length}</div><div class="s">남은 것 / 전체 ${it.ai.length}</div></div>
+    <div class="card"><div class="k">회계사 확인</div><div class="v">${it.cpa.length}</div><div class="s">판단 칸 · 검토의견</div></div>
+    <div class="card"><div class="k">이슈</div><div class="v">${it.issues.length}</div><div class="s">${resp.length ? "대응 " + resp.length : ""}${resp.length && found.length ? " · " : ""}${found.length ? "발견 " + found.length : ""}</div></div>
+  </div>`;
+  // 조서
+  h += `<h2>조서번호</h2>`;
+  h += it.wps.length ? `<div class="tw"><table><thead><tr><th>번호</th><th>이름</th><th>상태</th><th class="hide-sm">만든 이유</th><th class="hide-sm">파일</th></tr></thead><tbody>` +
+    it.wps.map(w => `<tr><td class="mono b" style="white-space:nowrap">${esc(w.no)}</td><td style="min-width:8em">${esc(w.name)}</td><td>${badge(w.status)}</td><td class="small muted hide-sm">${esc(w.why)}</td><td class="small muted hide-sm">${esc(w.file.split("/").pop())}</td></tr>`).join("") + `</tbody></table></div>`
+    : `<p class="empty">조서를 만들지 않는 항목입니다. 받은자료를 읽어 _색인/문서목록.json 에 넣습니다.</p>`;
+  // 스킬 적용 현황
+  h += `<h2>스킬 적용 현황</h2><div class="skills">${it.skills.map(sk => `<span class="chip ${ran.has(sk) || it.runs.length || it.ai.some(a => a.done) || itemCls(it) ? "" : "idle"}"><i></i>${esc(sk)}${D.public[sk] ? ` · 공개 스킬 ${esc(D.public[sk])}` : ""}</span>`).join("")}</div><div class="grid3">`;
+  h += `<div class="box"><h3>엔진 <span class="badge ${it.runs.length || !it.wps.length || made ? "pass" : "none"}">${it.runs.length ? "실행 " + it.runs.length : !it.wps.length ? "실행 1" : made ? "조서 만듦" : "아직"}</span></h3>` +
+    (it.runs.length ? it.runs.map(r => `<div style="margin-bottom:10px"><span class="small muted">${r.skills.map(esc).join(" · ")}</span><br><span class="cmd">${esc(r.cmd)}</span> <span class="small muted">종료 코드 ${r.code}</span>${r.lines.length ? `<div class="out">${r.lines.map(esc).join("\n")}</div>` : ""}</div>`).join("")
+      : made ? `<p class="empty">조서 파일이 감사 폴더에 있습니다. 이번 실행기록에는 이 조서를 만든 기록이 없습니다.</p>`
+      : it.wps.length ? `<p class="empty">앞 단계가 끝나면 이 단계를 돌립니다.</p>`
+      : `<div><span class="cmd">python -m audit index read</span><div class="out">받은자료 ${D.files}개를 _색인/문서목록.json 에 넣음
+엔진이 못 읽는 서식의 문서는 AI 판독으로 넘김</div></div>`) + `</div>`;
+  h += `<div class="box"><h3>AI 몫 <span class="badge ${it.ai.length ? (it.ai.every(a => a.done) ? "pass" : "req") : "none"}">${it.ai.length ? it.ai.filter(a => a.done).length + " / " + it.ai.length : "없음"}</span></h3>` +
+    (it.ai.length ? `<ul>${it.ai.map(a => `<li><span class="mk ${a.done ? "ok" : ""}">${a.done ? "✓" : "○"}</span><span>${esc(a.what)}<span class="d">${esc(a.how)}${a.how.includes("확인 전") ? "" : " · 결과는 「확인 전」 표시"}</span></span></li>`).join("")}</ul>` : `<p class="empty">엔진 결과만으로 끝나는 항목입니다.</p>`) + `</div>`;
+  h += `<div class="box"><h3>회계사 확인 <span class="badge ${it.cpa.length ? "req" : "pass"}">${it.cpa.length ? it.cpa.length + "건" : "없음"}</span></h3>` +
+    (it.cpa.length ? `<ul>${it.cpa.map(c => `<li><span class="mk">□</span><span>${esc(c.title)}<span class="d">${esc(c.detail)}</span></span></li>`).join("")}</ul>` : `<p class="empty">남은 판단이 없습니다.</p>`) + `</div></div>`;
+  // 이슈
+  h += `<h2>이슈 내용 ${it.issues.length ? `<span class="badge issue">${it.issues.length}</span>` : ""}</h2>`;
+  if (!it.issues.length) h += `<p class="empty">이 항목에 걸린 이슈가 없습니다.</p>`;
+  if (resp.length) h += (found.length ? `<p class="small muted">이 항목 조서에서 대응할 이슈</p>` : "") + resp.map(issueCard).join("");
+  if (found.length) h += `<p class="small muted">이 항목에서 찾아 다른 조서로 넘긴 이슈</p><div class="tw"><table><thead><tr><th>번호</th><th>내용</th><th class="num">금액</th><th>대응 조서</th></tr></thead><tbody>` +
+    found.map(x => { const hm = homeOf(x.no); return `<tr class="row" tabindex="0" ${hm ? `data-s="${hm[0]}" data-i="${hm[1]}"` : ""}><td>${x.no}</td><td>${esc(x.title)}</td><td class="num">${won(x.amount)}</td><td>${esc(x.response)}</td></tr>`; }).join("") + `</tbody></table></div>`;
+  // 빠진 자료
+  if (it.missing.length) h += `<h2>빠진 자료 <span class="badge issue">${it.missing.length}</span></h2><div class="box miss"><ul>${it.missing.map(m => `<li><span class="mk">!</span><span>${esc(m.item)}<span class="d">${esc(m.wp)}${m.issue ? " · 이슈 " + m.issue : ""}</span></span></li>`).join("")}</ul></div>`;
+  return h;
+}
+
+function render() {
+  $("#side").innerHTML = side();
+  $("#main").innerHTML = state.view === "home" ? home() : state.view === "stage" ? stage(state.s) : item(state.s, state.i);
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-s],[data-home],#home");
+  if (!b) return;
+  if (b.id === "home" || b.hasAttribute("data-home")) return go("home");
+  const k = +b.dataset.s;
+  if (b.dataset.i != null) return go("item", k, +b.dataset.i);
+  if (b.classList.contains("step") && state.view === "stage" && state.s === k && open.has(k)) { open.delete(k); return render(); }
+  go("stage", k);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches("tr.row")) e.target.click();
+});
+if (D.demo) {
+  $("#hright").innerHTML = `<span class="badge req">시연 상태</span>`;
+  $("#notice").hidden = false;
+  $("#notice").textContent = `${D.company} 감사 폴더의 _색인 값입니다. 조서 상태는 실행 단계 중(위험평가 끝)으로 가정해 넣었습니다.`;
+}
+$("#co").innerHTML = `<b>${esc(D.company)}</b><span>${esc(D.industry || "")}</span><span>${esc(D.fy_end)} 결산</span><span>${esc(D.kind)}</span><span>회사제시 ${esc(D.version || "")}</span>`;
+const m = location.hash.match(/^#s(\d)(?:-(\d+))?$/);
+if (m) { state = {view: m[2] ? "item" : "stage", s: +m[1] - 1, i: m[2] ? +m[2] - 1 : null}; open.add(state.s); }
+render();
+</script>
+</body>
+</html>

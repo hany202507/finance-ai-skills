@@ -1,0 +1,179 @@
+{
+ "issues": [
+  {
+   "no": 1,
+   "source": "자료 불일치",
+   "origin_wp": "2120A",
+   "area": "E",
+   "account": "재고자산",
+   "assertions": [
+    "E/O",
+    "A/V"
+   ],
+   "amount": 1200000000,
+   "title": "재고자산이 계정명세서 품목 합계와 다름",
+   "response_wp": "4000E",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 2,
+   "source": "자료 불일치",
+   "origin_wp": "2120A",
+   "area": "P",
+   "account": "제품매출",
+   "assertions": [
+    "E/O",
+    "C",
+    "CO"
+   ],
+   "amount": 1500000000,
+   "title": "매출이 부가세 과세표준과 다름",
+   "response_wp": "4000P",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 3,
+   "source": "분석적 변동",
+   "origin_wp": "2120A",
+   "area": "C",
+   "account": "외상매출금",
+   "assertions": [
+    "E/O",
+    "A/V",
+    "CO"
+   ],
+   "amount": 1225000000,
+   "title": "매출과 매출채권이 따로 움직임",
+   "response_wp": "4000C",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 4,
+   "source": "주요 회계처리",
+   "origin_wp": "2100-주요거래",
+   "area": "BBDD",
+   "account": "장기차입금",
+   "assertions": [
+    "C",
+    "RO"
+   ],
+   "amount": 3000000000,
+   "title": "이사회 2025-10-15 제2호 의안 운영자금 차입의 건: 의사록 결의에 맞는 전표가 장부에 없음",
+   "response_wp": "4000BBDD",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 5,
+   "source": "분석적 변동",
+   "origin_wp": "2120A",
+   "area": "Q",
+   "account": "제품매출원가",
+   "assertions": [
+    "C",
+    "A/V",
+    "CO"
+   ],
+   "amount": 2220000000,
+   "title": "매출원가가 전기 원가율로 계산한 금액과 다름",
+   "response_wp": "4000Q",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 6,
+   "source": "분석적 변동",
+   "origin_wp": "2120A",
+   "area": "H",
+   "account": "개발비",
+   "assertions": [
+    "E/O",
+    "A/V",
+    "P/CL"
+   ],
+   "amount": 800000000,
+   "title": "무형자산 증가와 관련 비용 감소",
+   "response_wp": "4000H",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 7,
+   "source": "자료 불일치",
+   "origin_wp": "2120A",
+   "area": "EE",
+   "account": "급여",
+   "assertions": [
+    "E/O",
+    "A/V"
+   ],
+   "amount": 300000000,
+   "title": "급여가 원천세 신고 근로소득 지급액과 다름",
+   "response_wp": "4000EE",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 8,
+   "source": "주요 회계처리",
+   "origin_wp": "2100-주요거래",
+   "area": "G",
+   "account": "기계장치",
+   "assertions": [
+    "E/O",
+    "P/CL",
+    "A/V",
+    "RO"
+   ],
+   "amount": 600000000,
+   "title": "기계장치: 의사록 결의와 대사된 주요 거래(2025-03-15). 회계처리 기준 확인 대상",
+   "response_wp": "4000G",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 9,
+   "source": "분석적 변동",
+   "origin_wp": "2120A",
+   "area": "CC",
+   "account": "미지급금",
+   "assertions": [
+    "E/O"
+   ],
+   "amount": 300000000,
+   "title": "미지급금 증감 가운데 독립 자료로 설명되지 않는 금액이 있음",
+   "response_wp": "4000CC",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  },
+  {
+   "no": 10,
+   "source": "분석적 변동",
+   "origin_wp": "2120A",
+   "area": "BBDD",
+   "account": "이자비용",
+   "assertions": [
+    "C",
+    "A/V"
+   ],
+   "amount": 50000000,
+   "title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름",
+   "response_wp": "4000BBDD",
+   "status": "열림",
+   "close_method": null,
+   "conclusion": null
+  }
+ ]
+}

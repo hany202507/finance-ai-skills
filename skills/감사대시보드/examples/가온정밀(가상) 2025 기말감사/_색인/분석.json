@@ -1,0 +1,1236 @@
+{
+ "inputs": {
+  "materiality.overall": {
+   "value": 190400000
+  },
+  "materiality.performance": {
+   "value": 142800000
+  },
+  "materiality.trivial": {
+   "value": 9520000
+  }
+ },
+ "findings": [
+  {
+   "id": "X-sales-vat:cur",
+   "title": "매출이 부가세 과세표준과 다름",
+   "metric": {
+    "left": 14700000000,
+    "right": 13200000000,
+    "diff": 1500000000,
+    "period": "cur"
+   },
+   "refs": [
+    "tb:404",
+    "부가세 신고서 2025 1기.pdf 1쪽",
+    "부가세 신고서 2025 2기.pdf 1쪽"
+   ]
+  },
+  {
+   "id": "X-payroll-wht:cur",
+   "title": "급여가 원천세 신고 근로소득 지급액과 다름",
+   "metric": {
+    "left": 1884000000,
+    "right": 1584000000,
+    "diff": 300000000,
+    "period": "cur"
+   },
+   "refs": [
+    "tb:801",
+    "원천징수이행상황신고서 2025.pdf 1쪽"
+   ]
+  },
+  {
+   "id": "X-inv-schedule:cur",
+   "title": "재고자산이 계정명세서 품목 합계와 다름",
+   "metric": {
+    "left": 2322000000,
+    "right": 1122000000,
+    "diff": 1200000000,
+    "period": "cur"
+   },
+   "refs": [
+    "tb:150",
+    "계정명세서_2025.xlsx 재고자산 시트"
+   ]
+  },
+  {
+   "id": "E-interest:interest_expense",
+   "title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름",
+   "metric": {
+    "expected": 300000000,
+    "actual": 250000000,
+    "diff": -50000000,
+    "avg_balance": 6000000000,
+    "rate": 0.05,
+    "rate_basis": "contract"
+   },
+   "refs": [
+    "tb:951",
+    "가나은행 여신약정서.pdf 1쪽"
+   ]
+  },
+  {
+   "id": "E-payroll:salaries",
+   "title": "급여가 원천세 신고 지급액과 다름",
+   "metric": {
+    "expected": 1584000000,
+    "actual": 1884000000,
+    "diff": 300000000
+   },
+   "refs": [
+    "tb:801",
+    "원천징수이행상황신고서 2025.pdf 1쪽"
+   ]
+  },
+  {
+   "id": "E-cogs:cogs",
+   "title": "매출원가가 전기 원가율로 계산한 금액과 다름",
+   "metric": {
+    "expected": 9996000000,
+    "actual": 7776000000,
+    "diff": -2220000000,
+    "prior_ratio": 0.68,
+    "driver_cur": 14700000000,
+    "driver_prior": 12000000000
+   },
+   "refs": [
+    "tb:455"
+   ]
+  },
+  {
+   "id": "E-retirement:retirement_expense",
+   "title": "퇴직급여가 전기 급여 대비 비율로 계산한 금액과 다름",
+   "metric": {
+    "expected": 157000000,
+    "actual": 132000000,
+    "diff": -25000000,
+    "prior_ratio": 0.0833,
+    "driver_cur": 1884000000,
+    "driver_prior": 1440000000
+   },
+   "refs": [
+    "tb:806"
+   ]
+  },
+  {
+   "id": "V-acct:108",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 3920000000,
+    "prior": 2200000000,
+    "change": 1720000000,
+    "change_ratio": 0.7818,
+    "expected": null,
+    "unexplained": 1720000000,
+    "explained_by": null
+   },
+   "refs": [
+    "tb:108"
+   ]
+  },
+  {
+   "id": "V-acct:150",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 2322000000,
+    "prior": 1020000000,
+    "change": 1302000000,
+    "change_ratio": 1.2765,
+    "expected": null,
+    "unexplained": 1302000000,
+    "explained_by": null
+   },
+   "refs": [
+    "tb:150"
+   ]
+  },
+  {
+   "id": "V-acct:226",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 800000000,
+    "prior": 0,
+    "change": 800000000,
+    "change_ratio": null,
+    "expected": null,
+    "unexplained": 800000000,
+    "explained_by": null
+   },
+   "refs": [
+    "tb:226"
+   ]
+  },
+  {
+   "id": "V-acct:253",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 300000000,
+    "prior": 0,
+    "change": 300000000,
+    "change_ratio": null,
+    "expected": null,
+    "unexplained": 300000000,
+    "explained_by": null
+   },
+   "refs": [
+    "tb:253"
+   ]
+  },
+  {
+   "id": "V-acct:404",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 14700000000,
+    "prior": 12000000000,
+    "change": 2700000000,
+    "change_ratio": 0.225,
+    "expected": 13200000000,
+    "unexplained": 1500000000,
+    "explained_by": "X-sales-vat (부가세 신고서 2025 1기.pdf 1쪽, 부가세 신고서 2025 2기.pdf 1쪽)"
+   },
+   "refs": [
+    "tb:404"
+   ]
+  },
+  {
+   "id": "V-acct:801",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 1884000000,
+    "prior": 1440000000,
+    "change": 444000000,
+    "change_ratio": 0.3083,
+    "expected": 1584000000,
+    "unexplained": 300000000,
+    "explained_by": "X-payroll-wht (원천징수이행상황신고서 2025.pdf 1쪽)"
+   },
+   "refs": [
+    "tb:801"
+   ]
+  },
+  {
+   "id": "V-acct:823",
+   "title": "독립 자료로 설명되지 않는 계정 증감",
+   "metric": {
+    "cur": 200000000,
+    "prior": 1000000000,
+    "change": -800000000,
+    "change_ratio": -0.8,
+    "expected": null,
+    "unexplained": -800000000,
+    "explained_by": null
+   },
+   "refs": [
+    "tb:823"
+   ]
+  },
+  {
+   "id": "R-sales-ar:accounts_receivable",
+   "title": "매출과 매출채권이 따로 움직임",
+   "metric": {
+    "a_cur": 14700000000,
+    "a_prior": 12000000000,
+    "b_cur": 3920000000,
+    "b_prior": 2200000000,
+    "d_a": 2700000000,
+    "d_b": 1720000000,
+    "g_a": 0.225,
+    "g_b": 0.7818,
+    "gap": 0.5568,
+    "amount": 1225000000
+   },
+   "refs": [
+    "tb:108"
+   ]
+  },
+  {
+   "id": "R-inv-cogs:inventory",
+   "title": "재고와 매출원가가 반대로 움직임",
+   "metric": {
+    "a_cur": 7776000000,
+    "a_prior": 8160000000,
+    "b_cur": 2322000000,
+    "b_prior": 1020000000,
+    "d_a": -384000000,
+    "d_b": 1302000000,
+    "g_a": -0.0471,
+    "g_b": 1.2765,
+    "gap": 1.3235,
+    "amount": 1350000000
+   },
+   "refs": [
+    "tb:150"
+   ]
+  },
+  {
+   "id": "R-debt-interest:interest_expense",
+   "title": "차입금과 이자비용이 따로 움직임",
+   "metric": {
+    "a_cur": 6000000000,
+    "a_prior": 5000000000,
+    "b_cur": 250000000,
+    "b_prior": 250000000,
+    "d_a": 1000000000,
+    "d_b": 0,
+    "g_a": 0.2,
+    "g_b": 0.0,
+    "gap": -0.2,
+    "amount": 50000000
+   },
+   "refs": [
+    "tb:951"
+   ]
+  },
+  {
+   "id": "R-intangible-rnd:intangibles+rnd_expense",
+   "title": "무형자산 증가와 관련 비용 감소",
+   "metric": {
+    "a_cur": 800000000,
+    "a_prior": 0,
+    "b_cur": 200000000,
+    "b_prior": 1000000000,
+    "d_a": 800000000,
+    "d_b": -800000000,
+    "amount": 800000000
+   },
+   "refs": [
+    "tb:226",
+    "tb:823"
+   ]
+  },
+  {
+   "id": "R-payroll-headcount:salaries",
+   "title": "급여와 인원이 따로 움직임",
+   "metric": {
+    "a_cur": 44.0,
+    "a_prior": 40.0,
+    "b_cur": 1884000000,
+    "b_prior": 1440000000,
+    "d_a": 4.0,
+    "d_b": 444000000,
+    "g_a": 0.1,
+    "g_b": 0.3083,
+    "gap": 0.2083,
+    "amount": 300000000
+   },
+   "refs": [
+    "tb:801"
+   ]
+  },
+  {
+   "id": "M-ye-month:revenue",
+   "title": "결산월 금액이 다른 달과 크게 다름",
+   "metric": {
+    "ye_month": "2025-12",
+    "ye_amount": 2600000000,
+    "avg_prev11": 1100000000,
+    "ratio": 2.3636,
+    "sign_flip": false,
+    "series": "flow"
+   },
+   "refs": [
+    "gl:cur:2025-12"
+   ]
+  },
+  {
+   "id": "M-ye-month:cogs",
+   "title": "결산월 금액이 다른 달과 크게 다름",
+   "metric": {
+    "ye_month": "2025-12",
+    "ye_amount": -452000000,
+    "avg_prev11": 748000000,
+    "ratio": -0.6043,
+    "sign_flip": true,
+    "series": "flow"
+   },
+   "refs": [
+    "gl:cur:2025-12"
+   ]
+  },
+  {
+   "id": "M-ye-month:accounts_receivable",
+   "title": "결산월 금액이 다른 달과 크게 다름",
+   "metric": {
+    "ye_month": "2025-12",
+    "ye_amount": 3920000000,
+    "avg_prev11": 2410000000,
+    "ratio": 1.6266,
+    "sign_flip": false,
+    "series": "balance"
+   },
+   "refs": [
+    "gl:cur:2025-12"
+   ]
+  },
+  {
+   "id": "M-ye-month:inventory",
+   "title": "결산월 금액이 다른 달과 크게 다름",
+   "metric": {
+    "ye_month": "2025-12",
+    "ye_amount": 2322000000,
+    "avg_prev11": 1071000000,
+    "ratio": 2.1681,
+    "sign_flip": false,
+    "series": "balance"
+   },
+   "refs": [
+    "gl:cur:2025-12"
+   ]
+  },
+  {
+   "id": "P-fict-sales:accounts_receivable",
+   "title": "기말 허위 매출",
+   "metric": {
+    "signals_on": [
+     "S-ye-sales-conc",
+     "S-new-party-large-sales",
+     "S-ar-growth-gt-sales",
+     "S-post-ye-reversal"
+    ],
+    "amounts": {
+     "S-ye-sales-conc": 1500000000,
+     "S-new-party-large-sales": 1500000000,
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-post-ye-reversal": 1500000000
+    },
+    "suspect": "결산일 직전 실재하지 않는 거래처나 거래로 매출을 올리고 기말 후 취소하거나 미회수 채권으로 남김",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-4392dee0",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2021-445819e4"
+   ]
+  },
+  {
+   "id": "P-new-party-circular:revenue",
+   "title": "신규 거래처와의 가공 매출·매입",
+   "metric": {
+    "signals_on": [
+     "S-new-party-large-sales",
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-new-party-large-sales": 1500000000,
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "새로 등장한 거래처와 실물 이동 없이 세금계산서만 주고받아 매출과 매출원가를 함께 부풀림. 매입처와 매출처가 같은 실체인 경우가 많음",
+    "sources": 3
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2025-ca533e5a",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2023-1e9114f4",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2021-f52ffed5"
+   ]
+  },
+  {
+   "id": "P-channel-stuffing:revenue",
+   "title": "연말 밀어내기 매출과 기말 후 정리",
+   "metric": {
+    "signals_on": [
+     "S-ye-sales-conc",
+     "S-post-ye-reversal",
+     "S-ar-days-up",
+     "S-ar-growth-gt-sales",
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-ye-sales-conc": 1500000000,
+     "S-post-ye-reversal": 1500000000,
+     "S-ar-days-up": 1217616438,
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "협력업체나 대리점과 짜고 연말에 주문 없는 물량을 출고해 매출로 잡은 뒤 다음 해에 반품·상계로 정리",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2022-362ce93c",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-c221cf56"
+   ]
+  },
+  {
+   "id": "P-dealer-push:revenue",
+   "title": "신규 대리점 앞 반출을 매출로 인식",
+   "metric": {
+    "signals_on": [
+     "S-new-party-large-sales",
+     "S-ar-days-up",
+     "S-ar-growth-gt-sales",
+     "S-post-ye-reversal"
+    ],
+    "amounts": {
+     "S-new-party-large-sales": 1500000000,
+     "S-ar-days-up": 1217616438,
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-post-ye-reversal": 1500000000
+    },
+    "suspect": "물류만 대행하는 대리점이나 해외 차명회사에 주문을 넘는 물량을 반출하고 반출 시점에 매출로 잡아 채권이 쌓임",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2021-042b3091",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2020-ac4b8dff"
+   ]
+  },
+  {
+   "id": "C-fict-ar-overdue:accounts_receivable",
+   "title": "매출보다 빨리 늘고 회수도 늦어진 허위 채권",
+   "metric": {
+    "signals_on": [
+     "S-ar-growth-gt-sales",
+     "S-ar-days-up",
+     "S-ye-sales-conc"
+    ],
+    "amounts": {
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-ar-days-up": 1217616438,
+     "S-ye-sales-conc": 1500000000
+    },
+    "suspect": "실제 인도나 용역 없이 매출과 채권을 함께 잡아 회수되지 않는 채권이 쌓임",
+    "sources": 3
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2024-39f3a761",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2023-20db73ab",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2020-10041340"
+   ]
+  },
+  {
+   "id": "C-ar-embezzle:accounts_receivable",
+   "title": "횡령을 숨기려고 남긴 매출채권",
+   "metric": {
+    "signals_on": [
+     "S-ar-days-up",
+     "S-ar-growth-gt-sales"
+    ],
+    "amounts": {
+     "S-ar-days-up": 1217616438,
+     "S-ar-growth-gt-sales": 1225000000
+    },
+    "suspect": "회수된 대금이나 유출된 현금을 숨기려고 거래가 끊긴 거래처의 채권 잔액을 장부에 그대로 둠",
+    "sources": 4
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-ffa94d7f",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2025-3c55f53e",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2018-bd8fb298"
+   ]
+  },
+  {
+   "id": "C-ar-allowance:accounts_receivable",
+   "title": "회수가 늦어진 채권에 대손충당금을 쌓지 않음",
+   "metric": {
+    "signals_on": [
+     "S-ar-days-up"
+    ],
+    "amounts": {
+     "S-ar-days-up": 1217616438
+    },
+    "suspect": "자본잠식이나 영업 중단 상태의 거래처, 종속기업 채권을 관계사라는 이유로 손상 검토 없이 그대로 둠",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2019-ea968c51",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2022-3b6b727e"
+   ]
+  },
+  {
+   "id": "C-ar-growth-sales:accounts_receivable",
+   "title": "매출채권만 유독 늘어난 허위 매출",
+   "metric": {
+    "signals_on": [
+     "S-ar-growth-gt-sales",
+     "S-ye-sales-conc"
+    ],
+    "amounts": {
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-ye-sales-conc": 1500000000
+    },
+    "suspect": "허위 검수확인서나 세금계산서로 매출을 올리거나 순자산 부족을 허위 채권으로 메움",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-fe110e45",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2010-0866c0b2"
+   ]
+  },
+  {
+   "id": "Q-gross-agent:cogs",
+   "title": "대리인 거래를 총액으로 매출 인식",
+   "metric": {
+    "signals_on": [
+     "S-gm-swing",
+     "S-new-party-large-sales"
+    ],
+    "amounts": {
+     "S-gm-swing": 2220000000,
+     "S-new-party-large-sales": 1500000000
+    },
+    "suspect": "재고 위험 없이 대금만 전달하는 거래를 총액으로 매출과 매출원가에 넣어 매출 규모를 키움",
+    "sources": 1
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-4448bdaf"
+   ]
+  },
+  {
+   "id": "P-tax-recon-gap:revenue",
+   "title": "세금계산서 발행과 장부 매출이 맞지 않음",
+   "metric": {
+    "signals_on": [
+     "S-recon-gap",
+     "S-new-party-large-sales",
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-recon-gap": 1500000000,
+     "S-new-party-large-sales": 1500000000,
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "실물 이동 없는 매출·매입 계약서로 매출을 꾸며 장부 매출과 부가세 신고 매출이 어긋남",
+    "sources": 1
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2021-8b090f0f"
+   ]
+  },
+  {
+   "id": "Q-poc-overstated:cogs",
+   "title": "진행기준 수익을 부풀려 미청구 채권이 쌓임",
+   "metric": {
+    "signals_on": [
+     "S-gm-swing",
+     "S-ar-growth-gt-sales",
+     "S-ar-days-up"
+    ],
+    "amounts": {
+     "S-gm-swing": 2220000000,
+     "S-ar-growth-gt-sales": 1225000000,
+     "S-ar-days-up": 1217616438
+    },
+    "suspect": "견적 금액이나 자의적 진행률로 공사·용역 수익을 인식해 이익률이 바뀌고 미청구 채권이 늘어남",
+    "sources": 1
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2022-50f97b7c"
+   ]
+  },
+  {
+   "id": "E-fict-inv-large:inventory",
+   "title": "재고가 늘고 회전도 느려진 가공 재고",
+   "metric": {
+    "signals_on": [
+     "S-inv-up-cogs-down",
+     "S-inv-days-up",
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-inv-up-cogs-down": 1350000000,
+     "S-inv-days-up": 1347336986,
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "목표 이익에 맞춰 기말 재고 수량을 늘리거나 남의 재고를 자사 타처보관 재고로 꾸밈",
+    "sources": 4
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-71cb6dde",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2021-684b55d4",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2017-082dcbf0"
+   ]
+  },
+  {
+   "id": "E-cogs-deferral:inventory",
+   "title": "출고 누락으로 매출원가를 다음 해로 미룸",
+   "metric": {
+    "signals_on": [
+     "S-inv-up-cogs-down",
+     "S-gm-swing",
+     "S-inv-days-up"
+    ],
+    "amounts": {
+     "S-inv-up-cogs-down": 1350000000,
+     "S-gm-swing": 2220000000,
+     "S-inv-days-up": 1347336986
+    },
+    "suspect": "판매된 제품의 출고나 원재료 투입을 수불부에서 빠뜨려 재고는 남고 매출원가는 줄어듦",
+    "sources": 5
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2025-3fd7c35b",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-5e541a0c",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2024-8bdfebc4"
+   ]
+  },
+  {
+   "id": "E-cost-absorption:inventory",
+   "title": "비용을 재고 원가로 돌림",
+   "metric": {
+    "signals_on": [
+     "S-inv-up-cogs-down"
+    ],
+    "amounts": {
+     "S-inv-up-cogs-down": 1350000000
+    },
+    "suspect": "판관비나 차입원가, 신규 외주공정 원가를 근거 없이 재고 원가에 넣어 재고가 늘고 비용이 줄어듦",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2019-079bb8cc",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2025-eebad1ef"
+   ]
+  },
+  {
+   "id": "E-obsolete:inventory",
+   "title": "오래 묵은 재고의 평가손실 미계상",
+   "metric": {
+    "signals_on": [
+     "S-inv-days-up"
+    ],
+    "amounts": {
+     "S-inv-days-up": 1347336986
+    },
+    "suspect": "장기 미사용·진부화·주문 취소 재고를 팔 수 있다고 보고 평가충당금이나 감모손실을 잡지 않음",
+    "sources": 4
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2024-ad0a1985",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2019-056b4c90",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2019-970332b5"
+   ]
+  },
+  {
+   "id": "E-ghost-stock:inventory",
+   "title": "실물 없는 재고가 쌓여 이월됨",
+   "metric": {
+    "signals_on": [
+     "S-inv-days-up",
+     "S-inv-up-cogs-down"
+    ],
+    "amounts": {
+     "S-inv-days-up": 1347336986,
+     "S-inv-up-cogs-down": 1350000000
+    },
+    "suspect": "시스템상 가상 창고나 수불부에만 있는 재고가 정리되지 않고 여러 해 쌓임",
+    "sources": 3
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2023-c81c0213",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2022-21d6c556",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2024-be733473"
+   ]
+  },
+  {
+   "id": "E-nrv-margin:inventory",
+   "title": "판가 하락에도 재고를 감액하지 않음",
+   "metric": {
+    "signals_on": [
+     "S-gm-swing",
+     "S-inv-days-up"
+    ],
+    "amounts": {
+     "S-gm-swing": 2220000000,
+     "S-inv-days-up": 1347336986
+    },
+    "suspect": "납품단가가 내리거나 원가가 올라 이익률이 떨어졌는데 재고를 순실현가능가치로 낮추지 않음",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2018-3abd8f4c",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2022-ecb077be"
+   ]
+  },
+  {
+   "id": "Q-cogs-misposted:cogs",
+   "title": "매출원가에 원가 아닌 금액이 들고 남",
+   "metric": {
+    "signals_on": [
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "원가 전표의 프로젝트 코드를 바꾸거나 수수료·차입금을 원가 계정에 넣고 빼서 이익률이 흔들림",
+    "sources": 3
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2024-d1e70066",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2023-32d6e9ea",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2015-aa71fdae"
+   ]
+  },
+  {
+   "id": "H-dev-cost:intangibles",
+   "title": "개발비로 비용을 자산화",
+   "metric": {
+    "signals_on": [
+     "S-capitalization"
+    ],
+    "amounts": {
+     "S-capitalization": 800000000
+    },
+    "suspect": "연구·개발단계 구분이나 인식요건 검토 없이 인건비와 감가상각비를 개발비로 계상",
+    "sources": 5
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/fss-2024-b767db62",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2021-eb52a9d2",
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2020-1e95dc37"
+   ]
+  },
+  {
+   "id": "H-dev-cost-margin:intangibles",
+   "title": "원가까지 개발비로 돌려 이익률이 바뀜",
+   "metric": {
+    "signals_on": [
+     "S-capitalization",
+     "S-gm-swing"
+    ],
+    "amounts": {
+     "S-capitalization": 800000000,
+     "S-gm-swing": 2220000000
+    },
+    "suspect": "제조원가나 사업부 지출 전체를 개발비·유형자산으로 대체해 영업이익을 흑자로 바꿈",
+    "sources": 2
+   },
+   "refs": [
+    "https://accountingwiki.co.kr/audit/qnas/kicpa-2019-0139ec64",
+    "https://accountingwiki.co.kr/audit/qnas/fss-2025-864997db"
+   ]
+  },
+  {
+   "id": "K-minutes-unmatched:2",
+   "title": "의사록 결의에 맞는 전표가 장부에 없음",
+   "metric": {
+    "meeting": "이사회",
+    "date": "2025-10-15",
+    "agenda": "제2호 의안 운영자금 차입의 건",
+    "topic": "차입",
+    "agenda_amount": 3000000000,
+    "counterparty": "다온은행",
+    "unconfirmed": true,
+    "minutes_id": 2,
+    "match": "minutes"
+   },
+   "refs": [
+    "scan_0012.pdf 2쪽"
+   ]
+  },
+  {
+   "id": "K:2025-03-15|202503-0028",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-large-one-off",
+     "K-new-party-large"
+    ],
+    "date": "2025-03-15",
+    "voucher": "202503-0028",
+    "voucher_total": 660000000,
+    "area_amount": 600000000,
+    "memo": "기계장치 취득",
+    "party": "대성기계",
+    "minutes_matched": true,
+    "keytx_id": 1,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-03-15 202503-0028"
+   ]
+  },
+  {
+   "id": "K:2025-07-01|202507-0001",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-large-one-off"
+    ],
+    "date": "2025-07-01",
+    "voucher": "202507-0001",
+    "voucher_total": 2000000000,
+    "area_amount": 2000000000,
+    "memo": "운영자금 차입",
+    "party": "가나은행",
+    "minutes_matched": true,
+    "keytx_id": 2,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-07-01 202507-0001"
+   ]
+  },
+  {
+   "id": "K:2025-12-18|202512-0028",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-large-one-off",
+     "K-new-party-large"
+    ],
+    "date": "2025-12-18",
+    "voucher": "202512-0028",
+    "voucher_total": 500000000,
+    "area_amount": 500000000,
+    "memo": "제품 매출",
+    "party": "에이원테크",
+    "minutes_matched": false,
+    "keytx_id": 3,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-18 202512-0028"
+   ]
+  },
+  {
+   "id": "K:2025-12-22|202512-0029",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-large-one-off",
+     "K-new-party-large"
+    ],
+    "date": "2025-12-22",
+    "voucher": "202512-0029",
+    "voucher_total": 500000000,
+    "area_amount": 500000000,
+    "memo": "제품 매출",
+    "party": "비앤씨산업",
+    "minutes_matched": false,
+    "keytx_id": 4,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-22 202512-0029"
+   ]
+  },
+  {
+   "id": "K:2025-12-29|202512-0058",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-closing-adjust",
+     "K-large-one-off",
+     "K-new-party-large"
+    ],
+    "date": "2025-12-29",
+    "voucher": "202512-0058",
+    "voucher_total": 500000000,
+    "area_amount": 500000000,
+    "memo": "제품 매출",
+    "party": "씨엘상사",
+    "minutes_matched": false,
+    "keytx_id": 5,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-29 202512-0058"
+   ]
+  },
+  {
+   "id": "K:2025-12-31|202512-0064",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-closing-adjust",
+     "K-large-one-off"
+    ],
+    "date": "2025-12-31",
+    "voucher": "202512-0064",
+    "voucher_total": 1200000000,
+    "area_amount": 1200000000,
+    "memo": "기말재고 실사 조정",
+    "party": null,
+    "minutes_matched": false,
+    "keytx_id": 6,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-31 202512-0064"
+   ]
+  },
+  {
+   "id": "K:2025-12-31|202512-0065",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-closing-adjust",
+     "K-large-one-off",
+     "K-new-account"
+    ],
+    "date": "2025-12-31",
+    "voucher": "202512-0065",
+    "voucher_total": 300000000,
+    "area_amount": 300000000,
+    "memo": "연말 성과급 정산",
+    "party": null,
+    "minutes_matched": false,
+    "keytx_id": 7,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-31 202512-0065"
+   ]
+  },
+  {
+   "id": "K:2025-12-31|202512-0066",
+   "title": "드문 계정 조합 전표",
+   "metric": {
+    "rules": [
+     "K-rare-combo",
+     "K-closing-adjust",
+     "K-large-one-off",
+     "K-new-account"
+    ],
+    "date": "2025-12-31",
+    "voucher": "202512-0066",
+    "voucher_total": 800000000,
+    "area_amount": 800000000,
+    "memo": "개발단계 지출 자산화",
+    "party": null,
+    "minutes_matched": false,
+    "keytx_id": 8,
+    "match": "journal"
+   },
+   "refs": [
+    "gl:cur:2025-12-31 202512-0066"
+   ]
+  }
+ ],
+ "patterns": [
+  {
+   "id": "P-fict-sales",
+   "title": "기말 허위 매출"
+  },
+  {
+   "id": "P-new-party-circular",
+   "title": "신규 거래처와의 가공 매출·매입"
+  },
+  {
+   "id": "P-channel-stuffing",
+   "title": "연말 밀어내기 매출과 기말 후 정리"
+  },
+  {
+   "id": "P-dealer-push",
+   "title": "신규 대리점 앞 반출을 매출로 인식"
+  },
+  {
+   "id": "C-fict-ar-overdue",
+   "title": "매출보다 빨리 늘고 회수도 늦어진 허위 채권"
+  },
+  {
+   "id": "C-ar-embezzle",
+   "title": "횡령을 숨기려고 남긴 매출채권"
+  },
+  {
+   "id": "C-ar-allowance",
+   "title": "회수가 늦어진 채권에 대손충당금을 쌓지 않음"
+  },
+  {
+   "id": "C-ar-growth-sales",
+   "title": "매출채권만 유독 늘어난 허위 매출"
+  },
+  {
+   "id": "Q-gross-agent",
+   "title": "대리인 거래를 총액으로 매출 인식"
+  },
+  {
+   "id": "P-tax-recon-gap",
+   "title": "세금계산서 발행과 장부 매출이 맞지 않음"
+  },
+  {
+   "id": "Q-poc-overstated",
+   "title": "진행기준 수익을 부풀려 미청구 채권이 쌓임"
+  },
+  {
+   "id": "E-fict-inv-large",
+   "title": "재고가 늘고 회전도 느려진 가공 재고"
+  },
+  {
+   "id": "E-cogs-deferral",
+   "title": "출고 누락으로 매출원가를 다음 해로 미룸"
+  },
+  {
+   "id": "E-cost-absorption",
+   "title": "비용을 재고 원가로 돌림"
+  },
+  {
+   "id": "E-obsolete",
+   "title": "오래 묵은 재고의 평가손실 미계상"
+  },
+  {
+   "id": "E-ghost-stock",
+   "title": "실물 없는 재고가 쌓여 이월됨"
+  },
+  {
+   "id": "E-nrv-margin",
+   "title": "판가 하락에도 재고를 감액하지 않음"
+  },
+  {
+   "id": "Q-cogs-misposted",
+   "title": "매출원가에 원가 아닌 금액이 들고 남"
+  },
+  {
+   "id": "H-dev-cost",
+   "title": "개발비로 비용을 자산화"
+  },
+  {
+   "id": "H-dev-cost-margin",
+   "title": "원가까지 개발비로 돌려 이익률이 바뀜"
+  }
+ ],
+ "issues": [
+  {
+   "issue": 1,
+   "score": 9.0,
+   "findings": [
+    "X-inv-schedule:cur",
+    "R-inv-cogs:inventory",
+    "V-acct:150",
+    "M-ye-month:inventory",
+    "K:2025-12-31|202512-0064",
+    "E-fict-inv-large:inventory",
+    "E-cogs-deferral:inventory",
+    "E-cost-absorption:inventory",
+    "E-obsolete:inventory",
+    "E-ghost-stock:inventory",
+    "E-nrv-margin:inventory"
+   ],
+   "patterns": [
+    "E-fict-inv-large",
+    "E-cogs-deferral",
+    "E-cost-absorption",
+    "E-obsolete",
+    "E-ghost-stock",
+    "E-nrv-margin"
+   ]
+  },
+  {
+   "issue": 2,
+   "score": 8.5,
+   "findings": [
+    "X-sales-vat:cur",
+    "V-acct:404",
+    "M-ye-month:revenue",
+    "P-new-party-circular:revenue",
+    "P-channel-stuffing:revenue",
+    "P-dealer-push:revenue",
+    "P-tax-recon-gap:revenue"
+   ],
+   "patterns": [
+    "P-new-party-circular",
+    "P-channel-stuffing",
+    "P-dealer-push",
+    "P-tax-recon-gap"
+   ]
+  },
+  {
+   "issue": 3,
+   "score": 8.5,
+   "findings": [
+    "R-sales-ar:accounts_receivable",
+    "V-acct:108",
+    "M-ye-month:accounts_receivable",
+    "K:2025-12-18|202512-0028",
+    "K:2025-12-22|202512-0029",
+    "K:2025-12-29|202512-0058",
+    "P-fict-sales:accounts_receivable",
+    "C-fict-ar-overdue:accounts_receivable",
+    "C-ar-embezzle:accounts_receivable",
+    "C-ar-allowance:accounts_receivable",
+    "C-ar-growth-sales:accounts_receivable"
+   ],
+   "patterns": [
+    "P-fict-sales",
+    "C-fict-ar-overdue",
+    "C-ar-embezzle",
+    "C-ar-allowance",
+    "C-ar-growth-sales"
+   ]
+  },
+  {
+   "issue": 4,
+   "score": 8.0,
+   "findings": [
+    "K-minutes-unmatched:2",
+    "K:2025-07-01|202507-0001"
+   ],
+   "patterns": []
+  },
+  {
+   "issue": 5,
+   "score": 8.0,
+   "findings": [
+    "E-cogs:cogs",
+    "M-ye-month:cogs",
+    "Q-gross-agent:cogs",
+    "Q-poc-overstated:cogs",
+    "Q-cogs-misposted:cogs"
+   ],
+   "patterns": [
+    "Q-gross-agent",
+    "Q-poc-overstated",
+    "Q-cogs-misposted"
+   ]
+  },
+  {
+   "issue": 6,
+   "score": 8.0,
+   "findings": [
+    "R-intangible-rnd:intangibles+rnd_expense",
+    "V-acct:226",
+    "V-acct:823",
+    "K:2025-12-31|202512-0066",
+    "H-dev-cost:intangibles",
+    "H-dev-cost-margin:intangibles"
+   ],
+   "patterns": [
+    "H-dev-cost",
+    "H-dev-cost-margin"
+   ]
+  },
+  {
+   "issue": 7,
+   "score": 5.6008,
+   "findings": [
+    "X-payroll-wht:cur",
+    "E-payroll:salaries",
+    "R-payroll-headcount:salaries",
+    "V-acct:801",
+    "K:2025-12-31|202512-0065"
+   ],
+   "patterns": []
+  },
+  {
+   "issue": 8,
+   "score": 5.2017,
+   "findings": [
+    "K:2025-03-15|202503-0028"
+   ],
+   "patterns": []
+  },
+  {
+   "issue": 9,
+   "score": 3.1008,
+   "findings": [
+    "V-acct:253"
+   ],
+   "patterns": []
+  },
+  {
+   "issue": 10,
+   "score": 2.8501,
+   "findings": [
+    "E-interest:interest_expense",
+    "R-debt-interest:interest_expense"
+   ],
+   "patterns": []
+  }
+ ]
+}

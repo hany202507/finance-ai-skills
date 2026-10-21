@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>감사 대시보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* 왼쪽 단계 · 세부 항목, 오른쪽 상세 두 단 */
+:root{
+  --background:oklch(1 0 0); --foreground:oklch(0.145 0 0);
+  --primary:oklch(0.527 0.154 150.069); --primary-foreground:oklch(0.982 0.018 155.826); --primary-soft:oklch(0.962 0.044 156.743);
+  --muted:oklch(0.97 0 0); --muted-foreground:oklch(0.50 0 0);
+  --border:oklch(0.922 0 0); --sidebar:oklch(0.985 0 0);
+  --destructive:oklch(0.577 0.245 27.325); --cell:#fff7cc; --cell-line:#e3d48a; --cell-ink:#7a6a1a;
+  --r-xl:0.875rem; --r-2xl:1.125rem;
+  --font:"Inter","Noto Sans KR",ui-sans-serif,system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font);font-size:14px;line-height:20px}
+button{font:inherit;color:inherit}
+.muted{color:var(--muted-foreground)} .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.small{font-size:12px} .b{font-weight:600} .mono{font-family:var(--mono);font-size:12px}
+.app{min-height:100vh;display:flex;flex-direction:column}
+
+header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;padding:10px 24px;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;cursor:pointer;background:none;border:0;padding:0}
+.logo{display:grid;place-items:center;width:28px;height:28px;border-radius:var(--r-xl);background:var(--foreground);color:var(--background);font-size:13px;font-weight:700}
+.co{display:flex;flex-wrap:wrap;gap:4px 8px;color:var(--muted-foreground)} .co b{color:var(--foreground);font-weight:500}
+.hright{margin-left:auto;display:flex;align-items:center;gap:8px}
+.notice{padding:8px 24px;background:var(--cell);border-bottom:1px solid var(--cell-line);color:var(--cell-ink);font-size:13px}
+
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.badge.done{background:var(--primary);color:var(--primary-foreground)}
+.badge.pass{background:var(--primary-soft);color:oklch(0.39 0.11 152)}
+.badge.req{box-shadow:inset 0 0 0 1px var(--cell-line);background:var(--cell);color:var(--cell-ink)}
+.badge.draft{background:var(--muted);color:var(--foreground)}
+.badge.none{box-shadow:inset 0 0 0 1px var(--border);color:var(--muted-foreground)}
+.badge.issue{box-shadow:inset 0 0 0 1px oklch(0.85 0.08 27);color:var(--destructive);background:oklch(0.97 0.02 27)}
+.badge.out{box-shadow:inset 0 0 0 1px var(--border);color:var(--foreground)}
+
+.body{flex:1;display:flex;flex-wrap:wrap;align-items:stretch}
+aside.panel{flex:1 1 300px;max-width:340px;min-width:0;background:var(--sidebar);border-right:1px solid var(--border);padding:20px 16px 28px}
+section.data{flex:999 1 560px;min-width:0;padding:24px 28px 48px}
+.prog{height:8px;border-radius:999px;background:var(--muted);overflow:hidden} .prog i{display:block;height:100%;background:var(--primary);border-radius:999px}
+.prog.thin{height:6px}
+.ptop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.ptop span:first-child{font-weight:600}
+
+.nav{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:2px}
+.step{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--r-xl);background:none;border:0;width:100%;text-align:left;cursor:pointer;color:var(--foreground)}
+.step:hover{background:var(--muted)}
+.step.on{background:var(--background);box-shadow:0 0 0 1px var(--border);font-weight:600}
+.step .dot{display:grid;place-items:center;width:22px;height:22px;border-radius:999px;font-size:11px;box-shadow:inset 0 0 0 1px var(--border);flex:none;color:var(--muted-foreground);background:var(--background)}
+.step.ok .dot{background:var(--primary);color:var(--primary-foreground);box-shadow:none}
+.step.cur .dot{box-shadow:inset 0 0 0 2px var(--primary);color:var(--primary);font-weight:700}
+.step .cnt{margin-left:auto;font-size:12px;color:var(--muted-foreground);font-weight:400}
+.subs{list-style:none;margin:2px 0 8px 19px;padding:0 0 0 12px;border-left:1px solid var(--border);display:grid;gap:1px}
+.sub{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border:0;background:none;border-radius:10px;text-align:left;cursor:pointer;font-size:13px;color:var(--foreground)}
+.sub:hover{background:var(--muted)}
+.sub.on{background:var(--background);box-shadow:0 0 0 1px var(--border);font-weight:600}
+.sub .sd{width:8px;height:8px;border-radius:999px;flex:none;box-shadow:inset 0 0 0 1.5px var(--border)}
+.sub .sd.ok{background:var(--primary);box-shadow:none} .sub .sd.part{background:linear-gradient(90deg,var(--primary) 50%,var(--muted) 50%);box-shadow:inset 0 0 0 1px var(--primary)}
+.sub .sd.req{background:#e0b93b;box-shadow:none}
+.sub .ib{margin-left:auto;font-size:11px;color:var(--destructive);font-weight:500}
+.step:focus-visible,.sub:focus-visible,.row:focus-visible,.brand:focus-visible,.lnk:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+
+h1{font-size:20px;line-height:28px;margin:0 0 4px;font-weight:600}
+h2{font-size:15px;margin:28px 0 10px;font-weight:600;display:flex;align-items:center;gap:8px}
+.crumb{font-size:13px;color:var(--muted-foreground);margin-bottom:6px}
+.crumb button{background:none;border:0;padding:0;cursor:pointer;color:var(--muted-foreground);text-decoration:underline;text-underline-offset:3px}
+.lede{color:var(--muted-foreground);margin:0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:20px}
+.card{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px}
+.card .k{font-size:12px;color:var(--muted-foreground)} .card .v{font-size:22px;line-height:30px;font-weight:600;font-variant-numeric:tabular-nums}
+.card .s{font-size:12px;color:var(--muted-foreground)}
+.tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-2xl)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-weight:500;color:var(--muted-foreground);text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--sidebar)}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.row{cursor:pointer} tr.row:hover td{background:var(--muted)}
+.skills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;background:var(--muted);font-size:12px;font-weight:500}
+.chip i{width:7px;height:7px;border-radius:999px;background:var(--primary);display:inline-block}
+.chip.idle i{background:var(--border)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.box{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px;min-width:0}
+.box h3{margin:0 0 8px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.box ul{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.box li{display:flex;gap:8px;font-size:13px;line-height:19px}
+.box li .mk{flex:none;width:16px;text-align:center;color:var(--muted-foreground)}
+.box li .mk.ok{color:var(--primary);font-weight:700}
+.box li .d{display:block;font-size:12px;color:var(--muted-foreground);margin-top:2px}
+.cmd{font-family:var(--mono);font-size:12px;background:var(--muted);border-radius:8px;padding:2px 6px}
+.out{margin:6px 0 0;padding:8px 10px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;font-family:var(--mono);font-size:11.5px;line-height:17px;white-space:pre-wrap;word-break:break-all;color:oklch(0.3 0 0)}
+.empty{color:var(--muted-foreground);font-size:13px}
+.iss{border:1px solid var(--border);border-radius:var(--r-2xl);padding:14px 16px;margin-bottom:12px}
+.iss .top{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.iss .t{font-weight:600}
+.iss .meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin:8px 0 10px;font-size:12px;color:var(--muted-foreground)}
+.iss .meta b{color:var(--foreground);font-weight:500}
+.iss table{font-size:12px} .iss th,.iss td{padding:7px 10px}
+.pats{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.lnk{background:none;border:0;padding:0;color:var(--foreground);text-decoration:underline;text-underline-offset:3px;cursor:pointer;font:inherit}
+.miss li .mk{color:var(--destructive)}
+@media (max-width:760px){
+  header{padding:10px 16px} .notice{padding:8px 16px}
+  aside.panel{max-width:none;flex-basis:100%;border-right:0;border-bottom:1px solid var(--border);padding:16px}
+  section.data{padding:20px 16px 40px}
+  .hide-sm{display:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <button class="brand" id="home"><span class="logo">감</span>외부감사</button>
+    <div class="co" id="co"></div>
+    <div class="hright" id="hright"></div>
+  </header>
+  <div class="notice" id="notice" hidden></div>
+  <div class="body">
+    <aside class="panel" id="side"></aside>
+    <section class="data" id="main" aria-live="polite"></section>
+  </div>
+</div>
+<script>
+const D = {"company": "가온정밀(가상)", "industry": "제조업(정밀 기계부품)", "fy_end": "2025-12-31", "kind": "계속감사", "version": "v1.1", "demo": true, "materiality": [190400000, 142800000, 9520000], "stages": [{"name": "시작", "what": "요청자료 · 계약 · 기업이해", "items": [{"name": "요청자료 목록 · 메일", "skills": ["감사-시작자료", "감사-요청메일"], "wps": [{"no": "PBC", "name": "요청자료목록", "status": "검토 끝", "why": "필수", "file": "1000 감사계약/PBC_요청자료목록.xlsx"}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": [{"item": "기말 재고 실사표와 실사 계획", "wp": "4000E", "issue": 1}, {"item": "외상매출금 관련 감사인 지정 거래의 계약서·출고(인도) 증빙", "wp": "4000C", "issue": 3}, {"item": "장기차입금 관련 당기 차입 약정서·입금 내역(감사인 지정 건, 다온은행)", "wp": "4000BBDD", "issue": 4}, {"item": "개발 프로젝트별 단계 구분 자료", "wp": "4000H", "issue": 6}, {"item": "정관, 주주명부, 특수관계자 목록 (빠진 것: 정관·법인등기부·사업자등록증 · 주주명부·임원명부)", "wp": "3500", "issue": null}, {"item": "주요 거래처 계약서, 연령분석표 (빠진 것: 매출·매입 계약)", "wp": "4000C", "issue": null}, {"item": "소송 현황과 법률 자문 내역(변호사 조회 대상)", "wp": "4000CL · 조회서", "issue": null}]}, {"name": "받은자료 판독", "skills": ["감사-맥락색인"], "wps": [], "runs": [], "ai": [{"what": "받은자료 판독: 00 받은자료/계약서/가나은행 여신약정서.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/세무신고/법인세 세무조정계산서 2024.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/세무신고/부가세 신고서 2025 1기.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/세무신고/부가세 신고서 2025 2기.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/세무신고/원천징수이행상황신고서 2024.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/세무신고/원천징수이행상황신고서 2025.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/잔액증명/가나은행 잔액증명 2025-12-31.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}, {"what": "받은자료 판독: 00 받은자료/회사답변/12월 매출 관련 답변.pdf", "how": "문서를 읽어 종류 · 기간 · 사실을 index apply 로 넣는다(확인 전 표시)", "done": true}], "cpa": [{"title": "받은자료 5건의 종류와 판독 내용을 확인해 주십시오", "detail": "AI 판독 5건. 확인 전에는 조서 결론에 쓰지 않습니다. 예) scan_0012.pdf · 이사회의사록_2025-02-20.pdf · 이사회의사록_2025-05-14.pdf 외 2건"}], "issues": [], "missing": []}, {"name": "계약 조서", "skills": ["감사-시작자료", "감사-검토"], "wps": [{"no": "1100", "name": "계약전위험평가", "status": "검토 끝", "why": "필수", "file": "1000 감사계약/1100_계약전위험평가.xlsx"}, {"no": "1200", "name": "감사업무조건합의", "status": "검토 끝", "why": "필수", "file": "1000 감사계약/1200_감사업무조건합의.docx"}, {"no": "1300", "name": "독립성", "status": "검토 끝", "why": "필수", "file": "1000 감사계약/1300_독립성.xlsx"}], "runs": [{"cmd": "python -m audit close make", "code": 0, "skills": ["감사-검토"], "lines": ["조서 9개. 노란 칸을 채운 뒤 검사(wp check)를 돌리십시오"]}], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "기업이해", "skills": ["감사-시작자료"], "wps": [{"no": "2100", "name": "기업이해", "status": "검토 끝", "why": "필수", "file": "2000 위험평가/2100_기업이해.xlsx"}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}]}, {"name": "위험평가", "what": "정산표 · 중요성 · 분석적 검토 · 위험", "items": [{"name": "정산표", "skills": ["감사-WTB"], "wps": [{"no": "8100B", "name": "정산표", "status": "검사 통과", "why": "필수", "file": "8000 감사완결/8100B_정산표_v1.1.xlsx"}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "중요성 · 방법론", "skills": ["감사-분석적검토"], "wps": [{"no": "2700A", "name": "중요성", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2700A_중요성_v1.1.xlsx"}, {"no": "2700B", "name": "감사방법론설정", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2700B_감사방법론설정.xlsx"}], "runs": [{"cmd": "python -m audit analyze", "code": 0, "skills": ["감사-주요회계처리", "감사-분석적검토"], "lines": []}], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "분석적 검토", "skills": ["감사-분석적검토"], "wps": [{"no": "2120A", "name": "위험평가분석적절차", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2120A_위험평가분석적절차_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit analyze", "code": 0, "skills": ["감사-주요회계처리", "감사-분석적검토"], "lines": ["이슈 5 만듦: 매출원가가 전기 원가율로 계산한 금액과 다름", "이슈 6 만듦: 무형자산 증가와 관련 비용 감소", "이슈 7 만듦: 급여가 원천세 신고 근로소득 지급액과 다름", "이슈 9 만듦: 미지급금 증감 가운데 독립 자료로 설명되지 않는 금액이 있음", "이슈 10 만듦: 이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름"]}], "ai": [{"what": "분석.json 과 이슈를 읽고 가설 · 정상 설명 · 왜곡 설명 · 회사 질문을 메모로 써서 analyze --memo 로 넣는다", "how": "감사-주요회계처리 · 감사-분석적검토", "done": true}], "cpa": [], "issues": [{"no": 1, "title": "재고자산이 계정명세서 품목 합계와 다름", "account": "재고자산", "amount": 1200000000, "assertions": ["E/O", "A/V"], "source": "자료 불일치", "origin": "2120A", "response": "4000E", "status": "열림", "score": 9.0, "evidence": [{"title": "재고자산이 계정명세서 품목 합계와 다름", "left": 2322000000, "right": 1122000000, "diff": 1200000000, "refs": ["tb:150", "계정명세서_2025.xlsx 재고자산 시트"]}, {"title": "재고와 매출원가가 반대로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:150"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:150"]}], "patterns": ["재고가 늘고 회전도 느려진 가공 재고", "출고 누락으로 매출원가를 다음 해로 미룸", "비용을 재고 원가로 돌림", "오래 묵은 재고의 평가손실 미계상"], "role": "발견"}, {"no": 2, "title": "매출이 부가세 과세표준과 다름", "account": "제품매출", "amount": 1500000000, "assertions": ["E/O", "C", "CO"], "source": "자료 불일치", "origin": "2120A", "response": "4000P", "status": "열림", "score": 8.5, "evidence": [{"title": "매출이 부가세 과세표준과 다름", "left": 14700000000, "right": 13200000000, "diff": 1500000000, "refs": ["tb:404", "부가세 신고서 2025 1기.pdf 1쪽", "부가세 신고서 2025 2기.pdf 1쪽"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:404"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}], "patterns": ["신규 거래처와의 가공 매출·매입", "연말 밀어내기 매출과 기말 후 정리", "신규 대리점 앞 반출을 매출로 인식", "세금계산서 발행과 장부 매출이 맞지 않음"], "role": "발견"}, {"no": 3, "title": "매출과 매출채권이 따로 움직임", "account": "외상매출금", "amount": 1225000000, "assertions": ["E/O", "A/V", "CO"], "source": "분석적 변동", "origin": "2120A", "response": "4000C", "status": "열림", "score": 8.5, "evidence": [{"title": "매출과 매출채권이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:108"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:108"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}], "patterns": ["기말 허위 매출", "매출보다 빨리 늘고 회수도 늦어진 허위 채권", "횡령을 숨기려고 남긴 매출채권", "회수가 늦어진 채권에 대손충당금을 쌓지 않음"], "role": "발견"}, {"no": 5, "title": "매출원가가 전기 원가율로 계산한 금액과 다름", "account": "제품매출원가", "amount": 2220000000, "assertions": ["C", "A/V", "CO"], "source": "분석적 변동", "origin": "2120A", "response": "4000Q", "status": "열림", "score": 8.0, "evidence": [{"title": "매출원가가 전기 원가율로 계산한 금액과 다름", "left": null, "right": null, "diff": -2220000000, "refs": ["tb:455"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}, {"title": "대리인 거래를 총액으로 매출 인식", "left": null, "right": null, "diff": null, "refs": ["https://accountingwiki.co.kr/audit/qnas/fss-2024-4448bdaf"]}], "patterns": ["대리인 거래를 총액으로 매출 인식", "진행기준 수익을 부풀려 미청구 채권이 쌓임", "매출원가에 원가 아닌 금액이 들고 남"], "role": "발견"}, {"no": 6, "title": "무형자산 증가와 관련 비용 감소", "account": "개발비", "amount": 800000000, "assertions": ["E/O", "A/V", "P/CL"], "source": "분석적 변동", "origin": "2120A", "response": "4000H", "status": "열림", "score": 8.0, "evidence": [{"title": "무형자산 증가와 관련 비용 감소", "left": null, "right": null, "diff": null, "refs": ["tb:226", "tb:823"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:226"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:823"]}], "patterns": ["개발비로 비용을 자산화", "원가까지 개발비로 돌려 이익률이 바뀜"], "role": "발견"}, {"no": 7, "title": "급여가 원천세 신고 근로소득 지급액과 다름", "account": "급여", "amount": 300000000, "assertions": ["E/O", "A/V"], "source": "자료 불일치", "origin": "2120A", "response": "4000EE", "status": "열림", "score": 5.6008, "evidence": [{"title": "급여가 원천세 신고 근로소득 지급액과 다름", "left": 1884000000, "right": 1584000000, "diff": 300000000, "refs": ["tb:801", "원천징수이행상황신고서 2025.pdf 1쪽"]}, {"title": "급여가 원천세 신고 지급액과 다름", "left": null, "right": null, "diff": 300000000, "refs": ["tb:801", "원천징수이행상황신고서 2025.pdf 1쪽"]}, {"title": "급여와 인원이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:801"]}], "patterns": [], "role": "발견"}, {"no": 9, "title": "미지급금 증감 가운데 독립 자료로 설명되지 않는 금액이 있음", "account": "미지급금", "amount": 300000000, "assertions": ["E/O"], "source": "분석적 변동", "origin": "2120A", "response": "4000CC", "status": "열림", "score": 3.1008, "evidence": [{"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:253"]}], "patterns": [], "role": "발견"}, {"no": 10, "title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름", "account": "이자비용", "amount": 50000000, "assertions": ["C", "A/V"], "source": "분석적 변동", "origin": "2120A", "response": "4000BBDD", "status": "열림", "score": 2.8501, "evidence": [{"title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름", "left": null, "right": null, "diff": -50000000, "refs": ["tb:951", "가나은행 여신약정서.pdf 1쪽"]}, {"title": "차입금과 이자비용이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:951"]}], "patterns": [], "role": "발견"}], "missing": []}, {"name": "주요 거래 · 의사록", "skills": ["감사-주요회계처리"], "wps": [{"no": "2100-주요거래", "name": "주요회계처리", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2100-주요거래_주요회계처리.xlsx"}], "runs": [{"cmd": "python -m audit analyze", "code": 0, "skills": ["감사-주요회계처리", "감사-분석적검토"], "lines": ["이슈 8 만듦: 기계장치: 의사록 결의와 대사된 주요 거래(2025-03-15). 회계처리 기준 확인 대상"]}], "ai": [{"what": "스캔본 의사록의 안건을 판독 문장으로 세운다(index apply)", "how": "감사-주요회계처리 · 감사-분석적검토", "done": true}], "cpa": [], "issues": [{"no": 4, "title": "이사회 2025-10-15 제2호 의안 운영자금 차입의 건: 의사록 결의에 맞는 전표가 장부에 없음", "account": "장기차입금", "amount": 3000000000, "assertions": ["C", "RO"], "source": "주요 회계처리", "origin": "2100-주요거래", "response": "4000BBDD", "status": "열림", "score": 8.0, "evidence": [{"title": "의사록 결의에 맞는 전표가 장부에 없음", "left": null, "right": null, "diff": null, "refs": ["scan_0012.pdf 2쪽"]}, {"title": "드문 계정 조합 전표", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-07-01 202507-0001"]}], "patterns": [], "role": "발견"}, {"no": 8, "title": "기계장치: 의사록 결의와 대사된 주요 거래(2025-03-15). 회계처리 기준 확인 대상", "account": "기계장치", "amount": 600000000, "assertions": ["E/O", "P/CL", "A/V", "RO"], "source": "주요 회계처리", "origin": "2100-주요거래", "response": "4000G", "status": "열림", "score": 5.2017, "evidence": [{"title": "드문 계정 조합 전표", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-03-15 202503-0028"]}], "patterns": [], "role": "발견"}], "missing": []}, {"name": "위험평가 · 통제", "skills": ["감사-분석적검토", "감사-검토"], "wps": [{"no": "2301", "name": "재무제표수준위험", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2301_재무제표수준위험.xlsx"}, {"no": "2302", "name": "경영진주장수준위험", "status": "검사 통과", "why": "필수", "file": "2000 위험평가/2302_경영진주장수준위험_v1.1.xlsx"}, {"no": "2511", "name": "통제환경", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2512", "name": "위험평가절차", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2513", "name": "통제모니터링", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2520", "name": "정보시스템", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2530", "name": "통제활동", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2531", "name": "통제설계운영", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2532", "name": "IT환경", "status": "검사 통과", "why": "필수", "file": ""}, {"no": "2533", "name": "IT일반통제", "status": "검사 통과", "why": "필수", "file": ""}], "runs": [{"cmd": "python -m audit close make", "code": 0, "skills": ["감사-검토"], "lines": ["조서 9개. 노란 칸을 채운 뒤 검사(wp check)를 돌리십시오"]}, {"cmd": "python -m audit analyze", "code": 0, "skills": ["감사-주요회계처리", "감사-분석적검토"], "lines": []}], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "감사계획 · 배정", "skills": ["감사-검토", "감사-지휘"], "wps": [{"no": "2110", "name": "감사계획", "status": "검토 끝", "why": "필수", "file": "2000 위험평가/2110_감사계획.xlsx"}, {"no": "2110-배정", "name": "업무배정", "status": "검토 끝", "why": "필수", "file": "2000 위험평가/2110-배정_업무배정.xlsx"}], "runs": [{"cmd": "python -m audit close make", "code": 0, "skills": ["감사-검토"], "lines": ["조서 9개. 노란 칸을 채운 뒤 검사(wp check)를 돌리십시오"]}], "ai": [], "cpa": [], "issues": [], "missing": []}]}, {"name": "실행", "what": "계정별 실증절차 · 조회 · 분개테스트", "items": [{"name": "감사전 재무제표 확인", "skills": ["감사-조서리드"], "wps": [{"no": "3650A", "name": "감사전재무제표확인", "status": "검사 통과", "why": "필수", "file": "3000 위험대응/3650A_감사전재무제표확인_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "매출 · 매출채권", "skills": ["감사-매출채권"], "wps": [{"no": "4000P", "name": "매출", "status": "검토 요청", "why": "이슈 2 · 유의적 계정(매출액 14,700,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000P_매출_v1.1.xlsx"}, {"no": "4000C", "name": "매출채권", "status": "초안", "why": "이슈 3 · 유의적 계정(매출채권 3,920,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000C_매출채권_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["4000P: 4000 계정별/4000P_매출_v1.1.xlsx (이슈 2 · 유의적 계정(매출액 14,700,000,000 > 수행중요성 142,800,000))", "조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [{"what": "4000P · 4000C 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-매출채권", "done": false}], "cpa": [{"title": "4000C 매출채권 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000P 검토의견을 적어 주십시오", "detail": "동료가 남긴 검토의견_4000P.xlsx 를 읽어 서명과 검토 끝을 적습니다(감사-검토)"}], "issues": [{"no": 2, "title": "매출이 부가세 과세표준과 다름", "account": "제품매출", "amount": 1500000000, "assertions": ["E/O", "C", "CO"], "source": "자료 불일치", "origin": "2120A", "response": "4000P", "status": "열림", "score": 8.5, "evidence": [{"title": "매출이 부가세 과세표준과 다름", "left": 14700000000, "right": 13200000000, "diff": 1500000000, "refs": ["tb:404", "부가세 신고서 2025 1기.pdf 1쪽", "부가세 신고서 2025 2기.pdf 1쪽"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:404"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}], "patterns": ["신규 거래처와의 가공 매출·매입", "연말 밀어내기 매출과 기말 후 정리", "신규 대리점 앞 반출을 매출로 인식", "세금계산서 발행과 장부 매출이 맞지 않음"], "role": "대응"}, {"no": 3, "title": "매출과 매출채권이 따로 움직임", "account": "외상매출금", "amount": 1225000000, "assertions": ["E/O", "A/V", "CO"], "source": "분석적 변동", "origin": "2120A", "response": "4000C", "status": "열림", "score": 8.5, "evidence": [{"title": "매출과 매출채권이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:108"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:108"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}], "patterns": ["기말 허위 매출", "매출보다 빨리 늘고 회수도 늦어진 허위 채권", "횡령을 숨기려고 남긴 매출채권", "회수가 늦어진 채권에 대손충당금을 쌓지 않음"], "role": "대응"}], "missing": [{"item": "외상매출금 관련 감사인 지정 거래의 계약서·출고(인도) 증빙", "wp": "4000C", "issue": 3}, {"item": "주요 거래처 계약서, 연령분석표 (빠진 것: 매출·매입 계약)", "wp": "4000C", "issue": null}, {"item": "소송 현황과 법률 자문 내역(변호사 조회 대상)", "wp": "4000CL · 조회서", "issue": null}]}, {"name": "자금", "skills": ["감사-자금"], "wps": [{"no": "4000A", "name": "현금및현금성자산", "status": "검토 요청", "why": "유의적 계정(현금및현금성자산 4,174,933,336 > 수행중요성 142,800,000)", "file": "4000 계정별/4000A_현금및현금성자산_v1.1.xlsx"}, {"no": "4000BBDD", "name": "차입금", "status": "초안", "why": "이슈 4 · 이슈 10 · 유의적 계정(장기차입금 7,000,000,000 > 수행중요성 142,800,000) · 유의적 계정(금융원가 250,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000BBDD_차입금_v1.1.xlsx"}, {"no": "4000D", "name": "기타유동자산", "status": "초안", "why": "유의적 계정(기타유동자산 453,900,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000D_기타유동자산_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [{"what": "4000A · 4000BBDD · 4000D 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-자금", "done": false}], "cpa": [{"title": "4000D 기타유동자산 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000BBDD 차입금 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000A 검토의견을 적어 주십시오", "detail": "동료가 남긴 검토의견_4000A.xlsx 를 읽어 서명과 검토 끝을 적습니다(감사-검토)"}], "issues": [{"no": 4, "title": "이사회 2025-10-15 제2호 의안 운영자금 차입의 건: 의사록 결의에 맞는 전표가 장부에 없음", "account": "장기차입금", "amount": 3000000000, "assertions": ["C", "RO"], "source": "주요 회계처리", "origin": "2100-주요거래", "response": "4000BBDD", "status": "열림", "score": 8.0, "evidence": [{"title": "의사록 결의에 맞는 전표가 장부에 없음", "left": null, "right": null, "diff": null, "refs": ["scan_0012.pdf 2쪽"]}, {"title": "드문 계정 조합 전표", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-07-01 202507-0001"]}], "patterns": [], "role": "대응"}, {"no": 10, "title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름", "account": "이자비용", "amount": 50000000, "assertions": ["C", "A/V"], "source": "분석적 변동", "origin": "2120A", "response": "4000BBDD", "status": "열림", "score": 2.8501, "evidence": [{"title": "이자비용이 차입금 평균 잔액과 금리로 계산한 금액과 다름", "left": null, "right": null, "diff": -50000000, "refs": ["tb:951", "가나은행 여신약정서.pdf 1쪽"]}, {"title": "차입금과 이자비용이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:951"]}], "patterns": [], "role": "대응"}], "missing": [{"item": "장기차입금 관련 당기 차입 약정서·입금 내역(감사인 지정 건, 다온은행)", "wp": "4000BBDD", "issue": 4}]}, {"name": "매입 · 재고 · 원가", "skills": ["감사-재고원가"], "wps": [{"no": "4000AA", "name": "매입채무", "status": "초안", "why": "유의적 계정(매입채무 1,109,533,336 > 수행중요성 142,800,000) · 부외부채 검토 후보(기말 후 지급 중 적요에 당기 표시 1건)", "file": "4000 계정별/4000AA_매입채무_v1.1.xlsx"}, {"no": "4000CC", "name": "기타유동부채", "status": "초안", "why": "이슈 9 · 유의적 계정(기타유동부채 973,200,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000CC_기타유동부채_v1.1.xlsx"}, {"no": "4000E", "name": "재고자산", "status": "초안", "why": "이슈 1 · 유의적 계정(재고자산 2,322,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000E_재고자산_v1.1.xlsx"}, {"no": "4000Q", "name": "매출원가", "status": "초안", "why": "이슈 5 · 유의적 계정(매출원가 7,776,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000Q_매출원가_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["4000Q: 4000 계정별/4000Q_매출원가_v1.1.xlsx (이슈 5 · 유의적 계정(매출원가 7,776,000,000 > 수행중요성 142,800,000))", "조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [{"what": "4000AA · 4000CC · 4000E · 4000Q 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-재고원가", "done": false}], "cpa": [{"title": "4000E 재고자산 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000AA 매입채무 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000CC 기타유동부채 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000Q 매출원가 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [{"no": 1, "title": "재고자산이 계정명세서 품목 합계와 다름", "account": "재고자산", "amount": 1200000000, "assertions": ["E/O", "A/V"], "source": "자료 불일치", "origin": "2120A", "response": "4000E", "status": "열림", "score": 9.0, "evidence": [{"title": "재고자산이 계정명세서 품목 합계와 다름", "left": 2322000000, "right": 1122000000, "diff": 1200000000, "refs": ["tb:150", "계정명세서_2025.xlsx 재고자산 시트"]}, {"title": "재고와 매출원가가 반대로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:150"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:150"]}], "patterns": ["재고가 늘고 회전도 느려진 가공 재고", "출고 누락으로 매출원가를 다음 해로 미룸", "비용을 재고 원가로 돌림", "오래 묵은 재고의 평가손실 미계상"], "role": "대응"}, {"no": 5, "title": "매출원가가 전기 원가율로 계산한 금액과 다름", "account": "제품매출원가", "amount": 2220000000, "assertions": ["C", "A/V", "CO"], "source": "분석적 변동", "origin": "2120A", "response": "4000Q", "status": "열림", "score": 8.0, "evidence": [{"title": "매출원가가 전기 원가율로 계산한 금액과 다름", "left": null, "right": null, "diff": -2220000000, "refs": ["tb:455"]}, {"title": "결산월 금액이 다른 달과 크게 다름", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-12"]}, {"title": "대리인 거래를 총액으로 매출 인식", "left": null, "right": null, "diff": null, "refs": ["https://accountingwiki.co.kr/audit/qnas/fss-2024-4448bdaf"]}], "patterns": ["대리인 거래를 총액으로 매출 인식", "진행기준 수익을 부풀려 미청구 채권이 쌓임", "매출원가에 원가 아닌 금액이 들고 남"], "role": "대응"}, {"no": 9, "title": "미지급금 증감 가운데 독립 자료로 설명되지 않는 금액이 있음", "account": "미지급금", "amount": 300000000, "assertions": ["E/O"], "source": "분석적 변동", "origin": "2120A", "response": "4000CC", "status": "열림", "score": 3.1008, "evidence": [{"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:253"]}], "patterns": [], "role": "대응"}], "missing": [{"item": "기말 재고 실사표와 실사 계획", "wp": "4000E", "issue": 1}]}, {"name": "유형 · 무형자산", "skills": ["감사-유무형리스"], "wps": [{"no": "4000G", "name": "유형자산", "status": "초안", "why": "이슈 8 · 유의적 계정(유형자산 4,150,000,000 > 수행중요성 142,800,000) · 유의적 계정(판매비와관리비 중 감가상각비 650,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000G_유형자산_v1.1.xlsx"}, {"no": "4000H", "name": "무형자산", "status": "초안", "why": "이슈 6 · 유의적 계정(무형자산 800,000,000 > 수행중요성 142,800,000) · 유의적 계정(판매비와관리비 중 경상연구개발비 200,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000H_무형자산_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [{"what": "4000G · 4000H 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-유무형리스", "done": false}], "cpa": [{"title": "4000G 유형자산 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000H 무형자산 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [{"no": 6, "title": "무형자산 증가와 관련 비용 감소", "account": "개발비", "amount": 800000000, "assertions": ["E/O", "A/V", "P/CL"], "source": "분석적 변동", "origin": "2120A", "response": "4000H", "status": "열림", "score": 8.0, "evidence": [{"title": "무형자산 증가와 관련 비용 감소", "left": null, "right": null, "diff": null, "refs": ["tb:226", "tb:823"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:226"]}, {"title": "독립 자료로 설명되지 않는 계정 증감", "left": null, "right": null, "diff": null, "refs": ["tb:823"]}], "patterns": ["개발비로 비용을 자산화", "원가까지 개발비로 돌려 이익률이 바뀜"], "role": "대응"}, {"no": 8, "title": "기계장치: 의사록 결의와 대사된 주요 거래(2025-03-15). 회계처리 기준 확인 대상", "account": "기계장치", "amount": 600000000, "assertions": ["E/O", "P/CL", "A/V", "RO"], "source": "주요 회계처리", "origin": "2100-주요거래", "response": "4000G", "status": "열림", "score": 5.2017, "evidence": [{"title": "드문 계정 조합 전표", "left": null, "right": null, "diff": null, "refs": ["gl:cur:2025-03-15 202503-0028"]}], "patterns": [], "role": "대응"}], "missing": [{"item": "개발 프로젝트별 단계 구분 자료", "wp": "4000H", "issue": 6}]}, {"name": "인건비", "skills": ["감사-인건비판관비"], "wps": [{"no": "4000EE", "name": "급여", "status": "초안", "why": "이슈 7 · 유의적 계정(판매비와관리비 중 급여, 퇴직급여 2,016,000,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000EE_급여_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조서리드"], "lines": ["조서 17개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [{"what": "4000EE 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-인건비판관비", "done": false}], "cpa": [{"title": "4000EE 급여 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [{"no": 7, "title": "급여가 원천세 신고 근로소득 지급액과 다름", "account": "급여", "amount": 300000000, "assertions": ["E/O", "A/V"], "source": "자료 불일치", "origin": "2120A", "response": "4000EE", "status": "열림", "score": 5.6008, "evidence": [{"title": "급여가 원천세 신고 근로소득 지급액과 다름", "left": 1884000000, "right": 1584000000, "diff": 300000000, "refs": ["tb:801", "원천징수이행상황신고서 2025.pdf 1쪽"]}, {"title": "급여가 원천세 신고 지급액과 다름", "left": null, "right": null, "diff": 300000000, "refs": ["tb:801", "원천징수이행상황신고서 2025.pdf 1쪽"]}, {"title": "급여와 인원이 따로 움직임", "left": null, "right": null, "diff": null, "refs": ["tb:801"]}], "patterns": [], "role": "대응"}], "missing": []}, {"name": "우발부채 · 자본", "skills": ["감사-충당우발자본"], "wps": [{"no": "4000CL", "name": "우발부채및약정사항", "status": "초안", "why": "필수(감사기준서 501 · 한공회 4000 CL 우발부채 및 약정사항)", "file": "4000 계정별/4000CL_우발부채및약정사항_v1.1.xlsx"}, {"no": "4000GG", "name": "자본", "status": "초안", "why": "유의적 계정(자본금 2,000,000,000 > 수행중요성 142,800,000) · 유의적 계정(자본잉여금 500,000,000 > 수행중요성 142,800,000) · 유의적 계정(이익잉여금 430,100,000 > 수행중요성 142,800,000)", "file": "4000 계정별/4000GG_자본_v1.1.xlsx"}], "runs": [], "ai": [{"what": "4000CL · 4000GG 표지의 절차마다 회사 자료로 해당 여부를 제안하고 묶음의 예외 기록을 점검한다", "how": "감사-충당우발자본", "done": false}], "cpa": [{"title": "4000CL 우발부채및약정사항 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "4000GG 자본 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [], "missing": [{"item": "소송 현황과 법률 자문 내역(변호사 조회 대상)", "wp": "4000CL · 조회서", "issue": null}]}, {"name": "외부조회", "skills": ["감사-조회서"], "wps": [{"no": "3320", "name": "외부조회", "status": "초안", "why": "필수", "file": "3000 위험대응/3320_외부조회_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-조회서"], "lines": ["보람산업 96,800,000 (4000C 표본) 발송 전", "다온테크 96,800,000 (4000C 표본) 발송 전", "해솔정밀 72,600,000 (4000C 표본) 발송 전", "새롬전자 72,600,000 (4000C 표본) 발송 전", "은하산업 72,600,000 (4000C 표본) 발송 전", "이든테크 72,600,000 (4000C 표본) 발송 전", "한결기계 48,400,000 (4000C 표본) 발송 전", "지온오토 48,400,000 (4000C 표본) 발송 전", "유성정밀 48,400,000 (4000C 표본) 발송 전", "라온전자 48,400,000 (4000C 표본) 발송 전"]}], "ai": [], "cpa": [{"title": "3320 외부조회 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [], "missing": []}, {"name": "분개테스트", "skills": ["감사-JET"], "wps": [{"no": "3600-JET", "name": "분개테스트", "status": "초안", "why": "필수", "file": "3000 위험대응/3600-JET_분개테스트_v1.1.xlsx"}], "runs": [{"cmd": "python -m audit wp make", "code": 0, "skills": ["감사-JET"], "lines": ["수행중요성 142,800,000 (방법론 기본값: 전체 중요성 × 75%. 근거: 실무 관행 범위 50% ~ 75%, 계속감사 75% · 초도감사 50%)", "3600-JET: 3000 위험대응/3600-JET_분개테스트_v1.1.xlsx (필수(감사기준서 240))", "주말 · 공휴일 전표 1건", "기말 후 취소 · 역분개 6건", "결산일 근처 큰 금액 22건 · 기준 71,400,000 (방법론 기본값: 전체 중요성 × 75%. 근거: 실무 관행 범위 50% ~ 75%, 계속감사 75% · 초도감사 50%)", "드문 계정 조합 10건", "끝자리 0 반복 16건", "적요 없음 0건", "수기 조정 전표 4건 · 분개장에 입력구분 열이 없어 결산일 근처 적요 낱말로 대신했습니다. 회사 전산에서 수기 전표 목록을 받아 대조해 주십시오", "조서 1개를 만들었습니다. 판단 칸(결론 · 검사 결과 · 확인)은 비어 있습니다"]}], "ai": [], "cpa": [{"title": "3600-JET 분개테스트 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [], "missing": []}, {"name": "특별 검토", "skills": ["감사-검토"], "wps": [{"no": "3200", "name": "유의적사항", "status": "초안", "why": "필수", "file": "3000 위험대응/3200_유의적사항.xlsx"}, {"no": "3300", "name": "실증적분석절차", "status": "초안", "why": "필수", "file": "3000 위험대응/3300_실증적분석절차.xlsx"}, {"no": "3400", "name": "회계추정치", "status": "초안", "why": "필수", "file": "3000 위험대응/3400_회계추정치.xlsx"}, {"no": "3500", "name": "특수관계자", "status": "초안", "why": "필수", "file": "3000 위험대응/3500_특수관계자.xlsx"}, {"no": "3600", "name": "부정검토", "status": "초안", "why": "필수", "file": "3000 위험대응/3600_부정검토.xlsx"}, {"no": "3700", "name": "계속기업", "status": "초안", "why": "필수", "file": "3000 위험대응/3700_계속기업.xlsx"}], "runs": [{"cmd": "python -m audit close make", "code": 0, "skills": ["감사-검토"], "lines": ["조서 9개. 노란 칸을 채운 뒤 검사(wp check)를 돌리십시오"]}], "ai": [], "cpa": [{"title": "3200 유의적사항 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "3300 실증적분석절차 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "3400 회계추정치 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "3500 특수관계자 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "3600 부정검토 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}, {"title": "3700 계속기업 기입란을 채워 주십시오", "detail": "상태 초안. 감사인 기입란(노란 칸)을 채우면 검사를 돌립니다"}], "issues": [], "missing": [{"item": "정관, 주주명부, 특수관계자 목록 (빠진 것: 정관·법인등기부·사업자등록증 · 주주명부·임원명부)", "wp": "3500", "issue": null}]}]}, {"name": "보고", "what": "수정 · 주석 · 감사보고서 · DART", "items": [{"name": "수정 반영", "skills": ["감사-수정반영"], "wps": [{"no": "8100A", "name": "왜곡표시집계", "status": "미작성", "why": "필수", "file": ""}, {"no": "8800", "name": "시산표", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "주석 · 종결분석", "skills": ["감사-주석", "감사-푸팅"], "wps": [{"no": "8400", "name": "공시사항점검표", "status": "미작성", "why": "필수", "file": ""}, {"no": "8110A", "name": "종결분석적절차", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "재무제표 · 감사보고서", "skills": ["감사-감사보고서"], "wps": [{"no": "8810", "name": "날인재무제표", "status": "미작성", "why": "필수", "file": ""}, {"no": "8820", "name": "감사보고서", "status": "미작성", "why": "필수", "file": ""}, {"no": "8300", "name": "서면진술", "status": "미작성", "why": "필수", "file": ""}, {"no": "8500", "name": "커뮤니케이션", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "감사의견", "skills": ["감사-감사보고서"], "wps": [{"no": "8600", "name": "감사의견", "status": "미작성", "why": "필수", "file": ""}, {"no": "8200", "name": "후속사건", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "DART 제출 파일", "skills": ["감사-DART", "감사-DSD푸팅"], "wps": [{"no": "DART", "name": "제출파일", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}]}, {"name": "종결", "what": "심리 · 감사 종료", "items": [{"name": "심리", "skills": ["감사-종결"], "wps": [{"no": "8550", "name": "심리사항점검표", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}, {"name": "감사 종료 · 보관", "skills": ["감사-종결"], "wps": [{"no": "8700", "name": "감사종료", "status": "미작성", "why": "필수", "file": ""}], "runs": [], "ai": [], "cpa": [], "issues": [], "missing": []}]}], "public": {"감사-시작자료": "PBC요청자료", "감사-요청메일": "PBC요청자료", "감사-JET": "분개테스트", "감사-DSD푸팅": "DSD푸팅"}, "files": 112, "issues_total": 10, "missing_total": 7};
+const DONE = ["검토 끝", "검사 통과"];
+const AS = {"E/O":"실재 · 발생","C":"완전성","A/V":"평가 · 배분","CO":"기간귀속","RO":"권리와 의무","P/CL":"표시 · 분류"};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const won = n => n == null ? "" : Number(n).toLocaleString("ko-KR");
+const badge = st => `<span class="badge ${({"검토 끝":"done","검사 통과":"pass","검토 요청":"req","초안":"draft"})[st] || "none"}">${esc(st)}</span>`;
+const ref = r => /^https?:/.test(r) ? `<a href="${esc(r)}" target="_blank" rel="noopener">감리지적사례</a>` : esc(String(r).replace(/^tb:(\d+)$/, "시산표 $1").replace(/^gl:cur:/, "분개장 ").replace(/^gl:prior:/, "전기 분개장 "));
+let state = {view: "home", s: null, i: null}, open = new Set();
+
+// 집계
+const allW = D.stages.flatMap(s => s.items.flatMap(i => i.wps));
+const doneOf = ws => ws.filter(w => DONE.includes(w.status)).length;
+const stDone = s => { const ws = s.items.flatMap(i => i.wps); return ws.length && doneOf(ws) === ws.length; };
+const curStage = D.stages.findIndex(s => !stDone(s));
+D.stages.forEach((s, k) => { if (k === curStage) open.add(k); });
+const itemCls = it => {
+  if (!it.wps.length) return it.ai.every(a => a.done) ? "ok" : "";
+  const d = doneOf(it.wps);
+  if (d === it.wps.length) return "ok";
+  if (it.wps.some(w => w.status === "검토 요청")) return "req";
+  return d ? "part" : "";
+};
+const openIssues = () => { const m = new Map(); D.stages.forEach(s => s.items.forEach(i => i.issues.forEach(x => m.set(x.no, x)))); return [...m.values()].sort((a, b) => a.no - b.no); };
+const homeOf = no => { for (const [k, s] of D.stages.entries()) for (const [j, it] of s.items.entries()) if (it.issues.some(x => x.no === no && x.role === "대응")) return [k, j]; return null; };
+const cpaCount = () => D.stages.reduce((n, s) => n + s.items.reduce((m, i) => m + i.cpa.length, 0), 0);
+
+function go(v, s = null, i = null) {
+  state = {view: v, s, i};
+  if (s != null) open.add(s);
+  location.hash = v === "home" ? "" : v === "stage" ? `s${s + 1}` : `s${s + 1}-${i + 1}`;
+  render();
+  // 휴대폰 폭에서는 사이드바가 위에 쌓이므로 고른 내용으로 내려간다
+  if (v !== "home" && matchMedia("(max-width:760px)").matches) $("#main").scrollIntoView(); else window.scrollTo({top: 0});
+}
+
+function side() {
+  const tot = allW.length, dn = doneOf(allW);
+  let h = `<div class="ptop"><span>전체 진행</span><span class="muted small">${curStage < 0 ? 5 : curStage} / 5 단계 끝 · 조서 ${dn} / ${tot}</span></div>
+    <div class="prog"><i style="width:${Math.round(dn / tot * 100)}%"></i></div><ul class="nav">`;
+  D.stages.forEach((s, k) => {
+    const ws = s.items.flatMap(i => i.wps), ok = stDone(s), cur = k === curStage;
+    const on = state.view === "stage" && state.s === k;
+    h += `<li><button class="step ${ok ? "ok" : ""} ${cur ? "cur" : ""} ${on ? "on" : ""}" data-s="${k}" aria-expanded="${open.has(k)}">
+      <span class="dot">${ok ? "✓" : k + 1}</span>${esc(s.name)}<span class="cnt">${cur ? "하는 중 · " : ""}${doneOf(ws)}/${ws.length}</span></button>`;
+    if (open.has(k)) {
+      h += `<ul class="subs">` + s.items.map((it, j) => {
+        const on2 = state.view === "item" && state.s === k && state.i === j;
+        const ni = it.issues.filter(x => x.role === "대응").length;
+        return `<li><button class="sub ${on2 ? "on" : ""}" data-s="${k}" data-i="${j}"><span class="sd ${itemCls(it)}"></span>${esc(it.name)}${ni ? `<span class="ib">이슈 ${ni}</span>` : ""}</button></li>`;
+      }).join("") + `</ul>`;
+    }
+    h += `</li>`;
+  });
+  return h + `</ul>`;
+}
+
+function home() {
+  const iss = openIssues(), tot = allW.length, dn = doneOf(allW);
+  let h = `<h1>${esc(D.company)} ${esc(String(D.fy_end).slice(0, 4))} 기말감사</h1><p class="lede">왼쪽에서 단계나 세부 항목을 누르면 조서번호, 스킬 적용 현황, 이슈가 나옵니다.</p>
+  <div class="cards">
+    <div class="card"><div class="k">조서</div><div class="v">${dn} / ${tot}</div><div class="s">검토 끝이나 검사 통과</div></div>
+    <div class="card"><div class="k">열린 이슈</div><div class="v">${iss.length}</div><div class="s">합계 ${won(iss.reduce((a, x) => a + (x.amount || 0), 0))}</div></div>
+    <div class="card"><div class="k">빠진 자료</div><div class="v">${D.missing_total}</div><div class="s">회사에 요청할 것</div></div>
+    <div class="card"><div class="k">회계사 확인</div><div class="v">${cpaCount()}</div><div class="s">판단 칸 · 검토의견</div></div>
+  </div>
+  <h2>단계별 진행</h2><div class="tw"><table><thead><tr><th>단계</th><th>하는 일</th><th style="width:30%">진행</th><th class="num">조서</th></tr></thead><tbody>`;
+  D.stages.forEach((s, k) => {
+    const ws = s.items.flatMap(i => i.wps), d = doneOf(ws);
+    h += `<tr class="row" tabindex="0" data-s="${k}"><td class="b">${k + 1}. ${esc(s.name)}</td><td class="muted">${esc(s.what)}</td>
+      <td><div class="prog thin"><i style="width:${Math.round(d / ws.length * 100)}%"></i></div></td><td class="num">${d} / ${ws.length}</td></tr>`;
+  });
+  h += `</tbody></table></div><h2>열린 이슈 <span class="badge issue">${iss.length}</span></h2><div class="tw"><table><thead><tr><th>번호</th><th>내용</th><th class="hide-sm">계정</th><th class="num">금액</th><th>대응 조서</th></tr></thead><tbody>`;
+  iss.forEach(x => {
+    const hm = homeOf(x.no);
+    h += `<tr class="row" tabindex="0" ${hm ? `data-s="${hm[0]}" data-i="${hm[1]}"` : ""}><td>${x.no}</td><td>${esc(x.title)}</td><td class="hide-sm muted">${esc(x.account)}</td><td class="num">${won(x.amount)}</td><td>${esc(x.response)}</td></tr>`;
+  });
+  return h + `</tbody></table></div>`;
+}
+
+function stage(k) {
+  const s = D.stages[k], ws = s.items.flatMap(i => i.wps), d = doneOf(ws);
+  let h = `<div class="crumb"><button data-home>전체</button> / ${k + 1}단계</div><h1>${esc(s.name)}</h1><p class="lede">${esc(s.what)}</p>
+  <div class="cards"><div class="card"><div class="k">조서</div><div class="v">${d} / ${ws.length}</div><div class="prog thin" style="margin-top:6px"><i style="width:${Math.round(d / ws.length * 100)}%"></i></div></div>
+  <div class="card"><div class="k">세부 항목</div><div class="v">${s.items.length}</div><div class="s">끝난 항목 ${s.items.filter(i => itemCls(i) === "ok").length}</div></div>
+  <div class="card"><div class="k">이 단계에서 대응할 이슈</div><div class="v">${s.items.reduce((n, i) => n + i.issues.filter(x => x.role === "대응").length, 0)}</div></div></div>
+  <h2>세부 항목</h2><div class="tw"><table><thead><tr><th>항목</th><th>조서번호</th><th>스킬</th><th class="num">진행</th><th class="num">이슈</th></tr></thead><tbody>`;
+  s.items.forEach((it, j) => {
+    const ni = it.issues.filter(x => x.role === "대응").length;
+    h += `<tr class="row" tabindex="0" data-s="${k}" data-i="${j}"><td class="b">${esc(it.name)}</td><td class="mono">${it.wps.map(w => esc(w.no)).join(" · ") || "<span class=muted>조서 없음</span>"}</td>
+      <td class="small">${it.skills.map(esc).join("<br>")}</td><td class="num">${it.wps.length ? doneOf(it.wps) + " / " + it.wps.length : (itemCls(it) === "ok" ? "끝" : "")}</td><td class="num">${ni || ""}</td></tr>`;
+  });
+  return h + `</tbody></table></div>`;
+}
+
+function issueCard(x) {
+  const ev = x.evidence.map(e => `<tr><td>${esc(e.title)}</td><td class="num">${won(e.left)}</td><td class="num">${won(e.right)}</td><td class="num b">${won(e.diff)}</td><td class="small muted">${e.refs.map(ref).join("<br>")}</td></tr>`).join("");
+  return `<div class="iss"><div class="top"><span class="badge issue">이슈 ${x.no}</span><span class="t">${esc(x.title)}</span><span class="badge out" style="margin-left:auto">${esc(x.status)}</span></div>
+  <div class="meta"><span>계정 <b>${esc(x.account)}</b></span><span>금액 <b>${won(x.amount)}</b></span><span>경영진주장 <b>${x.assertions.map(a => AS[a] || a).join(", ")}</b></span>
+  <span>출처 <b>${esc(x.source)}</b></span><span>발견 <b>${esc(x.origin)}</b> → 대응 <b>${esc(x.response)}</b></span></div>
+  ${ev ? `<div class="tw"><table><thead><tr><th>엔진 근거</th><th class="num">장부</th><th class="num">비교 자료</th><th class="num">차이</th><th>출처</th></tr></thead><tbody>${ev}</tbody></table></div>` : ""}
+  ${x.patterns.length ? `<div class="pats"><span class="small muted">비슷한 감리지적 유형</span>${x.patterns.map(p => `<span class="chip idle">${esc(p)}</span>`).join("")}</div>` : ""}</div>`;
+}
+
+function item(k, j) {
+  const s = D.stages[k], it = s.items[j];
+  const ran = new Set(it.runs.flatMap(r => r.skills)), made = it.wps.some(w => w.file);
+  const resp = it.issues.filter(x => x.role === "대응"), found = it.issues.filter(x => x.role === "발견");
+  let h = `<div class="crumb"><button data-home>전체</button> / <button data-s="${k}">${k + 1}. ${esc(s.name)}</button></div><h1>${esc(it.name)}</h1>
+  <div class="cards">
+    <div class="card"><div class="k">조서</div><div class="v">${it.wps.length ? doneOf(it.wps) + " / " + it.wps.length : "없음"}</div><div class="s">${it.wps.length ? "검토 끝이나 검사 통과" : "받은자료 색인만 갱신"}</div></div>
+    <div class="card"><div class="k">AI 몫</div><div class="v">${it.ai.filter(a => !a.done).length}</div><div class="s">남은 것 / 전체 ${it.ai.length}</div></div>
+    <div class="card"><div class="k">회계사 확인</div><div class="v">${it.cpa.length}</div><div class="s">판단 칸 · 검토의견</div></div>
+    <div class="card"><div class="k">이슈</div><div class="v">${it.issues.length}</div><div class="s">${resp.length ? "대응 " + resp.length : ""}${resp.length && found.length ? " · " : ""}${found.length ? "발견 " + found.length : ""}</div></div>
+  </div>`;
+  // 조서
+  h += `<h2>조서번호</h2>`;
+  h += it.wps.length ? `<div class="tw"><table><thead><tr><th>번호</th><th>이름</th><th>상태</th><th class="hide-sm">만든 이유</th><th class="hide-sm">파일</th></tr></thead><tbody>` +
+    it.wps.map(w => `<tr><td class="mono b" style="white-space:nowrap">${esc(w.no)}</td><td style="min-width:8em">${esc(w.name)}</td><td>${badge(w.status)}</td><td class="small muted hide-sm">${esc(w.why)}</td><td class="small muted hide-sm">${esc(w.file.split("/").pop())}</td></tr>`).join("") + `</tbody></table></div>`
+    : `<p class="empty">조서를 만들지 않는 항목입니다. 받은자료를 읽어 _색인/문서목록.json 에 넣습니다.</p>`;
+  // 스킬 적용 현황
+  h += `<h2>스킬 적용 현황</h2><div class="skills">${it.skills.map(sk => `<span class="chip ${ran.has(sk) || it.runs.length || it.ai.some(a => a.done) || itemCls(it) ? "" : "idle"}"><i></i>${esc(sk)}${D.public[sk] ? ` · 공개 스킬 ${esc(D.public[sk])}` : ""}</span>`).join("")}</div><div class="grid3">`;
+  h += `<div class="box"><h3>엔진 <span class="badge ${it.runs.length || !it.wps.length || made ? "pass" : "none"}">${it.runs.length ? "실행 " + it.runs.length : !it.wps.length ? "실행 1" : made ? "조서 만듦" : "아직"}</span></h3>` +
+    (it.runs.length ? it.runs.map(r => `<div style="margin-bottom:10px"><span class="small muted">${r.skills.map(esc).join(" · ")}</span><br><span class="cmd">${esc(r.cmd)}</span> <span class="small muted">종료 코드 ${r.code}</span>${r.lines.length ? `<div class="out">${r.lines.map(esc).join("\n")}</div>` : ""}</div>`).join("")
+      : made ? `<p class="empty">조서 파일이 감사 폴더에 있습니다. 이번 실행기록에는 이 조서를 만든 기록이 없습니다.</p>`
+      : it.wps.length ? `<p class="empty">앞 단계가 끝나면 이 단계를 돌립니다.</p>`
+      : `<div><span class="cmd">python -m audit index read</span><div class="out">받은자료 ${D.files}개를 _색인/문서목록.json 에 넣음
+엔진이 못 읽는 서식의 문서는 AI 판독으로 넘김</div></div>`) + `</div>`;
+  h += `<div class="box"><h3>AI 몫 <span class="badge ${it.ai.length ? (it.ai.every(a => a.done) ? "pass" : "req") : "none"}">${it.ai.length ? it.ai.filter(a => a.done).length + " / " + it.ai.length : "없음"}</span></h3>` +
+    (it.ai.length ? `<ul>${it.ai.map(a => `<li><span class="mk ${a.done ? "ok" : ""}">${a.done ? "✓" : "○"}</span><span>${esc(a.what)}<span class="d">${esc(a.how)}${a.how.includes("확인 전") ? "" : " · 결과는 「확인 전」 표시"}</span></span></li>`).join("")}</ul>` : `<p class="empty">엔진 결과만으로 끝나는 항목입니다.</p>`) + `</div>`;
+  h += `<div class="box"><h3>회계사 확인 <span class="badge ${it.cpa.length ? "req" : "pass"}">${it.cpa.length ? it.cpa.length + "건" : "없음"}</span></h3>` +
+    (it.cpa.length ? `<ul>${it.cpa.map(c => `<li><span class="mk">□</span><span>${esc(c.title)}<span class="d">${esc(c.detail)}</span></span></li>`).join("")}</ul>` : `<p class="empty">남은 판단이 없습니다.</p>`) + `</div></div>`;
+  // 이슈
+  h += `<h2>이슈 내용 ${it.issues.length ? `<span class="badge issue">${it.issues.length}</span>` : ""}</h2>`;
+  if (!it.issues.length) h += `<p class="empty">이 항목에 걸린 이슈가 없습니다.</p>`;
+  if (resp.length) h += (found.length ? `<p class="small muted">이 항목 조서에서 대응할 이슈</p>` : "") + resp.map(issueCard).join("");
+  if (found.length) h += `<p class="small muted">이 항목에서 찾아 다른 조서로 넘긴 이슈</p><div class="tw"><table><thead><tr><th>번호</th><th>내용</th><th class="num">금액</th><th>대응 조서</th></tr></thead><tbody>` +
+    found.map(x => { const hm = homeOf(x.no); return `<tr class="row" tabindex="0" ${hm ? `data-s="${hm[0]}" data-i="${hm[1]}"` : ""}><td>${x.no}</td><td>${esc(x.title)}</td><td class="num">${won(x.amount)}</td><td>${esc(x.response)}</td></tr>`; }).join("") + `</tbody></table></div>`;
+  // 빠진 자료
+  if (it.missing.length) h += `<h2>빠진 자료 <span class="badge issue">${it.missing.length}</span></h2><div class="box miss"><ul>${it.missing.map(m => `<li><span class="mk">!</span><span>${esc(m.item)}<span class="d">${esc(m.wp)}${m.issue ? " · 이슈 " + m.issue : ""}</span></span></li>`).join("")}</ul></div>`;
+  return h;
+}
+
+function render() {
+  $("#side").innerHTML = side();
+  $("#main").innerHTML = state.view === "home" ? home() : state.view === "stage" ? stage(state.s) : item(state.s, state.i);
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-s],[data-home],#home");
+  if (!b) return;
+  if (b.id === "home" || b.hasAttribute("data-home")) return go("home");
+  const k = +b.dataset.s;
+  if (b.dataset.i != null) return go("item", k, +b.dataset.i);
+  if (b.classList.contains("step") && state.view === "stage" && state.s === k && open.has(k)) { open.delete(k); return render(); }
+  go("stage", k);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches("tr.row")) e.target.click();
+});
+if (D.demo) {
+  $("#hright").innerHTML = `<span class="badge req">시연 상태</span>`;
+  $("#notice").hidden = false;
+  $("#notice").textContent = `${D.company} 감사 폴더의 _색인 값입니다. 조서 상태는 실행 단계 중(위험평가 끝)으로 가정해 넣었습니다.`;
+}
+$("#co").innerHTML = `<b>${esc(D.company)}</b><span>${esc(D.industry || "")}</span><span>${esc(D.fy_end)} 결산</span><span>${esc(D.kind)}</span><span>회사제시 ${esc(D.version || "")}</span>`;
+const m = location.hash.match(/^#s(\d)(?:-(\d+))?$/);
+if (m) { state = {view: m[2] ? "item" : "stage", s: +m[1] - 1, i: m[2] ? +m[2] - 1 : null}; open.add(state.s); }
+render();
+</script>
+</body>
+</html>
