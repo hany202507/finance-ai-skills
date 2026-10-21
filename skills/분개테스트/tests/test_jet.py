@@ -1,5 +1,6 @@
 """모의 분개장(가상 회사 가온정밀(가상))으로 분개 테스트 조서를 만든다. 2026-10-21 시험 열세 가지를 더하며 합성 분개장 시험을 붙였다."""
 import os
+import stat
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
@@ -236,3 +237,46 @@ def test_example_without_codes(tmp_path):
                       "--fy-end", "2025-12-31", "--pm", "60000000", "--company", "가온정밀(가상)", "--out", tmp_path / "out"])
     assert code == 0, log
     assert "기말 후 취소 · 역분개: 6건" in log and "결산일 근처 이익을 늘린 전표: 5건" in log, log
+
+
+def test_rerun_same_out(tmp_path):
+    """같은 --out 으로 두 번 돌린다. OneDrive 폴더는 하위 폴더마다 읽기 전용 속성이 붙어 두 번째 실행의 rmtree 가 WinError 5 로 멈췄다(2026-10-21 부트캠프)."""
+    src = tmp_path / "합성_분개장.xlsx"
+    _synthetic(src)
+    out = tmp_path / "out"
+    args = [src, "--fy-end", "2025-12-31", "--pm", "4000000", "--company", "합성", "--out", out]
+    code, log = _run(args)
+    assert code == 0, log
+    if os.name == "nt":
+        for p in (out / "_감사폴더").rglob("*"):
+            if p.is_dir():
+                os.chmod(p, stat.S_IREAD)                 # OneDrive 처럼 폴더에 읽기 전용 속성을 붙인다
+    code, log = _run(args)
+    assert code == 0, log
+    assert "지우지 못해" not in log, log
+    assert [x.name for x in out.iterdir() if x.name.startswith("_감사폴더")] == ["_감사폴더"]
+    assert (out / "3600-JET_분개테스트.xlsx").exists()
+
+
+def test_rerun_fallback_folder(tmp_path, monkeypatch, capsys):
+    """지난 _감사폴더를 끝내 못 지우면 _감사폴더_<시각> 에 새로 만들고 출력에 한 줄 알린다."""
+    import shutil
+
+    import run
+    src = tmp_path / "합성_분개장.xlsx"
+    _synthetic(src)
+    out = tmp_path / "out"
+    (out / "_감사폴더" / "00 받은자료" / "계약서").mkdir(parents=True)
+
+    def deny(path, *a, **k):
+        raise PermissionError(13, "액세스가 거부되었습니다", str(Path(path) / "00 받은자료" / "계약서"))
+
+    monkeypatch.setattr(shutil, "rmtree", deny)
+    code = run.main([str(src), "--fy-end", "2025-12-31", "--pm", "4000000", "--company", "합성", "--out", str(out)])
+    log = capsys.readouterr().out
+    assert code == 0, log
+    alt = [x for x in out.iterdir() if x.name.startswith("_감사폴더_")]
+    assert len(alt) == 1, log
+    assert "_감사폴더를 지우지 못해" in log and alt[0].name in log, log
+    assert (alt[0] / "00 받은자료" / "분개장" / src.name).exists()
+    assert (out / "3600-JET_분개테스트.xlsx").exists()

@@ -13,7 +13,10 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import stat
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -24,6 +27,42 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:  # noqa: BLE001
     pass
+
+
+def _force(func, path, exc):
+    """rmtree 가 지우지 못한 파일 · 폴더 하나의 읽기 전용 속성을 풀고 잠깐씩 기다리며 다시 지운다. OneDrive 동기화 폴더는 하위 폴더마다
+    읽기 전용 속성이 붙어 os.rmdir 이 WinError 5 로 멈춘다(2026-10-21 부트캠프). 끝내 안 되면 마지막 오류를 그대로 올린다."""
+    err = exc[1] if isinstance(exc, tuple) else exc
+    if func not in (os.rmdir, os.unlink, os.remove) or not isinstance(err, PermissionError):
+        raise err
+    for wait in (0, 0.2, 0.5, 1.0):
+        time.sleep(wait)
+        try:
+            os.chmod(path, stat.S_IMODE(os.lstat(path).st_mode) | stat.S_IWRITE)
+            func(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            err = e
+    raise err
+
+
+def _work_dir(out: Path) -> Path:
+    """작업용 감사 폴더. 지난 실행이 남긴 _감사폴더는 지우고 새로 만든다. 그래도 못 지우면 _감사폴더_<시각> 에 만들고 출력에 한 줄 알린다."""
+    d = out / "_감사폴더"
+    if not d.exists():
+        return d
+    try:
+        shutil.rmtree(d, **{"onexc" if sys.version_info >= (3, 12) else "onerror": _force})
+        return d
+    except OSError as e:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        alt, n = out / f"_감사폴더_{stamp}", 2
+        while alt.exists():
+            alt, n = out / f"_감사폴더_{stamp}_{n}", n + 1
+        print(f"알림: 지난 실행의 _감사폴더를 지우지 못해({type(e).__name__}: {e}) 이번 작업 폴더는 {alt.name} 입니다. 옛 _감사폴더는 탐색기에서 지워도 됩니다.")
+        return alt
 
 
 def main(argv=None) -> int:
@@ -42,9 +81,7 @@ def main(argv=None) -> int:
     from audit.workpapers import jet
 
     out = Path(a.out).resolve()
-    d = out / "_감사폴더"
-    if d.exists():
-        shutil.rmtree(d)
+    d = _work_dir(out)
     folder.scaffold(d, a.company, a.fy_end, fiscal_year_start=a.fy_start)
     rec = d / "00 받은자료"
     for p in list(a.journals) + list(a.after):
