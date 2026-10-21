@@ -35,3 +35,4 @@ def test_links_foot_text(tmp_path):
     assert code == 0, log
     for word in ("재무재표", "충당부체", "회사의 회사의"):
         assert word in log, word
+    assert "「대표이사 김가온(가상)」 의 직함을 빼거나 바꾼다" in log, log        # S101 주주 명단은 이름이 아니라 직함을 고친다(10-21)

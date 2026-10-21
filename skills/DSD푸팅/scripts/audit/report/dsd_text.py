@@ -301,6 +301,16 @@ def _addr_prefix(a: str, b: str) -> bool:
 _HEAD_MARK = re.compile(r"^\s*(?:\(\d+\)|\d+[.)]|[가-하][.)]|\([가-하]\)|[①-⑳]|[ⅰ-ⅹ][.)]?)\s*$")
 
 
+_HOLDING = re.compile(r"[이가은는의]?\s*(?:(?:보통주|우선주|주식|지분율?)\s*)?\d[\d,]*(?:\.\d+)?\s*(?:주(?![당년간])|%)")
+_CEO_TITLE = re.compile(r"(?:공동)?대표이사\s*(?:인\s*)?$")
+
+
+def _holding(text: str, end: int) -> bool:
+    """이름 바로 뒤에 주식수 · 지분율이 붙었다(「김가온 240,000주(60%)」 「김가온이 지분 60%를」). 주주 명단의 이름이라 대표이사가 바뀌어도
+    이름은 그대로고 직함만 틀린다(2026-10-21 가온정밀 실습 S101: 주주 김가온을 새 대표이사 이가온으로 바꾸라고 냈다)."""
+    return bool(_HOLDING.match(text, end))
+
+
 def _f(seg: Seg, rule: str, kind: str, quote: str, fix: str, basis: str) -> dict:
     return {"seg": seg.id, "where": seg.where, "rule": rule, "kind": kind, "quote": quote, "fix": fix, "basis": basis, "by": "엔진"}
 
@@ -351,11 +361,25 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
         if not isinstance(f, dict):
             continue
         new = _vals(f)
+        src = f.get("source") or "기준사실"
         for old in _olds(f):
             for s in segs:
-                if _n(old) and _n(old) in _n(s.text):
+                if not (_n(old) and _n(old) in _n(s.text)):
+                    continue
+                at = [m.start() for m in re.finditer(re.escape(old), s.text)] if key == "대표이사" else []
+                rename = not at                               # 띄어쓰기가 달라 글자 그대로 못 찾은 곳은 이름을 바꾼다
+                for i in at:
+                    if not _holding(s.text, i + len(old)):
+                        rename = True
+                        continue
+                    t = _CEO_TITLE.search(s.text, 0, i)       # 직함 없이 주주로만 적힌 전 대표이사 이름은 맞다
+                    if t:
+                        held = s.text[t.start(): i + len(old)]
+                        out.append(_f(s, "옛 값", "사실 불일치", _excerpt(s.text, held), f"「{held}」 의 직함을 빼거나 바꾼다(주주 이름은 그대로 둔다)",
+                                      f"{key} 가 바뀌었다({src}). 주식수 · 지분율이 붙은 주주 이름이라 고칠 것은 직함이다. 주주는 주주명부로 확인한다"))
+                if rename:
                     out.append(_f(s, "옛 값", "사실 불일치", _excerpt(s.text, old), f"{old} → {new[0] if new else '(새 값)'}",
-                                  f"{key} 가 바뀌었다({f.get('source') or '기준사실'}). 바뀌기 전 값이 남아 있다"))
+                                  f"{key} 가 바뀌었다({src}). 바뀌기 전 값이 남아 있다"))
     # 2. 대표이사 이름
     pat = re.compile(D["ceo_pattern"])
     bad = set(D.get("ceo_not_name") or [])
@@ -380,35 +404,40 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
             first = clean(m.group(1))
             if first is None:
                 continue
-            names, end = [first], m.end()
+            names, end = [(first, m.start(1))], m.end()
             if first != m.group(1) and m.group(1)[-1] in "와과":     # 「대표이사 이가온과 박가온」: 조사가 이음말이다
                 k = re.compile(r"\s*([가-힣]{2,4}(?:\(가상\))?)(?![가-힣])").match(s.text, end)
                 nxt = clean(k.group(1)) if k else None
                 if nxt and not nxt.endswith(roles):
-                    names.append(nxt)
+                    names.append((nxt, k.start(1)))
                     end = k.end()
             while (k := more.match(s.text, end)) is not None:      # 「공동대표이사 최시원, 김재홍」: 둘째 이름부터(2026-10-18 B-7)
                 nxt = clean(k.group(1))
                 if nxt is None or nxt.endswith(roles):
                     break
-                names.append(nxt)
+                names.append((nxt, k.start(1)))
                 end = k.end()
             if len(names) > 1:
-                together |= {_n(x) for x in names}
-            for name in names:
-                seen.setdefault(_n(name), []).append(s)
+                together |= {_n(x) for x, _ in names}
+            for name, at in names:
+                held = s.text[m.start(): at + len(name)] if _holding(s.text, at + len(name)) else ""      # 주주 명단의 이름(10-21)
+                seen.setdefault(_n(name), []).append((s, held))
                 if want and _n(name) not in want and _n(name) not in olds:
-                    out.append(_f(s, "대표이사", "사실 불일치", _excerpt(s.text, name), f"{name} → {' · '.join(_vals(facts['대표이사']))}",
-                                  f"기준 사실의 대표이사는 {' · '.join(_vals(facts['대표이사']))}({facts['대표이사'].get('source') or '기준사실'})"
-                                  + (". 공동대표이사로 적힌 이름도 모두 견준다" if len(names) > 1 else "")))
+                    cur, src = " · ".join(_vals(facts["대표이사"])), facts["대표이사"].get("source") or "기준사실"
+                    if held:
+                        out.append(_f(s, "대표이사", "사실 불일치", _excerpt(s.text, held), f"「{held}」 의 직함을 빼거나 바꾼다. 이름이 틀린 것이면 주주명부로 확인해 고친다",
+                                      f"기준 사실의 대표이사는 {cur}({src}). 주식수 · 지분율이 붙은 주주 이름이다. 전 대표이사가 주주로 남은 것이면 직함만 틀렸다"))
+                        continue
+                    out.append(_f(s, "대표이사", "사실 불일치", _excerpt(s.text, name), f"{name} → {cur}",
+                                  f"기준 사실의 대표이사는 {cur}({src})" + (". 공동대표이사로 적힌 이름도 모두 견준다" if len(names) > 1 else "")))
     if not want and len(seen) > 1:
         main = max(seen, key=lambda k: len(seen[k]))
         allowed = {main} | (together if main in together else set())
         for k, ss in seen.items():
             if k not in allowed:
-                for s in ss:
-                    out.append(_f(s, "대표이사", "일관성", _excerpt(s.text, k[:2]), "보고서 안 다른 곳의 대표이사 이름과 맞춘다",
-                                  f"보고서 안에서 대표이사 이름이 둘 이상이다({', '.join(seen)})"))
+                for s, held in ss:
+                    fix = f"「{held}」 의 직함과 이름을 주주명부로 확인한다(전 대표이사가 주주로 남은 것이면 직함만 고친다)" if held else "보고서 안 다른 곳의 대표이사 이름과 맞춘다"
+                    out.append(_f(s, "대표이사", "일관성", _excerpt(s.text, k[:2]), fix, f"보고서 안에서 대표이사 이름이 둘 이상이다({', '.join(seen)})"))
     # 3. 주소
     regions = D.get("regions") or []
     addr_keys = D.get("address_keys") or []
@@ -562,10 +591,19 @@ KINDS = ("오타", "표현", "사실 불일치", "공시 누락", "일관성")
 STATUS = ("공시됨", "공시 안 됨", "해당 없음")
 
 
+def _same_fix(ai_fix: str, eng_fix: str) -> bool:
+    """AI 의 고칠 안이 엔진 것과 같다. 엔진의 「A → B」 에서 B 만 적은 것도 같다."""
+    a = _n(ai_fix)
+    return a == _n(eng_fix) or ("→" in eng_fix and a == _n(eng_fix.split("→")[-1]))
+
+
 def check_ai(segs: list[Seg], ai: dict, engine: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
-    """AI 가 적은 것을 원문과 대조한다. 발췌가 그 조각에 글자 그대로 있어야 받는다. (받은 것, 받지 않은 것, 공시 확인)"""
+    """AI 가 적은 것을 원문과 대조한다. 발췌가 그 조각에 글자 그대로 있어야 받는다. (받은 것, 받지 않은 것, 공시 확인)
+    엔진 지적과 같은 곳(같은 S번호, 발췌가 겹침)이라도 고칠 안이 다르면 숨기지 않고 규칙 칸에 「AI(엔진과 같은 곳)」 으로 함께 낸다.
+    엔진 발췌는 앞뒤 40자를 붙인 글이라 한 줄의 다른 문제도 겹쳐 보인다(2026-10-21 가온정밀 실습: S227 현장감사 줄의 날짜 지적에
+    빈칸 지적이, S101 의 틀린 이름 바꾸기 안에 AI 의 직함 고치기 안이 가려졌다)."""
     by = {s.id: s for s in segs}
-    eng = {(x["seg"], _n(x["quote"].strip("…"))) for x in engine}
+    eng = [(x["seg"], _n(x["quote"].strip("…")), x["fix"]) for x in engine]
     ok, bad = [], []
     for x in ai.get("findings") or []:
         s = by.get(str(x.get("seg") or ""))
@@ -582,9 +620,10 @@ def check_ai(segs: list[Seg], ai: dict, engine: list[dict]) -> tuple[list[dict],
         if why:
             bad.append(dict(x, why=why))
             continue
-        dup = any(e_seg == s.id and (_n(q) in e_q or e_q in _n(q)) for e_seg, e_q in eng)
-        ok.append({"seg": s.id, "where": s.where, "rule": "AI", "kind": x["kind"], "quote": q, "fix": x["fix"], "basis": x["basis"],
-                   "by": "AI", "same_as_engine": dup})
+        near = [e_fix for e_seg, e_q, e_fix in eng if e_seg == s.id and (_n(q) in e_q or e_q in _n(q))]
+        dup = any(_same_fix(x["fix"], e_fix) for e_fix in near)
+        ok.append({"seg": s.id, "where": s.where, "rule": "AI(엔진과 같은 곳)" if near and not dup else "AI", "kind": x["kind"], "quote": q,
+                   "fix": x["fix"], "basis": x["basis"], "by": "AI", "same_as_engine": dup})
     disc = []
     for x in ai.get("disclosures") or []:
         s = by.get(str(x.get("seg") or "")) if x.get("seg") else None
@@ -617,7 +656,8 @@ def reading(res: dict) -> str:
     facts = res["facts"]
     lines = ["# dsd 문장 읽기 자료", "",
              "처음부터 끝까지 읽고 오타 · 어색한 표현 · 사실 불일치 · 공시 누락 · 일관성을 문장.json 에 적는다(형식은 감사-DSD푸팅 스킬 「문장 검토」).",
-             "발췌(quote)는 아래 글 그대로 적는다. 엔진이 이미 적은 것은 다시 적지 않아도 된다.", "", "## 기준 사실", ""]
+             "발췌(quote)는 아래 글 그대로 적는다. 엔진이 이미 적은 것은 다시 적지 않는다. 엔진의 고칠 안이 틀렸거나 엔진이 잡은 줄에 다른 문제가 있으면 "
+             "그 줄을 발췌해 적는다(엑셀에 엔진 지적과 함께 나온다).", "", "## 기준 사실", ""]
     if facts:
         for k, v in facts.items():
             if isinstance(v, list):
