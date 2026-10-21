@@ -41,7 +41,7 @@ from yangdo.dates import to_date  # noqa: E402
 from yangdo import facts as F  # noqa: E402
 
 PROTOCOL = "2025-03-26"
-SERVER_VERSION = "0.13.5"       # 플러그인 버전(.claude-plugin/plugin.json)과 같은 값. 어긋나면 시험이 실패한다
+SERVER_VERSION = "0.13.6"       # 플러그인 버전(.claude-plugin/plugin.json)과 같은 값. 어긋나면 시험이 실패한다
 NAME_SHOWN = 40                # 오류 문장에 적는 인자 이름의 최대 길이
 INSTRUCTIONS_HEAD = ("사실관계 JSON 에는 신고인 인적사항(성명, 주민등록번호, 주소, 전화번호, 계좌)을 넣지 않는다. "
                 '새 사건은 facts: {"자산": [{"id": "A"}]} 로 시작한다. 판 자산마다 항목 하나를 두고 id 는 A, B, ... 로 붙인다. '
