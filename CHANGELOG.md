@@ -2,6 +2,17 @@
 
 릴리스 노트는 이 파일에 쌓는다. 버전은 `.claude-plugin/plugin.json` 의 `version` 과 같다.
 
+## v0.13.1 DSD푸팅 머리말 · 버전 맞춤 (2026-10-21, 릴리스 노트 초안)
+
+### 고친 것
+
+- DSD푸팅: SKILL.md 머리말(frontmatter)의 description 에 「푸팅: 합계」 처럼 콜론 뒤에 띄어쓰기가 있어 YAML 로 읽히지 않았다. Claude 앱은 오류를 띄우지 않고 description 없이 이름만 보여 줬다. 그래서 스킬 이름을 직접 적지 않으면 Claude 가 이 스킬을 잘 쓰지 않았다. description 을 작은따옴표로 감쌌고 문구는 바꾸지 않았다.
+- 버전: 0.11.8 부터 plugin.json 만 올라가고 marketplace.json(0.11.8)과 양도소득세 `SERVER_VERSION`(0.11.7)은 그대로였다. 셋을 0.13.1 로 맞췄다. 양도소득세 CI 는 0.11.8 부터 이 버전 시험에서 실패하고 있었다.
+
+### 더한 것
+
+- CI 에 `frontmatter` 작업을 더했다. 스킬마다 머리말이 YAML 로 읽히는지, name 이 폴더 이름과 같은지, description 이 비지 않았는지 본다.
+
 ## v0.13.0 감사대시보드 (2026-10-21, 릴리스 노트 초안)
 
 ### 더한 것
