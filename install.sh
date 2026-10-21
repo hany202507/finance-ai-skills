@@ -26,6 +26,15 @@ for d in "$src"/skills/*/; do
   fi
 done
 
+# 2026-10-19 the law lookup skill was renamed. Remove its old install folder (exact old name, real folder only;
+# a symlink is left alone) so the old skill does not show next to the new one.
+# The name is written as UTF-8 bytes to keep this file ASCII.
+old="$dest/$(printf '\353\262\225\353\240\271\354\241\260\355\232\214')"
+if [ -d "$old" ] && [ ! -L "$old" ]; then
+  rm -rf "$old"
+  echo "removed: $old"
+fi
+
 # korean-law MCP (used by the tax and accounting review skills)
 rm -rf "$mcpdest"
 mkdir -p "$(dirname "$mcpdest")"

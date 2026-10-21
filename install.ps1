@@ -33,6 +33,19 @@ try {
         }
     }
 
+    # 2026-10-19 the law lookup skill was renamed. Remove its old install folder (exact old name, real folder only;
+    # a junction or symlink is left alone) so the old skill does not show next to the new one.
+    # The name is built from code points to keep this file ASCII.
+    $old = Join-Path $dest (-join [char[]](0xBC95, 0xB839, 0xC870, 0xD68C))
+    if (Test-Path -LiteralPath $old -PathType Container) {
+        if ((Get-Item -LiteralPath $old -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            Write-Host "skipped (link): $old"
+        } else {
+            Remove-Item -LiteralPath $old -Recurse -Force
+            Write-Host "removed: $old"
+        }
+    }
+
     # korean-law MCP (used by the tax and accounting review skills)
     if (Test-Path $mcpDest) { Remove-Item -Recurse -Force $mcpDest }
     Copy-Item -Recurse (Join-Path $root 'mcp\korean-law') $mcpDest
