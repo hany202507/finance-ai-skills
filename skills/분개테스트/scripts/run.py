@@ -5,7 +5,7 @@
                   [--after <결산일 후 분개장.xlsx>] [--tb <회사제시 시산표 · 재무제표.xlsx>] [--pm 수행중요성] [--company 회사]
                   --out <결과 폴더>
 
-결과 폴더에 「3600-JET_분개테스트.xlsx」 와 작업용 감사 폴더(_감사폴더)가 남는다. 엔진이 분개장을 읽고 시험 일곱 가지를 판정한다.
+결과 폴더에 「3600-JET_분개테스트.xlsx」 와 작업용 감사 폴더(_감사폴더)가 남는다. 엔진이 분개장을 읽고 시험 스무 가지와 분포 분석을 낸다.
 걸린 전표가 정상 거래인지는 회계사가 결과 목록의 검토 결과 칸에 적는다. 엔진은 부정 여부를 정하지 않는다.
 """
 from __future__ import annotations
@@ -52,7 +52,9 @@ def main(argv=None) -> int:
     if a.tb:
         shutil.copy2(a.tb, rec / "회사제시" / Path(a.tb).name)
     index.read_all(d, use_ocr=False)
-    ctx = {"mat": {"performance": a.pm, "trivial": None, "basis": "명령 --pm", "candidate": False, "candidates": []}} if a.pm else None
+    # 수행중요성은 늘 명령에서 받는다. 비우면 그 값을 쓰는 시험은 「수행중요성이 없어」 메모를 남긴다(2026-10-21: 예전에는 감사 엔진의 중요성 계산으로
+    # 넘어가 이 스킬에 없는 모듈을 찾다가 멈췄다)
+    ctx = {"mat": {"performance": a.pm, "trivial": None, "basis": "명령 --pm" if a.pm else "수행중요성 없음", "candidate": False, "candidates": []}}
     try:
         r = jet.make(d, ctx, force=True)
     except Exception as e:  # noqa: BLE001
@@ -67,6 +69,12 @@ def main(argv=None) -> int:
     print(f"분개장 {run['lines']:,}행 · 차변 {run['dr']:,.0f} · 대변 {run['cr']:,.0f}")
     for t in run["tests"]:
         print(f"  {t['id']} {t['title']}: {len(t['hits'])}건" + (f" ({t['note']})" if t.get("note") else ""))
+    an = run["analyses"]
+    bf, mo = an["benford"], an["monthly"]
+    print(f"  분석 첫 자리 분포: 줄 {bf['n']:,}개 · MAD " + ("-" if bf["mad"] is None else f"{bf['mad']:.4f}") + f" · {bf['verdict']}")
+    print("  분석 월별 매출: 결산월 = " + ("-" if mo["ye_ratio"] is None else f"월평균의 {mo['ye_ratio']:.2f}배") + (" (표시)" if mo["flag"] else ""))
+    multi = jet.multi_hits(run)
+    print(f"  여러 시험에 걸린 전표: {len(multi)}건" + "".join(f" · {e['voucher'].no}({len(e['titles'])}개)" for e in multi[:5]))
     print(f"조서: {dst}")
     return 0
 
