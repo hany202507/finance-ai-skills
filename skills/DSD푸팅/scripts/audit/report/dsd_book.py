@@ -5,7 +5,7 @@
 유동자산 줄의 D · E 열이 당기 · 전기 합계가 맞는지다. 칸의 수식이 합계 칸과 더한 칸들을 직접 가리킨다.
 단수(차이가 표시 단위로 MINOR 이하, 천원 · 백만원 표만)는 노랑, FALSE 는 빨강이다.
 검증 줄의 값 · 차이 · 결과와 기존 판 대비 차이는 모두 수식이다. 오버뷰는 시트마다 네 가지를 신호등으로 보인다:
-합계(표 안 소계 · 합계), 레퍼(표 사이 연결과 계산), 전기(작년 보고서와 일치), 버전(기존 판 대비 바뀐 곳, 바뀐 곳이 있으면 노랑. ).
+합계(표 안 소계 · 합계), 레퍼(표 사이 연결과 계산), 전기(작년 보고서와 일치), 버전(기존 판 대비 바뀐 곳, 바뀐 곳이 있으면 노랑).
 신호등은 조건부 서식 아이콘이고 칸의 값은 각 시트의 결과 열과 「바뀜」 열을 세는 수식이다. 바뀐 칸과 문단은 원문에서 빨간 글자가 된다.
 두 시트에 걸친 연결은 검증 줄의 칸이 있는 시트에 한 번 적고, 대사 대상이 있는 시트에는 결과를 끌어온 줄을 둔다.
 기존 판 원문은 「전_」, 작년 보고서 원문은 「작년_」, 정산표는 「조서_」, 함께 낸 다른 보고서는 「짝_」 시트에 값으로 둔다.
@@ -853,11 +853,12 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
     states = [shown(c) for c in live]
     n_group = len({cause[c.id][0] for c in live if c.id in cause})
     kinds = [dsd_links.kind_of(c) for c in live]
-    judged = [c for c in live if c.ok is False and not c.minor]
+    judged = [c for c in live if c.ok is False and not c.minor and not dsd_links.no_review(c)]      # 늘 나는 차이 · 근거 확인 숫자 오류는 독립 검증 대상이 아니다(2026-10-22)
     tail = (f" (FALSE 는 숫자 오류, 원인 {n_group} · 표시 오류 {kinds.count('표시 오류')} · 설명 부족 {kinds.count('설명 부족')}"
             f" · 독립 검증 {sum(1 for c in judged if c.verified)}/{len(judged)}(바꿈 {sum(1 for c in judged if c.verified == '바꿈')})"
             f" · 작년 보고서의 오류 {sum(1 for c in live if c.when == dsd_links.LAST_YEAR)}"
-            f" · 늘 나는 차이 {sum(1 for c in live if dsd_links.asks(c) and c.usual)}"
+            f" · 늘 나는 차이 {sum(1 for c in live if dsd_links.asks(c) and c.usual)}(그중 독립 검증 대신 회계사 표본 {sum(1 for c in live if dsd_links.sampled(c))})"
+            f" · 엔진이 근거를 확인한 숫자 오류 {sum(1 for c in live if dsd_links.engine_checked(c))}(독립 검증 안 함)"
             f" · 판정으로 뺀 것 {sum(1 for c in rows if c.dropped)} · 회계사가 뺀 것 {sum(1 for c in rows if c.excluded and not c.dropped)})")
     end_row = len(rows) + 4
     _put(lay, ws, 1, 4, f'="FALSE "&COUNTIF(A4:A{end_row},FALSE)&" · 확인 "&COUNTIF(A4:A{end_row},"{ASK_TEXT}")&" · 단수 "&COUNTIF(A4:A{end_row},"{MINOR_TEXT}")&"{tail}"',
@@ -865,7 +866,8 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
     ws.cell(2, 1, "TRUE 가 아닌 검증만 모았다. FALSE 는 숫자 오류(같아야 하는 금액이 다르고 고칠 숫자가 있음)이고 원인이 같은 줄끼리 묶었다. 표시 오류는 금액은 맞고 이름 · 기간 · 분류 표시가 틀린 것, "
                   "설명 부족은 금액은 맞고 문장이 모자란 것이다. 확인은 조건이 맞을 때만 같은 식의 차이이거나 판정이 확인으로 둔 차이다. 작년 보고서의 오류는 올해 숫자는 맞고 작년 보고서가 틀린 것이다. "
                   "단수는 천원 · 백만원 표의 3 이하 차이다. 맨 아래 흐린 줄은 판정으로 뺀 검증(걸지 않음 · 엔진 판독 · 설명됨)과 회계사가 X 를 적은 검증이다. "
-                  "검증 열은 판정을 쓴 사람과 다른 사람(에이전트)이 다시 본 결과(유지 · 바꿈)다. 차이 설명 후보는 엔진이 차이를 보고서의 다른 숫자로 설명해 본 것이고(자리바꿈 · 부호 · 단위 · 다른 열 · 차이와 같은 칸), "
+                  "검증 열은 판정을 쓴 사람과 다른 사람(에이전트)이 다시 본 결과(유지 · 바꿈)다. 판정이 확인인 늘 나는 차이는 독립 검증을 하지 않는다. "
+                  "회계사가 아래쪽에 모인 늘 나는 차이에서 유형마다 표본을 골라 근거를 보고 확인 칸에 O 를 적는다. 차이 설명 후보는 엔진이 차이를 보고서의 다른 숫자로 설명해 본 것이고(자리바꿈 · 부호 · 단위 · 다른 열 · 차이와 같은 칸), "
                   "고칠 칸 · 맞는 숫자는 판정이 고치라고 한 칸과 그 숫자를 받치는 세 번째 근거를 엔진이 계산한 결과다. "
                   "시트 이름을 누르면 그 칸으로, 대사 대상을 누르면 견준 칸으로, 원인을 누르면 원인 칸으로 간다. "
                   "O · X 는 「검증 목록」 시트의 확인 칸에 적는다(확인 열을 누르면 그 줄로 간다).").font = wp.font(size=9, color=wp.MUTED)
@@ -905,7 +907,9 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
             why = "근거가 약한 연결" if c.weak else ("늘 나는 차이" if c.usual else "확인할 차이")
         diff = None if c.right is None else round(c.left - c.right, 6)
         first = ("뺌", None) if out_ else (li("I"), shown(c))
-        check = "" if (out_ or c.minor) else (f"{c.verified}: {c.verify_why}"[:300] if c.verified else "검증 전")
+        check = "" if (out_ or c.minor) else (f"{c.verified}: {c.verify_why}"[:300] if c.verified else
+                                                ("독립 검증 안 함(늘 나는 차이. 회계사가 표본으로 본다)" if dsd_links.sampled(c) else
+                                                 ("독립 검증 안 함(엔진이 근거 칸으로 맞는 숫자를 확인했다)" if dsd_links.engine_checked(c) else "검증 전")))
         hint = "\n".join(f"[{h['kind']}] {h['text']}" for h in c.hints[:4])
         fix = ""
         if c.fix_cell is not None and c.fix_cell[0] in tabs:
@@ -1343,7 +1347,10 @@ def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, pri
         ("FALSE(숫자 오류)", f"=COUNTIF({li},FALSE)", states.count(False)),
         ("표시 오류(금액은 맞음)", None, sum(1 for c in live if dsd_links.kind_of(c) == "표시 오류")),
         ("설명 부족(금액은 맞음)", None, sum(1 for c in live if dsd_links.kind_of(c) == "설명 부족")),
-        ("독립 검증을 거친 판정", None, f"{sum(1 for c in live if c.ok is False and not c.minor and c.verified)} / {sum(1 for c in live if c.ok is False and not c.minor)}"),
+        ("독립 검증을 거친 판정", None, f"{sum(1 for c in live if c.ok is False and not c.minor and not dsd_links.no_review(c) and c.verified)} / "
+                                     f"{sum(1 for c in live if c.ok is False and not c.minor and not dsd_links.no_review(c))}"),
+        ("늘 나는 차이(독립 검증 대신 회계사 표본)", None, sum(1 for c in live if dsd_links.sampled(c))),
+        ("엔진이 근거를 확인한 숫자 오류(독립 검증 안 함)", None, sum(1 for c in live if dsd_links.engine_checked(c))),
         ("확인", f'=COUNTIF({li},"{ASK_TEXT}")', states.count(ASK_TEXT)),
         ("단수 차이", f'=COUNTIF({li},"{MINOR_TEXT}")', states.count(MINOR_TEXT)),
         ("회계사가 뺀 검증(X)", f'=COUNTIF({_q(LIST)}K:K,"X")', sum(1 for c in checks if c.excluded)),
@@ -1481,26 +1488,34 @@ def read_marks(path: Path) -> dict:
     out = {}
     if not Path(path).exists():
         return out
-    wb = load_workbook(path)
-    if LIST in wb.sheetnames:
-        ws = wb[LIST]
-        heads = {ws.cell(1, j).value: j for j in range(1, ws.max_column + 1)}
-        if {"확인", "id"} <= set(heads):
-            for r in range(2, ws.max_row + 1):
-                cid, mark = ws.cell(r, heads["id"]).value, ws.cell(r, heads["확인"]).value
-                if cid and isinstance(mark, str) and mark.strip().upper() in ("X", "O"):
-                    out[cid] = {"excluded": True} if mark.strip().upper() == "X" else {"confirmed": True}
-    for ws in wb.worksheets:
-        heads = {ws.cell(HEAD_ROW, j).value: j for j in range(1, ws.max_column + 1)}
-        if "확인" not in heads or "id" not in heads or heads.get("출처") is None:
-            continue
-        for r in range(FIRST_ROW, ws.max_row + 1):
-            cid, mark, src = ws.cell(r, heads["id"]).value, ws.cell(r, heads["확인"]).value, ws.cell(r, heads["출처"]).value
-            if not cid or src == MIRROR or not isinstance(mark, str):
+    wb = load_workbook(path, read_only=True)          # 값만 읽는다. 한 상장사 반기 별도 엑셀 1.3초 → 0.5초(2026-10-22 실행 시간 P5)
+
+    def at(row, j):
+        return row[j] if j < len(row) else None
+
+    try:
+        if LIST in wb.sheetnames:
+            rows = wb[LIST].iter_rows(values_only=True)
+            heads = {v: j for j, v in enumerate(next(rows, ()))}
+            if {"확인", "id"} <= set(heads):
+                for row in rows:
+                    cid, mark = at(row, heads["id"]), at(row, heads["확인"])
+                    if cid and isinstance(mark, str) and mark.strip().upper() in ("X", "O"):
+                        out[cid] = {"excluded": True} if mark.strip().upper() == "X" else {"confirmed": True}
+        for ws in wb.worksheets:
+            head = next(ws.iter_rows(min_row=HEAD_ROW, max_row=HEAD_ROW, values_only=True), ())
+            heads = {v: j for j, v in enumerate(head)}
+            if "확인" not in heads or "id" not in heads or heads.get("출처") is None:
                 continue
-            v = mark.strip().upper()
-            if v == "X":
-                out[cid] = {"excluded": True}
-            elif v == "O":
-                out[cid] = {"confirmed": True}
+            for row in ws.iter_rows(min_row=FIRST_ROW, values_only=True):
+                cid, mark, src = at(row, heads["id"]), at(row, heads["확인"]), at(row, heads["출처"])
+                if not cid or src == MIRROR or not isinstance(mark, str):
+                    continue
+                v = mark.strip().upper()
+                if v == "X":
+                    out[cid] = {"excluded": True}
+                elif v == "O":
+                    out[cid] = {"confirmed": True}
+    finally:
+        wb.close()
     return out

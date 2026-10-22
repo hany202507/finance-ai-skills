@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 from datetime import date, datetime
@@ -50,8 +51,19 @@ NUMBERED = re.compile(r"^\.\d{2,} ")          # 번호가 붙은 절차 시트 �
 _SHEET_REF = re.compile(r'''"(?:[^"]|"")*"|'((?:[^']|'')+)'!|(?<![\w.'])([A-Za-z_가-힣][\w.]*)!''')
 
 
+@functools.lru_cache(maxsize=None)
+def _font(size, items: tuple) -> Font:
+    return Font(name=FONT, size=size, **dict(items))
+
+
 def font(**k):
-    return Font(name=FONT, size=k.pop("size", 10), **k)
+    """같은 인자의 글꼴은 하나만 만들어 함께 쓴다. 칸마다 새로 만들면 큰 엑셀에서 수 초가 든다(2026-10-22 DSD푸팅 실행 시간).
+    돌려받은 글꼴을 고치지 말고 새로 부른다."""
+    size = k.pop("size", 10)
+    try:
+        return _font(size, tuple(sorted(k.items())))
+    except TypeError:                                 # 목록처럼 해시할 수 없는 값
+        return Font(name=FONT, size=size, **k)
 
 
 def base_name(sheet: str) -> str:

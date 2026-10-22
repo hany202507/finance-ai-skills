@@ -26,7 +26,7 @@ def test_links_foot_text(tmp_path):
     assert code == 0, log
     assert (out / "dsd_읽기자료.md").exists() and (out / "dsd_연결요청.json").exists()
     code, log = _run("links", DSD, "--apply", str(EX / "연결.json"), "--out", "out", cwd=tmp_path)
-    assert code == 0 and "AI 연결 2건" in log, log
+    assert code == 0 and "AI 연결 33건" in log and "엔진 후보 33건: 판정 없이 넣음 33" in log, log        # 판정을 적지 않은 엔진 후보는 그대로 들어간다(2026-10-22)
     code, log = _run("foot", DSD, "--out", "out", cwd=tmp_path)
     assert "FALSE 1" in log and "1,212,000,000" in log and "이웃한 두 자리" in log, log
     assert (out / f"DSD푸팅_{Path(DSD).stem}.xlsx").exists()

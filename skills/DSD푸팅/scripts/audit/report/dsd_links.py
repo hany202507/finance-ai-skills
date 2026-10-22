@@ -86,6 +86,25 @@ def asks(c: Check) -> bool:
     return c.ok is False and not c.minor and (bool(c.when) or c.weak) and not c.dropped
 
 
+def sampled(c: Check) -> bool:
+    """독립 검증을 하지 않고 회계사가 표본으로 보는 「늘 나는 차이」(2026-10-22 결정). 늘 나는 차이 유형(usual)이 붙은 검증이
+    판정까지 「확인」 으로 끝난 것만이다. 숫자 오류 · 표시 오류 · 설명 부족 · 작년 보고서 불일치로 판정되면 apply_finding 이 usual 을 지우고,
+    판정이 없거나 근거가 약한 연결이면 여기 들지 않는다. 한 상장사 2026 반기 별도에서 이런 확인 9건의 독립 검증에 10분이 들었고 결론이 모두 같았다."""
+    return asks(c) and bool(c.usual) and not c.weak and c.finding.startswith("확인")
+
+
+def engine_checked(c: Check) -> bool:
+    """독립 검증을 하지 않는 숫자 오류(2026-10-22 결정). 판정이 숫자 오류이고 엔진이 「근거 확인」 을 낸 것이다. 근거 칸(검증한 두 칸이 아닌
+    작년 보고서 · 다른 주석 · 정산표 칸)으로 계산한 금액이 판정의 맞는 숫자와 같다는 것을 엔진이 이미 확인했다. 부호만 바꾸는 고침은 작년 보고서의
+    같은 줄만 근거로 받는다(「근거 확인(부호)」). 「고칠 쪽 미정」 은 계속 독립 검증한다. 가온정밀 모의 dsd 의 FALSE 1건이 이 경우였다."""
+    return failed(c) and c.finding.startswith(("숫자 오류", "보고서 불일치")) and c.fix_note.startswith("근거 확인")
+
+
+def no_review(c: Check) -> bool:
+    """독립 검증 에이전트에게 보내지 않는 판정: 늘 나는 차이(sampled)와 엔진이 근거를 확인한 숫자 오류(engine_checked)."""
+    return sampled(c) or engine_checked(c)
+
+
 @lru_cache(maxsize=1)
 def rules() -> dict:
     return yaml.safe_load((DEFS / "dsd_link_rules.yaml").read_text(encoding="utf-8"))
@@ -170,7 +189,30 @@ def find_col(t: Table, name: str, nth: int = 1) -> int | None:
         return len(t.header) - 1 if len(t.header) > 1 else None
     if name in ("당기", "전기"):
         return period_col(t, name)
-    return _find(t.header, name, nth)
+    j = _find(t.header, name, nth)
+    pre = col_prefix(t.header) if j is None else ""
+    return _find([cut_prefix(h, pre) for h in t.header], name, nth) if pre else j
+
+
+def col_prefix(header: list[str]) -> str:
+    """숫자 열 이름이 모두 함께 쓰는 앞부분(낱말 단위, 띄어 쓴 8자 이상). XBRL 표는 열마다 「특수관계자의 범주 모든 특수관계자의 합계 …」 처럼
+    같은 앞부분을 되풀이한다. 읽기 자료는 이 앞부분을 한 번만 적고(2026-10-22 실행 시간 P6), 연결에 뗀 이름을 적어도 find_col 이 같은 열로 푼다.
+    열이 셋 미만이거나 앞부분이 짧으면 ""."""
+    names = [h for h in header[1:] if str(h).strip()]          # 이름 없는 열은 줄 이름 열이다
+    if len(names) < 3:
+        return ""
+    words = [str(h).split() for h in names]
+    k = 0
+    while all(len(w) > k + 1 and w[k] == words[0][k] for w in words):      # 열마다 낱말을 하나 이상 남긴다
+        k += 1
+    pre = " ".join(words[0][:k])
+    return pre if len(norm(pre)) >= 8 else ""
+
+
+def cut_prefix(name: str, pre: str) -> str:
+    """열 이름에서 공통 앞부분(col_prefix)을 뗀 이름."""
+    s = str(name)
+    return s[len(pre):].strip() if pre and s.startswith(pre) else s
 
 
 def _vsum(t: Table, rows: list[int], c: int) -> float:
@@ -404,10 +446,13 @@ def _checks_from_structure(t: Table, s: dict, unresolved: list) -> list[Check]:
     def need(x):                                 # 엔진이 찾은 구조는 항에 숫자가 둘 이상인 칸에만 건다. 하나뿐인 칸까지 걸었더니 공개 원문 209건에서
         return 1 if x.get("source") == "AI" else 2      # FALSE 가 100건 가까이 늘었다(10-13). AI 가 표를 읽고 정한 구조는 하나여도 건다
 
+    pre = col_prefix(t.header)
+
     def named(names, name, axis):                # 재무제표 본표의 열은 「당기」 「전기」 로 적어도 된다
         got = {norm(o) for o in names}
         if axis == "v":
             got |= {norm(t.header[c]) for o in names if o in ("당기", "전기") and (c := period_col(t, o)) is not None}
+            return norm(name) in got or norm(cut_prefix(name, pre)) in got      # 열 이름의 공통 앞부분을 떼고 적은 것(읽기 자료의 꼴)
         return norm(name) in got
 
     def wanted(x, name, axis):                   # only 가 있으면 거기 적힌 열(줄)에만 건다. 없으면 비율 이름과 skip 을 뺀다
@@ -533,6 +578,9 @@ def _resolve(doc: Doc, ref: dict, period: str | None, other: Doc | None = None):
         r = next((x for x in (find_row(t, n, ref.get("row_nth", 1)) for n in names) if x is not None), None)
     if ref.get("exact"):                         # 금액 근거로 건 연결은 열 이름을 글자 그대로 찾는다
         c = _find(t.header, ref["col"], ref.get("col_nth", 1))
+        pre = col_prefix(t.header) if c is None else ""
+        if pre:                                  # 공통 앞부분을 뗀 열 이름(읽기 자료의 꼴, 2026-10-22 P6)
+            c = _find([cut_prefix(h, pre) for h in t.header], ref["col"], ref.get("col_nth", 1))
     else:
         c = find_col(t, ref.get("col") or period or "당기", ref.get("col_nth", 1))
     if r is None or c is None or not (0 <= c < len(t.header)):
@@ -565,7 +613,7 @@ _LOSS_MARK = re.compile(r"\((?:\*|주)\s*\d*\)|\[[^\]]*\]|\s")
 
 def income_sign(label: str, v) -> int:
     """이익 방향으로 읽는 배수. 「당기순손실」 처럼 손실만 적는 줄의 양수는 손실 금액이라 -1 이다.
-    「당기순이익(손실)」 · 「당기순이익」 줄과 음수로 적은 손실 줄은 적힌 부호 그대로다(DART 정정공시 짝 · 실제 회사 자료 의 보고서 13건, 검증 26건이 손익계산서에 손실을 양수로 적었다)."""
+    「당기순이익(손실)」 · 「당기순이익」 줄과 음수로 적은 손실 줄은 적힌 부호 그대로다(DART 정정공시 짝 · 실제 회사 자료의 보고서 13건, 검증 26건이 손익계산서에 손실을 양수로 적었다)."""
     return -1 if _isnum(v) and v > 0 and _LOSS_MARK.sub("", str(label)).endswith("순손실") else 1
 
 
@@ -655,6 +703,8 @@ def apply_finding(c: Check, note: dict) -> None:
         c.when, c.usual, c.weak = EXPLAIN, "", False
     elif v == "확인" and not c.when and not c.weak:
         c.when = "판정: 확인할 차이"
+    if v == "확인" and "usual" in note:              # 판정이 늘 나는 차이 유형을 붙이거나 뗀다(빈 값이면 뗀다. 2026-10-22)
+        c.usual = str(note["usual"] or "")
     elif v == "작년 보고서 불일치":
         c.when, c.usual, c.weak = c.when or LAST_YEAR, "", False
     elif v in ("걸지 않음", "엔진 판독", "설명됨"):
@@ -950,6 +1000,123 @@ def _ai_rows(t: Table, q: Table, rows: dict, pairs: list) -> None:
             rows[i] = j
 
 
+# 전기 대사의 XBRL 항목과 표현 차이 사전(2026-10-22 실행 시간 P4). 한 상장사 2026 반기 별도에서 AI 가 prior_pairs 30건으로 메운 31줄을 엔진이 먼저 잇는다
+_XBRL_PRIOR = re.compile(r"^(BP|P)(FY\d{4})([ed])([A-Z0-9]+)(.*)$", re.S)
+
+
+def xbrl_prior(fact: tuple) -> list[tuple]:
+    """올해 보고서 전기 칸의 XBRL 항목(계정 코드, 문맥, …) → 작년 보고서에서 같은 사실을 가리키는 (계정 코드, 문맥) 후보. 전기 칸이 아니면 [].
+    문맥 앞머리 P(전기)는 작년 보고서의 C(당기), BP(전전기)는 P 다. 반기 · 분기 보고서의 비교 연도 말 · 연간 문맥(HY · Q1 처럼 A · Q 가 붙지 않은 것)은
+    작년 사업보고서의 FY 로도 찾는다. 올해 반기 「PFY2025eHY」(전기말) = 작년 사업보고서 「CFY2025eFY」, 올해 반기 「PFY2025dHYA」(전반기 누적) = 작년 반기 「CFY2025dHYA」.
+    문맥의 차원(뒤에 붙은 축 · 멤버)은 그대로 같아야 한다."""
+    code, ctx = fact[0], fact[1]
+    m = _XBRL_PRIOR.match(ctx)
+    if not m:
+        return []
+    head = ("P" if m.group(1) == "BP" else "C") + m.group(2) + m.group(3)
+    out = [(code, head + m.group(4) + m.group(5))]
+    if m.group(4) != "FY" and not m.group(4).endswith(("A", "Q")):
+        out.append((code, head + "FY" + m.group(5)))
+    return out
+
+
+def _xbrl_rows(t: Table, q: Table, rows: dict, cols: list) -> None:
+    """XBRL 항목이 같은 줄을 잇는다. rows 를 고친다. 같은 항목은 같은 사실이라 이름 짝보다 앞선다. 다만 이름 짝이 가리킨 작년 칸에도 항목이 있고
+    그것이 다를 때만 바꾼다. 작년 표의 같은 열에 그 항목이 한 줄뿐일 때만 잇는다. 줄 이름 키(row_keys)가 앞 두 칸만 써서
+    셋째 칸만 다른 줄이 같은 키가 되면 이름으로 잇지 못한다(한 상장사 2026 반기 별도 주석 19-2 판매비와관리비 열한 줄, 21-2 이자수익 · 이자비용)."""
+    if not t.xbrl or not q.xbrl:
+        return
+    idx: dict = {}
+    for (k, b), f in q.xbrl.items():
+        idx.setdefault(f[:2], set()).add((k, b))
+    for a, b in cols:
+        for i in range(len(t.rows)):
+            f = t.xbrl.get((i, a))
+            want = xbrl_prior(f) if f else []
+            hits = {k for g in want for k, bb in idx.get(g, ()) if bb == b}
+            if len(hits) != 1:
+                continue
+            k, j = hits.pop(), rows.get(i)
+            if j is None or (q.xbrl.get((j, b)) is not None and q.xbrl[(j, b)][:2] not in want):
+                rows[i] = k
+
+
+@lru_cache(maxsize=1)
+def _prior_names() -> dict:
+    d = yaml.safe_load((DEFS / "dsd_prior_names.yaml").read_text(encoding="utf-8")) or {}
+    return {"open_close": re.compile(d["open_close"]), "swap": re.compile(d["swap"]),
+            "replace": [(re.compile(p), r) for p, r in d.get("replace") or []]}
+
+
+def prior_alias(label: str) -> str:
+    """전기 대사용 줄 이름: 표현 차이 사전(dsd_prior_names.yaml)으로 바꾼 이름. 「단기차입금의 순감소」 와 「단기차입금의 순증가(감소)」 가 같은 이름이 된다."""
+    from .dsd_compare import _FOOT
+
+    r = _prior_names()
+    s = re.sub(r"\s+", " ", _FOOT.sub("", str(label or ""))).strip()
+    m = r["open_close"].match(s)
+    if m:
+        return m.group(1)
+    m = r["swap"].match(s)
+    if m:
+        s = m.group(2) + m.group(1)
+    s = norm(s)
+    for p, rep in r["replace"]:
+        s = p.sub(rep, s)
+    return re.sub(r"[\-·ㆍ,]", "", s)
+
+
+def _alias_rows(t: Table, q: Table, rows: dict) -> None:
+    """이름 짝 · XBRL 항목으로 잇지 못한 줄을 표현 차이 사전으로 잇는다. rows 를 고친다. 글자 열을 이은 전체 이름으로 견주고,
+    바꾼 이름이 양쪽 표에 하나씩인 줄만 잇는다. 이미 이은 작년 줄은 다시 쓰지 않는다."""
+    a, b = [prior_alias(x) for x in _labels(t)], [prior_alias(x) for x in _labels(q)]
+    taken = set(rows.values())
+    for i, k in enumerate(a):
+        if i in rows or not k or a.count(k) != 1 or b.count(k) != 1:
+            continue
+        j = b.index(k)
+        if j not in taken:
+            rows[i] = j
+            taken.add(j)
+
+
+def _xbrl_lost(doc: Doc, prior: Doc, tag: str, out: list[Check], lost: list[dict]) -> list[dict]:
+    """줄 짝으로 작년 칸을 찾지 못한 전기 금액을 작년 보고서 전체에서 같은 XBRL 항목으로 찾는다. 찾은 칸은 out 에 검증을 더하고,
+    남은 「못 찾은 줄」 을 돌려준다. 표 짝을 찾지 못한 주석(한 상장사 2026 반기 별도 주석 3-2 · 3-4 · 16-2 ↔ 작년 사업보고서 4-1 · 4-3 · 19-1)에 쓴다.
+    작년 보고서에 같은 항목이 여러 칸이면 처음 나온 칸과 견준다(같은 사실이라 금액이 같아야 한다)."""
+    idx: dict = {}
+    for q in prior.tables():
+        for (k, b), f in sorted((q.xbrl or {}).items()):
+            idx.setdefault(f[:2], (q, k, b))
+    if not idx:
+        return lost
+    have = {(c.table, c.r, c.c) for c in out}
+    keep = []
+    for u in lost:
+        t = doc.table(u["table"]) if "row" in u else None
+        if t is None or not t.xbrl:
+            keep.append(u)
+            continue
+        i, missing, labels = u["row"], False, _labels(t)
+        for a in range(1, len(t.header)):
+            f, v = t.xbrl.get((i, a)), t.nums[i][a]
+            if f is None or not _isnum(v) or (t.id, i, a) in have or not xbrl_prior(f):
+                continue
+            hit = next((idx[g] for g in xbrl_prior(f) if g in idx), None)
+            if hit is None or not _isnum(hit[0].nums[hit[1]][hit[2]]):
+                missing = missing or v != 0
+                continue
+            q, k, b = hit
+            k10 = (q.unit or 1) / (t.unit or 1)
+            cid = f"전기|{t.id}|{labels[i]}#{_ref(labels, i)[1]}|{t.header[a]}#{_ref(t.header, a)[1]}"
+            out.append(_prior_check(cid, t, i, a, q, k, b, k10 if k10 != 1 else 1, tag,
+                                    f"작년 {tag}{q.id} {q.rows[k][0]} · {q.header[b]}(XBRL 항목이 같은 칸)"))
+            have.add((t.id, i, a))
+        if missing:
+            keep.append(u)
+    return keep
+
+
 def prior_checks(doc: Doc, prior: Doc, m, tag: str = "", pairs: list | None = None) -> tuple[list[Check], list[dict]]:
     """전기 대사: 당기 보고서의 전기 숫자 = 작년 보고서의 당기 숫자. m 은 dsd_compare.match(doc, prior).
 
@@ -996,6 +1163,8 @@ def prior_checks(doc: Doc, prior: Doc, m, tag: str = "", pairs: list | None = No
         done[t.id] = {a for a, _ in pairs}
         _more_rows(t, q, rows)
         _same_name_rows(t, q, rows, pairs)
+        _xbrl_rows(t, q, rows, pairs)
+        _alias_rows(t, q, rows)
         _ai_rows(t, q, rows, ai_pairs)
         for a, b in pairs:
             k10 = _scale(t, q, rows, a, b)
@@ -1006,17 +1175,19 @@ def prior_checks(doc: Doc, prior: Doc, m, tag: str = "", pairs: list | None = No
                 k = rows.get(i)
                 if k is None or not _isnum(q.nums[k][b]):
                     if v != 0:
-                        unresolved.append({"table": t.id, "kind": "전기", "why": f"전기: 작년 보고서 {q.id} 에서 「{labels[i]}」 금액을 찾지 못함"})
+                        unresolved.append({"table": t.id, "kind": "전기", "why": f"전기: 작년 보고서 {q.id} 에서 「{labels[i]}」 금액을 찾지 못함", "row": i})
                     continue
                 out.append(_prior_check(f"전기|{t.id}|{labels[i]}#{_ref(labels, i)[1]}|{t.header[a]}#{_ref(t.header, a)[1]}", t, i, a, q, k, b, k10, tag,
                                         f"작년 {tag}{q.id} {q.rows[k][0]} · {q.header[b]}"))
     more, lost = _prior_split_tables(doc, prior, m, tag, {c.id for c in out}, ai_pairs, done)
+    out += more
+    left = _xbrl_lost(doc, prior, tag, out, unresolved + lost)      # 줄 짝으로 못 찾은 줄은 작년 보고서 전체에서 같은 XBRL 항목을 찾는다
     seen, gone = set(), []
-    for x in unresolved + lost:                 # 같은 줄을 열마다 알리지 않는다
+    for x in left:                              # 같은 줄을 열마다 알리지 않는다
         if (x["table"], x["why"]) not in seen:
             seen.add((x["table"], x["why"]))
-            gone.append(x)
-    return out + more, gone
+            gone.append({k: v for k, v in x.items() if k != "row"})      # 줄 번호는 XBRL 찾기에만 쓴다. 바깥 꼴은 그대로 둔다
+    return out, gone
 
 
 _PERIOD_LABEL = re.compile(r"^(?:[①-⑳]|\(\d+\)|\d+\))?\s*[<(\[〈]?\s*(당|전)(반기|분기|기)(말)?(?![가-힣])")
@@ -1116,7 +1287,7 @@ def _agree(t: Table, q: Table, rows: dict, cols: list) -> float:
 
 def _loose_rows(t: Table, q: Table, rows: dict) -> None:
     """이름 짝에서 빠진 줄을 느슨한 이름(_loose_key)으로 잇는다. rows 를 고친다. 느슨한 이름이 양쪽 표에 하나뿐인 줄만 잇는다
-    (더존 2025 주석8-6 「(주)테크핀레이팅스」 ↔ 작년 「(주)테크핀레이팅스[주]」)."""
+    (한 상장사 2025 주석8-6 「(주)가나다」 ↔ 작년 「(주)가나다[주]」)."""
     from .dsd_compare import row_keys
 
     a, b = [_loose_key(k) for k in row_keys(t)], [_loose_key(k) for k in row_keys(q)]
@@ -1132,7 +1303,7 @@ def _loose_rows(t: Table, q: Table, rows: dict) -> None:
 
 def _more_rows(t: Table, q: Table, rows: dict) -> None:
     """짝지은 두 표에서 matcher 가 잇지 않은 줄을 줄 이름 짝(dsd_compare._pairs)과 느슨한 이름(_loose_rows)으로 더 잇는다. rows 를 고친다.
-    이미 이은 작년 줄은 다시 쓰지 않는다. 11단계 첫 판은 이 줄들을 다른 작년 표에서까지 찾다가 틀린 표와 짝지었다(더존 주석8-6 ↔ 작년 8-1)."""
+    이미 이은 작년 줄은 다시 쓰지 않는다. 11단계 첫 판은 이 줄들을 다른 작년 표에서까지 찾다가 틀린 표와 짝지었다(한 상장사 주석8-6 ↔ 작년 8-1)."""
     from .dsd_compare import _pairs, row_keys
 
     taken = set(rows.values())
@@ -1226,6 +1397,8 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
             share, q, rows, cols = best
             used.add(q.id)
             _same_name_rows(t, q, rows, cols)
+            _xbrl_rows(t, q, rows, cols)
+            _alias_rows(t, q, rows)
             _ai_rows(t, q, rows, ai_pairs)
             labels = _labels(t)
             for a, b in cols:
@@ -1237,7 +1410,7 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
                     r = rows.get(i)
                     if r is None or not _isnum(q.nums[r][b]):
                         if v != 0 and share >= 0.5:          # 줄 이름이 반 넘게 겹친 표만 못 찾은 줄을 알린다(꼴이 다른 작년 표는 일부 줄만 짝짓는다)
-                            lost.append({"table": t.id, "kind": "전기", "why": f"전기: 작년 보고서 {q.id} 에서 「{labels[i]}」 금액을 찾지 못함"})
+                            lost.append({"table": t.id, "kind": "전기", "why": f"전기: 작년 보고서 {q.id} 에서 「{labels[i]}」 금액을 찾지 못함", "row": i})
                         continue
                     cid = f"전기|{t.id}|{labels[i]}#{_ref(labels, i)[1]}|{t.header[a]}#{_ref(t.header, a)[1]}"
                     if cid in have:

@@ -674,15 +674,37 @@ def reading(res: dict) -> str:
     lines += ["", f"## 엔진이 찾은 것 {len(res['engine'])}건", ""]
     for x in res["engine"]:
         lines.append(f"- {x['seg']} [{x['kind']} · {x['rule']}] {x['quote']} → {x['fix']}")
-    lines += ["", "## 글", ""]
+    segs = res["segments"]
+    shown = {s.id: _shown(s) for s in segs}
+    same: dict[str, list[str]] = {}                  # 보이는 글 → 그 글이 나온 S번호들(제목 · 표지는 묶지 않는다)
+    for s in segs:
+        if s.kind not in ("제목", "표지"):
+            same.setdefault(shown[s.id], []).append(s.id)
+    lines += ["", "## 글", "",
+              "표 줄은 글자가 든 칸만 적었다(숫자 칸은 숫자 푸팅이 본다). 외부감사 실시내용의 표는 숫자까지 적었다. 같은 글은 처음 한 번만 적고 같은 글이 나온 S번호를 붙였다. "
+              "발췌는 그 S번호들의 글에 모두 그대로 있다. 적을 때는 맨 앞 번호를 쓴다.", ""]
     part = None
-    for s in res["segments"]:
+    for s in segs:
+        ids = same.get(shown[s.id], [s.id]) if s.kind not in ("제목", "표지") else [s.id]
+        if ids[0] != s.id:                            # 앞에서 적은 글
+            continue
         if s.part != part:
             part = s.part
             lines += ["", f"### {part}", ""]
         mark = "**" if s.kind == "제목" else ""
-        lines.append(f"{s.id} [{s.kind}{(' ' + str(s.n)) if s.n else ''}] {mark}{s.text}{mark}")
+        tail = f" (같은 글 {len(ids) - 1}곳 더: {', '.join(ids[1:])})" if len(ids) > 1 else ""
+        lines.append(f"{s.id} [{s.kind}{(' ' + str(s.n)) if s.n else ''}] {mark}{shown[s.id]}{mark}{tail}")
     return "\n".join(lines) + "\n"
+
+
+def _shown(s: Seg) -> str:
+    """읽기 자료에 보일 글. 표 줄은 글자(한글 · 영문)가 든 칸만 남긴다. 「현금및현금성자산 | 12,581,632 | 0」 은 「현금및현금성자산」 이다
+    (2026-10-22 실행 시간 P3: 한 상장사 2026 반기 별도 문장읽기 1,333줄 가운데 표 줄 931줄, 그중 533줄이 이름 칸 하나에 숫자 칸).
+    외부감사 실시내용의 표는 숫자까지 그대로 둔다. 인원수 · 감사시간은 숫자 푸팅이 보지 않아서, 빼면 빈칸인지 알 수 없다
+    (같은 날 가온정밀 재기에서 문장 검토 에이전트가 dsd 원문을 직접 풀어 읽었다)."""
+    if not s.kind.startswith("표") or s.part == "외부감사 실시내용":
+        return s.text
+    return " | ".join(c for c in (x.strip() for x in s.text.split(" | ")) if re.search(r"[가-힣A-Za-z]", c))
 
 
 def to_json(res: dict) -> dict:

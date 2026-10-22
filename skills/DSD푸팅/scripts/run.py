@@ -6,6 +6,7 @@
     python run.py links <dsd> --apply <연결.json> --out <폴더>   AI 가 적은 연결 정의를 넣는다
     python run.py foot  <dsd> [--prior <작년 보고서>] [--wtb <정산표>] [--prev <기존 판>] --out <폴더>   푸팅 엑셀
     python run.py text  <dsd> [--prior <작년 보고서>] --out <폴더>    문장 검토(폴더에 기준사실.json 이 있으면 대표이사 · 주소 · 감사기간까지)
+    python run.py fetch <접수번호 | DART PDF> --out <폴더>   OpenDART 에서 원문 xml 을 받아 연결 · 별도로 나눈다(인증키는 환경변수 DART_API_KEY)
 
 명령과 옵션은 감사 엔진의 `dsd` 하위 명령과 같다(`python run.py foot -h`). 공개본은 감사 폴더 옵션(--case)을 쓰지 않는다.
 """

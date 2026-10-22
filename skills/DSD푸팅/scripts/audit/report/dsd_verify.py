@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from . import dsd_links
@@ -172,14 +173,82 @@ def apply_review(checks: list[Check], items: list[dict], doc: Doc, prior: Doc | 
     return problems
 
 
+BUNDLE_CELLS = 12      # 근거 묶음의 줄마다 적는 칸 수. 넓은 표(특수관계자 거래 39열)는 이 칸만큼만 적고 검증의 열과 끝 열은 늘 넣는다
+
+
+def _row_text(tid: str, t, r: int, focus: int | None = None) -> str:
+    """표 한 줄: 「[표] 「줄 이름」: 열 값 · 열 값 …」. 열 이름의 공통 앞부분은 뗀다."""
+    pre = dsd_links.col_prefix(t.header)
+    cols = [j for j in range(1, len(t.header)) if _isnum(t.nums[r][j]) or (str(t.rows[r][j] or "").strip() and str(t.header[j]).strip())]      # 이름 없는 글자 열은 줄 이름이다
+    if len(cols) > BUNDLE_CELLS:
+        keep = {cols[-1]} | ({focus} if focus in cols else set())
+        near = sorted(cols, key=lambda j: abs(j - (focus if focus is not None else 0)))
+        keep |= set(near[:BUNDLE_CELLS - len(keep)])
+        cols = sorted(keep)
+    cells = []
+    for j in cols:
+        v = t.nums[r][j]
+        text = _fmt(v) if _isnum(v) else str(t.rows[r][j]).strip()[:40]
+        cells.append(f"{dsd_links.cut_prefix(t.header[j], pre) or f'{j + 1}째 열'} {text}")
+    return f"[{tid}] 「{_labels(t)[r]}」: " + (" · ".join(cells) or "(빈 줄)")
+
+
+def _bundle(doc: Doc, c: Check, tabs: dict, rowmap: dict) -> list[str]:
+    """검증 하나의 근거 묶음(2026-10-22 실행 시간 P2). 검증 에이전트가 원문을 다시 뒤지지 않게 판정자료에 함께 적는다.
+    - 두 칸이 든 표의 그 줄(표 줄)
+    - 같은 주석의 다른 표에서 줄 이름이 같은 줄과 그 표의 합계 줄(같은 주석)
+    - 작년 보고서의 같은 표 줄. 전기 대사가 짝지은 줄이다(작년)"""
+    from .base import norm
+
+    cells = [(c.table, c.r, c.c)] + [(tid, r, k) for tid, r, k, _ in c.terms]
+    shown, out = set(), []
+    for tid, r, k in cells:
+        t = tabs.get(tid)
+        if t is not None and (tid, r) not in shown and 0 <= r < len(t.rows):
+            shown.add((tid, r))
+            out.append("  - 표 줄 " + _row_text(tid, t, r, k))
+    for tid, r, _ in cells:
+        t = tabs.get(tid)
+        if t is None or tid not in {x.id for x in doc.tables()} or not (0 <= r < len(t.rows)):
+            continue
+        name = norm(_labels(t)[r])
+        for q in (x[1] for x in doc.part_of(tid).items if x[0] == "t"):
+            if q.kind:
+                continue
+            for i, lab in enumerate(_labels(q)):
+                if (q.id, i) in shown:
+                    continue
+                same = name and norm(lab) == name and q.id != tid
+                total = q.id == tid and dsd_links.total_kind(lab) is not None and any(_isnum(v) for v in q.nums[i][1:])
+                if same or total:
+                    shown.add((q.id, i))
+                    out.append("  - 같은 주석 " + _row_text(q.id, q, i))
+    for tid, r, _ in cells:
+        hit = rowmap.get((tid, r))
+        if hit and hit not in shown and hit[0] in tabs:
+            shown.add(hit)
+            out.append("  - 작년 " + _row_text(hit[0], tabs[hit[0]], hit[1]))
+    return out[:12]
+
+
+# 전기 대사 판정(apply_prior_verdicts)이 근거 글 뒤에 붙인 「판정 …: …」. 판정은 「판정」 줄에 따로 적으니 근거 줄에서는 뗀다.
+# 검증 에이전트가 판정 글을 읽기 전에 근거를 보게 하려는 것이다(10-22 한 상장사 재기에서 검증 에이전트가 근거 줄의 판정 글을 먼저 봤다)
+_PRIOR_VERDICT = re.compile(r"(^| · )판정 (불일치|작년 불일치|설명됨|걸지 않음): .*$", re.S)
+
+
 def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict) -> str:
-    """판정자료: FALSE · 확인 검증마다 두 칸, 차이, 차이 설명 후보, 작년 보고서, 판정을 한 곳에. 판정을 쓰거나 검증하는 에이전트가 읽는다."""
+    """판정자료: FALSE · 확인 검증마다 두 칸, 차이, 차이 설명 후보, 작년 보고서, 판정, 근거 묶음을 한 곳에. 판정을 쓰거나 검증하는 에이전트가 읽는다."""
+    rowmap = {(c.table, c.r): (c.terms[0][0], c.terms[0][1]) for c in checks if c.group == "전기" and c.terms}      # 올해 줄 → 전기 대사가 짝지은 작년 줄
     rows = [c for c in checks if c.ok is False and not c.minor and not c.excluded]
     rows.sort(key=lambda c: (0 if dsd_links.failed(c) else 1, (cause.get(c.id) or (9999,))[0], -abs((c.left or 0) - (c.right or 0))))
     out = ["# dsd 판정자료", "",
            "FALSE · 확인 검증마다 두 칸의 금액, 차이, 엔진이 찾은 차이 설명 후보, 작년 보고서의 같은 칸, 지금 판정을 적었다.",
-           "판정은 후보마다 「해당 없음」 이나 「이것으로 설명됨」 을 정한 뒤에 쓴다. 판정 종류와 근거 칸 적는 법은 감사-DSD푸팅 스킬 「판정」 절에 있다.", "",
-           f"- FALSE(숫자 오류) {sum(1 for c in rows if dsd_links.failed(c))}건, 확인 · 표시 오류 · 설명 부족 · 작년 보고서의 오류 {sum(1 for c in rows if not dsd_links.failed(c))}건", ""]
+           "판정은 후보마다 「해당 없음」 이나 「이것으로 설명됨」 을 정한 뒤에 쓴다. 판정 종류와 근거 칸 적는 법은 감사-DSD푸팅 스킬 「판정」 절에 있다.",
+           "「근거 묶음」 은 두 칸이 든 표의 줄, 같은 주석에서 줄 이름이 같은 줄과 합계 줄, 작년 보고서의 같은 표 줄이다. 원문을 열기 전에 이것부터 본다.", "",
+           f"- FALSE(숫자 오류) {sum(1 for c in rows if dsd_links.failed(c))}건, 확인 · 표시 오류 · 설명 부족 · 작년 보고서의 오류 {sum(1 for c in rows if not dsd_links.failed(c))}건",
+           f"- 독립 검증 대상 {sum(1 for c in rows if not dsd_links.no_review(c))}건. 판정이 확인인 늘 나는 차이 {sum(1 for c in rows if dsd_links.sampled(c))}건과"
+           f" 엔진이 근거를 확인한 숫자 오류 {sum(1 for c in rows if dsd_links.engine_checked(c))}건은 독립 검증을 하지 않는다"
+           "(2026-10-22 결정. 「독립 검증: 대상 아님」 으로 적었다)", ""]
     for c in rows:
         t = tabs.get(c.table)
         left = cell_name(c.table, t, c.r, c.c) if t is not None else c.table
@@ -189,8 +258,9 @@ def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict) -> 
         out.append(f"- 왼쪽 칸: {left} = {_fmt(c.left or 0)}")
         out.append(f"- 대사 대상: {c.label} = {_fmt(c.right or 0)}")
         out.append(f"- 차이: {_fmt(d)} (단위 {c.unit:g}원)" + (f" · 허용 폭 {c.tol:g}" if c.tol else ""))
-        if c.basis:
-            out.append(f"- 근거: {c.basis}")
+        basis = _PRIOR_VERDICT.sub("", c.basis or "")
+        if basis:
+            out.append(f"- 근거: {basis}")
         if c.when:
             out.append(f"- 조건 · 판정 표시: {c.when}")
         if last.get(c.id):
@@ -200,10 +270,17 @@ def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict) -> 
             out += [f"  - [{h['kind']}] {h['text']}" for h in c.hints]
         else:
             out.append("- 차이 설명 후보: 엔진이 찾은 것 없음")
+        bundle = _bundle(doc, c, tabs, rowmap)
+        if bundle:
+            out += ["- 근거 묶음:"] + bundle
         out.append(f"- 판정: {c.finding or '(없음)'}")
         if c.fix_note:
             out.append(f"- 고칠 칸 · 근거: {c.fix_note}")
         if c.verified:
             out.append(f"- 독립 검증: {c.verified}. {c.verify_why}")
+        elif dsd_links.sampled(c):
+            out.append(f"- 독립 검증: 대상 아님(늘 나는 차이 「{c.usual}」. 회계사가 표본으로 본다)")
+        elif dsd_links.engine_checked(c):
+            out.append("- 독립 검증: 대상 아님(엔진이 근거 칸으로 맞는 숫자를 확인했다)")
         out.append("")
     return "\n".join(out)

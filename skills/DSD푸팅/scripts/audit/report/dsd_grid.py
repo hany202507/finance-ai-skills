@@ -6,7 +6,11 @@ dsd.read_dsd 는 블록 목록을 낸다(조서 세션이 그 형태를 읽으�
 from __future__ import annotations
 
 import hashlib
+import os
+import pickle
 import re
+import sys
+import time
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,13 +69,15 @@ def to_num(s):
     return int(x) if x == int(x) else x
 
 
-def expand(trs, fill: bool) -> list[list[str]]:
+def expand(trs, fill: bool, of=None) -> list[list]:
     """TR 목록의 COLSPAN · ROWSPAN 을 풀어 네모난 격자로 만든다. fill 이면 묶인 칸마다 같은 글자를 넣고(머리줄),
-    아니면 왼쪽 위 칸에만 넣는다(본문: 숫자가 두 번 세어지지 않게)."""
-    grid: list[list[str]] = []
-    carry: dict[int, tuple[int, str]] = {}
+    아니면 왼쪽 위 칸에만 넣는다(본문: 숫자가 두 번 세어지지 않게). of 를 주면 글자 대신 of(칸) 을 같은 자리에 넣고 빈 자리는 None 이다
+    (칸의 XBRL 항목을 글자 격자와 같은 자리에 둘 때)."""
+    blank, get = ("", dsd._text) if of is None else (None, of)
+    grid: list[list] = []
+    carry: dict[int, tuple] = {}
     for tr in trs:
-        row: list[str] = []
+        row: list = []
 
         def take():
             while len(row) in carry:
@@ -80,20 +86,44 @@ def expand(trs, fill: bool) -> list[list[str]]:
                     del carry[len(row)]
                 else:
                     carry[len(row)] = (n - 1, t)
-                row.append(t if fill else "")
+                row.append(t if fill else blank)
 
         for cell in (x for x in tr if x.tag in CELLS):
             take()
-            t = dsd._text(cell)
+            t = get(cell)
             cs, rs = int(cell.get("COLSPAN") or 1), int(cell.get("ROWSPAN") or 1)
             for k in range(cs):
                 if rs > 1:
                     carry[len(row)] = (rs - 1, t)
-                row.append(t if (k == 0 or fill) else "")
+                row.append(t if (k == 0 or fill) else blank)
         take()
         grid.append(row)
     w = max((len(r) for r in grid), default=0)
-    return [r + [""] * (w - len(r)) for r in grid]
+    return [r + [blank] * (w - len(r)) for r in grid]
+
+
+def _xbrl(cell):
+    """칸의 XBRL 항목(계정 코드, 기간 · 차원 문맥, 부호를 뒤집어 보였는지). 코드나 문맥이 없으면 None."""
+    code, ctx = (cell.get("ACODE") or "").strip(), (cell.get("ACONTEXT") or "").strip()
+    return (code, ctx, (cell.get("ANEGATED") or "").strip().upper() == "Y") if code and ctx else None
+
+
+def _finance_tags(t) -> list[list]:
+    """FINANCE 표의 본문 줄마다 칸의 XBRL 항목. dsd._finance_rows 가 묶인 열(내역 · 합계)에서 마지막으로 글자가 있는 칸을 고르는 것과 같은 칸을 고른다."""
+    head = t.find("THEAD/TR")
+    if head is None:
+        return [[_xbrl(c) for c in tr if c.tag in ("TD", "TH", "TE", "TU")] for sec in t if sec.tag in ("THEAD", "TBODY") for tr in sec.findall("TR")][1:]
+    spans = [int(c.get("COLSPAN") or 1) for c in head if c.tag in ("TH", "TD", "TE")]
+    out = []
+    for tr in t.findall("TBODY/TR"):
+        cells = [c for c in tr if c.tag in ("TD", "TH", "TE", "TU")]
+        row, i = [], 0
+        for sp in spans:
+            grp = [c for c in cells[i:i + sp] if dsd._text(c)]
+            row.append(_xbrl(grp[-1]) if grp else None)
+            i += sp
+        out.append(row)
+    return out
 
 
 def col_names(head: list[list[str]]) -> list[str]:
@@ -134,6 +164,7 @@ class Table:
     old_labels: list | None = None    # 묶인 칸을 채우기 전의 첫 칸. 앞서 적은 연결(빈 이름과 순번)을 풀 때 쓴다
     cell_units: dict | None = None    # 칸에 단위가 붙은 칸 {(줄, 열): 단위}. 「천원」 1000, 「원」 · 「주」 1, 「%」 0.01. 없는 칸은 표의 단위
     kind: str = ""                    # 「문장」 이면 주석 문단에서 꺼낸 금액을 모은 표(원문에는 없는 표)
+    xbrl: dict | None = None          # 숫자 칸의 XBRL 항목 {(줄, 열): (ACODE, ACONTEXT, ANEGATED)}. DART 정기보고서 원문 xml 에만 있다(2026-10-22 연결 후보)
 
     def unit_at(self, i: int, j: int) -> float:
         """칸 하나의 단위. 칸에 단위가 붙어 있으면 그것, 아니면 표의 단위."""
@@ -184,7 +215,7 @@ def section_of(title: str) -> str | None:
 
 class _GridReader(dsd._Reader):
     """dsd._Reader 의 걷기(절 · 제목 · 문단 판독)를 그대로 쓰고 표만 격자로 읽는다.
-    블록 ("grid", 머리줄, 본문, 재무제표 본표 여부, 머리줄에 적힌 단위, 과목 단계, 첫 열 원문)."""
+    블록 ("grid", 머리줄, 본문, 재무제표 본표 여부, 머리줄에 적힌 단위, 과목 단계, 첫 열 원문, 묶인 첫 칸, 칸의 XBRL 항목 격자 | None)."""
 
     def add(self, b):
         if b[0] == "h" and b[1] in (2, 3):
@@ -220,10 +251,12 @@ class _GridReader(dsd._Reader):
                 return
             self.stats["테두리 없는 표"] += 1    # 테두리만 없는 숫자 표는 표로 읽는다
         self.stats["원문 표"] += 1
-        unit, levels, raw = None, None, None
+        unit, levels, raw, tags = None, None, None, None
+        tagged = any(c.get("ACONTEXT") for c in t.iter() if c.tag in CELLS)     # DART 정기보고서 원문의 XBRL 칸
         if t.get("ACLASS") == "FINANCE":
             rows = dsd._finance_rows(t)
             header, body = (rows[0], rows[1:]) if rows else ([], [])
+            tags = _finance_tags(t) if tagged else None
             fin = True
             firsts = [next((c for c in tr if c.tag in CELLS), None) for tr in t.findall("TBODY/TR")]
             raw = [dsd._text(c) if c is not None else "" for c in firsts]
@@ -231,6 +264,7 @@ class _GridReader(dsd._Reader):
             levels = lv if any(x is not None for x in lv) and len(lv) == len(body) else None
         else:
             head, body = expand(t.findall("THEAD/TR"), True), expand(t.findall("TBODY/TR"), False)
+            tags = expand(t.findall("TBODY/TR"), False, _xbrl) if tagged else None
             keep = []
             for r in head:                       # 머리줄 안의 「(단위 : 천원)」 줄은 단위로 읽고 열 이름에서 뺀다
                 texts = {x.strip() for x in r if x.strip()}
@@ -253,8 +287,10 @@ class _GridReader(dsd._Reader):
                 unit = u or unit
                 if skip or k > 1:                # 단위 줄을 빼고, 여러 줄 머리줄은 묶인 칸을 채워 열 이름으로 잇는다
                     header, body = col_names(expand(trs[skip:skip + k], True)), expand(trs[skip + k:], False)
+                    tags = expand(trs[skip + k:], False, _xbrl) if tagged else None
                 else:
                     header, body = (body[0], body[1:]) if body else ([], [])
+                    tags = tags[1:] if tags else None
             fin = False
         merged = None
         if not fin:                              # 세로로 묶인 첫 칸(ROWSPAN)의 글자를 아래 줄에도 알려 준다
@@ -268,7 +304,9 @@ class _GridReader(dsd._Reader):
         body = [list(r) + [""] * (w - len(r)) for r in body]
         if raw is None:
             raw = [r[0] if r else "" for r in body]
-        self.add(("grid", header, body, fin, unit, levels, raw, merged))
+        if tags is not None:
+            tags = [list(r) + [None] * (w - len(r)) for r in tags][:len(body)] if len(tags) >= len(body) else None
+        self.add(("grid", header, body, fin, unit, levels, raw, merged, tags))
 
 
 def _cells(t):
@@ -429,9 +467,10 @@ def _note_refs(raw_label: str, note_cells: list[str]) -> list[int]:
     return sorted({int(x) for x in re.findall(r"\d+", text) if 0 < int(x) < 100})
 
 
-def _merge_same_columns(header: list[str], body: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+def _merge_same_columns(header: list[str], body: list[list[str]], tags: list | None = None) -> tuple[list[str], list[list[str]], list | None]:
     """머리줄 이름이 같은 이웃 열을 한 열로 합친다(줄마다 마지막으로 값이 있는 칸). 재무제표 본표를 일반 표로 만든 회사는
-    기간 하나에 내역 칸과 합계 칸을 두고 머리줄을 묶는다. dsd._finance_rows 가 FINANCE 표에 하는 일과 같다."""
+    기간 하나에 내역 칸과 합계 칸을 두고 머리줄을 묶는다. dsd._finance_rows 가 FINANCE 표에 하는 일과 같다.
+    tags(칸의 XBRL 항목 격자)를 주면 고른 칸의 항목을 같은 자리로 옮긴다."""
     groups: list[list[int]] = []
     for j, h in enumerate(header):
         if j > 1 and h.strip() and norm(h) == norm(header[groups[-1][0]]):
@@ -441,9 +480,12 @@ def _merge_same_columns(header: list[str], body: list[list[str]]) -> tuple[list[
     groups = [g if all(sum(1 for j in g if r[j].strip()) <= 1 for r in body) else [[j] for j in g] for g in groups]
     groups = [x for g in groups for x in (g if g and isinstance(g[0], list) else [g])]      # 한 줄에 값이 둘 있는 묶음은 합치지 않는다
     if all(len(g) == 1 for g in groups):
-        return header, body
-    out = [[next((r[j] for j in reversed(g) if r[j].strip()), "") for g in groups] for r in body]
-    return [header[g[0]] for g in groups], out
+        return header, body, tags
+    pick = [[next((j for j in reversed(g) if r[j].strip()), None) for g in groups] for r in body]
+    out = [["" if j is None else r[j] for j in pk] for r, pk in zip(body, pick)]
+    if tags is not None:
+        tags = [[None if j is None else tg[j] for j in pk] for tg, pk in zip(tags, pick)]
+    return [header[g[0]] for g in groups], out, tags
 
 
 def _split_missing(blocks: list) -> tuple[list, dict]:
@@ -552,11 +594,11 @@ def _parts(blocks: list) -> tuple[list[Part], int]:
                 cur.items.append(("p", text))
             continue
         if b[0] == "grid" and cur is not None:
-            _, header, body, fin, unit, levels, raw, merged = b
+            _, header, body, fin, unit, levels, raw, merged, tags = b
             k = sum(1 for x in cur.items if x[0] == "t") + 1
             tid = cur.key if (sec == FS and k == 1) else f"{cur.key}-{k}"
             if not fin:
-                header, body = _merge_same_columns(header, body)        # 기간마다 내역 · 합계 두 칸을 둔 표(일반 표로 만든 재무제표, 결손금처리계산서 주석)
+                header, body, tags = _merge_same_columns(header, body, tags)        # 기간마다 내역 · 합계 두 칸을 둔 표(일반 표로 만든 재무제표, 결손금처리계산서 주석)
             if sec == FS and not fin:
                 body = [[dsd._label(r[0])] + r[1:] for r in body]
             # 과목 옆 주석 번호 열은 숫자가 아니다. 머리줄이 두 줄이면 「지배기업소유주 주석」 처럼 위 칸 이름이 앞에 붙는다(연결 자본변동표, 10단계)
@@ -576,7 +618,9 @@ def _parts(blocks: list) -> tuple[list[Part], int]:
             labels, old = _row_labels(header, body, plain, merged) if sec == NOTES else (None, None)
             # 칸에 붙은 단위는 표의 단위와 같아도 남긴다. 단위 줄이 없어 앞 표의 단위를 이어받은 표에서도 칸의 단위가 맞고,
             # 전기 대사는 단위가 붙은 칸을 칸의 단위로 견준다(24번 작년 보고서의 「6,806,616천원」)
-            cur.items.append(("t", Table(tid, last_text[:200], unit, header, body, nums, fin, levels if sec == FS else None, refs, labels, old, cu or None)))
+            xb = {(i, j): tags[i][j] for i in range(len(nums)) for j in range(1, len(nums[i])) if tags and j < len(tags[i]) and tags[i][j] and nums[i][j] is not None}
+            cur.items.append(("t", Table(tid, last_text[:200], unit, header, body, nums, fin, levels if sec == FS else None, refs, labels, old, cu or None,
+                                         xbrl=xb or None)))
             pending_unit, last_text = None, ""
         elif b[0] == "grid":
             dropped += 1                                 # 첫 재무제표 · 주석 제목 앞의 표. 어느 부분에도 넣지 못했다
@@ -718,6 +762,58 @@ def read_grid(path: Path) -> Doc:
     parts, dropped = _parts(r.out)
     read = sum(1 for p in parts for x in p.items if x[0] == "t" and not x[1].kind)
     return Doc(path.name, hashlib.sha256(raw).hexdigest(), parts, dict(r.stats, **{"읽은 표": read, "어느 부분에도 넣지 못한 표": dropped}))
+
+
+CACHE_DAYS = 30                                # 이보다 오래 안 쓴 판독 캐시는 지운다
+
+
+def cache_dir() -> Path:
+    """판독 캐시 폴더. 이 PC 의 사용자 폴더(LOCALAPPDATA 아래 audit-dsd/판독)에 둔다. 결과 폴더에 두면 남이 준 결과 폴더의 pickle 을 읽게 된다
+    (pickle 은 읽을 때 코드가 돌 수 있다). 고객 자료의 판독 결과라 공유 폴더에 두지 않는다."""
+    return Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".cache") / "audit-dsd" / "판독"
+
+
+def _code_sig() -> str:
+    """판독 코드(이 파일 · dsd.py · base.py)와 파이썬 판의 지문. 코드가 바뀌면 캐시를 쓰지 않는다."""
+    global _SIG
+    if _SIG is None:
+        h = hashlib.sha256(sys.version.encode())
+        for f in (Path(__file__), Path(dsd.__file__), Path(__file__).with_name("base.py")):
+            h.update(f.read_bytes())
+        _SIG = h.hexdigest()[:12]
+    return _SIG
+
+
+_SIG: str | None = None
+
+
+def read_cached(path: Path, cache: Path | None) -> Doc:
+    """read_grid 와 같다. cache 폴더에 「파일 sha256 · 코드 지문」 별로 판독 결과를 두고 다시 쓴다(2026-10-22 실행 시간 P5).
+    foot 를 여러 번 돌려도 작년 보고서 · 짝 보고서를 다시 판독하지 않는다. 돌려주는 문서는 매번 새로 풀어낸 사본이라 고쳐도 캐시에 남지 않는다."""
+    path = Path(path)
+    if cache is None:
+        return read_grid(path)
+    sha, sig = hashlib.sha256(path.read_bytes()).hexdigest(), _code_sig()
+    p = Path(cache) / f"{sha}-{sig}.pkl"
+    if p.exists():
+        try:
+            doc = pickle.loads(p.read_bytes())
+            doc.source = path.name
+            os.utime(p)                               # 쓴 날을 남겨 오래 안 쓴 것만 지운다
+            return doc
+        except Exception:                             # 깨진 캐시는 버리고 다시 읽는다
+            pass
+    doc = read_grid(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        now = time.time()
+        for old in p.parent.glob("*.pkl"):            # 코드가 바뀌어 못 쓰게 된 캐시와 오래 안 쓴 캐시
+            if not old.stem.endswith(sig) or now - old.stat().st_mtime > CACHE_DAYS * 86400:
+                old.unlink(missing_ok=True)
+        p.write_bytes(pickle.dumps(doc, protocol=pickle.HIGHEST_PROTOCOL))
+    except OSError:
+        pass
+    return doc
 
 
 def to_json(doc: Doc) -> dict:
