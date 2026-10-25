@@ -1,0 +1,54 @@
+{
+ "code": "세금공과금명세서",
+ "title": "세금공과금명세서",
+ "aliases": {
+  "pdf": "세금공과금명세서"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "①과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②일자",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③적요",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④지급처",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "5",
+   "label": "⑤금액",
+   "rows": true
+  },
+  {
+   "code": "비고",
+   "label": "비고",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "손금불산입계_5",
+   "label": "손금불산입계 ⑤금액"
+  },
+  {
+   "code": "계_5",
+   "label": "계 ⑤금액",
+   "formula": "F.sum('세금공과금명세서','5')",
+   "total": true
+  }
+ ]
+}

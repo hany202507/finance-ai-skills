@@ -1,0 +1,17 @@
+{
+  "source": "kernelspaces/academy-product 법인세/ctax",
+  "commit": "d6c2f7e 2026-10-23 chore: 자동 저장 2026-10-23 15:58 (5개 파일)",
+  "copied": [
+    "case.py",
+    "xlsx.py",
+    "intake/",
+    "prior/",
+    "ar/",
+    "wp/",
+    "score/match.py"
+  ],
+  "stubs": [
+    "forms/plugins",
+    "forms/engine_forms.yaml"
+  ]
+}

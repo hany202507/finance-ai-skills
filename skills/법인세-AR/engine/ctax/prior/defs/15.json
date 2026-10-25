@@ -1,0 +1,70 @@
+{
+ "code": "15",
+ "title": "소득금액조정합계표",
+ "aliases": {
+  "efile": "D103700",
+  "pdf": "소득금액조정합계표"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "익금산입 및 손금불산입 ①과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "익금산입 및 손금불산입 ②금액",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "익금산입 및 손금불산입 ③소득처분 처분",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3_2",
+   "label": "익금산입 및 손금불산입 ③소득처분 코드",
+   "rows": true,
+   "dtype": "text",
+   "formula": "('400' if c('3') == '유보' else '100' if c('3') == '상여' else '200' if c('3') == '배당' else '300' if c('3') == '기타소득' else '500' if c('3') == '기타사외유출' else '600' if c('3') == '기타' else '')"
+  },
+  {
+   "code": "4",
+   "label": "손금산입 및 익금불산입 ④과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "5",
+   "label": "손금산입 및 익금불산입 ⑤금액",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "손금산입 및 익금불산입 ⑥소득처분 처분",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "6_2",
+   "label": "손금산입 및 익금불산입 ⑥소득처분 코드",
+   "rows": true,
+   "dtype": "text",
+   "formula": "('100' if c('6') == '유보' else '200' if c('6') == '기타' else '300' if c('6') == '출자의증가' else '')"
+  },
+  {
+   "code": "합계_2",
+   "label": "합계 익금산입 및 손금불산입 ②금액",
+   "formula": "F.sum('15','2')",
+   "total": true
+  },
+  {
+   "code": "합계_5",
+   "label": "합계 손금산입 및 익금불산입 ⑤금액",
+   "formula": "F.sum('15','5')",
+   "total": true
+  }
+ ]
+}

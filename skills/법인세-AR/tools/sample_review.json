@@ -1,0 +1,1128 @@
+{
+ "company": "(주)예시상사",
+ "term": 12,
+ "period": "2025.01.01 ~ 2025.12.31",
+ "case": "예시상사/2025 법인세",
+ "materials": {
+  "files": [
+   {
+    "name": "분개장",
+    "file": "회계/분개장_2025.xlsx",
+    "when": "10.14"
+   },
+   {
+    "name": "재무상태표 · 손익계산서",
+    "file": "결산/2025_재무제표.pdf",
+    "when": "10.14"
+   },
+   {
+    "name": "원가명세서 · 처분계산서",
+    "file": "결산/2025_재무제표.pdf",
+    "when": "10.14"
+   },
+   {
+    "name": "전기세무조정계산서",
+    "file": "세무/2024_법인세신고서_수정.pdf",
+    "when": "10.14"
+   },
+   {
+    "name": "전기 분개장",
+    "file": "회계/분개장_2024.xlsx",
+    "when": "10.14"
+   }
+  ],
+  "requested": [
+   {
+    "name": "주금납입증명서",
+    "from": "분석적 검토 · 자본금 증가 확인"
+   }
+  ],
+  "excluded": 30
+ },
+ "stages": [
+  {
+   "label": "자료 입력",
+   "state": "done",
+   "note": "7개 자료"
+  },
+  {
+   "label": "표준재무제표",
+   "state": "done",
+   "note": "세목 3건 확정"
+  },
+  {
+   "label": "분석적 검토",
+   "state": "current",
+   "note": ""
+  },
+  {
+   "label": "서식 총괄표",
+   "state": "todo",
+   "note": ""
+  },
+  {
+   "label": "신고",
+   "state": "todo",
+   "note": "준비 중"
+  }
+ ],
+ "questions": [
+  {
+   "uid": "machine",
+   "title": "기계장치를 어떻게 들였나요",
+   "description": "₩120,000,000 · 2025.06.18 취득. 취득 방식에 따라 투자세액공제가 달라져요.",
+   "kind": "세액공제",
+   "multiple": false,
+   "allow_other": true,
+   "options": [
+    {
+     "value": "new",
+     "label": "신품을 구매했어요",
+     "effect": "통합투자세액공제 ₩12,000,000 반영"
+    },
+    {
+     "value": "used",
+     "label": "중고품을 구매했어요",
+     "effect": "공제 대상에서 제외"
+    },
+    {
+     "value": "lease",
+     "label": "운용리스로 들였어요",
+     "effect": "공제 대상에서 제외"
+    }
+   ],
+   "answer": null
+  },
+  {
+   "uid": "capital",
+   "title": "자본금 ₩50,000,000은 어떻게 늘었나요",
+   "description": "주식이 바뀌었으니 주식등변동상황명세서를 내야 해요.",
+   "kind": "서식 필요",
+   "multiple": false,
+   "allow_other": false,
+   "options": [
+    {
+     "value": "paid",
+     "label": "유상증자",
+     "effect": "주주가 돈을 넣었어요"
+    },
+    {
+     "value": "bonus",
+     "label": "무상증자",
+     "effect": "잉여금을 자본금으로 옮겼어요"
+    },
+    {
+     "value": "swap",
+     "label": "출자전환",
+     "effect": "빌린 돈을 주식으로 바꿨어요"
+    }
+   ],
+   "answer": null
+  },
+  {
+   "uid": "rnd",
+   "title": "공제 대상인 연구개발비를 모두 골라 주세요",
+   "description": "항목마다 실질을 봐야 해서 자동으로 판단하지 않아요. 고른 항목만 명세서에 들어가요.",
+   "kind": "직접 판단",
+   "multiple": true,
+   "allow_other": false,
+   "options": [
+    {
+     "value": "staff",
+     "label": "전담 연구원 인건비 (4명)",
+     "effect": "₩61,200,000"
+    },
+    {
+     "value": "outsrc",
+     "label": "위탁연구비",
+     "effect": "₩18,000,000 · (재)○○기술원"
+    },
+    {
+     "value": "mat",
+     "label": "시약 · 재료비",
+     "effect": "₩7,500,000"
+    }
+   ],
+   "answer": null
+  }
+ ],
+ "sme": {
+  "verdict": "중소기업",
+  "note": "한도와 공제율이 여기서 정해져요"
+ },
+ "adjust_total": {
+  "add": 59190000,
+  "deduct": 3100000
+ },
+ "adjustments": [
+  {
+   "uid": "ent",
+   "subject": "기업업무추진비 증빙 미수취",
+   "side": "가산",
+   "kind": "손금불산입",
+   "amount": 4210000,
+   "disposition": "기타사외유출",
+   "paper_name": "23호(갑) 기업업무추진비조정명세서",
+   "accepted": false
+  },
+  {
+   "uid": "tax",
+   "subject": "법인세비용",
+   "side": "가산",
+   "kind": "손금불산입",
+   "amount": 38000000,
+   "disposition": "기타사외유출",
+   "paper_name": "3호 법인세 과세표준 및 세액조정계산서",
+   "accepted": false
+  },
+  {
+   "uid": "dep",
+   "subject": "감가상각비 상각부인",
+   "side": "가산",
+   "kind": "손금불산입",
+   "amount": 1850000,
+   "disposition": "유보",
+   "paper_name": "20호(1) 감가상각비조정명세서합계표",
+   "accepted": false
+  },
+  {
+   "uid": "intr",
+   "subject": "가지급금 인정이자",
+   "side": "가산",
+   "kind": "익금산입",
+   "amount": 2730000,
+   "disposition": "상여",
+   "paper_name": "19호(갑) 가지급금등의인정이자조정명세서",
+   "accepted": false
+  },
+  {
+   "uid": "ret",
+   "subject": "퇴직급여충당금 한도초과",
+   "side": "가산",
+   "kind": "손금불산입",
+   "amount": 12400000,
+   "disposition": "유보",
+   "paper_name": "32호 퇴직급여충당금조정명세서",
+   "accepted": false
+  },
+  {
+   "uid": "prior",
+   "subject": "전기 상각부인액 추인",
+   "side": "차감",
+   "kind": "손금산입",
+   "amount": 3100000,
+   "disposition": "유보 (△)",
+   "paper_name": "20호(1) 감가상각비조정명세서합계표",
+   "accepted": false
+  }
+ ],
+ "judgments": [
+  {
+   "uid": "machine",
+   "title": "기계장치 투자세액공제",
+   "impact": "세액공제 최대 ₩12,000,000",
+   "amount": 120000000,
+   "state": "답변 필요"
+  },
+  {
+   "uid": "capital",
+   "title": "자본금 증가 · 주식변동",
+   "impact": "주식등변동상황명세서",
+   "amount": 50000000,
+   "state": "답변 필요"
+  },
+  {
+   "uid": "rnd",
+   "title": "연구개발비 항목별 판단",
+   "impact": "연구 · 인력개발비 세액공제",
+   "amount": 86700000,
+   "state": "직접 판단"
+  }
+ ],
+ "others": [
+  {
+   "uid": "o1",
+   "title": "잡손실에 가산세 ₩320,000이 섞여 있어요",
+   "kind": "조정 후보",
+   "judgment": "조정 필요"
+  },
+  {
+   "uid": "o2",
+   "title": "업무용승용차 운행기록부 작성 여부",
+   "kind": "서식 필요",
+   "judgment": "판단 필요"
+  },
+  {
+   "uid": "o3",
+   "title": "이월결손금 잔액 없음 확인",
+   "kind": "전기 연속",
+   "judgment": "조정 없음"
+  }
+ ],
+ "default_card": "machine",
+ "cards": {
+  "sme": {
+   "badge": "반영됨",
+   "badge_variant": "default",
+   "kind": "기업 규모",
+   "title": "중소기업 판정",
+   "sub": "조세특례제한법 시행령 제2조 기준",
+   "result": "중소기업으로 확정",
+   "comment": "규모 · 독립성 · 졸업 요건을 모두 충족해 중소기업으로 판정했어요. 이 결과로 기업업무추진비 한도와 세액공제율을 정했어요.",
+   "basis": [
+    {
+     "label": "주된 업종",
+     "value": "전자부품 제조업 · 매출의 79%"
+    },
+    {
+     "label": "평균 매출액",
+     "value": "최근 3개 사업연도 평균 ₩36.1억 · 업종 규모 기준 이내"
+    },
+    {
+     "label": "자산총액",
+     "value": "₩48.2억 · 5,000억원 미만"
+    },
+    {
+     "label": "독립성",
+     "value": "상호출자제한기업집단 소속 아님 · 전기 주주 정보 기준 법인 주주 없음"
+    },
+    {
+     "label": "적용 효과",
+     "value": "기업업무추진비 기본한도 연 3,600만원 · 통합투자세액공제 기본공제율 10%"
+    }
+   ],
+   "law": [
+    {
+     "ref": "조세특례제한법 시행령 제2조",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/조세특례제한법시행령/제2조"
+    }
+   ],
+   "entries": [],
+   "foot": "주주명부를 아직 받지 못해 독립성은 전기 주주 정보로 판단했어요."
+  },
+  "machine": {
+   "badge": "확인 필요",
+   "badge_variant": "outline",
+   "kind": "세액공제",
+   "title": "기계장치 증가 · 투자세액공제",
+   "sub": "기계장치 +₩120,000,000 · 2025.06.18 취득",
+   "result": "",
+   "comment": "사업용 신품을 새로 들였다면 중소기업 기본공제율 10%로 ₩12,000,000을 공제받을 수 있어요. 중고품이나 운용리스는 대상에서 빠져요.",
+   "basis": [
+    {
+     "label": "자산 변동",
+     "value": "기계장치 기초 ₩412,000,000 → 기말 ₩532,000,000"
+    },
+    {
+     "label": "증빙",
+     "value": "세금계산서 1건 · 공급자 (주)한빛정밀"
+    },
+    {
+     "label": "공제율",
+     "value": "중소기업 기본공제율 10%"
+    }
+   ],
+   "law": [
+    {
+     "ref": "조세특례제한법 제24조 (통합투자세액공제)",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/조세특례제한법/제24조"
+    },
+    {
+     "ref": "조세특례제한법 시행령 제21조",
+     "grade": "★★☆"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.06.18",
+     "memo": "CNC 가공기 1대",
+     "accts": "기계장치 / 미지급금",
+     "amount": 120000000
+    }
+   ],
+   "foot": "답을 고르면 세액공제 서식에 바로 반영돼요."
+  },
+  "capital": {
+   "badge": "확인 필요",
+   "badge_variant": "outline",
+   "kind": "서식 필요",
+   "title": "자본금 증가 · 주식등변동상황명세서",
+   "sub": "자본금 +₩50,000,000 · 2025.09.02",
+   "result": "",
+   "comment": "주식 변동이 있으니 주식등변동상황명세서를 내야 해요. 변동 없음으로 제출하면 오류가 나요. 증자 방식에 따라 명세서의 변동 사유가 달라지고, 증빙이 있으면 주주별 내역을 자동으로 채워요.",
+   "basis": [
+    {
+     "label": "자본금",
+     "value": "₩500,000,000 → ₩550,000,000 (액면 ₩5,000 기준 10,000주)"
+    },
+    {
+     "label": "대변 계정",
+     "value": "보통예금 입금 · 유상증자 가능성이 높아요"
+    },
+    {
+     "label": "전기 신고",
+     "value": "주식등변동상황명세서 제출 이력 있음 · 기말 100,000주"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제119조 (주식등변동상황명세서의 제출)",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제119조"
+    },
+    {
+     "ref": "법인세법 시행규칙 별지 제54호서식",
+     "grade": "★★☆"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.09.02",
+     "memo": "유상증자 납입",
+     "accts": "보통예금 / 자본금",
+     "amount": 50000000
+    }
+   ],
+   "foot": ""
+  },
+  "rnd": {
+   "badge": "직접 판단",
+   "badge_variant": "outline",
+   "kind": "직접 판단",
+   "title": "연구개발비 · 항목별 판단",
+   "sub": "경상연구개발비 ₩86,700,000",
+   "result": "",
+   "comment": "연구 · 인력개발비 세액공제 대상인지는 항목마다 실질을 봐야 해요. 공제 대상으로 고른 항목만 일반연구및인력개발비명세서에 들어가요.",
+   "basis": [
+    {
+     "label": "연구조직",
+     "value": "전기 세무조정계산서에 연구개발전담부서 인정 기록 있음"
+    },
+    {
+     "label": "전담 연구원 인건비",
+     "value": 61200000
+    },
+    {
+     "label": "위탁연구비",
+     "value": "₩18,000,000 · (재)○○기술원"
+    },
+    {
+     "label": "시약 · 재료비",
+     "value": 7500000
+    }
+   ],
+   "law": [
+    {
+     "ref": "조세특례제한법 제10조 (연구 · 인력개발비에 대한 세액공제)",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/조세특례제한법/제10조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.01~12",
+     "memo": "연구원 급여 외 216건",
+     "accts": "경상연구개발비 / 보통예금 외",
+     "amount": 86700000
+    }
+   ],
+   "foot": ""
+  },
+  "ent": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "손금불산입",
+   "title": "기업업무추진비 증빙 미수취분",
+   "sub": "손금불산입 ₩4,210,000 · 기타사외유출",
+   "result": "",
+   "comment": "3만원 초과 지출 중 적격증빙이 없는 12건을 먼저 부인했어요. 나머지 ₩37,000,000은 한도 ₩47,737,200 안이라 추가 조정이 없어요.",
+   "basis": [
+    {
+     "label": "기본한도",
+     "value": "₩36,000,000 (중소기업)"
+    },
+    {
+     "label": "수입금액 한도",
+     "value": "₩3,912,400,000 × 0.3% = ₩11,737,200"
+    },
+    {
+     "label": "한도 합계",
+     "value": 47737200
+    },
+    {
+     "label": "직접 부인",
+     "value": "3만원 초과 · 영수증만 있는 12건 ₩4,210,000"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제25조 제2항",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제25조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.03.14",
+     "memo": "거래처 식사 · 간이영수증",
+     "accts": "접대비 / 현금",
+     "amount": 480000
+    },
+    {
+     "date": "2025.11.27",
+     "memo": "명절 선물 · 간이영수증",
+     "accts": "접대비 / 보통예금",
+     "amount": 1250000
+    }
+   ],
+   "foot": "전체 12건은 기업업무추진비조정명세서에서 볼 수 있어요."
+  },
+  "tax": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "손금불산입",
+   "title": "법인세비용",
+   "sub": "손금불산입 ₩38,000,000 · 기타사외유출",
+   "result": "",
+   "comment": "손익계산서의 법인세비용 전액을 손금불산입했어요.",
+   "basis": [
+    {
+     "label": "계정",
+     "value": "법인세등 ₩38,000,000"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제21조",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제21조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.12.31",
+     "memo": "법인세 추산액",
+     "accts": "법인세등 / 미지급법인세",
+     "amount": 38000000
+    }
+   ],
+   "foot": ""
+  },
+  "dep": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "손금불산입",
+   "title": "감가상각비 상각부인",
+   "sub": "손금불산입 ₩1,850,000 · 유보",
+   "result": "",
+   "comment": "차량운반구의 회사 계상액이 상각범위액을 넘어 초과분을 부인했어요.",
+   "basis": [
+    {
+     "label": "회사 계상액",
+     "value": 14250000
+    },
+    {
+     "label": "상각범위액",
+     "value": "₩12,400,000 · 정률법"
+    },
+    {
+     "label": "관련 서식",
+     "value": "별지 제20호서식(1)"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제23조",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제23조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.12.31",
+     "memo": "차량 감가상각",
+     "accts": "감가상각비 / 감가상각누계액",
+     "amount": 14250000
+    }
+   ],
+   "foot": ""
+  },
+  "intr": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "익금산입",
+   "title": "가지급금 인정이자",
+   "sub": "익금산입 ₩2,730,000 · 상여",
+   "result": "",
+   "comment": "대표이사 가지급금에 당좌대출이자율로 계산한 이자를 익금산입했어요. 회사가 받은 이자는 없어요.",
+   "basis": [
+    {
+     "label": "적수 평균잔액",
+     "value": 59350000
+    },
+    {
+     "label": "적용 이자율",
+     "value": "당좌대출이자율 4.6%"
+    },
+    {
+     "label": "관련 서식",
+     "value": "별지 제19호서식(갑)"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 시행령 제89조 제3항",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법시행령/제89조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.04.02",
+     "memo": "대표이사 대여",
+     "accts": "가지급금 / 보통예금",
+     "amount": 80000000
+    }
+   ],
+   "foot": ""
+  },
+  "ret": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "손금불산입",
+   "title": "퇴직급여충당금 한도초과",
+   "sub": "손금불산입 ₩12,400,000 · 유보",
+   "result": "",
+   "comment": "퇴직급여충당금 전입액 중 한도를 넘는 부분을 손금불산입했어요.",
+   "basis": [
+    {
+     "label": "회사 전입액",
+     "value": 12400000
+    },
+    {
+     "label": "한도액",
+     "value": "₩0 · 누적 한도 소진"
+    },
+    {
+     "label": "관련 서식",
+     "value": "별지 제32호서식"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제33조",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제33조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.12.31",
+     "memo": "퇴직급여충당금 설정",
+     "accts": "퇴직급여 / 퇴직급여충당부채",
+     "amount": 12400000
+    }
+   ],
+   "foot": ""
+  },
+  "prior": {
+   "badge": "확신 높음",
+   "badge_variant": "secondary",
+   "kind": "손금산입",
+   "title": "전기 상각부인액 추인",
+   "sub": "손금산입 ₩3,100,000 · △유보",
+   "result": "",
+   "comment": "전기에 부인된 감가상각비 중 올해 시인부족액만큼 손금으로 추인했어요.",
+   "basis": [
+    {
+     "label": "전기 유보 잔액",
+     "value": "₩5,600,000 (전기 세무조정계산서)"
+    },
+    {
+     "label": "당기 시인부족액",
+     "value": 3100000
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 시행령 제32조 제1항",
+     "grade": "★★☆"
+    }
+   ],
+   "entries": [],
+   "foot": ""
+  },
+  "o1": {
+   "badge": "조정 필요",
+   "badge_variant": "outline",
+   "kind": "조정 후보",
+   "title": "잡손실 중 가산세",
+   "sub": "잡손실 ₩1,240,000 중 가산세 ₩320,000",
+   "result": "",
+   "comment": "부가가치세 신고불성실가산세가 잡손실로 처리돼 있어요. 가산세는 손금불산입하고 기타사외유출로 처분해요.",
+   "basis": [
+    {
+     "label": "잡손실 합계",
+     "value": 1240000
+    },
+    {
+     "label": "가산세로 보이는 분개",
+     "value": "2건 · 적요에 「가산세」"
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제21조 제1호",
+     "grade": "★★★",
+     "url": "https://www.law.go.kr/법령/법인세법/제21조"
+    }
+   ],
+   "entries": [
+    {
+     "date": "2025.07.25",
+     "memo": "부가세 가산세 납부",
+     "accts": "잡손실 / 보통예금",
+     "amount": 320000
+    }
+   ],
+   "foot": "금액이 작아 세무조정 내역에는 아직 넣지 않았어요."
+  },
+  "o2": {
+   "badge": "판단 필요",
+   "badge_variant": "outline",
+   "kind": "서식 필요",
+   "title": "업무용승용차 운행기록부",
+   "sub": "업무용승용차 2대 · 관련 비용 ₩21,800,000",
+   "result": "",
+   "comment": "관련 비용이 1대당 1,500만원을 넘는 차량이 있어 운행기록부가 있는지 확인해야 해요. 없으면 초과분을 손금불산입해요.",
+   "basis": [
+    {
+     "label": "차량",
+     "value": "승용차 2대 (리스 1대 포함)"
+    },
+    {
+     "label": "관련 비용",
+     "value": 21800000
+    }
+   ],
+   "law": [
+    {
+     "ref": "법인세법 제27조의2",
+     "grade": "★★☆"
+    }
+   ],
+   "entries": [],
+   "foot": ""
+  }
+ },
+ "income": {
+  "net_income": 184520000,
+  "add": 59190000,
+  "add_count": 5,
+  "deduct": 3100000,
+  "deduct_count": 1,
+  "income": 240610000,
+  "credits": null
+ },
+ "directions": [
+  "세무조정 6건은 계산 근거가 분명해 그대로 반영해요. 가장 큰 건은 법인세비용 ₩38,000,000이에요.",
+  "기계장치 ₩120,000,000은 취득 방식에 따라 통합투자세액공제 ₩12,000,000이 달라져요.",
+  "자본금이 ₩50,000,000 늘어 주식등변동상황명세서가 필요해요.",
+  "연구개발비 ₩86,700,000은 항목별로 공제 대상인지 직접 판단해야 해요."
+ ],
+ "summary": {
+  "top": [
+   {
+    "uid": "machine",
+    "title": "기계장치 투자세액공제",
+    "where": "재무상태표 · 기계장치",
+    "judgment": "판단 필요",
+    "risk": "상",
+    "line": "신품이면 ₩12,000,000을 공제받아요."
+   },
+   {
+    "uid": "capital",
+    "title": "자본금 증가와 주식변동",
+    "where": "재무상태표 · 자본금",
+    "judgment": "서식 필요",
+    "risk": "중",
+    "line": "주금납입증명서가 오면 주주별 내역을 채워요."
+   },
+   {
+    "uid": "ent",
+    "title": "기업업무추진비 증빙 미수취",
+    "where": "손익계산서 · 접대비",
+    "judgment": "조정 필요",
+    "risk": "중",
+    "line": "적격증빙이 없는 12건 ₩4,210,000을 부인해요."
+   }
+  ]
+ },
+ "ar_sheet": {
+  "groups": [
+   {
+    "key": "company",
+    "label": "전사 기준",
+    "desc": "회사 종류 · 주식 변동 · 전기 조정 예측 · 재무제표 훑기 · 당기 중소기업",
+    "rows": [
+     {
+      "key": "P1",
+      "title": "1-(1) 회사 종류 구분",
+      "relation": "전기 신고서 종류별 구분 30(중소기업), 전자부품 제조업",
+      "judgment": "확인",
+      "judgment_text": "중소기업 · 소기업 · 전자부품 제조업",
+      "amount": null,
+      "asks": [],
+      "uids": [
+       "sme"
+      ],
+      "guide": [
+       "1-1"
+      ],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     },
+     {
+      "key": "P2",
+      "title": "1-(2) 주식변동 · 부동산임대업 주업",
+      "relation": "자본금 ₩500,000,000 → ₩550,000,000 (2025.09.02 납입)",
+      "judgment": "판단 필요",
+      "judgment_text": "주식변동 있음 · 54호 제출 예상 · 임대업 주업 해당 아님",
+      "amount": null,
+      "asks": [
+       "답변 필요: 자본금 ₩50,000,000은 어떻게 늘었나요",
+       "주금납입증명서를 보내 주십시오"
+      ],
+      "uids": [
+       "capital"
+      ],
+      "guide": [
+       "1-2"
+      ],
+      "pending": 1,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "P3",
+      "title": "1-(3) 전기 조정 · 유보로 당기 조정 예측",
+      "relation": "전기 15호 4줄 · 50호(을) 유보 1줄(감가상각 ₩5,600,000)",
+      "judgment": "조정 필요",
+      "judgment_text": "다시 생길 듯 3건 · 추인될 듯 1건",
+      "amount": null,
+      "asks": [],
+      "uids": [
+       "tax",
+       "ent",
+       "prior"
+      ],
+      "guide": [
+       "1-3"
+      ],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "F1",
+      "title": "2-(1) 재무제표로 볼 계정 고르기",
+      "relation": "엔진 이슈 9건을 재무상태표 · 손익계산서 순서로 대 봄",
+      "judgment": "판단 필요",
+      "judgment_text": "볼 계정 7개(엔진 이슈 6 · AI 추가 1)",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [
+       "2-1"
+      ],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "F2",
+      "title": "2-(2) 당기 중소기업 여부",
+      "relation": "평균 매출 ₩36.1억 · 자산총액 ₩48.2억",
+      "judgment": "확인",
+      "judgment_text": "중소기업 · 확정 · 전기와 같음",
+      "amount": null,
+      "asks": [
+       "2025년 말 주주명부를 보내 주십시오"
+      ],
+      "uids": [
+       "sme"
+      ],
+      "guide": [
+       "2-2"
+      ],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     }
+    ],
+    "total": 5,
+    "adjust": 1,
+    "attention": 3,
+    "pending": 1,
+    "asks": 3,
+    "na": 0,
+    "issues": 3
+   },
+   {
+    "key": "accounts",
+    "label": "재무제표 계정별",
+    "desc": "가이드 계정 묶음마다 관련 계정 · 조서 조정 · AI 추가 이슈",
+    "rows": [
+     {
+      "key": "acct:1",
+      "title": "1) 유가증권, 배당금수익",
+      "relation": "유가증권 계정이 없습니다",
+      "judgment": "해당 없음",
+      "judgment_text": "유가증권 계정이 없습니다",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     },
+     {
+      "key": "acct:3",
+      "title": "3) 대여금",
+      "relation": "가지급금 기말 ₩80,000,000 · 적수 평균 ₩59,350,000",
+      "judgment": "조정 필요",
+      "judgment_text": "가지급금 인정이자 ₩2,730,000 가산 · 상여",
+      "amount": 2730000,
+      "asks": [
+       "대표이사와 맺은 금전소비대차 약정서를 보내 주십시오"
+      ],
+      "uids": [
+       "intr"
+      ],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:5",
+      "title": "5) 유형자산, 감가상각비, 손상차손",
+      "relation": "차량 감가상각비 ₩14,250,000 · 전기 유보 ₩5,600,000",
+      "judgment": "조정 필요",
+      "judgment_text": "감가상각비 상각부인 ₩1,850,000 가산 · 유보 · 전기 상각부인액 추인 ₩3,100,000 차감 · 유보",
+      "amount": -1250000,
+      "asks": [],
+      "uids": [
+       "dep",
+       "prior"
+      ],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:9",
+      "title": "9) 미지급비용, 충당부채",
+      "relation": "퇴직급여충당금 전입 ₩12,400,000",
+      "judgment": "조정 필요",
+      "judgment_text": "퇴직급여충당금 한도초과 ₩12,400,000 가산 · 유보",
+      "amount": 12400000,
+      "asks": [],
+      "uids": [
+       "ret"
+      ],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:11",
+      "title": "11) 자본금, 주발초",
+      "relation": "자본금 ₩50,000,000 증가",
+      "judgment": "판단 필요",
+      "judgment_text": "증자 방식에 따라 54호 변동 사유가 달라집니다",
+      "amount": null,
+      "asks": [
+       "답변 필요: 자본금 ₩50,000,000은 어떻게 늘었나요"
+      ],
+      "uids": [
+       "capital"
+      ],
+      "guide": [],
+      "pending": 1,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:15",
+      "title": "15) 세금과공과",
+      "relation": "법인세등 ₩38,000,000",
+      "judgment": "조정 필요",
+      "judgment_text": "법인세비용 ₩38,000,000 가산 · 기타사외유출",
+      "amount": 38000000,
+      "asks": [],
+      "uids": [
+       "tax"
+      ],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:16",
+      "title": "16) 기업업무추진비",
+      "relation": "기업업무추진비 ₩41,210,000 · 한도 ₩47,737,200",
+      "judgment": "조정 필요",
+      "judgment_text": "기업업무추진비 증빙 미수취 ₩4,210,000 가산 · 기타사외유출. 나머지는 한도 안",
+      "amount": 4210000,
+      "asks": [
+       "간이영수증 12건의 거래처 · 목적을 알려 주십시오"
+      ],
+      "uids": [
+       "ent"
+      ],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:22",
+      "title": "22) 기부금",
+      "relation": "기부금 계정이 없습니다",
+      "judgment": "해당 없음",
+      "judgment_text": "기부금 계정이 없습니다",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     },
+     {
+      "key": "acct:20",
+      "title": "20) 재고자산감모손실",
+      "relation": "재고자산감모손실 계정이 없습니다",
+      "judgment": "해당 없음",
+      "judgment_text": "재고자산감모손실 계정이 없습니다",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     }
+    ],
+    "total": 9,
+    "adjust": 5,
+    "attention": 6,
+    "pending": 1,
+    "asks": 3,
+    "na": 3,
+    "issues": 6
+   },
+   {
+    "key": "credits",
+    "label": "세액공제",
+    "desc": "전기 공제 · 감면, 공제 계정, 공제 제안",
+    "rows": [
+     {
+      "key": "P4",
+      "title": "1-(4) 전기 공제 · 감면으로 당기 예측",
+      "relation": "전기 통합투자세액공제 ₩4,800,000 · 연구 · 인력개발비 세액공제 ₩9,100,000",
+      "judgment": "판단 필요",
+      "judgment_text": "계속 2건",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [
+       "1-4"
+      ],
+      "pending": 0,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "credit:1",
+      "title": "통합투자세액공제",
+      "relation": "기계장치 +₩120,000,000 · 2025.06.18 CNC 가공기",
+      "judgment": "판단 필요",
+      "judgment_text": "적용 가능 · 신품이면 기본공제율 10% 적용 대상",
+      "amount": 120000000,
+      "asks": [
+       "답변 필요: 기계장치를 어떻게 들였나요",
+       "세금계산서와 사용개시일을 보내 주십시오"
+      ],
+      "uids": [
+       "machine"
+      ],
+      "guide": [],
+      "pending": 1,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "credit:2",
+      "title": "연구 · 인력개발비 세액공제",
+      "relation": "경상연구개발비 ₩86,700,000 · 연구개발전담부서 인정",
+      "judgment": "판단 필요",
+      "judgment_text": "항목마다 실질을 봐야 해 직접 판단",
+      "amount": 86700000,
+      "asks": [
+       "답변 필요: 공제 대상인 연구개발비를 모두 골라 주세요",
+       "연구원 명단과 위탁연구 계약서를 보내 주십시오"
+      ],
+      "uids": [
+       "rnd"
+      ],
+      "guide": [],
+      "pending": 1,
+      "state": null,
+      "issue": true
+     },
+     {
+      "key": "acct:13",
+      "title": "13) 급여+복리후생비(인건비)",
+      "relation": "급여 ₩612,000,000(전기 ₩598,000,000) · 인원 변동 작음",
+      "judgment": "해당 없음",
+      "judgment_text": "엔진이 공제 단서를 찾지 못했습니다",
+      "amount": null,
+      "asks": [],
+      "uids": [],
+      "guide": [],
+      "pending": 0,
+      "state": null,
+      "issue": false
+     }
+    ],
+    "total": 4,
+    "adjust": 0,
+    "attention": 3,
+    "pending": 2,
+    "asks": 4,
+    "na": 1,
+    "issues": 3
+   }
+  ],
+  "coverage": {
+   "guide_lines": 39,
+   "issue": 14,
+   "na": 22,
+   "need": 3,
+   "account_groups": 22,
+   "issues": 9,
+   "added": 1,
+   "credits": 2,
+   "adjustments": 6
+  }
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "code": "선급비용명세서",
+ "title": "선급비용명세서",
+ "aliases": {
+  "pdf": "선급비용명세서"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "①구분",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②적요",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③거래처",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④금액",
+   "rows": true
+  },
+  {
+   "code": "비고",
+   "label": "비고(기간)",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "손금불산입계_4",
+   "label": "손금불산입계 ④금액"
+  },
+  {
+   "code": "계_4",
+   "label": "계 ④금액",
+   "formula": "F.sum('선급비용명세서','4')",
+   "total": true
+  }
+ ]
+}

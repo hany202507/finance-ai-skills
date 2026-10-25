@@ -1,0 +1,45 @@
+# 엔진이 채우는 서식(ctax forms). 2026-10-09 2회차, 에이전트 D 서식.
+#
+# AR(ctax ar)은 AR.json forms[].by 를 이 목록으로 정한다. 목록에 있는 code 는 「엔진」, 없는 code 는 「사람」 이다.
+# defs/*.json 에 정의가 있어도 여기 없으면 엔진이 채우지 않는다(54부표 · 지방43의5을 · 지방43의5병 은 정의만 있다).
+#
+# 차례는 서식.xlsx 시트 차례다.
+# when: always  늘 만든다(AR status 가 「해당 없음」 이 아니면)
+#       data    채울 값이 있을 때만 만든다. 값이 없으면 서식.json skipped 에 까닭을 남긴다
+# from: 란을 채우는 값의 출처(사람이 읽는 설명)
+# with: 이 서식을 만들면 함께 만드는 서식(채울 값이 있을 때)
+forms:
+  - {code: "1", when: always, from: "전기.json company · cells 1, 3호 란"}
+  - {code: "3", when: always, from: "조정.json summary · 조서 tax_3", with: ["4"]}
+  - {code: "4", when: data, from: "3호 · 15호 란, 조서 tax_3 공제감면세액(있을 때만)"}
+  - {code: "std_bs", when: always, from: "장부.json fs.bs"}
+  - {code: "std_is", when: always, from: "장부.json fs.is"}
+  - {code: "std_cogs", when: data, from: "장부.json 원가 계정 500~799(코드 범위로 제조 · 공사 · 분양 · 운송 · 기타원가명세서)"}
+  - {code: "std_re", when: always, from: "장부.json fs.bs 이익잉여금 줄, 전기 cells std_re, 표준손익계산서 당기순손익"}
+  - {code: "10갑", when: data, from: "전표.csv 선납세금 줄, 조서 tax_3 원천납부세액", with: ["지방43의5갑"]}
+  - {code: "15", when: always, from: "조정.json adjustments · direct", with: ["15부표1", "15부표2"]}
+  - {code: "15부표1", when: data, from: "조정.json adjustments 가산"}
+  - {code: "15부표2", when: data, from: "조정.json adjustments 차감"}
+  - {code: "16", when: data, from: "장부.json 매출 계정 401~450"}
+  - {code: "17", when: data, from: "장부.json 매출 계정, 전기.json company"}
+  - {code: "20_1", when: data, from: "조서 depreciation groups(정률)", with: ["20_4"]}
+  - {code: "20_2", when: data, from: "조서 depreciation groups(정액)", with: ["20_4"]}
+  - {code: "20_4", when: data, from: "20호(1)(2) 줄 합계", with: ["20_1", "20_2"]}
+  - {code: "21", when: data, from: "조서 donation values", with: ["22"]}
+  - {code: "22", when: data, from: "전표.csv 기부금 줄, 조서 donation values"}
+  - {code: "23갑", when: data, from: "조서 entertainment values"}
+  - {code: "23을", when: data, from: "조서 entertainment values, 장부 기업업무추진비 계정"}
+  - {code: "29", when: data, from: "조서 business_car values"}
+  - {code: "32", when: data, from: "조서 retirement values(퇴직급여충당금)"}
+  - {code: "33", when: data, from: "조서 retirement values(퇴직연금운용자산)"}
+  - {code: "47갑", when: always, from: "23호(갑) · 32호 · 34호 · 40호(갑) · 15호 소득처분 · 이익잉여금처분계산서 · 조서 donation"}
+  - {code: "47을", when: always, from: "19호(갑) 인정이자(3절). 1 · 2 · 4절은 빈 칸(재고 · 유가증권 평가, 국고보조금 등, 건설자금이자)"}
+  - {code: "50갑", when: always, from: "표준재무상태표 자본 구역, 조정.json losses"}
+  - {code: "50을", when: always, from: "조정.json reserves"}
+  - {code: "50병", when: always, from: "빈 서식"}
+  - {code: "51", when: always, from: "전기.json company, 장부 매출, 표준재무제표"}
+  - {code: "54", when: data, from: "전기.json 54호(없으면 전기 신고서 PDF 54호 쪽), 장부 자본금 · 자기주식, 전표 자본금 줄"}
+  - {code: "세금공과금명세서", when: data, from: "전표.csv 세금과공과 줄, 조서 taxes_dues"}
+  - {code: "지방43", when: always, from: "지방43의2 란, 전기.json cells 1", with: ["지방43의2"]}
+  - {code: "지방43의2", when: always, from: "3호 란, 지방세법 103조의20 세율", with: ["지방43"]}
+  - {code: "지방43의5갑", when: data, from: "10호(갑) 줄"}

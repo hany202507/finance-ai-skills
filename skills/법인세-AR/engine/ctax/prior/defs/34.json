@@ -1,0 +1,273 @@
+{
+ "code": "34",
+ "title": "대손충당금및대손금조정명세서",
+ "aliases": {
+  "efile": "D106300",
+  "pdf": "대손충당금및대손금조정명세서"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "① 채권잔액 ((21)란의 금액)",
+   "formula": "c('계_21')"
+  },
+  {
+   "code": "2",
+   "label": "② 설 정 률",
+   "dtype": "rate",
+   "formula": "max(param('대손.최저설정률'), c('2_2'))",
+   "override": "② 를 그 값으로 둔다"
+  },
+  {
+   "code": "3",
+   "label": "③ 한도액 (①×②)",
+   "formula": "rounddown(c('1') * max(param('대손.최저설정률'), c('2_2')))",
+   "override": "params 대손.최저설정률(법인세법 시행령 §61②)을 읽는다"
+  },
+  {
+   "code": "7",
+   "label": "⑦ 한도초과액 (⑥－③)",
+   "formula": "max(c('6')-c('3'),0)"
+  },
+  {
+   "code": "4",
+   "label": "④ 당기계상액"
+  },
+  {
+   "code": "5",
+   "label": "⑤ 보충액"
+  },
+  {
+   "code": "6",
+   "label": "⑥ 계",
+   "formula": "c('4')+c('5')",
+   "total": true
+  },
+  {
+   "code": "8",
+   "label": "⑧장부상 충당금 기초잔액"
+  },
+  {
+   "code": "9",
+   "label": "⑨기중 충당금 환입액"
+  },
+  {
+   "code": "10",
+   "label": "⑩충당금 부인 누계액"
+  },
+  {
+   "code": "11",
+   "label": "⑪당기대손금 상계액 {(27)의 금액}",
+   "formula": "c('계_27')"
+  },
+  {
+   "code": "12",
+   "label": "⑫당기설정 충당금 보충액",
+   "formula": "c('5')",
+   "override": "⑫ 당기설정충당금 보충액은 ⑤ 보충액이다"
+  },
+  {
+   "code": "13",
+   "label": "⑬환입할금액(⑧－⑨－⑩－⑪－⑫)",
+   "formula": "c('8')-c('9')-c('10')-c('11')-c('12')"
+  },
+  {
+   "code": "14",
+   "label": "⑭회사 환입액"
+  },
+  {
+   "code": "15",
+   "label": "⑮과소환입· 과다환입(△) (⑬－⑭)",
+   "formula": "c('13')-c('14')"
+  },
+  {
+   "code": "2_2",
+   "label": "②설정률 (ㄴ)대손실적률",
+   "dtype": "rate"
+  },
+  {
+   "code": "2_3",
+   "label": "②설정률 (ㄷ)대손충당금 적립기준",
+   "dtype": "rate"
+  },
+  {
+   "code": "16",
+   "label": "(16)계정과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "17",
+   "label": "(17)채권잔액의 장부가액",
+   "rows": true
+  },
+  {
+   "code": "18",
+   "label": "(18)기말현재 대손금부인누계",
+   "rows": true
+  },
+  {
+   "code": "19",
+   "label": "(19)합계((17)+(18))",
+   "rows": true,
+   "formula": "c('17')+c('18')",
+   "total": true
+  },
+  {
+   "code": "20",
+   "label": "(20)충당금설정제외채권",
+   "rows": true
+  },
+  {
+   "code": "21",
+   "label": "(21)채권잔액((19)-(20))",
+   "rows": true,
+   "formula": "c('19')-c('20')"
+  },
+  {
+   "code": "계_17",
+   "label": "계 (17)채권잔액의 장부가액",
+   "formula": "F.sum('34','17')",
+   "total": true
+  },
+  {
+   "code": "계_18",
+   "label": "계 (18)기말현재 대손금부인누계",
+   "formula": "F.sum('34','18')",
+   "total": true
+  },
+  {
+   "code": "계_19",
+   "label": "계 (19)합계",
+   "formula": "F.sum('34','19')",
+   "total": true
+  },
+  {
+   "code": "계_20",
+   "label": "계 (20)충당금설정제외채권",
+   "formula": "F.sum('34','20')",
+   "total": true
+  },
+  {
+   "code": "계_21",
+   "label": "계 (21)채권잔액",
+   "formula": "F.sum('34','21')",
+   "total": true
+  },
+  {
+   "code": "22",
+   "label": "(22)일자",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "23",
+   "label": "(23)계정과목",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "24",
+   "label": "(24)채권내역",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "25",
+   "label": "(25)대손사유",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "26",
+   "label": "(26)금액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "27",
+   "label": "대손충당금상계액 (27)계",
+   "rows": true,
+   "formula": "c('26')-c('30')",
+   "table": "2"
+  },
+  {
+   "code": "28",
+   "label": "대손충당금상계액 (28)시인액",
+   "rows": true,
+   "formula": "c('27')-c('29')",
+   "table": "2"
+  },
+  {
+   "code": "29",
+   "label": "대손충당금상계액 (29)부인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "30",
+   "label": "당기손비계상액 (30)계",
+   "rows": true,
+   "formula": "c('31')+c('32')",
+   "table": "2"
+  },
+  {
+   "code": "31",
+   "label": "당기손비계상액 (31)시인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "32",
+   "label": "당기손비계상액 (32)부인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "계_26",
+   "label": "계 (26)금액",
+   "formula": "F.sum('34','26')",
+   "total": true
+  },
+  {
+   "code": "계_27",
+   "label": "계 (27)계",
+   "formula": "F.sum('34','27')",
+   "total": true
+  },
+  {
+   "code": "계_28",
+   "label": "계 (28)시인액",
+   "formula": "F.sum('34','28')",
+   "total": true
+  },
+  {
+   "code": "계_29",
+   "label": "계 (29)부인액",
+   "formula": "F.sum('34','29')",
+   "total": true
+  },
+  {
+   "code": "계_30",
+   "label": "계 (30)계",
+   "formula": "F.sum('34','30')",
+   "total": true
+  },
+  {
+   "code": "계_31",
+   "label": "계 (31)시인액",
+   "formula": "F.sum('34','31')",
+   "total": true
+  },
+  {
+   "code": "계_32",
+   "label": "계 (32)부인액",
+   "formula": "F.sum('34','32')",
+   "total": true
+  }
+ ]
+}
