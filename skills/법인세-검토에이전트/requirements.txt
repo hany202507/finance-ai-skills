@@ -1,3 +1,4 @@
 openpyxl
 pyyaml
 pymupdf
+pytest>=7
