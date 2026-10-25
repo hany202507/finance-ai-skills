@@ -260,6 +260,63 @@ def _int(v) -> int:
         return 0
 
 
+FX_ADJ = re.compile(r"외화|환산")
+# 47호(갑) 코드 → (이름, 15호 과목 · 조정내용 낱말). ④ 세무상부인(조정)금액이 15호 그 과목 가산 줄에 있어야 한다
+ROWS_47 = {"12": ("(102) 퇴직급여충당금", re.compile(r"퇴직급여충당")), "13": ("(104) 대손충당금", re.compile(r"대손충당")),
+           "65": ("(118) 기업업무추진비", re.compile(r"기업업무추진비|접대비"))}
+
+
+def prior_form_checks(prior: dict, adjs: list[dict]) -> list[dict]:
+    """신고서 한 권(전기.json 꼴)의 40호(갑) · 47호(갑) 칸과 15호 줄을 맞댄다(10-25). [{id, title, amount, basis, forms, papers,
+    questions, todo}]. 40호(갑) · 47호(갑)을 읽지 못했으면(cells 에 없으면) 빈 목록이다."""
+    cells = prior.get("cells") or {}
+    c40, c47 = cells.get("40갑") or {}, cells.get("47갑") or {}
+    fx = [a for a in adjs if FX_ADJ.search(f"{a.get('subject') or ''} {a.get('note') or ''}")]
+    fx_net = sum(_int(a.get("amount")) * (1 if a.get("side") == "가산" else -1) for a in fx)
+    fx_text = (f"15호 외화 · 환산 줄 {len(fx)}줄 순액 {won(fx_net)}원" if fx else "15호에 외화 · 환산 조정 줄이 없습니다")
+    out = []
+    basis, amount = [], 0
+    for row, label in (("가", "가. 화폐성 외화자산 · 부채 평가손익"), ("나", "나. 통화선도 · 통화스왑 · 환변동보험 평가손익")):
+        two, three = _int(c40.get(f"{row}_2")), _int(c40.get(f"{row}_3"))
+        adj = _int(c40.get(f"{row}_6")) or _int(c40.get(f"{row}_5")) - _int(c40.get(f"{row}_4"))
+        if two and not three and adj and abs(adj) != abs(fx_net):
+            amount += abs(adj)
+            basis.append(f"40호(갑) {label}: ② 당기손익금 해당액 {won(two)}원, ③ 회사손익금 계상액 빈 칸, 손익조정금액 {won(adj)}원")
+    d74 = _int(c47.get("74_4"))
+    if d74 and abs(d74) != abs(fx_net):
+        basis.append(f"47호(갑) (122) 외화자산 · 부채평가손익 ④ 세무상부인(조정)금액 {won(d74)}원")
+        amount = amount or abs(d74)
+    if basis:
+        basis.append(fx_text)
+        basis.append("회사계상액 칸이 비면 회사가 장부에 적은 환산손익 전부를 세무조정할 금액처럼 적게 됩니다. 평가방법(사업연도 종료일 "
+                     "매매기준율)을 신고했으면 ③ 에 회사 환산손익을 적고 손익조정금액을 0 으로 고칩니다. 신고하지 않았으면 취득일 · "
+                     "발생일 환율로 두므로(법인세법 시행령 제76조 제2항 단서) 15호에 환산손익 조정이 있어야 합니다")
+        out.append({"id": "prior_fx_form", "title": "전기 40호(갑) · 47호(갑) 외화평가 칸이 15호와 맞지 않습니다(회사계상액 칸 빈 칸)",
+                    "amount": amount, "basis": basis, "forms": ["40갑", "47갑", "15"], "papers": ["fx"],
+                    "questions": ["외화 평가방법(사업연도 종료일 매매기준율) 신고서를 낸 적이 있는지, 냈으면 언제인지 알려 주십시오"],
+                    "todo": ["평가방법을 신고했으면 당기 40호(갑) ③ 에 회사 환산손익을 적고, 신고하지 않았으면 전기 환산손익 "
+                             "익금불산입 · 손금불산입(경정청구 방향)을 회사와 정합니다"]})
+    basis, amount = [], 0
+    for code, (label, word) in ROWS_47.items():
+        d = _int(c47.get(f"{code}_4"))
+        lines = [a for a in adjs if a.get("side") == "가산" and word.search(f"{a.get('subject') or ''} {a.get('note') or ''}")]
+        got = sum(_int(a.get("amount")) for a in lines)
+        if abs(d) == got or (d and any(_int(a.get("amount")) == abs(d) for a in lines)):
+            continue
+        if not d and (not got or code not in c47):
+            continue                    # ④ 가 비었으면 그 줄 ③ 을 읽었을 때만 15호와 견준다(줄을 못 읽은 것과 가르려고)
+        amount += abs(abs(d) - got)
+        basis.append(f"47호(갑) {label} ④ 세무상부인(조정)금액 {won(d)}원, 15호 가산 줄 {len(lines)}줄 {won(got)}원")
+    if basis and c47:
+        basis.append("47호(갑) ④ 는 각 조정명세서의 부인액을 옮겨 적는 칸이라 15호 가산 줄과 같아야 합니다. 둘 중 어느 쪽이 맞는지 "
+                     "조정명세서(32호 · 34호 · 23호(갑))로 봅니다")
+        out.append({"id": "prior_form_47", "title": "전기 47호(갑) 세무상부인 칸이 15호와 다릅니다",
+                    "amount": amount, "basis": basis, "forms": ["47갑", "15"], "papers": [],
+                    "questions": ["전기 신고서 47호(갑) 세무상부인 칸과 15호가 다른 까닭을 알려 주십시오"],
+                    "todo": ["다른 줄의 조정명세서를 열어 15호 금액이 맞는지 확인하고, 15호가 빠졌으면 전기 수정신고 여부를 정합니다"]})
+    return out
+
+
 class Hits:
     def __init__(self):
         self.n, self.amount, self.words = 0, 0, []
@@ -647,6 +704,18 @@ class Builder:
                  questions=["전기 업무용승용차 손금불산입액 가운데 15호에 넣지 않은 차량과 까닭, 전기 신고를 고칠지(수정신고) 알려 주십시오",
                             "당기 업무용승용차의 운행기록부 작성 여부와 업무사용비율을 알려 주십시오"],
                  todo=["전기 신고서 29호 2절 차량별 줄과 15호를 맞춰 보고, 누락이 맞으면 전기 수정신고 여부를 회사와 정합니다"])
+    def check_prior_fx_forms(self) -> None:
+        """전기 40호(갑) · 47호(갑) 칸이 전기 15호와 맞지 않는 곳(10-25, 신고본 품질 신호). 전기.json cells["40갑"] · cells["47갑"]
+        (prior/form_more.py)을 읽는다. 함수는 신고서 한 권(전기.json 꼴)만 보므로 당기 신고본 점검에도 그대로 쓴다(prior_form_checks).
+
+        prior_fx_form       40호(갑) ③ 회사손익금 계상액이 비었는데 ② 당기손익금 해당액이 있어 ⑥ 손익조정금액(④ · ⑤)이 생겼고, 그 금액이
+                            15호 외화 · 환산 줄과 맞지 않는다. 47호(갑) (122) ④ 가 15호와 다르면 같은 이슈에 붙인다
+        prior_form_47       47호(갑) ④ 세무상부인(조정)금액이 15호 같은 과목 가산 줄과 다르다(퇴직급여충당금 · 대손충당금 · 기업업무추진비)"""
+        for issue in prior_form_checks(self.P, self.prior_adj):
+            self.add(issue["id"], "신고 점검", "가능", issue["title"], guide=["1-3"], amounts={"prior": issue["amount"]},
+                     basis=issue["basis"], papers=issue["papers"], forms=issue["forms"], questions=issue["questions"],
+                     todo=issue["todo"])
+
     def sme_scale(self, revenue: int) -> list[str]:
         """전기 51호 규모 기준 칸(억원, cells["51"])과 당기 손익계산서 매출액을 견준 사실. 당기 매출액이 소기업 기준(15) ·
         중소기업 기준(11)을 넘으면 이슈(sme_small · sme_size)를 더한다. 51호는 업종별 사업수입금액이고 여기서는 손익계산서
@@ -906,7 +975,7 @@ class Builder:
             if g == "local":
                 local.append(r)
                 continue
-            words = [m.group(0) for m in re.finditer(r"법인세|지방소득세|지방세|부가세|부가가치세|경정청구|경정|과오납|환급가산금|가산금|환급",
+            words = [m.group(0) for m in re.finditer(r"법인세|지방소득세|지방세|부가세|부가가치세|경정청구|경정|과오납|환급가산금|가산이자|가산금|환급",
                                                      str(r.get("memo") or ""))]
             if g == "vat":                      # 「법인세등_부가세_…」 꼴 적요 머리말의 법인세는 낱말에서 뺀다
                 words = [w for w in words if w not in ("법인세", "지방소득세")]
@@ -2466,6 +2535,7 @@ class Builder:
         self.check_prior_loss()
         self.check_prior_forms()
         self.check_prior_car()
+        self.check_prior_fx_forms()
         self.rule_loans()
         self.rule_corp_tax()
         self.rule_entertainment()

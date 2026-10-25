@@ -561,12 +561,13 @@ def compute(p: Paper, b: Books) -> None:
     args = (lim_dep, lim_log, rent_ratio, b.months, repair_ratio)
     rows = []
     migrated = []
-    carry_of, prior_only = _prior_carry(p, b, cars, models)
-    order = sorted(cars, key=lambda k: (k == NOT_ASSIGNED, k == OTHER_VEHICLE, k == ASSET_RENT, k))
     # 10-19: 그 차량번호가 포터 · 봉고 같은 화물 · 승합 적요와 함께 나온 차량은 대상 기본값을 「부」 로 둔다.
     # 10-21: 차량번호 앞자리가 승합 · 화물 · 특수 분류(두 자리 70~99, 세 자리 700~999)인 차량도 「부」 로 두고 확인 줄을 낸다.
     # 업무용승용차는 개별소비세 과세 승용자동차라(법인세법 제27조의2 제1항) 화물 번호판 차량은 대상이 아니다(분류기호 고시 ★★☆)
     truck_plates = {plate_of(ln) for ln in lines if (NOT_CAR.search(ln.memo) or NONCAR_WORD.search(ln.memo)) and plate_of(ln)}
+    own_default = _own_dep_defaults(p, b, cars, truck_plates)
+    carry_of, prior_only = _prior_carry(p, b, cars, models, own_default)
+    order = sorted(cars, key=lambda k: (k == NOT_ASSIGNED, k == OTHER_VEHICLE, k == ASSET_RENT, k))
     not_target = {k for k in cars if k in truck_plates}
     by_number = {k for k in cars if PLATE.fullmatch(k) and not plate_is_passenger(k) and k not in not_target and k not in prior_only}
     if not_target:
@@ -596,7 +597,7 @@ def compute(p: Paper, b: Books) -> None:
                "ratio_in": p.take(b, f"업무사용비율/{k}", 1, "ratio"),
                "months": p.take(b, f"월수/{k}", months, "int"),
                "costs": dict(c["costs"]),
-               "own_dep": p.take(b, f"자가 감가상각비/{k}", 0, "int"),
+               "own_dep": p.take(b, f"자가 감가상각비/{k}", own_default.get(k, 0), "int"),
                "lease_ins": p.take(b, f"리스 보험료/{k}", 0, "int"),
                "lease_tax": p.take(b, f"리스 자동차세/{k}", 0, "int"),
                "lease_repair": p.take(b, f"리스 수선유지비/{k}", 0, "int"),
@@ -655,7 +656,8 @@ def compute(p: Paper, b: Books) -> None:
         p.notes.append(f"「{k}」 의 옛 노란 칸 「리스 제외액」 값을 「리스료 중 보험료」 칸으로 옮겼습니다. 보험료 · 자동차세 · 수선유지비로 나눠 고치세요")
     p.notes.append("운행기록 작성 여부는 「여」, 업무사용비율은 100% 로 두었습니다. 운행기록이 없으면 「부」 로 바꾸세요(1천5백만원 기준)")
     p.notes.append("리스 차량의 감가상각비 상당액은 리스료에서 보험료 · 자동차세 · 수선유지비를 뺀 금액입니다. 리스료에 들어 있으면 노란 칸에 넣으세요")
-    p.notes.append("자가 차량의 감가상각비는 감가상각 조서의 차량운반구 회사계상액 중 그 차량 몫을 「자가 감가상각비」 노란 칸에 넣습니다")
+    if not own_default:
+        p.notes.append("자가 차량의 감가상각비는 감가상각 조서의 차량운반구 회사계상액 중 그 차량 몫을 「자가 감가상각비」 노란 칸에 넣습니다")
     prior_car = [a for a in (b.prior or {}).get("adjustments", [])
                  if ("차량" in a.get("subject", "") or "승용차" in a.get("subject", "")) and a.get("side") == "가산"]
     _carry_messages(p, rows, carry_of, prior_only)
@@ -682,7 +684,84 @@ def _ymd(s: str) -> str:
     return str(s or "").replace(".", "-")[:10]
 
 
-def _prior_carry(p: Paper, b: Books, cars: dict, models: dict) -> tuple[dict, dict]:
+def _own_dep_defaults(p: Paper, b: Books, cars: dict, truck_plates: set) -> dict[str, int]:
+    """자가 차량 「자가 감가상각비」 기본값(10-25). 감가상각 조서의 차량운반구 회사 상각비(depreciation.company_dep_of)를 자가 차량에
+    나눈다. 차량유지비 계정에는 감가상각비 줄이 없어 기본값 0 이면 자가 차량 800만원 초과 유보(법인세법 제27조의2 제3항)가 빠졌다.
+
+    자가 차량: 승용 번호판 차량번호 줄이고 임차료 줄이 없으며 렌트 번호판(하 · 허 · 호)이 아닌 차량. 한 대면 상각비 전부를 둔다.
+    여러 대면 전기 29호 3절 차량별 줄에서 전기 사업연도 내내 가진 차량의 전기 상각비(한도초과 + 한도 800만원, 정액 상각이면 해마다
+    같다)를 그 차량 몫으로 어림하고, 어림이 없는 차량이 한 대만 남으면 나머지를 둔다. 그래도 나누지 못하면 0 과 확인 줄이다.
+    회계사가 노란 칸에 넣은 차량은 그 값을 쓰고 남은 금액만 나눈다. 여러 대로 나눈 값은 확인 줄에 남긴다."""
+    from .depreciation import company_dep_of
+    cands = sorted(k for k, c in cars.items()
+                   if PLATE.fullmatch(k) and plate_is_passenger(k) and k not in truck_plates and not c["rent"] and not c["lease"]
+                   and PLATE.fullmatch(k).group(2) not in RENTAL_LETTERS)
+    if not cands:
+        return {}
+    total = company_dep_of(b, "차량")
+    pool = total - sum(cars[k]["costs"].get("감가상각비", 0) for k in cands)
+    by_hand = {k: b.override(p.id, f"자가 감가상각비/{k}") for k in cands}
+    by_hand = {k: int(v) for k, v in by_hand.items() if v not in (MISSING, "", None)}
+    pool -= sum(by_hand.values())
+    left = [k for k in cands if k not in by_hand and not cars[k]["costs"].get("감가상각비")]
+    if pool <= 0 or not left:
+        return {}
+    if len(left) == 1:
+        p.notes.append(f"감가상각 조서의 차량운반구 회사 상각비 {total:,}원 가운데 {pool:,}원을 자가 차량 {left[0]} 의 「자가 감가상각비」 "
+                       "기본값으로 넣었습니다(장부의 자가 승용차 한 대). 차량운반구에 업무용승용차가 아닌 차량이 있으면 그 몫을 빼십시오")
+        return {left[0]: pool}
+    lim = int(rate(b.rates, "business_car", "depreciation_limit"))
+    fy_start = str(b.info.get("fy_start") or f"{b.fy or 2025}-01-01")
+    prior_start = f"{int(fy_start[:4]) - 1}{fy_start[4:]}"
+    est = {}
+    for r in ((b.prior or {}).get("rows") or {}).get("29") or []:
+        k = re.sub(r"\s", "", str(r.get("car") or ""))
+        start = _ymd(r.get("start"))
+        if k in left and not r.get("end") and start and start <= prior_start and int(r.get("excess") or 0) > 0:
+            est[k] = int(r["excess"]) + lim
+    rest = [k for k in left if k not in est]
+    if not est or sum(est.values()) > pool or len(rest) > 1 or (not rest and sum(est.values()) != pool):
+        p.confirm.append(f"자가 차량 {', '.join(left)} 의 「자가 감가상각비」 를 넣지 못했습니다. 감가상각 조서의 차량운반구 회사 상각비 "
+                         f"{total:,}원 가운데 차량마다 몫을 노란 칸에 넣으십시오(비어 있으면 800만원 초과 유보가 빠집니다)")
+        return {}
+    out = dict(est)
+    if rest:
+        out[rest[0]] = pool - sum(est.values())
+    text = ", ".join(f"{k} {v:,}원" for k, v in out.items())
+    p.confirm.append(f"감가상각 조서의 차량운반구 회사 상각비 {total:,}원을 자가 차량에 나눠 「자가 감가상각비」 기본값으로 넣었습니다: {text}. "
+                     "전기 29호 3절 한도초과가 있는 차량은 전기 상각비(한도초과 + 800만원)와 같다고 어림했고"
+                     + (f", {rest[0]} 에는 나머지를 두었습니다" if rest else "")
+                     + ". 고정자산 대장의 차량별 상각비로 확인하십시오")
+    return out
+
+
+def _prior_disposed(p: Paper, b: Books, rows: list[dict]) -> set[str]:
+    """전기에 처분해 이월액을 이미 손금추인한 차량(10-25). 전기 15호 차감 줄 가운데 업무용승용차 · 차량 과목이고 조정내용에
+    양도 · 처분 · 매각이 든 감가상각비 한도초과 추인 줄을, 조정내용의 차량번호나 금액(29호 3절 그 차량의 차기이월액과 같음)으로
+    차량에 잇는다. 그 차량은 이월액을 0 으로 본다(처분한 차량의 차기이월액을 3절에 그대로 찍는 신고본이 있다). 잇지 못한 줄은 확인 줄이다."""
+    out = set()
+    by_plate = {re.sub(r"\s", "", str(r.get("car") or "")): int(r.get("closing") or 0) for r in rows}
+    for a in (b.prior or {}).get("adjustments", []) or []:
+        subj, note = str(a.get("subject") or ""), str(a.get("note") or "")
+        if a.get("side") != "차감" or not re.search(r"승용차|차량", subj + note) or not re.search(r"양도|처분|매각", note):
+            continue
+        if not re.search(r"감가상각|한도초과|이월", subj + note) or re.search(r"처분손실", subj + note):
+            continue
+        amt = int(a.get("amount") or 0)
+        m = PLATE.search(note)
+        plate = "".join(m.groups()) if m else ""
+        hit = [plate] if plate in by_plate else [k for k, v in by_plate.items() if v and v == amt]
+        if len(hit) == 1:
+            out.add(hit[0])
+            p.notes.append(f"전기 15호에 차량 {hit[0]} 의 처분 손금추인 {amt:,}원이 있어 그 차량의 전기 이월액을 0 으로 보았습니다"
+                           "(처분한 사업연도에 이월액을 손금산입, 법인세법 시행령 제50조의2 제11항)")
+        else:
+            p.confirm.append(f"전기 15호에 업무용승용차 처분 손금추인 {amt:,}원이 있는데 29호 3절의 어느 차량 것인지 잇지 못했습니다. "
+                             "그 차량이면 「전기 이월액」 을 0 으로 고치십시오")
+    return out
+
+
+def _prior_carry(p: Paper, b: Books, cars: dict, models: dict, own_default: dict | None = None) -> tuple[dict, dict]:
     """전기 29호 3절 차기이월액 → 차량별 「전기 이월액」 기본값(10-21). (차량 이름 → 이월액, 당기 장부에 없어 새로 둔 차량 → 정보).
 
     차량번호가 당기 차량 이름과 같으면 그 차량에 둔다. 당기 장부에 없는 차량은 줄을 하나 만든다(관련비용 0). 이월액은 다음 사업연도부터
@@ -692,13 +771,15 @@ def _prior_carry(p: Paper, b: Books, cars: dict, models: dict) -> tuple[dict, di
     rows = _prior_29(b)
     if not rows:
         return {}, {}
+    own_default = own_default or {}
+    disposed = _prior_disposed(p, b, rows)
     fy_start = str(b.info.get("fy_start") or f"{b.fy or 2025}-01-01")
     by_norm = {re.sub(r"\s", "", k): k for k in cars}
     carry_of, prior_only, held = {}, {}, {}
     for r in rows:
         plate = re.sub(r"\s", "", str(r.get("car") or ""))
         amt = int(r.get("closing") or 0)
-        if not plate:
+        if not plate or plate in disposed:
             continue
         end, start = _ymd(r.get("end")), _ymd(r.get("start"))
         own_done = not end and bool(start) and f"{int(start[:4]) + 5}{start[4:]}" <= fy_start
@@ -706,6 +787,7 @@ def _prior_carry(p: Paper, b: Books, cars: dict, models: dict) -> tuple[dict, di
             k = by_norm[plate]
             lease_on = bool(end) and end >= fy_start and not cars[k]["rent"]
             own_dep = b.override(p.id, f"자가 감가상각비/{k}")
+            own_dep = own_default.get(k, 0) if own_dep is MISSING else own_dep
             own_on = (not end and not own_done and not cars[k]["costs"].get("감가상각비")
                       and own_dep in (MISSING, 0, "", None))
             if lease_on or own_on:

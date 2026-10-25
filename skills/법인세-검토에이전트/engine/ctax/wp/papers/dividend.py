@@ -5,7 +5,11 @@
 배당기준일 전 3개월 이내에 취득한 주식의 배당은 빼고, 출자비율은 3개월 이상 계속 보유한 주식으로 센다(시행령 제17조의2 제1항).
 
 장부에는 지분율 · 보유기간이 없다. 그래서 배당 지급법인마다 노란 칸(지분율 · 3개월 이상 보유 · 대상 여부 · 주식 장부가액)을
-두고, **기본값으로는 조정을 넣지 않는다**. 지분율을 넣기 전에는 「지분율을 넣으면 X원」 을 보인다.
+두고, 전기 신고서에도 없는 지급법인은 **기본값으로 조정을 넣지 않는다**. 지분율을 넣기 전에는 「지분율을 넣으면 X원」 을 보인다.
+10-25: 지분율 기본값은 전기 16호의2 배당금지급법인현황의 지분율이다(전기.json rows["16의2"], 이름으로 잇는다). 또 그 주식을
+배당 받은 날 전 3개월 안에 처음 샀으면(유가증권 계정 줄의 적요 종목 · 거래처로 찾은 첫 매수일, 그 전 처분 줄 없음, 전기
+16호의2 에 없음) 배당기준일 전 3개월 이내 취득 주식의 배당(법인세법 제18조의2 제2항 제1호)으로 보아 「3개월 이상 보유」 를 X 로 둔다.
+배당기준일은 장부에 없어 받은 날로 어림한다(기준일은 받은 날보다 앞이라 받은 날 전 3개월 안에 산 주식은 기준일 전 3개월 안이다).
 배당 지급법인 이름은 적요(「보이스아이 배당금」 처럼)에서, 없으면 거래처에서 읽는다. 은행 · 증권 계좌번호나 「만기」 가 든
 줄은 펀드 분배금으로 보아 대상 여부를 X 로 둔다(집합투자기구 이익분배금은 피출자법인 배당에 들지 않는다).
 """
@@ -49,6 +53,39 @@ def payer_of(memo: str, partner: str) -> str:
     return name
 
 
+def prior_share(b: Books, name: str) -> tuple[float, str] | None:
+    """전기 16호의2 배당금지급법인현황에서 이 지급법인의 (지분율 비율, 전기 법인명). 회사 표기((주) · 주식회사)는 빼고 잇는다."""
+    from .securities import _same_stock
+    for r in ((b.prior or {}).get("rows") or {}).get("16의2") or []:
+        if _same_stock(str(r.get("name") or ""), name):
+            try:
+                return float(str(r.get("share")).replace(",", "")) / 100, str(r.get("name"))
+            except ValueError:
+                return None
+    return None
+
+
+def _months_before(d: str, n: int) -> str:
+    y, m, day = int(d[:4]), int(d[5:7]), int(d[8:10])
+    m -= n
+    while m <= 0:
+        y, m = y - 1, m + 12
+    return f"{y:04d}-{m:02d}-{min(day, 28 if m == 2 else 30 if m in (4, 6, 9, 11) else 31):02d}"
+
+
+def recent_purchase(b: Books, name: str, paid_on: str) -> str:
+    """배당 받은 날(paid_on) 전 3개월 안에 처음 산 주식이면 첫 매수일, 아니면 빈 글. 유가증권 자산 계정 줄 가운데 적요 종목
+    (securities.stock_name) 이나 거래처가 지급법인과 같은 줄을 본다. 그 전에 처분 줄이 있으면(기초에 가진 주식) 빈 글이다."""
+    from .securities import COMPANY_MARK, NOT_SEC, SEC, _same_stock, stock_name
+    accts = [a for a in b.accounts(cls="자산") if SEC.search(a["name"]) and not NOT_SEC.search(a["name"])]
+    mine = [ln for ln in sorted(b.lines_of(accts), key=lambda x: (x.date, x.no))
+            if _same_stock(stock_name(ln.memo) or COMPANY_MARK.sub("", ln.partner or ""), name) and ln.date <= paid_on]
+    if not mine or mine[0].debit <= 0:
+        return ""
+    first = mine[0].date
+    return first if first >= _months_before(paid_on, 3) else ""
+
+
 def bracket(share: float, table) -> float:
     for low, rt in table:
         if share >= low and share > 0:
@@ -66,7 +103,9 @@ def compute(p: Paper, b: Books) -> None:
         name = payer_of(ln.memo, ln.partner)
         fund = bool(ACCOUNT_NO.search(ln.memo) or FUND.search(ln.memo))
         p.lines.append(LineRow(ln, name, "", why="펀드 분배금으로 보임(계좌번호 · 만기)" if fund else ""))
-        e = payers.setdefault(name, {"payer": name, "배당금액": 0, "fund": False, "lines": 0, "partner": ln.partner})
+        e = payers.setdefault(name, {"payer": name, "배당금액": 0, "fund": False, "lines": 0, "partner": ln.partner,
+                                     "paid_on": ln.date})
+        e["paid_on"] = min(e["paid_on"], ln.date)
         e["배당금액"] += amt
         e["fund"] = e["fund"] or fund
         e["lines"] += 1
@@ -76,8 +115,17 @@ def compute(p: Paper, b: Books) -> None:
     rows = []
     for i, e in enumerate(sorted(payers.values(), key=lambda x: -x["배당금액"])):
         n = e["payer"]
-        share = p.take(b, f"지분율/{n}", 0.0, "ratio")
-        hold = p.take(b, f"3개월 이상 보유/{n}", "O", "pick")
+        got = None if e["fund"] else prior_share(b, n)
+        bought = "" if e["fund"] or got else recent_purchase(b, n, e["paid_on"])
+        share = p.take(b, f"지분율/{n}", got[0] if got else 0.0, "ratio")
+        hold = p.take(b, f"3개월 이상 보유/{n}", "X" if bought else "O", "pick")
+        if got and f"지분율/{n}" not in p.overridden:
+            p.notes.append(f"{n}: 전기 16호의2 배당금지급법인현황의 지분율 {got[0]:.2%}({got[1]})를 지분율 기본값으로 넣었습니다. "
+                           "당기 중 지분이 바뀌었으면 노란 칸을 고치세요")
+        if bought and f"3개월 이상 보유/{n}" not in p.overridden:
+            p.confirm.append(f"{n}: 그 주식을 {bought} 에 처음 사고 배당을 {e['paid_on']} 에 받아 배당기준일 전 3개월 이내 취득 주식의 배당"
+                             "(법인세법 제18조의2 제2항 제1호)으로 보고 「3개월 이상 보유」 를 X 로 두었습니다. 배당기준일과 그날 보유 주식을 "
+                             "확인하고, 기초에도 그 주식을 가졌으면 O 로 고치세요")
         target = p.take(b, f"대상 여부/{n}", "X" if e["fund"] else "O", "pick")
         listed = p.take(b, f"상장 여부/{n}", "", "text")
         book = p.take(b, f"주식 장부가액/{n}", 0, "int")

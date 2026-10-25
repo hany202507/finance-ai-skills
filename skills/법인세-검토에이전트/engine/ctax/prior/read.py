@@ -6,8 +6,9 @@
   company      1호(①③⑧⑨⑩⑮) · 51호 (26)(27) 동그라미 · 표지(기수)
   cells        파서가 읽은 서식의 한 줄 란(row 0) 전부. 1호는 글, 3호 세율(11 · 14 · 35 · 60)은 인쇄된 % 정수.
                54호 1절 주식수 · 액면가 · 자본금과 3절 합계 줄은 cells["54"](form54.py), 29호 2절 합계 줄은 cells["29"],
-               51호 규모 기준 칸(억원)은 cells["51"](form29.py)
-  rows         줄 꼴 서식의 줄 {서식: [{란: 값}]}. 29호 3절 차량별 한도초과 이월 줄(rows["29"], form29.py), 54호 3절 주주 줄(rows["54"], form54.py), 21호 5절 기부금 이월액 명세 ·
+               51호 규모 기준 칸(억원)은 cells["51"](form29.py), 40호(갑) 1절 · 47호(갑) 코드 줄은 cells["40갑"] · cells["47갑"]
+               (form_more.py)
+  rows         줄 꼴 서식의 줄 {서식: [{란: 값}]}. 16호의2 2절 배당금지급법인 줄(rows["16의2"], form_more.py), 29호 3절 차량별 한도초과 이월 줄(rows["29"], form29.py), 54호 3절 주주 줄(rows["54"], form54.py), 21호 5절 기부금 이월액 명세 ·
                6절 해당 사업연도 기부금 지출액 명세 줄(rows["21"], form21.py), 22호 기부금명세서 줄(rows["22"]) ·
                세금공과금명세서 비고(손금불산입 등)가 있는 줄(rows["세금공과금명세서"], form22.py)
   adjustments  15호 줄. 조정내용(note)은 15호 부표1(가산) · 부표2(차감)에서 금액으로 짝지어 붙인다
@@ -37,6 +38,7 @@ from ctax.prior.form21 import read_21
 from ctax.prior.form22 import read_22, read_taxes
 from ctax.prior.form29 import carry_rows, read_29, scale_51
 from ctax.prior.form54 import read_54
+from ctax.prior.form_more import read_16_2, read_40, read_47
 from ctax.prior.pdf import Cell, Problem, _toc, read_cells, split_pages
 from ctax.prior.rnd import read_rnd
 
@@ -597,6 +599,17 @@ def build(pages: list[dict], cells: list[Cell], problems: list[Problem], cover_t
         got = reader(pages_of(pages, code))
         if got:
             out_rows[code] = got
+    rows16, why16 = read_16_2(pages_of(pages, "16의2"))
+    if rows16:
+        out_rows["16의2"] = rows16
+    for why in why16:
+        qs.append(Problem("16의2.read", "16호의2 수입배당금액명세서 배당금지급법인현황을 다 읽지 못했다", why))
+    for code, reader, name in (("40갑", read_40, "40호(갑) 외화자산등평가차손익조정명세서"), ("47갑", read_47, "47호(갑) 주요계정명세서")):
+        got, why_more = reader(pages_of(pages, code))
+        if got:
+            out_cells[code] = got
+        for why in why_more:
+            qs.append(Problem(f"{code}.read", f"{name}를 다 읽지 못했다", why))
     credits = credits_from(cells)
     credit_years, why_years = credit_years_from(cells, credits)
     for why in why_years:

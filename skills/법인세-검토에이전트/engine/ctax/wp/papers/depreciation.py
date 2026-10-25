@@ -189,6 +189,20 @@ def additions_without_dep(b: Books) -> list[dict]:
     return out
 
 
+def company_dep_of(b: Books, word: str) -> int:
+    """자산 이름에 word 가 든 묶음(「차량」 → 차량운반구)의 회사 상각비(N) 합계. 묶음 · 상각 가르기는 compute 와 같다(_groups · _label).
+    업무용승용차 조서가 자가 차량 「자가 감가상각비」 기본값을 정할 때 쓴다(10-25, 감가상각 조서보다 먼저 계산된다)."""
+    dep_v, disp_v = _dep_vouchers(b), _disposal_vouchers(b)
+    total = 0
+    for g in _groups(b):
+        if word not in (g["asset"].get("name") or ""):
+            continue
+        contra = {c["code"] for c in g["contra"]}
+        total -= sum(ln.amount for ln in b.lines_of([g["asset"]] + g["contra"])
+                     if _label(ln, ln.account in contra, dep_v, disp_v) == "상각")
+    return total
+
+
 def limit_of(method: str, rate: float, acq_base: int, g: dict) -> int:
     """상각범위액(계산). 정액은 취득가액 기준, 정률은 세무상 미상각잔액 기준(월할 취득 반영), 세무상 미상각잔액을 넘지 않는다."""
     if not rate:

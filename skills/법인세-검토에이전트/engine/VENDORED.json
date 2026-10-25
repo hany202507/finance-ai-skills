@@ -1,6 +1,6 @@
 {
   "source": "kernelspaces/academy-product 법인세/ctax",
-  "commit": "d6c2f7e 2026-10-23 chore: 자동 저장 2026-10-23 15:58 (5개 파일)",
+  "commit": "b6b328f 2026-10-25 docs(법인세): NOTES 에서 평가세트 회사 이름 빼기(배포 스킬 엔진으로 옮겨지는 파일)",
   "copied": [
     "case.py",
     "xlsx.py",

@@ -9,6 +9,8 @@
   지방세 환급          수익 계정 줄 중 지방세 + 환급(세목이 없음). 법인세 환급 합의 10%(±1%)면 법인지방소득세로      O · X
                        보고 O, 아니면 재산세 등 손금이었던 세금의 환급일 수 있어 X(확인 필요)
   환급가산금           환급 + 가산금 · 가산이자. 과목 「환급가산금」. 제18조 제4호                                      O
+                       10-25: 「환급」 없이 세목 + 가산이자 · 환급이자(「지방세 가산이자」 · 「국세 가산이자」)도 같다.
+                       수익 계정 대변에 적은 세목의 가산이자는 과오납금 환급금 이자다. 낸 가산금 · 가산세는 비용이라 대상이 아니다
   관세 환급가산금      위에 관세가 붙은 줄. 관세는 국세기본법 국세 목록에 없어 X(확인 필요)                              X
   부가세 환급          수익 계정 줄 중 부가세 · 부가가치세 + 환급 · 경정, 1,000원 이상. 과목은 그 수익 계정 이름.         O
                        낼 때 손금이 아니었던 세액이라 익금이 아니다(제18조 제5호 · 제21조 제1호 적용, ★★☆).
@@ -44,6 +46,8 @@ LOCAL_INCOME = re.compile(r"지방소득세")
 LOCAL_TAX = re.compile(r"지방세")
 CORP = re.compile(r"법인세")
 CUSTOMS = re.compile(r"관세")
+# 「환급」 없이 적은 환급금 이자(10-25 「지방세 가산이자」). 세목 바로 뒤 가산이자 · 환급이자만 본다(「가산금」 은 낸 돈일 수 있어 뺀다)
+TAX_INTEREST = re.compile(r"(국세|지방세|지방소득세|법인세|부가세|부가가치세|재산세|취득세|관세)\s*(가산이자|환급이자)")
 VAT_MIN = 1000           # 이보다 작은 부가세 줄은 단수 차이로 보고 후보에서 뺀다(잡손실 「단수 차이 추정」 과 같은 값)
 
 ACCT_REFUND = "법인세등 계정 환급"
@@ -73,7 +77,7 @@ def basis(rates: dict) -> list[tuple]:
 
 def classify_refund(text: str, tax_account: bool) -> tuple[str, str, str] | None:
     """환급 후보 줄 하나 → (엔진 분류, 익금불산입 기본값, 근거). 후보가 아니면 None. 지방세 환급의 10% 판정은 compute 가 한다."""
-    if NOT_REFUND.search(text) or not REFUND.search(text):
+    if NOT_REFUND.search(text) or not (REFUND.search(text) or (not tax_account and TAX_INTEREST.search(text))):
         return None
     if tax_account:
         return ACCT_REFUND, "O", "법인세등 계정 대변의 환급 줄. 손금불산입한 법인세의 환급(법인세법 제18조 제3호)"
