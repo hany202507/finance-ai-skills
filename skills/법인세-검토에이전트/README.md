@@ -1,4 +1,4 @@
-# 법인세 검토에이전트 (법인세-AR)
+# 법인세 검토에이전트
 
 법인세 검토에이전트. 전기 신고서의 빠진 조정(경정청구 · 수정신고 후보)부터 당기 신고 전 유의사항, 신고서 초안 리뷰까지 하는 법인세 세무조정 분석적 검토(AR) Claude 스킬.
 
@@ -18,7 +18,7 @@ v0.3(가이드 순서대로 한 단계씩 판단, 공제 · 감면을 입법 취
 
 ```bash
 git clone https://github.com/hany202507/finance-ai-skills.git
-cp -r finance-ai-skills/skills/법인세-AR ~/.claude/skills/법인세-AR
+cp -r finance-ai-skills/skills/법인세-검토에이전트 ~/.claude/skills/법인세-검토에이전트
 pip install openpyxl pyyaml pymupdf
 ```
 

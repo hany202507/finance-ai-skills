@@ -37,7 +37,7 @@ jobs:
         # ubuntu 와 windows 에서 돈다. 아래 식은 저장소가 private 이면 ubuntu 만 고른다
         os: ${{ github.event.repository.private && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         python: ["3.10", "3.13"]
-        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령검토, 양도소득세, 법인세-통합고용, 분개테스트, DSD푸팅, 감사대시보드, 법인세-AR]
+        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령검토, 양도소득세, 법인세-통합고용, 분개테스트, DSD푸팅, 감사대시보드, 법인세-검토에이전트]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
