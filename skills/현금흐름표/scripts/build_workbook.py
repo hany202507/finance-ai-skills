@@ -17,6 +17,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter as L
 import 계정규칙 as R
+import engine as E
 
 NAVY = PatternFill("solid", fgColor="1E2750")
 SUB = PatternFill("solid", fgColor="F1F3FB")
@@ -354,8 +355,8 @@ def 만들기(r, 경로, 회사="", 기간=("", ""), 메모=(), 기말BS=None):
         a = 계정[c]
         정.cell(row=row, column=1, value=c); 정.cell(row=row, column=2, value=a["계정"])
         ID = f"$A{row}"
-        정[f"H{row}"] = a["계정"]; 정[f"I{row}"] = f'=-SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"<>영업",{J["N"]},"<0")'
-        정[f"J{row}"] = a["계정"]; 정[f"K{row}"] = f'=SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"<>영업",{J["N"]},">0")'
+        정[f"H{row}"] = E.손익라벨(c, 계정); 정[f"I{row}"] = f'=-SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"<>영업",{J["N"]},"<0")'
+        정[f"J{row}"] = E.손익라벨(c, 계정); 정[f"K{row}"] = f'=SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"<>영업",{J["N"]},">0")'
         정[f"O{row}"] = f'=SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"투자",{J["N"]},">0")'
         정[f"Q{row}"] = f'=-SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"투자",{J["N"]},"<0")'
         정[f"S{row}"] = f'=SUMIFS({J["N"]},{J["D"]},{ID},{J["U"]},"재무",{J["N"]},">0")'
@@ -410,9 +411,9 @@ def 만들기(r, 경로, 회사="", 기간=("", ""), 메모=(), 기말BS=None):
         c = 정.cell(row=row, column=j + 1, value=h); c.fill, c.font = NAVY, HF
     row += 1
     라벨들 = sorted({lab for c in r.정산칸 for k in ("I", "K") for lab in r.정산칸[c].get(k, {})} |
-                  {계정[c]["계정"] for c in r.정산손익})
+                  {E.손익라벨(c, 계정) for c in r.정산손익})
     for lab in 라벨들:
-        코드 = r.정산라벨코드.get(lab) or next((c for c in r.정산손익 if 계정[c]["계정"] == lab), None)
+        코드 = r.정산라벨코드.get(lab) or next((c for c in r.정산손익 if E.손익라벨(c, 계정) == lab), None)
         if 코드 is None:
             continue
         비용 = 계정[코드]["구분"] == "비용"
@@ -459,21 +460,31 @@ def 만들기(r, 경로, 회사="", 기간=("", ""), 메모=(), 기말BS=None):
         간.cell(row=row, column=1, value="1. 당기순이익(손실)"); 간.cell(row=row, column=2, value=f"=간접법_정산표!G{당기순}")
         _줄(간, row, "grp"); 소계 = [row]; row += 1
     범 = f"간접법_정산표!$H$4:$H${끝}", f"간접법_정산표!$I$4:$I${끝}", f"간접법_정산표!$J$4:$J${끝}", f"간접법_정산표!$K$4:$K${끝}"
-    가산 = sorted({lab for c in r.정산칸 for lab in r.정산칸[c].get("I", {})} | {계정[c]["계정"] for c in r.정산손익})
-    차감 = sorted({lab for c in r.정산칸 for lab in r.정산칸[c].get("K", {})} | {계정[c]["계정"] for c in r.정산손익})
-    for 제목, 라벨목록, 라벨범, 금액범, 부호, 총칸 in (
-            ("2. 현금의 유출이 없는 비용 등의 가산", 가산, 범[0], 범[1], "", "I"),
-            ("3. 현금의 유입이 없는 수익 등의 차감", 차감, 범[2], 범[3], "-", "K")):
-        h = row
-        간.cell(row=row, column=1, value=제목); _줄(간, row, "grp"); row += 1
-        for lab in 라벨목록:
-            간.cell(row=row, column=1, value=lab)
-            간.cell(row=row, column=2, value=f"={부호}SUMIF({라벨범},A{row},{금액범})"); _줄(간, row, "item"); row += 1
-        간.cell(row=row, column=1, value="그 밖의 것")
-        간.cell(row=row, column=2, value=f"={부호}간접법_정산표!{총칸}{합행}-SUM(B{h + 1}:B{row - 1})" if row > h + 1
-                else f"={부호}간접법_정산표!{총칸}{합행}")
-        _줄(간, row, "item"); row += 1
-        간.cell(row=h, column=2, value=f"=SUM(B{h + 1}:B{row - 1})"); 소계.append(h)
+    # 손익 계정과목마다 가산 · 차감 · 순액을 한 줄에 둔다. 가산 · 차감은 계정 성격이 아니라 비현금 분개의 방향이라
+    # 같은 계정이 양쪽에 걸린다(국고보조금 상계, 재공품 원가 대체, 평가충당금 환입, 리스료 상계).
+    # 두 묶음으로 갈라 두면 계정별로 맞춰 볼 수 없어 한 줄로 모았다(2026-10-29)
+    라벨 = sorted({lab for c in r.정산칸 for k in ("I", "K") for lab in r.정산칸[c].get(k, {})} | {E.손익라벨(c, 계정) for c in r.정산손익})
+    간.column_dimensions["C"].width = 20; 간.column_dimensions["D"].width = 20
+    h = row
+    간.cell(row=row, column=1, value="2. 현금 유출입이 없는 손익의 조정 (계정과목별)"); _줄(간, row, "grp")
+    for col, t in (("B", "금액(2 는 순액 = 가산 + 차감)"), ("C", "가산(현금 유출 없는 비용 등)"), ("D", "차감(현금 유입 없는 수익 등)")):
+        간[f"{col}3"] = t; 간[f"{col}3"].font = Font(bold=True, size=9, color="44506A")
+    row += 1
+    for lab in 라벨:
+        간.cell(row=row, column=1, value=lab)
+        간.cell(row=row, column=3, value=f"=SUMIF({범[0]},A{row},{범[1]})")
+        간.cell(row=row, column=4, value=f"=-SUMIF({범[2]},A{row},{범[3]})")
+        간.cell(row=row, column=2, value=f"=C{row}+D{row}"); _줄(간, row, "item")
+        _줄(간, row, "item", 3); _줄(간, row, "item", 4); row += 1
+    간.cell(row=row, column=1, value="그 밖의 것")
+    for col, 총칸, 부호 in (("C", "I", ""), ("D", "K", "-")):
+        간[f"{col}{row}"] = (f"={부호}간접법_정산표!{총칸}{합행}-SUM({col}{h + 1}:{col}{row - 1})" if row > h + 1
+                            else f"={부호}간접법_정산표!{총칸}{합행}")
+    간.cell(row=row, column=2, value=f"=C{row}+D{row}"); _줄(간, row, "item")
+    _줄(간, row, "item", 3); _줄(간, row, "item", 4); row += 1
+    for col in "BCD":
+        간[f"{col}{h}"] = f"=SUM({col}{h + 1}:{col}{row - 1})"; 간[f"{col}{h}"].number_format = NUM
+    소계.append(h)
     h = row
     간.cell(row=row, column=1, value="4. 영업활동으로 인한 자산·부채의 변동"); _줄(간, row, "grp"); row += 1
     for c, (s, e) in 정행.items():
@@ -739,8 +750,9 @@ def 만들기(r, 경로, 회사="", 기간=("", ""), 메모=(), 기말BS=None):
         독.cell(row=row, column=1, value=c); 독.cell(row=row, column=2, value=x["계정"]); 독.cell(row=row, column=3, value=계정[c]["구분"])
         독.cell(row=row, column=5, value=(f"=SUMIFS({J['G']},{J['D']},A{row})-SUMIFS({J['H']},{J['D']},A{row})" if 비용
                                           else f"=SUMIFS({J['H']},{J['D']},A{row})-SUMIFS({J['G']},{J['D']},A{row})"))
-        가 = (f"SUMIF(간접법_정산표!$H$4:$H${끝정},B{row},간접법_정산표!$I$4:$I${끝정})",
-             f"SUMIF(간접법_정산표!$J$4:$J${끝정},B{row},간접법_정산표!$K$4:$K${끝정})")
+        라 = f'A{row}&" "&B{row}'       # 정산표 손익 라벨은 「코드 계정명」(engine.손익라벨)
+        가 = (f"SUMIF(간접법_정산표!$H$4:$H${끝정},{라},간접법_정산표!$I$4:$I${끝정})",
+             f"SUMIF(간접법_정산표!$J$4:$J${끝정},{라},간접법_정산표!$K$4:$K${끝정})")
         독.cell(row=row, column=6, value=f"={가[0]}-{가[1]}" if 비용 else f"={가[1]}-{가[0]}")
         독.cell(row=row, column=7, value=f"=SUMIFS({J['N']},{J['D']},A{row})")
         독.cell(row=row, column=8, value=f"=E{row}-F{row}+G{row}" if 비용 else f"=E{row}-F{row}-G{row}")

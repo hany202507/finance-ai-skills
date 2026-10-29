@@ -84,6 +84,11 @@ def main(argv=None):
             명세 = 입력.계정명세서(a.재무상태표)
         except Exception:
             명세 = []
+        # 기초·기말 두 날짜가 든 재무상태표면 기초 기준일 줄만 명세로 쓴다. 기말 줄까지 쓰면 기초잔액 풀이 두 배가 된다(2026-10-29)
+        if any(m.get("기준일") for m in 명세):
+            import datetime as _dt
+            기초일 = str(_dt.date.fromisoformat(str(기간[0])[:10]) - _dt.timedelta(days=1))
+            명세 = [m for m in 명세 if m.get("기준일") == 기초일]
     이름코드 = {l["계정"]: l["코드"] for l in 줄}
     for m in 명세:
         if isinstance(m["코드"], str) or m["코드"] is None:

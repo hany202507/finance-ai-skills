@@ -496,6 +496,7 @@ def 계정명세서(경로):
     pc = next((c for c in ["거래처", "거래처명"] if c in df.columns), None)
     tc = next((c for c in ["적요", "내용", "비고", "성격"] if c in df.columns), None)
     oc = next((c for c in ["원천계정", "원천 계정", "원천", "원천코드", "발생계정"] if c in df.columns), None)
+    dc = _열(df, "기준일", False)
     out = []
     for _, x in df.iterrows():
         if pd.isna(x[bc]):
@@ -504,7 +505,8 @@ def 계정명세서(경로):
         out.append({"코드": c, "계정": n, "잔액": _원(x[bc]), "원천": _원천계정(x[oc]) if oc else None,
                     "거래처": _글(x[pc]) if pc else "", "적요": _글(x[tc]) if tc else "",
                     "활동": _글(x["활동"]) or None if "활동" in df.columns else None,
-                    "항목": _글(x["항목"]) or None if "항목" in df.columns else None})
+                    "항목": _글(x["항목"]) or None if "항목" in df.columns else None,
+                    "기준일": str(x[dc])[:10] if dc else None})
     return out
 
 
