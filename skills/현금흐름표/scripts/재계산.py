@@ -15,18 +15,48 @@ import sys
 from pathlib import Path
 
 
-def _엑셀(경로):
+def _엑셀_자식(경로, pid파일):
+    """따로 띄운 파이썬에서 엑셀을 돌린다. 엑셀 프로세스 번호를 먼저 적어 두어 부모가 시간 초과 때 끌 수 있게 한다."""
     import win32com.client as win32
     app = win32.DispatchEx("Excel.Application")
+    try:
+        import win32process
+        Path(pid파일).write_text(str(win32process.GetWindowThreadProcessId(app.Hwnd)[1]), encoding="utf-8")
+    except Exception:
+        pass
     app.Visible = False
     app.DisplayAlerts = False
+    app.AskToUpdateLinks = False
     try:
-        wb = app.Workbooks.Open(str(Path(경로).resolve()))
+        wb = app.Workbooks.Open(str(Path(경로).resolve()), UpdateLinks=0)
         app.CalculateFullRebuild()
         wb.Save()
         wb.Close(SaveChanges=False)
     finally:
         app.Quit()
+
+
+def _엑셀(경로, 제한초=None):
+    """엑셀 COM 은 로그인 · 복구 · 라이선스 같은 창이 뜨면 아무 말 없이 무한정 기다린다. 따로 띄운 프로세스로 돌리고
+    시간 제한을 넘기면 엑셀을 끄고 실패로 넘긴다(2026-10-29, 1만 줄 분개장에 30분 넘게 걸렸다는 보고)."""
+    import tempfile, time
+    p = Path(경로).resolve()
+    제한초 = 제한초 or max(180, int(p.stat().st_size / 1_000_000 * 60))     # 1MB 에 1분, 적어도 3분
+    pid파일 = Path(tempfile.gettempdir()) / f"재계산_{p.stem}_{int(time.time())}.pid"
+    자식 = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--엑셀자식", str(p), str(pid파일)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        _, err = 자식.communicate(timeout=제한초)
+    except subprocess.TimeoutExpired:
+        자식.kill()
+        if pid파일.exists():
+            subprocess.run(["taskkill", "/F", "/PID", pid파일.read_text().strip()], capture_output=True)
+        raise TimeoutError(f"엑셀이 {제한초}초 안에 끝나지 않아 껐다(대화상자가 떠 있었을 수 있다)")
+    finally:
+        pid파일.unlink(missing_ok=True)
+    if 자식.returncode:
+        줄 = (err or b"").decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(줄[-1] if 줄 else "엑셀 실패")
     return "Excel"
 
 
@@ -84,3 +114,10 @@ def 확인(경로):
                     if b.cell(r, c).value is None:
                         빈칸 += 1
     return 전체, 빈칸
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 4 and sys.argv[1] == "--엑셀자식":
+        _엑셀_자식(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) >= 2:
+        print(심기(sys.argv[1]) or "재계산 못 함")

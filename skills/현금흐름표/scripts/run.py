@@ -14,9 +14,30 @@ from collections import defaultdict
 import 입력, engine, build_workbook, 재계산
 
 
+class _값시트:
+    """읽기 전용으로 한 시트의 값을 한 번 훑어 좌표로 찾는다. 대조에 필요한 건 요약 · 직접법 · 간접법 · 정산표 네 시트뿐인데
+    통째로 열면 분개장 시트(줄 수 × 40열)까지 읽어 1만 2천 줄에서 21초가 걸렸다(2026-10-29)"""
+    def __init__(self, ws):
+        self.값 = {}
+        for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+            for j, v in enumerate(row, 1):
+                if v is not None:
+                    self.값[(i, j)] = v
+
+    def __getitem__(self, 좌표):
+        from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+        c, rr = coordinate_from_string(좌표)
+        return type("칸", (), {"value": self.값.get((rr, column_index_from_string(c)))})
+
+    def cell(self, row, column):
+        return type("칸", (), {"value": self.값.get((row, column))})
+
+
 def 대조(경로, r, 셀):
     import openpyxl
-    wb = openpyxl.load_workbook(경로, data_only=True)
+    원 = openpyxl.load_workbook(경로, data_only=True, read_only=True)
+    wb = {n: _값시트(원[n]) for n in ("현금흐름표_직접법", "현금흐름표_간접법", "요약", "간접법_정산표")}
+    원.close()
     직, 간, 요약 = wb["현금흐름표_직접법"], wb["현금흐름표_간접법"], wb["요약"]
     틀림 = []
     def 비교(이름, 엑셀값, 엔진값):
@@ -70,6 +91,10 @@ def main(argv=None):
     ap.add_argument("--엑셀대조생략", action="store_true",
                     help="엑셀·LibreOffice 로 수식을 다시 계산해 엔진 값과 대조하는 단계를 건너뛴다(엑셀이 없는 서버·CI)")
     a = ap.parse_args(argv)
+    import time
+    시각 = [("시작", time.time())]
+    def 찍기(이름):
+        시각.append((이름, time.time()))
 
     줄, 전기, 기말, 마스터, 메모, 기간, 부가 = 입력.준비(a.분개장, a.재무상태표, a.계정, a.분개장시트,
                                               세부통합=not a.세부유지, 손익계산서경로=a.손익계산서,
@@ -96,10 +121,21 @@ def main(argv=None):
     현금추가 = {int(x) if x.isdigit() else x for x in a.현금계정}
     투자지정 = {int(x) if x.isdigit() else x for x in a.투자계정}
     판정 = [p for f in a.판정 for p in 입력.판정파일(f)]
+    찍기("읽기")
     r = engine.실행(줄, 전기, 마스터, 정책, 기말, 기준=a.기준, 상세=상세, 명세서=명세, 손익NI=손익NI, 현금추가=현금추가,
                    투자지정=투자지정, 잔액열어둠=부가.get("잔액열어둠", False), 판정=판정)
+    찍기("계산")
     메모.append(f"기준: {r.기준}" + (f", 상세 {len(상세)}건" if 상세 else "") + (f", 계정명세서 {len(명세)}건" if 명세 else "")
               + (f", 회계사 판정 {len(r.판정)}줄" if r.판정 else ""))
+    # 기말 재무상태표 · 손익계산서가 없으면 결산정리분개가 빠졌는지 알 수 없다. 빠지면 현금 합계는 맞아도
+    # 간접법의 당기순이익과 운전자본 변동이 틀린다. 결과마다 같이 주면 더 정확하다고 안내한다(2026-10-29)
+    안내 = []
+    if not 기말 and not a.시산표:
+        안내.append("기말 재무상태표를 같이 주면 더 정확합니다. 계정마다 기말 잔액을 분개장과 대조해 빠진 결산정리분개를 찾습니다. "
+                  "지금은 기말 잔액을 기초 + 분개장으로 만들어 이 대조가 늘 맞습니다")
+    if not a.손익계산서 and not a.시산표:
+        안내.append("손익계산서를 같이 주면 더 정확합니다. 간접법이 출발하는 당기순이익을 분개장과 대조합니다")
+    메모 += [f"안내: {x}" for x in 안내]
 
     out = Path(a.출력 or Path(a.분개장[0]).parent)
     out.mkdir(parents=True, exist_ok=True)
@@ -107,11 +143,14 @@ def main(argv=None):
     xl = out / f"현금흐름표_{이름}.xlsx"
     메모 = 메모 + [f"정책: " + ", ".join(f"{k}={v}" for k, v in r.정책.items())]
     셀 = build_workbook.만들기(r, xl, a.회사, 기간, 메모, 기말)
+    찍기("워크북")
     if a.엑셀대조생략:
         틀림, 판정 = [], []
     else:
         도구 = 재계산.심기(xl)
+        찍기("엑셀 재계산")
         틀림, 판정 = (대조(xl, r, 셀) if 도구 else (["재계산 못 함: 엑셀에서 열어 저장한 뒤 다시 대조"], []))
+        찍기("대조")
 
     요약 = {
         "파일": str(xl), "기간": 기간, "메모": 메모,
@@ -124,6 +163,7 @@ def main(argv=None):
         "독립검산": r.독립, "독립통과": r.독립통과,
         "엑셀검증": [{"검증": k, "판정": p} for k, p in 판정], "엑셀대조_틀림": 틀림,
         "확인사항": [{"분류": x[0], "내용": x[1], "금액": x[2]} for x in r.확인],
+        "안내": 안내,
     }
     (out / f"검증_{이름}.json").write_text(json.dumps(요약, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -156,6 +196,10 @@ def main(argv=None):
           + (", B 는 잔액 열어둠이라 판정 안 함" if r.잔액열어둠 else "") + ")")
     for t in 틀림:
         print("   ", t)
+    for x in 안내:
+        print(f"  안내: {x}")
+    print("  시간: " + " · ".join(f"{n} {b - a_:.0f}초" for (_, a_), (n, b) in zip(시각, 시각[1:]))
+          + f" · 합계 {시각[-1][1] - 시각[0][1]:.0f}초")
     return 0 if (r.통과 and not 틀림) else 1
 
 

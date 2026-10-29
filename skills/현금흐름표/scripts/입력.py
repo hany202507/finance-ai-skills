@@ -76,8 +76,31 @@ def 스타일제거(경로):
     return buf
 
 
+_읽은표 = {}
+
+
 def _원본(경로, 시트=None, header=0):
+    """같은 파일을 여러 번 읽지 않는다. 원장 여부를 볼 때와 분개장을 읽을 때 같은 파일을 두 번 열어
+    1만 2천 줄 분개장 읽기에 27초가 걸렸다(2026-10-29). 엑셀은 calamine 이 있으면 그것으로 읽는다(openpyxl 보다 열 배 남짓 빠르다)."""
     p = Path(경로)
+    try:
+        열쇠 = (str(p.resolve()), p.stat().st_mtime_ns, 시트, header)
+    except OSError:
+        열쇠 = None
+    if 열쇠 in _읽은표:
+        return _읽은표[열쇠].copy()
+    df = _원본_읽기(p, 시트, header)
+    if 열쇠:
+        _읽은표[열쇠] = df
+    return df.copy()
+
+
+def _엔진():
+    import importlib.util
+    return "calamine" if importlib.util.find_spec("python_calamine") else None
+
+
+def _원본_읽기(p, 시트=None, header=0):
     if p.suffix.lower() in (".csv", ".txt"):
         # 엑셀이 한글을 제대로 여는 BOM 붙은 UTF-8, BOM 없는 UTF-8, 한글 엑셀이 저장한 CP949 를 모두 받는다
         for enc in ("utf-8-sig", "cp949"):
@@ -89,6 +112,13 @@ def _원본(경로, 시트=None, header=0):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
+        엔진 = _엔진()
+        if 엔진:
+            try:
+                return pd.read_excel(p, sheet_name=시트 if 시트 is not None else 0, header=header, engine=엔진)
+            except Exception as e:
+                if "sheet" in str(e).lower() and "not found" in str(e).lower():
+                    raise
         try:
             return pd.read_excel(p, sheet_name=시트 if 시트 is not None else 0, header=header)
         except (TypeError, ValueError, KeyError) as e:
@@ -442,12 +472,17 @@ def 상세(경로, 필터=None):
     dc = next(c for c in ["일자", "거래일자", "거래일시", "승인일", "날짜", "date"] if c in df.columns)
     tc = next((c for c in ["적요", "내용", "거래내용", "memo"] if c in df.columns), None)
     pc = next((c for c in ["거래처", "거래처명", "거래처 라벨", "상대방"] if c in df.columns), None)
+    # 은행마다 입출금 열 이름이 다르다(입금·입금액·입금금액·맡기신금액). 입금액 · 출금액 열 통장에서 멈췄다(2026-10-29)
+    ic = next((c for c in ["입금", "입금액", "입금금액", "맡기신금액"] if c in df.columns), None)
+    oc = next((c for c in ["출금", "출금액", "출금금액", "찾으신금액"] if c in df.columns), None)
+    ac = next((c for c in ["금액", "거래금액", "amount"] if c in df.columns), None)
+    if not (ic and oc) and not ac:
+        raise ValueError(f"상세 내역 {Path(경로).name} 에 금액 열이 없다(입금·출금 또는 금액). 있는 열: {list(df.columns)}")
     out = []
     for _, x in df.iterrows():
-        if "입금" in df.columns and "출금" in df.columns:
-            금액 = _원(x["입금"]) - _원(x["출금"])
+        if ic and oc:
+            금액 = _원(x[ic]) - _원(x[oc])
         else:
-            ac = next(c for c in ["금액", "거래금액", "amount"] if c in df.columns)
             금액 = _원(x[ac])
             io = next((c for c in ["입출금", "구분", "거래구분"] if c in df.columns), None)
             if io and "출" in str(x[io]):
