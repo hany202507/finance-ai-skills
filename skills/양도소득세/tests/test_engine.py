@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import copy
+import datetime as dt
 import json
 import os
 
@@ -101,7 +102,12 @@ def test_personal_data_rejected():
 
 
 def test_stale_edition_warns():
-    r = engine.calculate(copy.deepcopy(CASES["A"]), today="2026-10-30")
+    # 날짜는 규칙세트 확인일에서 센다. 고정 날짜로 두면 기준정보를 갱신할 때 낡음이 풀려 실패한다(2026-11-03 갱신)
+    checked = dt.date.fromisoformat(calc("A")["기준정보"]["확인일"])
+    day = lambda n: (checked + dt.timedelta(days=n)).isoformat()
+    fresh = engine.calculate(copy.deepcopy(CASES["A"]), today=day(engine.STALE_DAYS))
+    assert fresh["기준정보"]["낡음"] is False and not any("7일" in w for w in fresh["경고"])
+    r = engine.calculate(copy.deepcopy(CASES["A"]), today=day(engine.STALE_DAYS + 1))
     assert r["기준정보"]["낡음"] is True and any("7일" in w for w in r["경고"])
 
 

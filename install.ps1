@@ -93,9 +93,9 @@ try {
             if ([regex]::IsMatch($block, '"LAW_OC"\s*:\s*"[^"<]+"')) { $oc = $true }
         }
         $keys = @('head',
+            $(if ($cfg -match 'taxdoctorai\.com') { 'taxdoctor-ok' } else { 'taxdoctor-check' }),
             $(if ($kl.Success) { 'korean-law-ok' } else { 'korean-law-missing' }),
             $(if ($oc) { 'oc-ok' } else { 'oc-missing' }),
-            $(if ($cfg -match 'taxdoctorai\.com') { 'taxdoctor-ok' } else { 'taxdoctor-check' }),
             $(if ($cfg -match 'mcp\.gomdori\.app') { 'gomdori-ok' } else { 'gomdori-check' }),
             'tail')
         $index = Join-Path $mcpDest 'index.js'

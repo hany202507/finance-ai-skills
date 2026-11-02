@@ -44,16 +44,27 @@ python scripts/make_return.py --사실관계 sample/a.json --신고인 sample/a_
 
 ## 설치 뒤 점검
 
-세액 계산은 `rules/` 규칙세트로 하고, 근거 조문을 더 찾거나 기준정보를 갱신할 때(5절) 아래 네 가지를 씁니다. 설치를 마치면 이 세션에서 도구가 보이는지 ToolSearch 로 확인하고, 없는 것만 사용자에게 알립니다. 저장소 설치 스크립트(README 「설치」)로 깔았으면 끝에 같은 내용의 「법령 서버 점검」이 나옵니다.
+필요한 법령 서버는 TaxDoctor 하나입니다. 세액 계산과 판정은 `rules/` 규칙세트만 읽고, 법령 서버는 근거 조문을 더 찾을 때(5절)만 씁니다. 설치를 마치면 이 세션에서 TaxDoctor 도구가 보이는지 ToolSearch 로 확인하고, 없으면 사용자에게 알립니다. 저장소 설치 스크립트(README 「설치」)로 설치했으면 끝에 같은 내용의 「법령 서버 점검」이 나옵니다.
+
+| 확인할 것 | 있으면 보이는 도구 | 없을 때 알릴 것 |
+|---|---|---|
+| TaxDoctor | `search_tax`, `get_article` | `https://taxdoctorai.com` 무료 가입 → Claude 설정 → 커넥터 → 커스텀 커넥터 추가, 주소 `https://mcp.taxdoctorai.com/mcp` |
+
+TaxDoctor 를 넣었으면 앱을 껐다 켠 뒤 「소득세법 제89조 원문 찾아줘」로 확인합니다. 법령명 · 시행일 · 링크가 나오면 연결된 것입니다.
+
+### TaxDoctor 가 안 될 때 (선택)
+
+아래 셋은 TaxDoctor 가 응답하지 않을 때 조문을 읽는 데 씁니다. 없어도 계산과 신고서 만들기는 됩니다. 없으면 「TaxDoctor 가 안 될 때 쓰는 선택 항목이 있다」고 한 줄만 알리고, 사용자가 원하면 아래대로 안내합니다.
 
 | 확인할 것 | 있으면 보이는 도구 | 없을 때 알릴 것 |
 |---|---|---|
 | korean-law 법령 서버 | `mcp__korean-law__get_law_text` | 설치 경로는 `<홈 폴더 절대경로>/.claude/mcp/korean-law/index.js` 입니다(저장소 설치 스크립트가 넣습니다). 그 경로에 `index.js` 가 없으면 저장소의 `mcp/korean-law` 폴더를 그 경로로 복사하고 Node 패키지를 설치합니다(Node.js 18 이상). 그다음 Claude 앱에 「korean-law 법령 서버를 사용자 범위로 등록해 줘. 실행은 node "<그 경로>", 환경변수 LAW_OC 는 <본인OC>」를 보내고 앱을 껐다 켭니다 |
 | 법제처 OC | korean-law 첫 조회가 인증 오류 없이 응답 | `https://open.law.go.kr` 회원가입 → 「OPEN API 신청」에서 활용신청(승인 1~2일). 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크합니다. OC 는 가입한 이메일의 @ 앞부분인 아이디입니다(`hong@gmail.com` 이면 `hong`) |
-| TaxDoctor | `search_tax`, `get_article` | `https://taxdoctorai.com` 무료 가입 → Claude 설정 → 커넥터 → 커스텀 커넥터 추가, 주소 `https://mcp.taxdoctorai.com/mcp` |
 | 법제처 통합검색(korean-law-mcp) | `legal_research`, `get_annexes` | 커스텀 커넥터 추가, 주소 `https://mcp.gomdori.app/law?oc=<본인OC>`. `?oc=` 를 빼면 OC 없는 사용자끼리 나눠 쓰는 한도에 걸려 자주 막힙니다 |
 
-korean-law 서버가 없으면 OC 가 있는지 먼저 묻습니다. OC 가 없으면 OC 줄부터 알리고, 승인된 뒤 korean-law 등록과 통합검색 주소에 같은 OC 를 넣게 합니다. 다 갖춘 뒤에는 앱을 껐다 켠 뒤 「민법 제162조 원문 찾아줘」로 확인합니다.
+korean-law 를 넣으려면 OC 가 먼저 있어야 합니다. OC 가 없으면 OC 항목부터 알리고, 승인된 뒤 korean-law 등록과 통합검색 주소에 같은 OC 를 넣게 합니다. 다 갖추면 앱을 껐다 켜고 「korean-law 로 민법 제162조 원문 찾아줘」로 확인합니다.
+
+기준정보를 직접 다시 받으려면(`scripts/refresh/fetch_articles.py`) 법제처 OC 와 TaxDoctor 가 둘 다 있어야 합니다.
 
 ## 0. 기준정보
 
@@ -298,7 +309,7 @@ python "{skill}/scripts/make_return.py" --사실관계 <facts.json> --신고인 
 
 ## 5. 법령을 더 찾아야 할 때
 
-`skills/법령검토/SKILL.md` 순서를 따릅니다. TaxDoctor 를 1차로 쓰고 korean-law 로 대조합니다.
+TaxDoctor 로 찾습니다. 세법 조문과 지난 판(`get_article` 의 `as_of`), 부칙(`get_amendments`), 예규 · 판례(`search_tax`), 세법이 아닌 참조 법령(`get_reference_article`, 민법 · 주택법 등), 조정대상지역 공고 이력(`get_regulated_area_history`)이 들어 있습니다. TaxDoctor 가 안 될 때 korean-law 를 씁니다.
 
 이 스킬의 규칙세트 값은 바꾸지 않습니다. 값이 틀렸다고 보이면 운영자에게 알립니다.
 

@@ -68,7 +68,7 @@ if [ -f "$src/install-check.txt" ]; then
   if [ -n "${LAW_OC:-}" ]; then oc=ok; fi
   if grep -q 'taxdoctorai\.com' "$cfg"; then td=ok; fi
   if grep -q 'mcp\.gomdori\.app' "$cfg"; then gl=ok; fi
-  for k in head "korean-law-$kl" "oc-$oc" "taxdoctor-$td" "gomdori-$gl" tail; do
+  for k in head "taxdoctor-$td" "korean-law-$kl" "oc-$oc" "gomdori-$gl" tail; do
     awk -v k="[$k]" '{ sub(/\r$/, "") } $0 == k { p = 1; next } /^\[[a-z-]+\]$/ { p = 0 } p' "$src/install-check.txt" |
       sed "s|{MCP_INDEX}|$mcpdest/index.js|"
   done
