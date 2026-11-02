@@ -356,26 +356,31 @@ def test_before_2023_is_not_integrated_credit(tmp_path):
 
 def test_sample_2027_second_term_and_third_year(tmp_path):
     """2027 과세연도: 신규공제 A(직전) + B(전전, 2025 과세연도 대비). 전전전(2024)은 법 제29조의8 제1항 괄호로 비교에서 빠져 계산된다.
-    직전(2026) 증가분은 신규공제라 2차 연도가 없고, 직전전(2025) 1차 공제는 3차 연도로 이어진다(근로자별 인원)."""
+    직전(2026) 증가분은 신규공제라 2차 연도가 없고, 직전전(2025) 1차 공제는 3차 연도로 이어진다(근로자별 인원).
+    신규공제 인원은 새 범위(근로기간 1년이 된 달부터, 2026-11-02 대표 결정)다. 샘플은 직전전(2025) 급여대장이 없어 B 는 전기 신고 인원
+    9.5명(종전 범위)과 견주고, min(해당 9.91, 직전 9.04) 이 그보다 적어 B 가 없다(2026-11-02 전에는 A 13,180,000 · B 29,120,000)."""
     root = tmp_path / "샘플회사" / "2027 법인세"
     assert cli.main([str(root), "--sample", "--sample-year", "2027"]) == 0
-    inp, res, _, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+    inp, res, rules, _ = run(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
     assert not res["unsupported"] and res["regime"] == "2026"
+    assert res["used_new"]["해당"] == (Fraction("9.91"), Fraction("6.08")) and res["used_new"]["직전"] == (Fraction("9.04"), Fraction("5.66"))
     a, b, c = res["new"]["terms"]
-    assert (a["n_y"], a["n_o"], a["amt_y"], a["amt_o"]) == (Fraction("1.74"), Fraction("0.25"), 12_180_000, 1_000_000)
-    assert (b["d_t"], b["n_y"], b["n_o"], b["amt_y"]) == (Fraction("1.82"), Fraction("1.82"), 0, 29_120_000)
+    assert (a["n_y"], a["n_o"], a["amt_y"], a["amt_o"]) == (Fraction("0.42"), Fraction("0.45"), 2_940_000, 1_800_000)
+    assert (b["d_t"], b["n_y"], b["n_o"], b["amt_y"]) == (Fraction("-0.46"), 0, 0, 0)
     assert c is None
-    assert (res["second"], res["third"], res["new_total"], res["extra"], res["total"]) == (0, 14_500_000, 42_300_000, 0, 56_800_000)
+    assert (res["second"], res["third"], res["new_total"], res["extra"], res["total"]) == (0, 14_500_000, 4_740_000, 0, 19_240_000)
     assert res["third_pw"] is True
+    assert any("신규공제 비교에도 이 인원(종전 범위)" in t for t in cli.memos(inp, res, rules))
 
 
 def test_law_pdf_on_official_form(tmp_path):
     """법정서식 PDF: 법제처 서식 쪽 위에 값만 얹는다. 쪽 수와 칸 값, 서식 원문 글이 그대로인지 본다."""
     fitz = pytest.importorskip("fitz")
     from ctax.employ import lawform
+    # 2026 · 2027: 서식(2) 인원은 새 범위(9.91), 기존공제 서식(1) 인원은 종전 범위(13.33), 명세서 사람별 계산한 수는 버리지 않은 값(0.5833)
     want = {2025: (7, ["92,355,000", "27,355,000", "37,500,000", "14,500,000", "13.31", "강도윤", "19750402"]),
-            2026: (10, ["26,180,000", "12,180,000", "13,180,000", "37,500,000", "14,500,000"]),
-            2027: (10, ["29,120,000", "41,300,000", "14,500,000"])}
+            2026: (10, ["17,740,000", "2,940,000", "1,800,000", "4,740,000", "37,500,000", "14,500,000", "9.91", "13.33", "0.5833"]),
+            2027: (10, ["4,740,000", "2,940,000", "14,500,000", "9.91"])}
     for year, (pages, texts) in want.items():
         root = tmp_path / "샘플회사" / f"{year} 법인세"
         assert cli.main([str(root), "--sample", "--sample-year", str(year)]) == 0
@@ -407,6 +412,122 @@ def test_law_pdf_fields_exist_in_coords(tmp_path):
             missing = [k for k in v if k not in c["fields"][form]]
             assert not missing, (year, form, missing)
     assert all(len(r) == 22 for per in c["rows"].values() for r in per["cells"])
+
+
+# ---------------------------------------------------------------- 2026 상시근로자 범위 · 버림 단위 (2026-11-02 대표 결정)
+
+Y2026 = {"과세연도 시작일": D(2026, 1, 1), "과세연도 종료일": D(2026, 12, 31), "직전 1차년도 공제액 청년등": None,
+         "직전 1차년도 공제액 청년등 외": None, "직전전 1차년도 공제액 청년등 외": None, "전기 신고 직전전 상시근로자 수": None,
+         "전기 신고 직전전 청년등 수": None}
+SERVICE = [                                                         # 근로기간 1년이 되는 달의 경계
+    ("C01", "삼월말", D(1980, 1, 1), D(2025, 3, 31), None, "정규직", {}),      # 1년 = 2026-03-30 → 3월부터 10달
+    ("C02", "사월초", D(1980, 1, 1), D(2025, 4, 1), None, "정규직", {}),       # 1년 = 2026-03-31 → 3월부터 10달
+    ("C03", "사월둘", D(1980, 1, 1), D(2025, 4, 2), None, "정규직", {}),       # 1년 = 2026-04-01 → 4월부터 9달
+    ("C04", "올해입사", D(1980, 1, 1), D(2026, 2, 2), None, "정규직", {}),     # 과세연도 안에 1년이 되지 않는다 → ⓐ
+    ("C05", "단기계약", D(1980, 1, 1), D(2024, 6, 3), None, "기간제", {"계약 1년 미만": "Y"}),   # 새 범위는 계약기간 열을 보지 않는다
+    ("C06", "직전입사", D(1980, 1, 1), D(2024, 7, 1), None, "정규직", {}),     # 직전(2025)은 1년 = 2025-06-30 → 6월부터 7달
+]
+DEEMED = [                                                          # 질의회신 2-2: 2025 계약자의 직전 연도 간주
+    ("D01", "간주청년", D(1990, 9, 15), D(2025, 3, 3), None, "정규직", {}),    # 계약 때 34세, 2025-09-15 에 35세, 3년 간주
+    ("D02", "이전계약", D(1990, 9, 15), D(2024, 3, 4), None, "정규직", {}),    # 2024 계약: 간주 없음
+]
+PART = [                                                            # 새 범위 단시간: 월 평균 근로시간
+    ("F01", "평균미달", D(1980, 1, 1), D(2023, 1, 2), None, "단시간", {"월 소정근로시간": 80, "월 평균 근로시간": 55}),
+    ("F02", "평균충족", D(1980, 1, 1), D(2023, 1, 2), None, "단시간",
+     {"월 소정근로시간": 40, "월 평균 근로시간": 64, "직전 월 평균 근로시간": 58}),
+    ("F03", "평균없음", D(1980, 1, 1), D(2023, 1, 2), None, "단시간", {"월 소정근로시간": 70}),
+]
+
+
+def test_2026_new_scope_counts_from_month_service_reaches_one_year(tmp_path):
+    """새 범위(시행령 제26조의8 제2항 제1호): 월말 현재 근로기간 1년 이상인 달부터 넣고 입사일로 소급하지 않는다(rules.yaml scope.service_year).
+    신규공제 비교 연도인 직전 과세연도도 새 범위로 다시 센다(scope.prior_recount). 종전 범위 인원은 그대로다."""
+    inp, res, _, _ = run(make_input(tmp_path / "a.xlsx", staff=SERVICE, years=(2025, 2026), company=Y2026))
+    assert res["new_scope"] and res["sum_floor"] and res["regime"] == "2026"
+    assert calc.one_year_day(inp.staff[0]) == D(2026, 3, 30) and calc.one_year_day(inp.staff[1]) == D(2026, 3, 31)
+    cur = {r.person.id: r for r in res["counts_new"]["해당"].rows}
+    assert [sum(cur[x].worked) for x in ("C01", "C02", "C03", "C04", "C05", "C06")] == [10, 10, 9, 0, 12, 12]
+    assert cur["C03"].worked[:4] == [0, 0, 0, 1]                                     # 4월 말부터
+    assert not cur["C04"].regular and cur["C04"].reason == calc.REASONS["a_new"] and sum(cur["C04"].employed) == 11
+    assert cur["C05"].regular                                                        # 근로기간 2년, 계약 1년 미만 열은 보지 않는다
+    old = {r.person.id: r for r in res["counts"]["해당"].rows}
+    assert sum(old["C01"].worked) == 12 and old["C04"].regular and old["C05"].reason == calc.REASONS["a"]   # 종전 범위
+    prev = {r.person.id: r for r in res["counts_new"]["직전"].rows}
+    assert sum(prev["C05"].worked) == 7 and sum(prev["C06"].worked) == 7 and sum(prev["C01"].worked) == 0
+    # 새 범위 해당 53 / 12 = 4.4166 → 4.41, 직전 14 / 12 = 1.1666 → 1.16.
+    # 종전 범위 해당은 C01 · C02 · C03 · C06 열두 달 + C04 열한 달 = 59 / 12 = 4.9166 → 4.91(C05 는 계약 1년 미만)
+    assert res["used_new"]["해당"][0] == Fraction("4.41") and res["used_new"]["직전"][0] == Fraction("1.16")
+    assert res["used"]["해당"][0] == Fraction("4.91")
+    assert res["new"]["terms"][0]["d_t"] == Fraction("3.25")
+
+
+def test_2026_prior_year_keeps_2025_contract_deemed_youth(tmp_path):
+    """2025 계약자가 2025년 중 35세가 되어도 직전(2025) 인원에 3년 간주를 넣는다(2026-11-02 대표 결정, 질의회신 2-2,
+    사전-2026-법규법인-0729). 2024 계약자는 간주 없이 그해 연령."""
+    inp, res, rules, _ = run(make_input(tmp_path / "a.xlsx", staff=DEEMED, years=(2025, 2026), company=Y2026))
+    assert res["periods"]["직전"].deemed
+    assert any("직전 과세연도 인원에도 2025년 중 계약한 사람의 청년 간주" in t for t in cli.memos(inp, res, rules))
+    prev = {r.person.id: r for r in res["counts"]["직전"].rows}
+    assert sum(prev["D01"].youth_deem) == 10 and sum(prev["D01"].youth_age) == 6     # 3 ~ 12월 말 · 3 ~ 8월 말
+    assert sum(prev["D02"].youth_deem) == sum(prev["D02"].youth_age) == 8           # 1 ~ 8월 말
+    # 직전 인원(종전 범위): D01 10/12 + D02 12/12, 청년등 10/12 + 8/12 = 1.5
+    assert res["used"]["직전"] == (Fraction("1.83"), Fraction("1.5"))
+
+
+def test_sum_floor_from_2026_filing(tmp_path):
+    """2026 과세연도 신고부터 사람별 계산한 수를 더한 뒤 100분의 1 미만을 버린다(시행령 제11조의2 제8항, 2026.5.22 개정,
+    부칙 <대통령령 제36342호> 제2조 제2항). 2025 과세연도 신고는 사람마다 버린 뒤 더한다."""
+    def staff(year):
+        return [(f"E0{i}", f"칠개월{i}", D(1980, 1, 1), D(2023, 1, 2), D(year, 7, 31), "정규직", {}) for i in range(3)]
+    _, r25, _, _ = run(make_input(tmp_path / "a.xlsx", staff=staff(2025)))
+    assert not r25["sum_floor"] and r25["counts"]["해당"].total == Fraction("1.74")             # 0.58 × 3
+    assert r25["counts"]["해당"].rows[0].n_work == Fraction("0.58")
+    _, r26, _, _ = run(make_input(tmp_path / "b.xlsx", staff=staff(2026), years=(2025, 2026), company=Y2026))
+    assert r26["sum_floor"] and r26["counts"]["해당"].total == Fraction("1.75")                # 21 / 12 = 1.75
+    assert r26["used_new"]["해당"][0] == Fraction("1.75") and r26["counts_new"]["해당"].rows[0].n_work == Fraction(7, 12)
+    assert r26["counts"]["해당"].me_total == Fraction("1.75")                                   # 월말 합 방식은 원래 합계에서 버린다
+
+
+def test_2026_part_time_uses_average_hours(tmp_path):
+    """새 범위 단시간근로자는 해당 과세연도 월 평균 근로시간 60시간으로 가린다(시행령 제26조의8 제2항 제2호). 비면 월 소정근로시간."""
+    inp, res, rules, _ = run(make_input(tmp_path / "a.xlsx", staff=PART, years=(2025, 2026), company=Y2026))
+    cur = {r.person.id: r for r in res["counts_new"]["해당"].rows}
+    prev = {r.person.id: r for r in res["counts_new"]["직전"].rows}
+    old = {r.person.id: r for r in res["counts"]["해당"].rows}
+    assert cur["F01"].reason == calc.REASONS["b"] and old["F01"].regular and old["F01"].weight == Fraction(1, 2)
+    assert cur["F02"].regular and cur["F02"].weight == Fraction(1, 2) and old["F02"].reason == calc.REASONS["b"]
+    assert prev["F02"].reason == calc.REASONS["b"] and prev["F01"].regular                    # 직전은 「직전 월 평균 근로시간」, 없으면 소정
+    assert cur["F03"].regular and cur["F03"].weight == Fraction(1, 2)
+    notes = cli.memos(inp, res, rules)
+    assert any("월 소정근로시간을 대신 쓴 사람" in t and "평균없음" in t for t in notes)
+
+
+def test_2026_new_scope_excel_matches_engine(tmp_path):
+    """엑셀이 있는 PC 에서만: 근로기간 경계 · 직전 간주 · 단시간 · 기존공제 2차 판정이 섞인 2026 과세연도에서 수식 값이 엔진과 모두 같다.
+    질의회신 대조(2026-11-02) 때 엑셀이 직전 간주를 빼 신규공제가 엔진과 어긋났던 경우를 포함한다."""
+    pytest.importorskip("win32com.client")
+    root = tmp_path / "가상회사" / "2026 법인세"
+    make_input(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx", staff=SERVICE + DEEMED + PART, years=(2025, 2026),
+               company={**Y2026, "직전 1차년도 공제액 청년등": 14_500_000, "직전 1차년도 공제액 청년등 외": 8_500_000})
+    code = cli.main([str(root)])
+    data = json.loads((root / "_색인" / "통합고용.json").read_text(encoding="utf-8"))
+    if data["excel"] is None:
+        pytest.skip("엑셀이 없습니다")
+    assert data["excel"]["bad"] == [] and data["excel"]["errors"] == []
+    assert [t for t in data["excel"]["tests"] if t["result"] != "통과"] == []
+    assert code == 0 and data["excel"]["total"] > 120                 # 새 범위 사람별 대조까지(10-02 판보다 많다)
+    assert data["rounding"] == "합계에서 버림" and data["headcount_new"]["해당"]["출처"] == "급여대장"
+
+
+def test_cli_passes_returned_headcount_to_info(tmp_path):
+    """육아휴직 복귀 인원도 신고건.json 「상시근로자」 에 넘겨야 조서 20 · 8호(갑) 1B5 에 추가공제가 간다(10-30 늘봄환경 시연에서 1,300만원이 빠졌다)."""
+    root = tmp_path / "가상회사" / "2025 법인세"
+    root.mkdir(parents=True)
+    from ctax.employ import sample
+    sample.write(root / "00 받은자료" / "급여" / "통합고용_입력.xlsx")
+    assert cli.main([str(root), "--no-excel"]) in (0, 1)
+    block = json.loads((root / "_색인" / "신고건.json").read_text(encoding="utf-8"))["상시근로자"]
+    assert block["육아휴직 복귀 인원"] == 1
 
 
 def test_scope_unconfirmed_is_provisional(tmp_path, capsys):

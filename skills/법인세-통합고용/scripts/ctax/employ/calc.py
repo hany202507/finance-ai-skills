@@ -1,6 +1,7 @@
 """통합고용세액공제 상시근로자 수와 공제액을 파이썬으로 계산한다(엑셀 수식과 따로 계산해 서로 맞춰 보는 쪽).
 
 기준은 rules.yaml, 1인당 공제금액은 ctax/wp/rates_2025/credits.yaml 의 employment_integrated 다. 인원은 Fraction 으로 센다.
+2026 과세연도부터는 인원을 두 벌 센다: 종전 범위(기존공제 2 · 3차 판정)와 새 범위(신규공제 · 추가공제, rules.yaml scope.scope_2026_from).
 """
 from __future__ import annotations
 
@@ -13,7 +14,8 @@ from .model import PERIODS, Company, Inputs, Person, rule
 
 FAR = date(9999, 12, 31)
 REASONS = {"a": "ⓐ근로계약기간 1년 미만", "b": "ⓑ단시간 근로자", "c": "ⓒ법인의 임원", "d": "ⓓ최대주주(출자자) 및 그 친족",
-           "e": "ⓔ원천징수사실 미확인 근로자 등", "f": "ⓕ기타", "f_res": "ⓕ기타(내국인 아님)", "f_disp": "ⓕ기타(파견근로자)"}
+           "e": "ⓔ원천징수사실 미확인 근로자 등", "f": "ⓕ기타", "f_res": "ⓕ기타(내국인 아님)", "f_disp": "ⓕ기타(파견근로자)",
+           "a_new": "ⓐ근로기간 1년 미만"}
 YOUTH_KINDS = ("장애인", "고령자", "경력단절", "북한이탈주민", "청년")
 
 
@@ -55,7 +57,8 @@ class Row:
     regular: bool = False
     reason: str = ""
     weight: Fraction = Fraction(1)
-    worked: list[int] = field(default_factory=list)       # 월말 재직(0 · 1)
+    worked: list[int] = field(default_factory=list)       # 근무개월로 세는 달(0 · 1). 새 범위는 근로기간 1년이 된 달부터
+    employed: list[int] = field(default_factory=list)     # 월말 재직이고 급여가 있는 달(근로기간 판정 전)
     youth_age: list[int] = field(default_factory=list)    # 청년등(현재 연령)
     youth_deem: list[int] = field(default_factory=list)   # 청년등(간주 포함)
     paid: list[int] = field(default_factory=list)         # 그 달 지급액
@@ -141,15 +144,32 @@ def youth_kind(p: Person, rules: dict) -> str:
     return "청년"
 
 
-def common_reason(p: Person, rules: dict) -> str:
-    """과세연도와 상관없는 상시근로자 제외 사유(없으면 빈 글)."""
+def one_year_day(p: Person) -> date:
+    """근로기간이 1년이 되는 날(입사일부터 12개월 뒤의 전날). 이 날이 그 달 말일 이전이면 그 달부터 새 범위 근무개월에 넣는다
+    (rules.yaml scope.service_year, 2026-11-02 대표 결정)."""
+    return add_months(p.hired, 12) - timedelta(days=1)
+
+
+def hours_for(p: Person, period: str, scope: str) -> tuple[float | None, bool]:
+    """단시간근로자 판정에 쓰는 시간과, 새 범위에서 월 평균 근로시간이 없어 월 소정근로시간으로 대신했는지.
+    종전 범위는 월 소정근로시간, 새 범위는 그 과세연도 월 평균 근로시간(직전전은 입력 열이 없어 소정근로시간)."""
+    if scope != "새":
+        return p.hours, False
+    v = p.avg_hours if period == "해당" else p.avg_hours_prev if period == "직전" else None
+    return (v, False) if v is not None else (p.hours, True)
+
+
+def common_reason(p: Person, rules: dict, hours: float | None = None, scope: str = "종전") -> str:
+    """과세연도와 상관없는 상시근로자 제외 사유(없으면 빈 글). 새 범위는 「계약 1년 미만」 을 보지 않고
+    근로기간 1년(count_period)으로 가린다. hours 를 주지 않으면 월 소정근로시간."""
+    h = p.hours if hours is None else hours
     if p.resident == "N":
         return REASONS["f_res"]
     if p.kind == "파견":
         return REASONS["f_disp"]
-    if p.short == "Y":
+    if p.short == "Y" and scope != "새":
         return REASONS["a"]
-    if p.kind == "단시간" and (p.hours or 0) < float(rule(rules, "scope", "part_time_hours")):
+    if p.kind == "단시간" and (h or 0) < float(rule(rules, "scope", "part_time_hours")):
         return REASONS["b"]
     if p.officer == "Y":
         return REASONS["c"]
@@ -160,8 +180,9 @@ def common_reason(p: Person, rules: dict) -> str:
     return ""
 
 
-def weight_of(p: Person, rules: dict) -> Fraction:
-    if p.kind == "단시간" and (p.hours or 0) >= float(rule(rules, "scope", "part_time_hours")):
+def weight_of(p: Person, rules: dict, hours: float | None = None) -> Fraction:
+    h = p.hours if hours is None else hours
+    if p.kind == "단시간" and (h or 0) >= float(rule(rules, "scope", "part_time_hours")):
         key = "part_time_weight_supported" if p.supported == "Y" else "part_time_weight"
         return Fraction(str(rule(rules, "scope", key)))
     return Fraction(1)
@@ -186,34 +207,42 @@ def periods(co: Company, rules: dict) -> dict[str, Period]:
     return out
 
 
-def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
+def count_period(inp: Inputs, per: Period, rules: dict, scope: str = "종전", sum_floor: bool = False) -> Count:
+    """한 과세연도 인원. scope 「새」 는 2026 과세연도부터의 상시근로자 범위(근로기간 1년이 된 달부터, 단시간은 월 평균 근로시간).
+    sum_floor 면 사람별 계산한 수를 버리지 않고 더한 뒤 100분의 1 미만을 버린다(rules.yaml count.sum_floor_from)."""
     co = inp.company
     pays = [x for x in inp.pays if per.start <= x.month <= per.end]
     per.has_payroll = bool(pays)
     by_id: dict[str, list] = {}
     for x in pays:
         by_id.setdefault(x.id, []).append(x)
+    cut_n = (lambda x: x) if sum_floor else floor2                      # noqa: E731  사람별 계산한 수
     rows = []
     for p in inp.staff:
-        r = Row(person=p, weight=weight_of(p, rules), kind=youth_kind(p, rules))
+        hours = hours_for(p, per.name, scope)[0]
+        r = Row(person=p, weight=weight_of(p, rules, hours), kind=youth_kind(p, rules))
         mine = by_id.get(p.id, [])
         if not per.has_payroll:
             r.proof = "자료없음"
         else:
             r.proof = "Y" if sum(x.tax + x.pension + x.health for x in mine) > 0 else "N"
-        common = common_reason(p, rules)
+        common = common_reason(p, rules, hours, scope)
         r.regular = not common and r.proof != "N"
         r.reason = common or ("" if r.proof != "N" else REASONS["e"])
         lo, hi = age_limits(p, rules)
         cut = youth_cutoff(p, co.size, rules, per.deemed)
         fixed = fixed_youth(p, rules)
         left = p.left or FAR
+        year1 = one_year_day(p) if scope == "새" else None
         for e in per.ends:
             first = date(e.year, e.month, 1)
             paid = sum(x.pay for x in mine if x.month == first)
             on = p.hired <= e <= left                    # 월말 재직
             # 급여대장이 있는 과세연도는 그 달 급여가 있어야 근무개월로 센다(2026-10-12 회계사 확인, rules.yaml count.unpaid_month)
             w = 1 if on and (paid or not per.has_payroll or co.unpaid == "Y") else 0
+            r.employed.append(w)
+            if year1 and year1 > e:                      # 새 범위: 월말 현재 근로기간 1년 미만인 달은 넣지 않는다
+                w = 0
             r.worked.append(w)
             r.youth_age.append(1 if w and (fixed or (p.kind == "정규직" and lo <= e < hi)) else 0)
             r.youth_deem.append(1 if w and (fixed or (p.kind == "정규직" and lo <= e < cut)) else 0)
@@ -222,20 +251,23 @@ def count_period(inp: Inputs, per: Period, rules: dict) -> Count:
                 r.no_pay += 1
             if paid and (e < p.hired or first > left):
                 r.odd_pay += 1
+        if r.regular and any(r.employed) and not any(r.worked):
+            r.regular, r.reason = False, REASONS["a_new"]          # 과세연도 안에 근로기간 1년이 되지 않았다
         if r.regular:
             m = Fraction(per.months)
             r.m_work = r.weight * sum(r.worked)
-            r.n_work = floor2(r.m_work / m)
+            r.n_work = cut_n(r.m_work / m)
             r.m_youth_age = r.weight * sum(r.youth_age)
-            r.n_youth_age = floor2(r.m_youth_age / m)
+            r.n_youth_age = cut_n(r.m_youth_age / m)
             r.m_youth_deem = r.weight * sum(r.youth_deem)
-            r.n_youth_deem = floor2(r.m_youth_deem / m)
+            r.n_youth_deem = cut_n(r.m_youth_deem / m)
         rows.append(r)
     c = Count(period=per, rows=rows)
     reg = [r for r in rows if r.regular]
-    c.total = sum((r.n_work for r in reg), Fraction(0))
-    c.youth_age = sum((r.n_youth_age for r in reg), Fraction(0))
-    c.youth_deem = sum((r.n_youth_deem for r in reg), Fraction(0))
+    cut_t = floor2 if sum_floor else (lambda x: x)                     # noqa: E731  합계
+    c.total = cut_t(sum((r.n_work for r in reg), Fraction(0)))
+    c.youth_age = cut_t(sum((r.n_youth_age for r in reg), Fraction(0)))
+    c.youth_deem = cut_t(sum((r.n_youth_deem for r in reg), Fraction(0)))
     for i in range(per.months):
         c.monthly.append(sum((r.weight * r.worked[i] for r in reg), Fraction(0)))
         c.monthly_paid.append(sum(1 for r in rows if r.paid[i] > 0))
@@ -328,8 +360,12 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     기존공제(2 · 3차 연도) · 신규공제 · 추가공제."""
     co = inp.company
     pers = periods(co, rules)
-    counts = {name: count_period(inp, per, rules) for name, per in pers.items()}
     cur = pers["해당"]
+    # 2026 과세연도 신고부터 근로자별 인원은 계산한 수를 더한 뒤 버린다(부칙 <대통령령 제36342호> 제2조 제2항)
+    sum_floor = cur.start >= date.fromisoformat(rule(rules, "count", "sum_floor_from"))
+    new_scope = cur.start >= date.fromisoformat(rule(rules, "scope", "scope_2026_from"))
+    counts = {name: count_period(inp, per, rules, "종전", sum_floor) for name, per in pers.items()}
+    counts_new = {name: count_period(inp, per, rules, "새", sum_floor) for name, per in pers.items()}
     deemed_from = date.fromisoformat(rule(rules, "youth", "deemed_from"))
     method = "근로자별" if cur.start >= deemed_from else "월말합"
     regime = regime_of(co, rates)
@@ -378,6 +414,16 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         else:
             used[name] = legacy[name] = (Fraction(0), Fraction(0))
             source[name] = "없음"
+
+    # 새 범위 인원(2026 과세연도부터 신규공제 · 추가공제). 비교 연도도 새 범위로 다시 센다(rules.yaml scope.prior_recount).
+    # 급여대장이 없는 연도는 종전 인원(전기 신고서 · 창업 0)을 그대로 쓴다
+    used_new = {}
+    for name in PERIODS:
+        c = counts_new[name]
+        if source[name] == "급여대장":
+            used_new[name] = (c.total, c.youth_deem if pers[name].deemed else c.youth_age)
+        else:
+            used_new[name] = used[name]
 
     (t_c, y_c), (t_p, y_p) = used["해당"], used["직전"]
     o_c, o_p = t_c - y_c, t_p - y_p
@@ -448,11 +494,11 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         priors = []
         for name in ("직전", "직전전"):
             ok_p = source[name] != "없음" and pers[name].start > cutoff
-            priors.append(used[name] if ok_p else None)
+            priors.append(used_new[name] if ok_p else None)
         priors.append(None)                                      # 전전전은 이 워크북이 세지 않는다(지원 연도는 2027 까지)
         if co.consumer == "Y" or not prev_ok:
             priors = [None, None, None]
-        new = new_credit(co.size, co.capital, used["해당"], priors, rates)
+        new = new_credit(co.size, co.capital, used_new["해당"], priors, rates)
     new_total = new["credit"] if new else 0
 
     returned = co.returned if co.returned is not None else sum(
@@ -460,13 +506,16 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     amt_sizes = {"중소기업": int(rule(rules, "extra", "return_sme")), "중견기업": int(rule(rules, "extra", "return_mid"))}
     amt = amt_sizes.get(co.size, 0)
     return_in_time = co.fy_start <= date.fromisoformat(rates["employment_integrated_extra"]["return_until"]["value"])
-    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and return_in_time and prev_ok and t_c >= t_p
+    x_c, x_p = (used_new if new_scope else used)["해당"][0], (used_new if new_scope else used)["직전"][0]   # 추가공제 인원 비교(㉝ · ㉞)
+    extra = int(round(float(returned) * amt)) if (co.consumer != "Y" and return_in_time and prev_ok and x_c >= x_p
                                                 and co.size in amt_sizes and not unsupported) else 0
     if unsupported:
         second = third = 0
 
-    return {"periods": pers, "counts": counts, "method": method, "regime": regime, "in_time": in_time, "unsupported": unsupported,
-            "used": used, "legacy": legacy, "source": source, "d_t": d_t, "d_y": d_y, "d_o": d_o, "n_y": n_y, "n_o": n_o,
+    return {"periods": pers, "counts": counts, "counts_new": counts_new, "new_scope": new_scope, "sum_floor": sum_floor,
+            "method": method, "regime": regime, "in_time": in_time, "unsupported": unsupported,
+            "used": used, "used_new": used_new, "legacy": legacy, "source": source, "d_t": d_t, "d_y": d_y, "d_o": d_o,
+            "n_y": n_y, "n_o": n_o,
             "a_y": a_y, "a_o": a_o, "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second,
             "second_cut": second_cut, "second_alt": second_alt, "second_pw": pw2, "third": third, "third_cut": third_cut,
             "third_alt": third_alt, "third_pw": pw3, "new": new, "new_total": new_total, "returned": float(returned),

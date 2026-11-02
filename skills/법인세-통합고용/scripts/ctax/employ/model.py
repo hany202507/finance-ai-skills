@@ -30,6 +30,10 @@ STAFF_COLS = [
     ("고용형태", "kind", "kind", True, "정규직 · 기간제 · 단시간 · 파견. 기간제 · 단시간 · 파견은 청년에서 빠진다"),
     ("계약 1년 미만", "short", "yn", False, "근로계약기간이 1년 미만이면 Y. 갱신으로 총 기간이 1년 이상이면 N"),
     ("월 소정근로시간", "hours", "num", False, "단시간근로자만. 60시간 미만이면 상시근로자가 아니다"),
+    ("월 평균 근로시간", "avg_hours", "num", False, "단시간근로자만. 2026 과세연도 신고부터 해당 과세연도 총 근로시간 ÷ 근무개월 수. "
+                                                  "60시간 미만이면 신규공제 인원에서 빠진다. 비우면 월 소정근로시간을 쓴다"),
+    ("직전 월 평균 근로시간", "avg_hours_prev", "num", False, "단시간근로자만. 2026 과세연도 신고부터 직전 과세연도 인원을 새 범위로 다시 셀 때 쓴다. "
+                                                          "비우면 월 소정근로시간을 쓴다"),
     ("0.75 요건", "supported", "yn", False, "단시간근로자가 시행령 제23조 제11항 제2호 요건을 모두 채우면 Y"),
     ("임원", "officer", "yn", False, "법인세법 시행령 제40조 제1항의 임원이면 Y"),
     ("최대주주·친족", "owner", "yn", False, "최대주주 · 최대출자자와 그 배우자 · 직계존비속 · 친족이면 Y"),
@@ -91,6 +95,8 @@ class Person:
     kind: str = "정규직"
     short: str = "N"
     hours: float | None = None
+    avg_hours: float | None = None          # 해당 과세연도 월 평균 근로시간(2026 과세연도부터 새 범위)
+    avg_hours_prev: float | None = None     # 직전 과세연도 월 평균 근로시간
     supported: str = "N"
     officer: str = "N"
     owner: str = "N"

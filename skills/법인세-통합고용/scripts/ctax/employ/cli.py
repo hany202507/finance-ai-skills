@@ -14,7 +14,7 @@ from openpyxl import Workbook, load_workbook
 from .. import xlsx as X
 from ..case import WP_DIR, Case, MissingInput, won
 from . import book, lawform
-from .calc import compute, month_end
+from .calc import REASONS, compute, hours_for, month_end
 from .model import (COMPANY_ROWS, INPUT_DIR, INPUT_NAME, PAY_COLS, PERIODS, STAFF_COLS, InputError, Inputs, load_data,
                     load_rules, read_inputs)
 
@@ -107,20 +107,46 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
                    "(시행규칙 부칙 제23호 제6조: 개정 서식으로 종전 규정의 공제를 신청할 수 없으면 종전 서식). 합계(8호(갑) 18S)는 둘을 더합니다. 기존공제 2차 연도 인원은 최초 공제연도가 2025 과세연도라 근로자별, 3차 연도는 2024 과세연도라 월말 합 방식입니다(시행령 부칙 제36127호 제11조 제1항)")
     elif res["unsupported"]:
         out.append(res["unsupported"])
-    if res["regime"] == "2026" and not res["unsupported"]:
-        out.append("2026 과세연도부터 상시근로자 범위가 바뀌었습니다(시행령 제26조의8 제2항, 대통령령 제35999호 2026-01-01 시행): "
-                   "「근로계약기간 1년 미만」 이 「근로기간 1년 미만」 으로, 단시간근로자는 「1개월 소정근로시간 60시간」 이 「해당 과세연도 총 근로시간 ÷ 근무개월 수 60시간」 으로. "
-                   "이 엔진은 사원명부의 「계약 1년 미만」 · 「월 소정근로시간」 으로 종전 기준을 씁니다. 기존공제(2024 · 2025 증가분)는 종전 범위가 맞고(부칙 제2조), "
-                   "신규공제 인원은 새 범위로 회계사가 확인하십시오(「근로기간」 이 실제 근무 기간인지는 해석례가 아직 없습니다)")
+    if res["new_scope"] and not res["unsupported"]:
+        out.append("2026 과세연도부터 신규공제 · 추가공제 인원은 새 범위(시행령 제26조의8 제2항, 대통령령 제35999호 2026-01-01 시행)로 셉니다. "
+                   "근로기간 1년이 된 달부터 근무개월 수에 넣고(월말 현재 근로기간 1년 이상인 달, 입사일로 소급하지 않음), 단시간근로자는 "
+                   "해당 과세연도 월 평균 근로시간(총 근로시간 ÷ 근무개월 수) 60시간으로 가립니다. 비교하는 직전 과세연도 인원도 새 범위로 "
+                   "다시 셉니다. 기존공제(2024 · 2025 과세연도 증가분의 2 · 3차 연도) 판정은 종전 범위입니다(부칙 <대통령령 제35999호> 제2조). "
+                   "근로기간 기준과 비교 연도 재산정은 2026-11-02 대표 결정이고 이정아 회계사 확인 전입니다(rules.yaml scope.service_year · prior_recount). "
+                   "두 범위의 인원은 4인원 시트에 함께 있습니다")
+        for per in ("해당", "직전"):
+            c_new = res["counts_new"][per]
+            if per != "해당" and not c_new.period.has_payroll:
+                continue
+            cut = [r for r in c_new.rows if sum(r.worked) < sum(r.employed) and (r.regular or r.reason == REASONS["a_new"])]
+            if cut:
+                out.append(f"{per} 과세연도 새 범위에서 근로기간 1년이 되기 전 달을 뺀 사람 {len(cut)}명: {names(cut)}")
+            part = [r for r in c_new.rows if r.person.kind == "단시간" and any(r.employed)
+                    and hours_for(r.person, per, "새")[1]]
+            if part:
+                col = "월 평균 근로시간" if per == "해당" else "직전 월 평균 근로시간"
+                out.append(f"{per} 과세연도 새 범위 단시간근로자 판정에 월 평균 근로시간이 없어 월 소정근로시간을 대신 쓴 사람: {names(part)}. "
+                           f"그해 총 근로시간 ÷ 근무개월 수를 사원명부 「{col}」 에 적으십시오(시행령 제26조의8 제2항 제2호)")
+        prev = res["counts"]["직전"].rows + res["counts_new"]["직전"].rows       # 종전 범위(기존공제 판정) · 새 범위
+        if res["periods"]["직전"].deemed and res["periods"]["직전"].has_payroll and any(
+                r.regular and r.youth_age != r.youth_deem for r in prev):
+            out.append("직전 과세연도 인원에도 2025년 중 계약한 사람의 청년 간주(3년, 중소 · 중견 아니면 2년)를 넣었습니다. 명세서 작성방법 25 괄호"
+                       "(「간주 개정규정은 미적용」)는 2024년 이전 계약자에 대한 말로 읽었습니다(2026-11-02 대표 결정, 사전-2026-법규법인-0729)")
+    if res["sum_floor"]:
+        out.append("인원은 사람별 계산한 수를 버리지 않고 더한 뒤 100분의 1 미만을 버렸습니다(시행령 제11조의2 제8항, 대통령령 제36342호 2026. 5. 22. 개정, "
+                   "부칙 제2조 제2항: 2026년 1월 1일 이후 개시 과세연도 신고부터). 명세서의 사람별 계산한 수는 버리지 않은 값입니다")
     if res["method"] == "근로자별":
-        out.append("1차 연도 인원은 근로자별 방식(사람마다 근무개월 수 ÷ 과세연도 개월 수, 100분의 1 미만 버림)으로 셌습니다"
-                   "(시행령 제26조의8 제6항 · 제11조의2 제8항, 부칙 <대통령령 제36127호> 제11조 제1항). 2 · 3차 연도 판정은 "
+        out.append("1차 연도 인원은 근로자별 방식(사람마다 근무개월 수 ÷ 과세연도 개월 수, "
+                   + ("합에서 100분의 1 미만 버림" if res["sum_floor"] else "100분의 1 미만 버림") + ")으로 셌습니다"
+                   "(시행령 제26조의8 제6항 · 제11조의2 제8항, 부칙 <대통령령 제36127호> 제11조 제1항). 2024 과세연도 이전 증가분의 2 · 3차 연도 판정은 "
                    "월말 합 방식(종전 규정)입니다. 두 방식의 인원은 4인원 시트에 함께 있습니다")
     for per in ("직전", "직전전"):
         src = res["source"][per]
         if src == "전기 신고서":
             out.append(f"{per} 과세연도 급여대장이 없어 전기 신고서의 인원(0기준 노란 칸)을 썼습니다. 계산 방식 · 청년 범위가 "
-                       "당기와 같은지 확인하십시오")
+                       "당기와 같은지 확인하십시오"
+                       + (". 신규공제 비교에도 이 인원(종전 범위)을 썼습니다. 새 범위(근로기간 1년)로 다시 세려면 그 과세연도 급여대장을 "
+                          "넣으십시오" if res["new_scope"] and res["periods"][per].start.year >= 2025 else ""))
         elif src == "없음" and (per == "직전" or co.first_prev2_youth or co.first_prev2_other):
             out.append(f"{per} 과세연도 인원이 없습니다(급여대장도 전기 신고 인원도 없음). 그 인원이 필요한 공제는 계산하지 않았습니다")
     cur_rows = counts["해당"].rows
@@ -307,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
     data = {"company": case.company, "fy_start": str(inp.company.fy_start), "fy_end": str(inp.company.fy_end),
             "method": res["method"], "size": inp.company.size, "capital": inp.company.capital, "headcount": head,
             "legacy": {per: {"상시": f2(res["legacy"][per][0]), "청년등": f2(res["legacy"][per][1])} for per in PERIODS},
+            # 2026 과세연도부터 신규공제 · 추가공제 인원(새 범위). headcount 는 종전 범위(조서 credits 가 2 · 3차 연도 판정에 쓴다)
+            "headcount_new": ({per: {"상시": f2(res["used_new"][per][0]), "청년등": f2(res["used_new"][per][1]),
+                                     "청년등외": f2(res["used_new"][per][0] - res["used_new"][per][1]), "출처": src_of[per]}
+                               for per in PERIODS} if res["new_scope"] else None),
+            "rounding": "합계에서 버림" if res["sum_floor"] else "사람별 버림",
             "increase": {"상시": f2(res["d_t"]), "청년등": f2(res["d_y"]), "청년등외": f2(res["d_o"])},
             "credit": {"청년등 공제 인원": f2(res["n_y"]), "청년등 외 공제 인원": f2(res["n_o"]), "청년등 1인당": res["a_y"],
                        "청년등 외 1인당": res["a_o"], "1차 청년등": res["first_y"], "1차 청년등 외": res["first_o"],
@@ -335,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
                 first["직전전"] = {"청년등": inp.company.first_prev2_youth, "청년등 외": inp.company.first_prev2_other}
             if first:
                 block["1차년도 공제액"] = first
+            if res["returned"]:      # 추가공제(육아휴직 복귀)는 ctax wp 가 이 인원으로 다시 계산한다(8호(갑) 1B5 줄)
+                block["육아휴직 복귀 인원"] = res["returned"]
             info[INFO_KEY] = block
             case.write_json("신고건.json", info)
             wrote = True
@@ -345,7 +378,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"통합고용세액공제 {won(res['total'])}원 = 1차 {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
           + (f"+ 신규 {won(res['new_total'])} " if res["regime"] == "2026" else "") + f"+ 추가 {won(res['extra'])}")
     print(f"상시근로자 수: 해당 {h['상시']:.2f}(청년등 {h['청년등']:.2f}) · 직전 {head['직전']['상시']:.2f}"
-          f"(청년등 {head['직전']['청년등']:.2f}, {src_of['직전']}) · 증가 {f2(res['d_t']):.2f} · 방식 {res['method']}")
+          f"(청년등 {head['직전']['청년등']:.2f}, {src_of['직전']}) · 증가 {f2(res['d_t']):.2f} · 방식 {res['method']}"
+          + (" · 기존공제 판정용 종전 범위" if res["new_scope"] else ""))
+    if res["new_scope"]:
+        hn = data["headcount_new"]
+        print(f"새 범위 상시근로자 수(신규공제 · 추가공제): 해당 {hn['해당']['상시']:.2f}(청년등 {hn['해당']['청년등']:.2f}) · "
+              f"직전 {hn['직전']['상시']:.2f}(청년등 {hn['직전']['청년등']:.2f}) · 증가 {hn['해당']['상시'] - hn['직전']['상시']:.2f}")
     code = 1 if pending else 0
     if back:
         failed = [t for t in back["tests"] if t["result"] == "확인"]

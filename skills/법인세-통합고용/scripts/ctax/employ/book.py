@@ -23,7 +23,7 @@ YMD = "yyyymmdd"
 NUM2 = "0.00"
 STAFF_FIRST, PAY_FIRST, JUDGE_FIRST = 5, 5, 11
 BLOCK = 12                      # 판정 시트 한 묶음의 달 수
-B_PAY, B_WORK, B_Y1, B_Y2 = 24, 36, 48, 60   # 묶음이 시작하는 열
+B_PAY, B_WORK, B_Y1, B_Y2, B_WN, B_YN = 34, 46, 58, 70, 82, 94   # 묶음이 시작하는 열(B_WN · B_YN 은 새 범위)
 MID = Alignment(horizontal="center", vertical="center", wrap_text=True)
 FORM_FONT = Font(name=X.FONT, size=9)
 FORM_BOLD = Font(name=X.FONT, size=10, bold=True)
@@ -139,7 +139,16 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict) -> KV:
           f'=IF(AND({k["fy_start"]}>=DATE(2023,1,1),YEAR({k["fy_end"]})<={rule(rules, "regime", "last_supported_year")}),"Y","N")',
           note=basis(rules, "regime", "first_year_from") + " / " + basis(rules, "regime", "last_supported_year"))
     k.put("deem", "해당 과세연도 청년 간주", "N" if co.deem == "N" else f'=IF({k["method"]}="근로자별","Y","N")', kind="input",
-          note="쓰지 않으려면 N 으로 고칩니다. " + basis(rules, "youth", "deemed_from"))
+          note="쓰지 않으려면 N 으로 고칩니다. 직전 · 직전전 과세연도도 2025년 이후 개시면 같은 값을 씁니다. "
+               + basis(rules, "youth", "deemed_from") + " / " + basis(rules, "youth", "deemed_prior_year"))
+    day = lambda s: "DATE({},{},{})".format(*(int(x) for x in s.split("-")))     # noqa: E731
+    k.put("new_scope", "신규공제 · 추가공제 인원을 새 범위로 셈",
+          f'=IF({k["fy_start"]}>={day(r("scope", "scope_2026_from"))},"Y","N")',
+          note="새 범위: 근로기간 1년이 된 달부터, 단시간근로자는 월 평균 근로시간. " + basis(rules, "scope", "scope_2026_from") + " / "
+               + basis(rules, "scope", "service_year") + " / " + basis(rules, "scope", "prior_recount"))
+    k.put("sum_floor", "근로자별 인원을 합계에서 버림", f'=IF({k["fy_start"]}>={day(r("count", "sum_floor_from"))},"Y","N")',
+          note="Y 면 사람별 계산한 수를 버리지 않고 더한 뒤 100분의 1 미만을 버립니다. N 이면 사람마다 버린 뒤 더합니다. "
+               + basis(rules, "count", "sum_floor_from"))
     y25, yo = r("youth", "deemed_years_2025"), r("youth", "deemed_years_other")
     pick = lambda d: (f'=IF({k["size"]}="중소기업",{d["중소기업"]},IF({k["size"]}="중견기업",{d["중견기업"]},'   # noqa: E731
                       f'{d["일반기업"]}))')
@@ -203,14 +212,16 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict) -> KV:
 
 # ---------------------------------------------------------------- 1사원명부 · 2급여대장
 
-STAFF_CALC = ["제외사유(과세연도와 무관)", "단시간 유형", "병역을 뺀 생년월일", "15세가 되는 날", "35세가 되는 날(청년 제외시점, 현재 연령)",
-              "계약 체결일 기준 청년", "청년 간주 종료일", "청년 제외시점(간주 포함)", "고령자", "나이와 무관한 청년등", "정규직"]
-C_REASON, C_WEIGHT, C_ADJ, C_15, C_35, C_HIRE_Y, C_DEEM, C_CUT, C_SENIOR, C_FIXED, C_REGULAR = range(
-    len(STAFF_COLS) + 1, len(STAFF_COLS) + 12)
+STAFF_CALC = ["제외사유(종전 범위, 과세연도와 무관)", "단시간 유형(종전 범위)", "병역을 뺀 생년월일", "15세가 되는 날",
+              "35세가 되는 날(청년 제외시점, 현재 연령)", "계약 체결일 기준 청년", "청년 간주 종료일", "청년 제외시점(간주 포함)", "고령자",
+              "나이와 무관한 청년등", "정규직", "근로기간 1년이 되는 날(새 범위는 이 날이 속한 달부터)"]
+C_REASON, C_WEIGHT, C_ADJ, C_15, C_35, C_HIRE_Y, C_DEEM, C_CUT, C_SENIOR, C_FIXED, C_REGULAR, C_YEAR1 = range(
+    len(STAFF_COLS) + 1, len(STAFF_COLS) + 13)
 
 
 def _staff(ws, inp: Inputs, k: KV, last: int) -> None:
-    row = X.title(ws, "1. 사원명부", "한 사람 한 줄입니다. A ~ V 열은 입력(노란 칸), W 열부터는 판정 수식입니다. 재입사자는 줄을 따로 씁니다")
+    row = X.title(ws, "1. 사원명부", f"한 사람 한 줄입니다. A ~ {L(len(STAFF_COLS))} 열은 입력(노란 칸), {L(len(STAFF_COLS) + 1)} 열부터는 "
+                                    "판정 수식입니다. 재입사자는 줄을 따로 씁니다")
     head = [c[0] for c in STAFF_COLS] + STAFF_CALC
     X.header(ws, row, head)
     ws.row_dimensions[row].height = 44
@@ -243,15 +254,16 @@ def _staff(ws, inp: Inputs, k: KV, last: int) -> None:
             C_SENIOR: f'=IF({A["hired"]}>=EDATE({A["birth"]},12*{k["senior"]}),"Y","N")',
             C_FIXED: (f'=IF(OR({A["disabled"]}="Y",{a(C_SENIOR)}="Y",{A["career"]}="Y",{A["defector"]}="Y"),"Y","N")'),
             C_REGULAR: f'=IF({A["kind"]}="정규직","Y","N")',
+            C_YEAR1: f'=EDATE({A["hired"]},12)-1',
         }
         for col, formula in f.items():
             c = X.cell(ws, r, col, formula)
-            if col in (C_ADJ, C_15, C_35, C_DEEM, C_CUT):
+            if col in (C_ADJ, C_15, C_35, C_DEEM, C_CUT, C_YEAR1):
                 c.number_format = DATE
             elif col == C_WEIGHT:
                 c.number_format = NUM2
     ws.freeze_panes = ws.cell(row=STAFF_FIRST, column=3)
-    X.widths(ws, [10, 10, 12, 12, 12, 7, 9, 8, 9, 8, 6, 9, 8, 12, 12, 8, 8, 9, 8, 8, 8, 16, 26, 8, 12, 12, 12, 9, 12, 12, 7, 9, 7])
+    X.widths(ws, [10, 10, 12, 12, 12, 7, 9, 8, 9, 9, 9, 8, 6, 9, 8, 12, 12, 8, 8, 9, 8, 8, 8, 16, 26, 8, 12, 12, 12, 9, 12, 12, 7, 9, 7, 14])
     X.note(ws, last + 2, "열 뜻과 근거는 스킬 문서 「원천 데이터 정의」 와 ctax/employ/NOTES.md 에 있습니다")
 
 
@@ -276,9 +288,14 @@ def _pay(ws, pays: list, last: int) -> dict:
 J_HEAD = ["사번", "성명", "생년월일", "근로계약 체결일", "퇴사일", "퇴사일(계산용)", "납부 확인", "상시근로자", "제외사유", "단시간 유형",
           "월말 재직 달 수", "상시근로자 근무개월수", "상시근로자별 계산한 수", "청년등 달 수(현재 연령)", "청년등 근무개월수(현재 연령)",
           "계산한 수(현재 연령)", "청년등 달 수(서식 기준)", "청년등 상시근로자 근무개월수", "청년등 상시근로자별 계산한 수", "청년등 구분",
-          "재직인데 급여 없는 달", "재직 기간이 아닌데 급여 있는 달"]
+          "재직인데 급여 없는 달", "재직 기간이 아닌데 급여 있는 달",
+          "근로기간 1년이 되는 날", "새 범위 단시간 근로시간(월 평균, 없으면 소정)", "새 범위 제외사유", "새 범위 상시근로자",
+          "새 범위 단시간 유형", "새 범위 근무개월수", "새 범위 계산한 수", "새 범위 청년등 근무개월수", "새 범위 청년등 계산한 수",
+          "새 범위 청년등 구분"]
 (J_ID, J_NAME, J_BIRTH, J_HIRED, J_LEFT, J_LEFTX, J_PROOF, J_REG, J_REASON, J_WEIGHT, J_MW, J_M20, J_N21, J_MY1, J_M22A, J_N23A,
- J_MY2, J_M22, J_N23, J_KIND, J_NOPAY, J_ODD) = range(1, 23)
+ J_MY2, J_M22, J_N23, J_KIND, J_NOPAY, J_ODD,
+ J_YEAR1, J_HRS, J_RN, J_REGN, J_WN, J_MN, J_NN, J_MYN, J_NYN, J_KINDN) = range(1, 33)
+J_AVG = {"해당": "avg_hours", "직전": "avg_hours_prev", "직전전": None}     # 새 범위 단시간 판정에 쓰는 사원명부 열
 J_START = {"해당": "fy_start", "직전": "p_start", "직전전": "pp_start"}
 J_END = {"해당": "fy_end", "직전": "p_end", "직전전": "pp_end"}
 J_MONTHS = {"해당": "months", "직전": "p_months", "직전전": "pp_months"}
@@ -286,20 +303,23 @@ J_MONTHS = {"해당": "months", "직전": "p_months", "직전전": "pp_months"}
 
 def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> None:
     row = X.title(ws, f"3. 판정({per} 과세연도)",
-                  "사람마다 달마다 월말 재직과 청년등 여부를 가립니다. 「서식 기준」 은 해당 과세연도에만 청년 간주를 넣은 값입니다")
+                  "사람마다 달마다 월말 재직과 청년등 여부를 가립니다. 「서식 기준」 은 2025년 이후 개시 과세연도에 청년 간주를 넣은 값입니다. "
+                  "「새 범위」 는 2026 과세연도 신고부터 신규공제 · 추가공제에 쓰는 인원입니다(근로기간 1년이 된 달부터)")
+    deem = f"={k['deem']}" if per == "해당" else f'=IF(AND({k["deem"]}="Y",$B$4>=DATE(2025,1,1)),"Y","N")'
     for j, (label, value, fmt) in enumerate((("과세연도 시작일", f"={k[J_START[per]]}", DATE), ("종료일", f"={k[J_END[per]]}", DATE),
-                                             ("개월 수", f"={k[J_MONTHS[per]]}", "0"),
-                                             ("청년 간주", f"={k['deem']}" if per == "해당" else "N", ""),
-                                             ("급여대장 줄 수", None, "0"), ("급여 없는 달 포함", f"={k['unpaid']}", ""))):
+                                             ("개월 수", f"={k[J_MONTHS[per]]}", "0"), ("청년 간주", deem, ""),
+                                             ("급여대장 줄 수", None, "0"), ("급여 없는 달 포함", f"={k['unpaid']}", ""),
+                                             ("합계에서 버림", f"={k['sum_floor']}", ""))):
         X.cell(ws, 4, 1 + 2 * j, label, kind="total")
         X.cell(ws, 4, 2 + 2 * j, value).number_format = fmt or "General"
-    START, END, MONTHS, DEEM, PAYN, UNPAID = "$B$4", "$D$4", "$F$4", "$H$4", "$J$4", "$L$4"
+    START, END, MONTHS, DEEM, PAYN, UNPAID, SF = "$B$4", "$D$4", "$F$4", "$H$4", "$J$4", "$L$4", "$N$4"
     ws[PAYN.replace("$", "")] = (f'=COUNTIFS({pay["month"]},">="&{START},{pay["month"]},"<="&{END})' if n_pay else 0)
     first = JUDGE_FIRST
     head = first - 1
     X.header(ws, head, J_HEAD)
     ws.row_dimensions[head].height = 58
-    blocks = ((B_PAY, "그 달 지급액(급여대장)"), (B_WORK, "근무개월로 세는 달(월말 재직이고 급여 있음)"), (B_Y1, "청년등(현재 연령)"), (B_Y2, "청년등(서식 기준)"))
+    blocks = ((B_PAY, "그 달 지급액(급여대장)"), (B_WORK, "근무개월로 세는 달(월말 재직이고 급여 있음)"), (B_Y1, "청년등(현재 연령)"),
+              (B_Y2, "청년등(서식 기준)"), (B_WN, "새 범위 근무개월(근로기간 1년이 된 달부터)"), (B_YN, "새 범위 청년등(서식 기준)"))
     for start, text in blocks:
         ws.merge_cells(start_row=head - 1, start_column=start, end_row=head - 1, end_column=start + BLOCK - 1)
         c = ws.cell(row=head - 1, column=start, value=text)
@@ -316,19 +336,28 @@ def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> Non
     for i in range(BLOCK):
         X.cell(ws, 7, B_PAY + i, f'=COUNTIF({rng(B_PAY + i)},">0")', kind="total")
         X.cell(ws, 7, B_WORK + i, f"=SUM({rng(B_WORK + i)})", kind="total")
-        for start in (B_WORK, B_Y1, B_Y2):
-            c = X.cell(ws, 8, start + i, f'=SUMPRODUCT({rng(start + i)},{rng(J_WEIGHT)},--({rng(J_REG)}="Y"))', kind="total")
+        X.cell(ws, 7, B_WN + i, f"=SUM({rng(B_WN + i)})", kind="total")
+        for start, weight, reg in ((B_WORK, J_WEIGHT, J_REG), (B_Y1, J_WEIGHT, J_REG), (B_Y2, J_WEIGHT, J_REG),
+                                   (B_WN, J_WN, J_REGN), (B_YN, J_WN, J_REGN)):
+            c = X.cell(ws, 8, start + i, f'=SUMPRODUCT({rng(start + i)},{rng(weight)},--({rng(reg)}="Y"))', kind="total")
             c.number_format = NUM2
     st = lambda col, r: ref(S_STAFF, f"${L(col)}{r}")             # noqa: E731
     span = lambda start, r: f"${L(start)}{r}:${L(start + BLOCK - 1)}{r}"   # noqa: E731
     heads = f"${L(B_PAY)}${head}:${L(B_PAY + BLOCK - 1)}${head}"
     acts = f"${L(B_PAY)}$6:${L(B_PAY + BLOCK - 1)}$6"
+    # 사람별 계산한 수: 합계에서 버리면(2026 과세연도 신고부터) 사람별로는 버리지 않는다
+    calc_n = lambda m: f'=IF({SF}="Y",{m}/{MONTHS},ROUNDDOWN(ROUND({m}/{MONTHS},8),2))'   # noqa: E731
+    avg = J_AVG[per]
     for i in range(n):
         r, s = first + i, STAFF_FIRST + i
         a = lambda col: f"${L(col)}{r}"   # noqa: E731
+        A = lambda name: st(attr_col(name), s)   # noqa: E731
         proof = (f'=IF({PAYN}=0,"자료없음",IF(' + "+".join(
             f'SUMIFS({pay[x]},{pay["id"]},{a(J_ID)},{pay["month"]},">="&{START},{pay["month"]},"<="&{END})'
             for x in ("tax", "pension", "health")) + '>0,"Y","N"))') if n_pay else "자료없음"
+        kind_of = lambda m: (f'=IF({a(m)}=0,"",IF({A("disabled")}="Y","장애인",IF({st(C_SENIOR, s)}="Y","고령자",'   # noqa: E731
+                             f'IF({A("career")}="Y","경력단절",IF({A("defector")}="Y","북한이탈주민","청년")))))')
+        hours = f'IF({A(avg)}="",N({A("hours")}),{A(avg)})' if avg else f'N({A("hours")})'
         f = {
             J_ID: f"={st(1, s)}", J_NAME: f"={st(2, s)}", J_BIRTH: f"={st(3, s)}", J_HIRED: f"={st(4, s)}",
             J_LEFT: f'=IF({st(5, s)}="","",{st(5, s)})', J_LEFTX: f'=IF({st(5, s)}="",DATE(9999,12,31),{st(5, s)})',
@@ -338,40 +367,60 @@ def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> Non
             J_WEIGHT: f"={st(C_WEIGHT, s)}",
             J_MW: f"=SUM({span(B_WORK, r)})",
             J_M20: f'=IF({a(J_REG)}="Y",{a(J_WEIGHT)}*{a(J_MW)},0)',
-            J_N21: f"=ROUNDDOWN(ROUND({a(J_M20)}/{MONTHS},8),2)",
+            J_N21: calc_n(a(J_M20)),
             J_MY1: f"=SUM({span(B_Y1, r)})",
             J_M22A: f'=IF({a(J_REG)}="Y",{a(J_WEIGHT)}*{a(J_MY1)},0)',
-            J_N23A: f"=ROUNDDOWN(ROUND({a(J_M22A)}/{MONTHS},8),2)",
+            J_N23A: calc_n(a(J_M22A)),
             J_MY2: f"=SUM({span(B_Y2, r)})",
             J_M22: f'=IF({a(J_REG)}="Y",{a(J_WEIGHT)}*{a(J_MY2)},0)',
-            J_N23: f"=ROUNDDOWN(ROUND({a(J_M22)}/{MONTHS},8),2)",
-            J_KIND: (f'=IF({a(J_M22)}=0,"",IF({st(attr_col("disabled"), s)}="Y","장애인",IF({st(C_SENIOR, s)}="Y","고령자",'
-                     f'IF({st(attr_col("career"), s)}="Y","경력단절",IF({st(attr_col("defector"), s)}="Y","북한이탈주민","청년")))))'),
+            J_N23: calc_n(a(J_M22)),
+            J_KIND: kind_of(J_M22),
             J_NOPAY: (f"=IF({PAYN}=0,0,SUMPRODUCT(({heads}>={a(J_HIRED)})*({heads}<={a(J_LEFTX)})*({acts}=1)*({span(B_PAY, r)}=0)))"
                       if n_pay else 0),
             J_ODD: (f"=SUMPRODUCT(({span(B_PAY, r)}>0)*((({heads}<{a(J_HIRED)})+(({heads}-DAY({heads})+1)>{a(J_LEFTX)}))>0))"
                     if n_pay else 0),
+            # 새 범위(시행령 제26조의8 제2항, 2026 과세연도부터): 계약 1년 미만 열은 보지 않고 근로기간 1년, 단시간은 월 평균 근로시간
+            J_YEAR1: f"={st(C_YEAR1, s)}",
+            J_HRS: f'=IF({A("kind")}<>"단시간","",{hours})',
+            J_RN: (f'=IF({A("resident")}="N","{REASONS["f_res"]}",IF({A("kind")}="파견","{REASONS["f_disp"]}",'
+                   f'IF(AND({A("kind")}="단시간",N({a(J_HRS)})<{k["hours"]}),"{REASONS["b"]}",IF({A("officer")}="Y","{REASONS["c"]}",'
+                   f'IF({A("owner")}="Y","{REASONS["d"]}",IF({A("other")}="Y","{REASONS["f"]}",IF({a(J_PROOF)}="N","{REASONS["e"]}",'
+                   f'IF(AND(SUM({span(B_WN, r)})=0,SUM({span(B_WORK, r)})>0),"{REASONS["a_new"]}",""))))))))'),
+            J_REGN: f'=IF({a(J_RN)}="","Y","N")',
+            J_WN: (f'=IF(AND({A("kind")}="단시간",N({a(J_HRS)})>={k["hours"]}),IF({A("supported")}="Y",{k["w_sup"]},'
+                   f'{k["w_half"]}),1)'),
+            J_MN: f'=IF({a(J_REGN)}="Y",{a(J_WN)}*SUM({span(B_WN, r)}),0)',
+            J_NN: calc_n(a(J_MN)),
+            J_MYN: f'=IF({a(J_REGN)}="Y",{a(J_WN)}*SUM({span(B_YN, r)}),0)',
+            J_NYN: calc_n(a(J_MYN)),
+            J_KINDN: kind_of(J_MYN),
         }
         for col, formula in f.items():
             c = X.cell(ws, r, col, formula)
-            if col in (J_BIRTH, J_HIRED, J_LEFT, J_LEFTX):
+            if col in (J_BIRTH, J_HIRED, J_LEFT, J_LEFTX, J_YEAR1):
                 c.number_format = DATE
-            elif col in (J_WEIGHT, J_M20, J_N21, J_M22A, J_N23A, J_M22, J_N23):
+            elif col in (J_WEIGHT, J_M20, J_M22A, J_M22, J_WN, J_MN, J_MYN):
                 c.number_format = NUM2
+            elif col in (J_N21, J_N23A, J_N23, J_NN, J_NYN):
+                c.number_format = "0.00##"
+        cut = f'IF({DEEM}="Y",{st(C_CUT, s)},{st(C_35, s)})'
         for m in range(BLOCK):
-            pc, wc, y1, y2 = B_PAY + m, B_WORK + m, B_Y1 + m, B_Y2 + m
+            pc, wc, y1, y2, wn, yn = (b + m for b in (B_PAY, B_WORK, B_Y1, B_Y2, B_WN, B_YN))
             hd = lambda col: f"{L(col)}${head}"       # noqa: E731
             first_day = f"({hd(pc)}-DAY({hd(pc)})+1)"
             X.cell(ws, r, pc, (f'=IF({L(pc)}$6=1,SUMIFS({pay["pay"]},{pay["id"]},{a(J_ID)},{pay["month"]},">="&{first_day},'
                                f'{pay["month"]},"<="&{hd(pc)}),0)') if n_pay else 0, money=True)
             X.cell(ws, r, wc, (f"=IF(AND({L(wc)}$6=1,{a(J_HIRED)}<={hd(wc)},{a(J_LEFTX)}>={hd(wc)},"
                                f'OR({PAYN}=0,{UNPAID}="Y",{L(pc)}{r}>0)),1,0)'))
-            young = lambda col, cut: (f'=IF(AND({L(wc)}{r}=1,OR({st(C_FIXED, s)}="Y",AND({st(C_REGULAR, s)}="Y",'      # noqa: E731
-                                      f'{hd(col)}>={st(C_15, s)},{hd(col)}<{cut}))),1,0)')
-            X.cell(ws, r, y1, young(y1, st(C_35, s)))
-            X.cell(ws, r, y2, young(y2, f'IF({DEEM}="Y",{st(C_CUT, s)},{st(C_35, s)})'))
+            young = lambda col, on, cut: (f'=IF(AND({L(on)}{r}=1,OR({st(C_FIXED, s)}="Y",AND({st(C_REGULAR, s)}="Y",'      # noqa: E731
+                                          f'{hd(col)}>={st(C_15, s)},{hd(col)}<{cut}))),1,0)')
+            X.cell(ws, r, y1, young(y1, wc, st(C_35, s)))
+            X.cell(ws, r, y2, young(y2, wc, cut))
+            X.cell(ws, r, wn, f"=IF(AND({L(wc)}{r}=1,{a(J_YEAR1)}<={hd(wn)}),1,0)")      # 월말 현재 근로기간 1년 이상
+            X.cell(ws, r, yn, young(yn, wn, cut))
     ws.freeze_panes = ws.cell(row=first, column=3)
-    X.widths(ws, [10, 10, 11, 11, 11, 11, 8, 7, 22, 7, 7, 8, 8, 7, 8, 8, 7, 8, 8, 9, 7, 7, 2] + [8] * BLOCK + [4] * (BLOCK * 3))
+    X.widths(ws, [10, 10, 11, 11, 11, 11, 8, 7, 22, 7, 7, 8, 8, 7, 8, 8, 7, 8, 8, 9, 7, 7,
+                  11, 9, 18, 7, 7, 8, 8, 8, 8, 9, 2] + [8] * BLOCK + [4] * (BLOCK * 5))
 
 
 def attr_col(name: str) -> int:
@@ -385,18 +434,20 @@ def _count(ws, k: KV, judge_last: int) -> dict:
     out: dict = {}
     X.header(ws, row, ["과세연도", "시작일", "종료일", "개월 수", "급여대장 줄 수", "근로자별 상시", "근로자별 청년등(현재 연령)",
                        "근로자별 청년등(서식 기준)", "월말 인원 합(상시)", "월말 합 방식 상시", "월말 인원 합(청년등)", "월말 합 방식 청년등",
-                       "재직인데 급여 없는 달", "재직 기간이 아닌데 급여 있는 달"])
+                       "재직인데 급여 없는 달", "재직 기간이 아닌데 급여 있는 달", "새 범위 근로자별 상시", "새 범위 근로자별 청년등(서식 기준)"])
     ws.row_dimensions[row].height = 44
     rng = lambda per, col: ref(S_JUDGE[per], f"${L(col)}${JUDGE_FIRST}:${L(col)}${judge_last}")      # noqa: E731
     top = lambda per, start: ref(S_JUDGE[per], f"${L(start)}$8:${L(start + BLOCK - 1)}$8")          # noqa: E731
+    # 2026 과세연도 신고부터는 사람별 계산한 수를 더한 뒤 버린다(시행령 제11조의2 제8항, 2026.5.22 개정)
+    total = lambda per, col: f'=IF({k["sum_floor"]}="Y",ROUNDDOWN(ROUND(SUM({rng(per, col)}),8),2),SUM({rng(per, col)}))'   # noqa: E731
     a = {}
     for i, per in enumerate(PERIODS):
         r = row + 1 + i
         j = lambda addr: ref(S_JUDGE[per], addr)       # noqa: E731
         vals = [per, f"={j('$B$4')}", f"={j('$D$4')}", f"={j('$F$4')}", f"={j('$J$4')}",
-                f"=SUM({rng(per, J_N21)})", f"=SUM({rng(per, J_N23A)})", f"=SUM({rng(per, J_N23)})",
+                total(per, J_N21), total(per, J_N23A), total(per, J_N23),
                 f"=SUM({top(per, B_WORK)})", None, f"=SUM({top(per, B_Y1)})", None,
-                f"=SUM({rng(per, J_NOPAY)})", f"=SUM({rng(per, J_ODD)})"]
+                f"=SUM({rng(per, J_NOPAY)})", f"=SUM({rng(per, J_ODD)})", total(per, J_NN), total(per, J_NYN)]
         vals[9] = f"=ROUNDDOWN(ROUND(I{r}/D{r},8),2)"
         vals[11] = f"=ROUNDDOWN(ROUND(K{r}/D{r},8),2)"
         for col, v in enumerate(vals, start=1):
@@ -404,11 +455,12 @@ def _count(ws, k: KV, judge_last: int) -> dict:
             c.number_format = DATE if col in (2, 3) else ("0" if col in (4, 5, 13, 14) else NUM2)
         a[per] = {name: ref(S_COUNT, absolute(col, r)) for name, col in
                   (("payn", 5), ("w_total", 6), ("w_youth_age", 7), ("w_youth", 8), ("me_sum", 9), ("me_total", 10),
-                   ("me_youth_sum", 11), ("me_youth", 12), ("nopay", 13), ("odd", 14))}
+                   ("me_youth_sum", 11), ("me_youth", 12), ("nopay", 13), ("odd", 14), ("n_total", 15), ("n_youth", 16))}
     out["raw"] = a
 
     row += 6
-    ws.cell(row=row - 1, column=1, value="서식에 쓰는 인원(1차 연도 계산)").font = Font(name=X.FONT, bold=True, size=11)
+    ws.cell(row=row - 1, column=1, value="서식에 쓰는 인원(종전 범위. 2025 과세연도까지 1차 연도 계산, 2026 과세연도부터는 기존공제 판정 · 서식(1))"
+            ).font = Font(name=X.FONT, bold=True, size=11)
     X.header(ws, row, ["과세연도", "출처", "⑥ 상시근로자 수", "⑦ 청년등상시근로자 수", "⑧ 청년등 외(⑥-⑦)", "설명"])
     used = {}
     filed = {"직전": ("filed_p_t", "filed_p_y"), "직전전": ("filed_pp_t", "filed_pp_y")}
@@ -425,12 +477,15 @@ def _count(ws, k: KV, judge_last: int) -> dict:
             t, y = k[filed[per][0]], k[filed[per][1]]
             tail = f'IF({k["startup"]}="Y","창업(0)","없음")' if per == "직전" else '"없음"'
             src = f'=IF({p["payn"]}>0,"급여대장",IF({t}<>"","전기 신고서",{tail}))'
-            mine_t = f'IF({k["method"]}="근로자별",{p["w_total"]},{p["me_total"]})' if per == "직전" else p["me_total"]
-            mine_y = f'IF({k["method"]}="근로자별",{p["w_youth"]},{p["me_youth"]})' if per == "직전" else p["me_youth"]
+            # 직전전은 2025년 이후 개시 과세연도일 때만 근로자별(calc.compute 와 같다)
+            pw = (f'{k["method"]}="근로자별"' if per == "직전"
+                  else f'AND({k["method"]}="근로자별",{k["pp_start"]}>=DATE(2025,1,1))')
+            mine_t = f'IF({pw},{p["w_total"]},{p["me_total"]})'
+            mine_y = f'IF({pw},{p["w_youth"]},{p["me_youth"]})'
             total = f'=IF($B{r}="급여대장",{mine_t},IF($B{r}="전기 신고서",{f2(t)},0))'
             youth = f'=IF($B{r}="급여대장",{mine_y},IF($B{r}="전기 신고서",{f2(y)},0))'
-            text = ("청년 간주를 넣지 않습니다(별지 제10호의10서식 작성방법 24 · 25)" if per == "직전"
-                    else "월말 합 방식(종전 규정)")
+            text = ("2025년 이후 개시 과세연도면 2025년 이후 계약자의 청년 간주를 넣습니다(2026-11-02 대표 결정, 사전-2026-법규법인-0729)"
+                    if per == "직전" else "2025년 이후 개시 과세연도면 근로자별, 그 전이면 월말 합 방식(종전 규정)")
         X.cell(ws, r, 1, per, kind="total")
         X.cell(ws, r, 2, src if per == "해당" else src)
         for col, v in ((3, total), (4, youth), (5, f"=ROUND(C{r}-D{r},2)")):
@@ -439,6 +494,30 @@ def _count(ws, k: KV, judge_last: int) -> dict:
         used[per] = {"src": ref(S_COUNT, f"$B${r}"), "t": ref(S_COUNT, f"$C${r}"), "y": ref(S_COUNT, f"$D${r}"),
                      "o": ref(S_COUNT, f"$E${r}")}
     out["used"] = used
+
+    row += 6
+    ws.cell(row=row - 1, column=1, value="신규공제 · 추가공제에 쓰는 인원(새 범위, 2026 과세연도부터 서식(2) · 명세서)"
+            ).font = Font(name=X.FONT, bold=True, size=11)
+    X.header(ws, row, ["과세연도", "출처", "⑥ 상시근로자 수", "⑦ 청년등상시근로자 수", "⑧ 청년등 외(⑥-⑦)", "설명"])
+    used_new = {}
+    for i, per in enumerate(PERIODS):
+        r = row + 1 + i
+        p = a[per]
+        X.cell(ws, r, 1, per, kind="total")
+        X.cell(ws, r, 2, f"={used[per]['src']}")
+        if per == "해당":
+            total, youth = f"={p['n_total']}", f"={p['n_youth']}"
+        else:
+            t, y = k[filed[per][0]], k[filed[per][1]]
+            total = f'=IF($B{r}="급여대장",{p["n_total"]},IF($B{r}="전기 신고서",{f2(t)},0))'
+            youth = f'=IF($B{r}="급여대장",{p["n_youth"]},IF($B{r}="전기 신고서",{f2(y)},0))'
+        for col, v in ((3, total), (4, youth), (5, f"=ROUND(C{r}-D{r},2)")):
+            X.cell(ws, r, col, v).number_format = NUM2
+        X.cell(ws, r, 6, "근로기간 1년이 된 달부터, 단시간은 월 평균 근로시간(시행령 제26조의8 제2항). 급여대장이 없으면 전기 신고 인원"
+               ).font = X.NOTE_FONT
+        used_new[per] = {"src": used[per]["src"], "t": ref(S_COUNT, f"$C${r}"), "y": ref(S_COUNT, f"$D${r}"),
+                         "o": ref(S_COUNT, f"$E${r}")}
+    out["used_new"] = used_new
 
     row += 6
     ws.cell(row=row - 1, column=1, value="2 · 3차 연도 판정에 쓰는 인원(월말 합 방식, 종전 규정)").font = Font(name=X.FONT, bold=True, size=11)
@@ -488,7 +567,7 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
     row = X.title(ws, "5. 공제액", "조세특례제한법 제29조의8 제1항 · 제3항 · 제5항. 인원은 4인원 시트에서 옵니다")
     X.header(ws, row, ["항목", "값", "설명 · 근거"])
     c = KV(ws, row + 1)
-    u, g = cnt["used"], cnt["legacy"]
+    u, g, un = cnt["used"], cnt["legacy"], cnt["used_new"]
     e = rates["employment_integrated"]
     n2 = lambda key, label, f, note="": c.put(key, label, f, fmt=NUM2, note=note)   # noqa: E731
     won = lambda key, label, f, note="", kind="body": c.put(key, label, f, kind=kind, fmt=X.MONEY, note=note)   # noqa: E731
@@ -554,8 +633,9 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
         kind="total")
 
     c.section("라. 추가공제(육아휴직 복귀자)")
-    n2("33", "㉝ 해당 과세연도 상시근로자 수", f"={u['해당']['t']}", "출산전후휴가 대체 인력이 있으면 휴가 중인 사람을 빼고 다시 셉니다(작성방법 6)")
-    n2("34", "㉞ 직전 과세연도 상시근로자 수", f"={u['직전']['t']}")
+    n2("33", "㉝ 해당 과세연도 상시근로자 수", f'=IF({k["new_scope"]}="Y",{un["해당"]["t"]},{u["해당"]["t"]})',
+       "2026 과세연도부터 새 범위 인원(4인원 시트). 출산전후휴가 대체 인력이 있으면 휴가 중인 사람을 빼고 다시 셉니다(작성방법 6)")
+    n2("34", "㉞ 직전 과세연도 상시근로자 수", f'=IF({k["new_scope"]}="Y",{un["직전"]["t"]},{u["직전"]["t"]})')
     n2("35", "㉟ 상시근로자 증가 인원 수(㉝-㉞)", f"=ROUND({c['33']}-{c['34']},2)")
     n2("ret", "육아휴직 복귀자 인원 수", f"={k['returned']}")
     won("36", "㊱ 추가공제 세액공제액",
@@ -565,29 +645,29 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
 
     nw = rates["employment_integrated_new"]
     if "youth_a" in nw:
-        c.section("마. 신규공제(2026 과세연도부터, 법 제29조의8 제1항 새 산식)")
+        c.section("마. 신규공제(2026 과세연도부터, 법 제29조의8 제1항 새 산식. 인원은 4인원 시트의 새 범위)")
         c.put("new_on", "신규공제 적용", f'=IF({k["fy_start"]}>=DATE(2026,1,1),"Y","N")',
               note="과세연도 개시일이 2026-01-01 이후이면 신규공제로 봅니다. " + nw["applies_from"]["basis"])
-        c.put("new_p_ok", "직전 과세연도 비교 가능", f'=IF(AND({c["new_on"]}="Y",{k["consumer"]}<>"Y",{u["직전"]["src"]}<>"없음",'
+        c.put("new_p_ok", "직전 과세연도 비교 가능", f'=IF(AND({c["new_on"]}="Y",{k["consumer"]}<>"Y",{un["직전"]["src"]}<>"없음",'
               f'{k["p_start"]}>DATE(2024,12,31)),"Y","N")', note="직전 과세연도 인원이 있고 2024년 12월 31일 이전에 개시한 과세연도가 아니어야 비교합니다")
-        c.put("new_pp_ok", "전전 과세연도 비교 가능", f'=IF(AND({c["new_p_ok"]}="Y",{u["직전전"]["src"]}<>"없음",'
+        c.put("new_pp_ok", "전전 과세연도 비교 가능", f'=IF(AND({c["new_p_ok"]}="Y",{un["직전전"]["src"]}<>"없음",'
               f'{k["pp_start"]}>DATE(2024,12,31)),"Y","N")', note="2024 과세연도 이전은 비교에서 뺍니다")
         szkey = lambda part, term: (f'IF({k["size"]}="중소기업",IF({k["capital"]}="N",{k[f"n_{part}_{term}_중소기업_수도권밖"]},'
                                     f'{k[f"n_{part}_{term}_중소기업_수도권"]}),IF({k["size"]}="중견기업",{k[f"n_{part}_{term}_중견기업"]},'
                                     f'{k[f"n_{part}_{term}_일반기업"]}))')
-        n2("nA_t", "A 전체 증가 인원(해당 − 직전)", f"=ROUND({u['해당']['t']}-{u['직전']['t']},2)")
+        n2("nA_t", "A 전체 증가 인원(해당 − 직전)", f"=ROUND({un['해당']['t']}-{un['직전']['t']},2)")
         n2("nA_y", "A 청년등 증가 인원(전체 증가 한도)",
-           f'=IF(AND({c["new_p_ok"]}="Y",{c["nA_t"]}>0),MAX(0,MIN(ROUND({u["해당"]["y"]}-{u["직전"]["y"]},2),{c["nA_t"]})),0)')
+           f'=IF(AND({c["new_p_ok"]}="Y",{c["nA_t"]}>0),MAX(0,MIN(ROUND({un["해당"]["y"]}-{un["직전"]["y"]},2),{c["nA_t"]})),0)')
         n2("nA_o", "A 청년등 외 증가 인원(전체 증가 한도)",
-           f'=IF(AND({c["new_p_ok"]}="Y",{c["nA_t"]}>0),MAX(0,MIN(ROUND({u["해당"]["o"]}-{u["직전"]["o"]},2),{c["nA_t"]})),0)')
+           f'=IF(AND({c["new_p_ok"]}="Y",{c["nA_t"]}>0),MAX(0,MIN(ROUND({un["해당"]["o"]}-{un["직전"]["o"]},2),{c["nA_t"]})),0)')
         won("nA_ay", "A 청년등 금액", f'=ROUND({c["nA_y"]}*{szkey("youth", "a")},0)')
         won("nA_ao", "A 청년등 외 금액", f'=ROUND({c["nA_o"]}*{szkey("other", "a")},0)')
-        m_pp_t = f'MIN({u["해당"]["t"]},{u["직전"]["t"]})'
-        n2("nB_t", "B 전체 증가 인원(해당 · 직전 중 적은 수 − 전전)", f"=ROUND({m_pp_t}-{u['직전전']['t']},2)")
+        m_pp_t = f'MIN({un["해당"]["t"]},{un["직전"]["t"]})'
+        n2("nB_t", "B 전체 증가 인원(해당 · 직전 중 적은 수 − 전전)", f"=ROUND({m_pp_t}-{un['직전전']['t']},2)")
         n2("nB_y", "B 청년등 증가 인원(전체 증가 한도)",
-           f'=IF(AND({c["new_pp_ok"]}="Y",{c["nB_t"]}>0),MAX(0,MIN(ROUND(MIN({u["해당"]["y"]},{u["직전"]["y"]})-{u["직전전"]["y"]},2),{c["nB_t"]})),0)')
+           f'=IF(AND({c["new_pp_ok"]}="Y",{c["nB_t"]}>0),MAX(0,MIN(ROUND(MIN({un["해당"]["y"]},{un["직전"]["y"]})-{un["직전전"]["y"]},2),{c["nB_t"]})),0)')
         n2("nB_o", "B 청년등 외 증가 인원(전체 증가 한도)",
-           f'=IF(AND({c["new_pp_ok"]}="Y",{c["nB_t"]}>0),MAX(0,MIN(ROUND(MIN({u["해당"]["o"]},{u["직전"]["o"]})-{u["직전전"]["o"]},2),{c["nB_t"]})),0)')
+           f'=IF(AND({c["new_pp_ok"]}="Y",{c["nB_t"]}>0),MAX(0,MIN(ROUND(MIN({un["해당"]["o"]},{un["직전"]["o"]})-{un["직전전"]["o"]},2),{c["nB_t"]})),0)')
         won("nB_ay", "B 청년등 금액", f'=ROUND({c["nB_y"]}*{szkey("youth", "b")},0)')
         won("nB_ao", "B 청년등 외 금액", f'=ROUND({c["nB_o"]}*{szkey("other", "b")},0)')
         won("nC", "C 전전전 대비 금액", "=0", "이 워크북은 전전전 과세연도 인원을 세지 않습니다. 2027 과세연도까지는 해당 없음(전전전이 2024 이전)")
@@ -834,7 +914,7 @@ def _form2(ws, k: KV, cnt: dict, c: KV, new_rates: dict) -> dict:
     """별지 제10호의9서식(2)(2026. 3. 20. 신설)를 법정 모양으로 그린다. 값은 모두 5공제액 · 4인원 시트를 읽는 수식이다.
     서식(2)에는 기존공제(2024 · 2025 과세연도 증가분의 2 · 3차 연도)가 없어, 그 금액은 서식 밖 참고 줄로 따로 두고 합계(18S)에 더한다."""
     f = Form(ws, 10)
-    u = cnt["used"]
+    u = cnt["used_new"]                                        # 신규공제 · 추가공제는 새 범위 인원(시행령 제26조의8 제2항)
     at: dict = {}
     ws.cell(row=1, column=1, value="■ 조세특례제한법 시행규칙 [별지 제10호의9서식(2)] <신설 2026. 3. 20.>").font = X.NOTE_FONT
     f.row = 2
@@ -1007,14 +1087,21 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
                        "⑦ 경력단절근로자 상시근로자 수", "⑧ 북한이탈주민 상시근로자 수", "⑨ 합계", "⑩ 청년등 외 상시근로자수(=②-⑨)"])
     ws.row_dimensions[row].height = 44
     rng = lambda per, col: ref(S_JUDGE[per], f"${L(col)}${JUDGE_FIRST}:${L(col)}${judge_last}")     # noqa: E731
+    # 2026 과세연도 신고부터는 새 범위 인원(시행령 제26조의8 제2항)을 적고, 합계에서 100분의 1 미만을 버린다(작성방법 1 · 7)
+    new = res["new_scope"]
+    REG, REASON, WEIGHT, M20, N21, M22, N23, KIND = ((J_REGN, J_RN, J_WN, J_MN, J_NN, J_MYN, J_NYN, J_KINDN) if new else
+                                                     (J_REG, J_REASON, J_WEIGHT, J_M20, J_N21, J_M22, J_N23, J_KIND))
+    sf = k["sum_floor"]
+    floor = lambda x: f'IF({sf}="Y",ROUNDDOWN(ROUND({x},8),2),{x})'      # noqa: E731
     at = {}
     for i, per in enumerate(("해당", "직전")):
         r = row + 1 + i
         on = "TRUE" if per == "해당" else f'{cnt["used"][per]["src"]}="급여대장"'
-        cells = [f"{per} 과세연도", f"={ref(S_JUDGE[per], '$F$4')}", f'=IF({on},SUM({rng(per, J_N21)}),"")']
+        cells = [f"{per} 과세연도", f"={ref(S_JUDGE[per], '$F$4')}", f'=IF({on},{floor(f"SUM({rng(per, N21)})")},"")']
         for kind in ("청년", "장애인", "고령자", "경력단절", "북한이탈주민"):
-            cells.append(f'=IF({on},SUMIF({rng(per, J_KIND)},"{kind}",{rng(per, J_N23)}),"")')
-        cells += [f'=IF({on},SUM(D{r}:H{r}),"")', f'=IF({on},ROUND(C{r}-I{r},2),"")']
+            cells.append(f'=IF({on},{floor(f"SUMIF({rng(per, KIND)},{chr(34)}{kind}{chr(34)},{rng(per, N23)})")},"")')
+        cells += [f'=IF({on},IF({sf}="Y",ROUNDDOWN(ROUND(SUM({rng(per, N23)}),8),2),SUM(D{r}:H{r})),"")',
+                  f'=IF({on},ROUND(C{r}-I{r},2),"")']
         for col, v in enumerate(cells, start=1):
             X.cell(ws, r, col, v, kind="total" if col == 1 else "body").number_format = "0" if col == 2 else NUM2
         at[per] = {"total": ref(S_ROSTER, f"$C${r}"), "youth": ref(S_ROSTER, f"$I${r}"), "other": ref(S_ROSTER, f"$J${r}")}
@@ -1043,11 +1130,11 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
             jg = lambda col: ref(S_JUDGE[per], f"${L(col)}{j}")      # noqa: E731
             young = f'AND({st(C_REGULAR, s)}="Y",{start}<{st(C_35, s)},{end}>={st(C_15, s)})'
             vals = [
-                f"={jg(J_BIRTH)}", f"={jg(J_NAME)}", f"={jg(J_REG)}", f"={jg(J_REASON)}",
-                f'=IF({jg(J_WEIGHT)}<1,{jg(J_WEIGHT)},"")', f"={st(attr_col('resident'), s)}",
+                f"={jg(J_BIRTH)}", f"={jg(J_NAME)}", f"={jg(REG)}", f"={jg(REASON)}",
+                f'=IF({jg(WEIGHT)}<1,{jg(WEIGHT)},"")', f"={st(attr_col('resident'), s)}",
                 f'=IF({st(attr_col("capital"), s)}="",{k["capital"]},{st(attr_col("capital"), s)})', f"={jg(J_HIRED)}",
                 (f'=IF({jg(J_MW)}=0,"",TEXT(MONTH(MAX({jg(J_HIRED)},{start})),"00")&"~"&TEXT(MONTH(MIN({jg(J_LEFTX)},{end})),"00"))'),
-                f"={jg(J_M20)}", f"={jg(J_N21)}", f"={jg(J_M22)}", f"={jg(J_N23)}",
+                f"={jg(M20)}", f"={jg(N21)}", f"={jg(M22)}", f"={jg(N23)}",
                 f'=IF({young},"Y","N")', f'=IF(AND({deem}="Y",ISNUMBER({st(C_DEEM, s)})),"Y","N")',
                 f'=IF({st(C_REGULAR, s)}="Y",IF({deem}="Y",{st(C_CUT, s)},{st(C_35, s)}),"")',
                 f"={st(attr_col('disabled'), s)}", f"={st(C_SENIOR, s)}", f"={st(attr_col('career'), s)}",
@@ -1055,7 +1142,8 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
             ]
             for col, v in enumerate(vals, start=1):
                 c = X.cell(ws, row, col, v)
-                c.number_format = YMD if col in (1, 8, 16) else (NUM2 if col in (5, 10, 11, 12, 13) else "General")
+                c.number_format = YMD if col in (1, 8, 16) else ("0.00##" if col in (11, 13) else
+                                                                 NUM2 if col in (5, 10, 12) else "General")
                 c.alignment = Alignment(horizontal="center")
             row += 1
             shown += 1
@@ -1086,12 +1174,14 @@ def _check(ws, inp: Inputs, res: dict, cnt: dict, c: KV, form: dict) -> dict:
         out[label] = (engine, f"C{r}")
         r += 1
 
-    raw, used, legacy = cnt["raw"], cnt["used"], cnt["legacy"]
+    raw, used, legacy, used_new = cnt["raw"], cnt["used"], cnt["legacy"], cnt["used_new"]
+    # 「서식 기준」 청년등은 그 과세연도가 2025년 이후 개시면 청년 간주를 넣은 값이다(직전 · 직전전 포함, 2026-11-02 대표 결정)
+    form_youth = lambda x: x.youth_deem if x.period.deemed else x.youth_age     # noqa: E731
     for per in PERIODS:
-        x = res["counts"][per]
+        x, xn = res["counts"][per], res["counts_new"][per]
         put(f"{per} 근로자별 상시", float(x.total), raw[per]["w_total"])
         put(f"{per} 근로자별 청년등(현재 연령)", float(x.youth_age), raw[per]["w_youth_age"])
-        put(f"{per} 근로자별 청년등(서식 기준)", float(x.youth_deem if per == "해당" else x.youth_age), raw[per]["w_youth"])
+        put(f"{per} 근로자별 청년등(서식 기준)", float(form_youth(x)), raw[per]["w_youth"])
         put(f"{per} 월말 인원 합(상시)", float(x.me_sum), raw[per]["me_sum"])
         put(f"{per} 월말 합 방식 상시", float(x.me_total), raw[per]["me_total"])
         put(f"{per} 월말 합 방식 청년등", float(x.me_youth), raw[per]["me_youth"])
@@ -1099,6 +1189,10 @@ def _check(ws, inp: Inputs, res: dict, cnt: dict, c: KV, form: dict) -> dict:
         put(f"{per} 서식 ⑦ 청년등", float(res["used"][per][1]), used[per]["y"])
         put(f"{per} 2 · 3차 판정 상시", float(res["legacy"][per][0]), legacy[per]["t"])
         put(f"{per} 2 · 3차 판정 청년등", float(res["legacy"][per][1]), legacy[per]["y"])
+        put(f"{per} 새 범위 근로자별 상시", float(xn.total), raw[per]["n_total"])
+        put(f"{per} 새 범위 근로자별 청년등(서식 기준)", float(form_youth(xn)), raw[per]["n_youth"])
+        put(f"{per} 신규공제 인원 상시", float(res["used_new"][per][0]), used_new[per]["t"])
+        put(f"{per} 신규공제 인원 청년등", float(res["used_new"][per][1]), used_new[per]["y"])
     put("청년등 공제 인원", float(res["n_y"]), c["n_y"])
     put("청년등 외 공제 인원", float(res["n_o"]), c["n_o"])
     for label, key, cell in (("⑳ 1차년도 세액공제액", "first", "20"), ("㉖ 2차년도 세액공제액", "second", "26"),
@@ -1112,13 +1206,23 @@ def _check(ws, inp: Inputs, res: dict, cnt: dict, c: KV, form: dict) -> dict:
         x = res["counts"][per]
         if per == "직전" and not x.period.has_payroll:
             continue
+        deemed = x.period.deemed
         for i, rw in enumerate(x.rows):
             j = JUDGE_FIRST + i
             if not any(rw.worked):
                 continue
             put(f"{per} {rw.person.name}({rw.person.id}) 계산한 수", float(rw.n_work), ref(S_JUDGE[per], f"${L(J_N21)}${j}"))
-            y = rw.n_youth_deem if per == "해당" else rw.n_youth_age
+            y = rw.n_youth_deem if deemed else rw.n_youth_age
             put(f"{per} {rw.person.name}({rw.person.id}) 청년등 계산한 수", float(y), ref(S_JUDGE[per], f"${L(J_N23)}${j}"))
+        if not res["new_scope"]:
+            continue
+        for i, rw in enumerate(res["counts_new"][per].rows):          # 새 범위(신규공제 · 추가공제)
+            j = JUDGE_FIRST + i
+            if not any(rw.employed):
+                continue
+            put(f"{per} {rw.person.name}({rw.person.id}) 새 범위 계산한 수", float(rw.n_work), ref(S_JUDGE[per], f"${L(J_NN)}${j}"))
+            y = rw.n_youth_deem if deemed else rw.n_youth_age
+            put(f"{per} {rw.person.name}({rw.person.id}) 새 범위 청년등 계산한 수", float(y), ref(S_JUDGE[per], f"${L(J_NYN)}${j}"))
     out["_range"] = f"$D${row + 1}:$D${r - 1}"
     X.widths(ws, [44, 16, 16, 10])
     return out
@@ -1144,8 +1248,12 @@ def _list(ws, inp, res, k: KV, cnt, c: KV, form, roster, memos, staff_last, pay_
     ws.cell(row=row, column=1, value="결과").font = Font(name=X.FONT, bold=True, size=11)
     row += 1
     X.header(ws, row, ["항목", "값"])
-    u = cnt["used"]
-    for label, f, fmt in (("해당 과세연도 상시근로자 수", f"={u['해당']['t']}", NUM2), ("직전 과세연도 상시근로자 수", f"={u['직전']['t']}", NUM2),
+    u, un = cnt["used"], cnt["used_new"]
+    tail = "(종전 범위, 기존공제 판정)" if res["new_scope"] else ""
+    for label, f, fmt in (*((("새 범위 해당 과세연도 상시근로자 수(신규공제 · 추가공제)", f"={un['해당']['t']}", NUM2),
+                             ("새 범위 직전 과세연도 상시근로자 수", f"={un['직전']['t']}", NUM2)) if res["new_scope"] else ()),
+                          (f"해당 과세연도 상시근로자 수{tail}", f"={u['해당']['t']}", NUM2),
+                          (f"직전 과세연도 상시근로자 수{tail}", f"={u['직전']['t']}", NUM2),
                           ("상시근로자 증가 인원 수", f"={c['13']}", NUM2), ("청년등 증가 인원 수", f"={c['16']}", NUM2),
                           ("1차년도 세액공제액", f"={c['20']}", X.MONEY), ("2차년도 세액공제액", f"={c['26']}", X.MONEY),
                           ("3차년도 세액공제액", f"={c['32']}", X.MONEY),

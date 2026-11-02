@@ -17,9 +17,8 @@ from datetime import date
 from fractions import Fraction
 from pathlib import Path
 
-import fitz
-
-from .calc import FAR, age_limits, deemed_until, is_senior, youth_cutoff
+import pymupdf as fitz
+from .calc import FAR, age_limits, deemed_until, floor2, is_senior, youth_cutoff
 from .model import Inputs
 
 HERE = Path(__file__).resolve().parent
@@ -48,6 +47,14 @@ def num(x) -> str:
     """개월수 · 인원: 정수면 정수, 아니면 소수 둘째 자리."""
     f = float(x)
     return str(int(f)) if f == int(f) else f"{f:.2f}"
+
+
+def per_head(x, exact: bool) -> str:
+    """명세서 사람별 계산한 수. 합계에서 버리는 신고(2026 과세연도부터)는 버리지 않은 값을 소수 넷째 자리까지 적는다."""
+    if not exact:
+        return n2(x)
+    s = f"{float(x):.4f}".rstrip("0")
+    return s + "0" * max(0, 2 - len(s.split(".")[1]))
 
 
 def ymd(d: date | None) -> str:
@@ -133,8 +140,8 @@ def form1(inp: Inputs, res: dict, company: str, legacy: bool) -> dict:
 
 
 def form2(inp: Inputs, res: dict, company: str) -> dict:
-    """별지 제10호의9서식(2)(2026 과세연도부터): 신규공제와 추가공제."""
-    co, u, src = inp.company, res["used"], res["source"]
+    """별지 제10호의9서식(2)(2026 과세연도부터): 신규공제와 추가공제. 인원은 새 범위(시행령 제26조의8 제2항)."""
+    co, u, src = inp.company, res["used_new"], res["source"]
     v = _head(co, company)
     for per, col in (("직전전", "전전"), ("직전", "직전"), ("해당", "해당")):
         if per != "해당" and src[per] == "없음":
@@ -178,8 +185,14 @@ def form2(inp: Inputs, res: dict, company: str) -> dict:
     return v
 
 
+def _counts(res: dict, per: str):
+    """명세서에 적는 인원: 2026 과세연도 신고부터 새 범위(작성방법 9 가목 · 12), 그 전은 종전 범위."""
+    return res["counts_new" if res["new_scope"] else "counts"][per]
+
+
 def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
-    co, period, cnt = inp.company, res["periods"][per], res["counts"][per]
+    co, period, cnt = inp.company, res["periods"][per], _counts(res, per)
+    exact = res["sum_floor"]
     by_id = {r.person.id: r for r in cnt.rows}
     out = []
     for p in inp.staff:
@@ -191,7 +204,7 @@ def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
         deem = period.deemed
         m_y, n_y = (r.m_youth_deem, r.n_youth_deem) if deem else (r.m_youth_age, r.n_youth_age)
         lo, hi = age_limits(p, rules)
-        worked = sum(r.worked)
+        worked = sum(r.employed)                     # 근로기간(MM~MM)은 실제 재직 달(새 범위의 1년 판정 전)
         span = ""
         if worked:
             a, b = max(p.hired, period.start), min(p.left or FAR, period.end)
@@ -200,7 +213,8 @@ def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
         cut = (youth_cutoff(p, co.size, rules, True) if deem else hi) if r.regular else None
         out.append([
             ymd(p.birth), p.name, yn(r.regular), (r.reason[:1] if r.reason else ""), (num(r.weight) if r.weight < 1 else ""),
-            yn(p.resident), yn(p.capital or co.capital), ymd(p.hired), span, num(r.m_work), n2(r.n_work), num(m_y), n2(n_y),
+            yn(p.resident), yn(p.capital or co.capital), ymd(p.hired), span, num(r.m_work), per_head(r.n_work, exact), num(m_y),
+            per_head(n_y, exact),
             yn(young), yn(deem and deemed_until(p, co.size, rules) is not None), ymd(cut),
             yn(p.disabled), yn(is_senior(p, rules)), yn(p.career), yn(p.defector), yn(p.converted), yn(p.returned),
         ])
@@ -212,7 +226,7 @@ def roster(inp: Inputs, res: dict, rules: dict, company: str) -> tuple[dict, dic
     v = _head(inp.company, company)
     rows = {}
     for per in ("해당", "직전"):
-        period, cnt = res["periods"][per], res["counts"][per]
+        period, cnt = res["periods"][per], _counts(res, per)
         if per == "직전" and not period.has_payroll:
             continue
         kinds = {k: Fraction(0) for k in KIND_CODE}
@@ -221,6 +235,9 @@ def roster(inp: Inputs, res: dict, rules: dict, company: str) -> tuple[dict, dic
             if r.regular and r.kind in kinds:
                 kinds[r.kind] += n
         total, youth = cnt.total, sum(kinds.values(), Fraction(0))
+        if res["sum_floor"]:                         # 합계에서 100분의 1 미만 버림(작성방법 1 · 7)
+            kinds = {k: floor2(v) for k, v in kinds.items()}
+            youth = floor2(youth)
         v[f"{per}_1"], v[f"{per}_2"] = str(period.months), n2(total)
         for k, code in KIND_CODE.items():
             v[f"{per}_{code}"] = n2(kinds[k])

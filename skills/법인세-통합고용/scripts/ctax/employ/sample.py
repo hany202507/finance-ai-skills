@@ -133,11 +133,11 @@ DOUZONE_HEAD = (                                   # 더존 급여대장 머리�
 )
 
 
-def write_douzone_pdfs(folder: Path, year: int = 2025) -> list[Path]:
+def write_douzone_pdfs(folder: Path, year: int = 2025, company: str = "샘플회사(가상)") -> list[Path]:
     """더존 「급여대장」 PDF 를 흉내 낸 달별 PDF. 칸마다 선을 그은 표이고 머리글 네 줄 · 사람마다 세 줄이다(실제 더존 양식과 같은 짜임).
     첫 줄: 사원번호 · 성명 · 기본급 · 식대 · 국민연금 · 건강보험 · 고용보험 · 소득세 · 지방소득세. 둘째 줄: 입사일 · 공제합계.
     셋째 줄: 퇴사일 · 지급합계 · 차인지급액. 마지막 쪽 끝에 「합계(N명)」 줄. 한 쪽에 열한 명씩(더존과 같다)이라 열한 명이 넘는 달은 두 쪽이다."""
-    import fitz
+    import pymupdf as fitz
     folder.mkdir(parents=True, exist_ok=True)
     x0, y0, w, h, cols = 30, 90, 78, 12, len(DOUZONE_HEAD[0])
     per_page, out = 11, []
@@ -146,7 +146,7 @@ def write_douzone_pdfs(folder: Path, year: int = 2025) -> list[Path]:
         for start in range(0, len(rows), per_page):
             pg = doc.new_page(width=842, height=595)
             pg.insert_text((x0, 50), f"{month[:4]}년{month[5:]}월분 급여대장", fontname="korea", fontsize=14)
-            pg.insert_text((x0, 68), "회사명: 샘플회사(가상)", fontname="korea", fontsize=8)
+            pg.insert_text((x0, 68), f"회사명: {company}", fontname="korea", fontsize=8)
             pg.insert_text((x0, 80), f"[귀속:{month[:4]}년{month[5:]}월] [지급:{month[:4]}년{month[5:]}월25일]", fontname="korea", fontsize=8)
             grid = [list(r) for r in DOUZONE_HEAD]
             for r in rows[start:start + per_page]:
@@ -175,7 +175,7 @@ def write_douzone_pdfs(folder: Path, year: int = 2025) -> list[Path]:
     return out
 
 
-def write_payroll_excels(folder: Path, year: int = 2025) -> list[Path]:
+def write_payroll_excels(folder: Path, year: int = 2025, company: str = "샘플회사(가상)") -> list[Path]:
     """달별 엑셀 급여대장. 직전 과세연도와 해당 과세연도의 열 이름 · 순서 · 머리 줄 위치를 다르게 했다(급여 프로그램을 바꾼 회사).
     맨 아래에 합계 줄이 있어 옮긴 뒤 원본 합계와 맞춰 볼 수 있다."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -194,7 +194,7 @@ def write_payroll_excels(folder: Path, year: int = 2025) -> list[Path]:
                        sum(r["pension"] for r in rows), sum(r["health"] for r in rows), None])
         else:
             ws.append([f"{month[:4]}년 {int(month[5:])}월 급여대장"])
-            ws.append(["샘플회사(가상)", None, None, f"지급일 {month}-25"])
+            ws.append([company, None, None, f"지급일 {month}-25"])
             ws.append(["사번", "성명", "지급합계", "소득세", "지방소득세", "국민연금(근로자)", "건강보험(근로자, 장기요양 포함)", "차인지급액"])
             for r in rows:
                 ded = r["tax"] + r["tax"] // 100 * 10 + r["pension"] + r["health"]
@@ -209,13 +209,13 @@ def write_payroll_excels(folder: Path, year: int = 2025) -> list[Path]:
     return out
 
 
-def write_staff_file(path: Path, year: int = 2025) -> Path:
+def write_staff_file(path: Path, year: int = 2025, company: str = "샘플회사(가상)") -> Path:
     """인사 담당이 따로 주는 사원명부 엑셀(숫자 사번, 퇴사자 포함). 머리글은 입력 양식 「사원명부」 와 같은 이름이다."""
     staff, _, _ = _people(year, numeric=True)
     wb = Workbook()
     ws = wb.active
     ws.title = "사원명부"
-    ws.append([f"샘플회사(가상) 사원명부 · {year - 1} ~ {year} 재직자 전원"])
+    ws.append([f"{company} 사원명부 · {year - 1} ~ {year} 재직자 전원"])
     head = [c[0] for c in STAFF_COLS]
     ws.append(head)
     for sid, name, birth, hired, left, kind, _, more, memo in staff:
