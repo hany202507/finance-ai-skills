@@ -23,8 +23,8 @@ const MSG = `[세법 근거 규약 — 자동 주입]
 세법 쟁점으로 보인다. 해석·검토가 필요하면 \`세법자문-회신\` 스킬을 쓰고, 아래를 지켜라.
 
 1. 근거로 적는 출처는 TaxDoctor 와 \`korean-law\` 두 곳이다. 웹·기억만으로 조문번호를 단정하지 마라.
-   - 세법 조문·예규·판례 조사: TaxDoctor (\`search_tax\`, \`get_article\`)
-   - 세법이 아닌 법령, 부칙의 적용 시점(\`get_addenda\`), 지난 과세기간 조문, 내용으로 조문 찾기(\`scan_articles\`): \`korean-law\`
+   - 세법 조문·예규·판례, 세법 판단에 쓰이는 비세법 참조 법령(\`get_reference_article\`), 지난 과세기간 조문(\`get_article\` 의 \`as_of\`), 부칙의 적용 시점(\`get_amendments\`) 조사: TaxDoctor (\`search_tax\`, \`get_article\`)
+   - 근거 조문 대조(지난 판은 \`effective_date\`, 부칙은 \`get_addenda\`), TaxDoctor 에 없는 법령(최저임금법 등), 내용으로 조문 찾기(\`scan_articles\`): \`korean-law\`
 2. 근거마다 등급을 붙인다. ★★★ 원문 확인(세법 조문은 두 곳에서 같은 판, TaxDoctor 에 없는 법령과 부칙은 korean-law 원문과 링크) / ★★☆ 한 곳에서만 읽었거나 요지만 / ☆ 두 곳에서 다 못 엶.
    결론에 쓴 조문이 ★★★ 이 아니면 그 사실을 결론 옆에 적는다.
 3. 답변 목차는 결론 · 쟁점분석 · 실무해설 · 근거규정 넷이다. 대화창 완료 보고도 같은 순서다.

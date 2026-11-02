@@ -104,16 +104,19 @@ description: 한국 법령(노무·근로기준법, 상법·회사법, 민법, �
 | 무엇 | 도구 |
 |---|---|
 | 세법 조문 | TaxDoctor `get_article` 과 korean-law `get_law_text` 같은 판 |
-| 세법이 아닌 법 조문 | korean-law `get_law_text`. 실패하면 법제처 통합검색 `get_law_text` |
+| 세법이 아닌 법 조문 | korean-law `get_law_text`. 실패하면 법제처 통합검색 `get_law_text`. TaxDoctor 에 있는 법은 `get_reference_article` 로 대조할 수 있다 |
 | 별표 | 법제처 통합검색 `get_annexes`, 세법은 TaxDoctor `get_annex` |
 | 대법원 판례 | 법제처 통합검색 `search_decisions(domain="precedent")` → `get_decision_text`. 본문 검색은 `options={"search": "both", "court": "대법원"}`, 사건번호는 `options={"caseNumber": "…"}` |
 | 고용노동부 행정해석 | 법제처 통합검색 `search_decisions(domain="moel")` → `get_decision_text(domain="moel")` |
 | 노동위원회, 산재·고용보험 재심사 | 법제처 통합검색 `domain="nlrc"`, `"iaciac"`, `"eiac"` |
 | 법제처 법령해석례 | korean-law `search_decisions(domain="expc")` 또는 통합검색 `domain="interpretation"` |
-| 조세심판원, 국세청 예규 | korean-law `search_rulings`, 통합검색 `domain="tax_tribunal"`, `"nts"` |
+| 국세청 예규·해석 | TaxDoctor `search_interpretations` → 본문은 `get_evidence(source_field="content")`. 법제처 API(korean-law `search_rulings`, 통합검색 `domain="nts"`)는 국세청 · 재정경제부 해석의 목록만 준다(2026-11-02 대조) |
+| 조세심판원 | TaxDoctor `search_tax`(`search_intents` 의 `tribunal`) · `search_cases`, korean-law `search_rulings(source="tribunal")` → `get_ruling`, 통합검색 `domain="tax_tribunal"` |
 | 고시·행정규칙 | 법제처 통합검색 `execute_tool("search_admin_rule")` → `execute_tool("get_admin_rule")`. 본문이 첨부 PDF 뿐이면 사용자 허락을 받고 내려받아 `pypdf` 로 읽는다 |
 
-- TaxDoctor 는 세법 90개만 싣는다. 민법·상법·근로기준법 등은 없다
+- TaxDoctor 는 세법 90개와 세법 판단에 쓰이는 비세법 참조 법령 81개를 싣는다(2026-11-02 `list_laws`). 민법 · 상법 · 근로기준법 · 근로자퇴직급여 보장법 · 고용보험법 · 산업재해보상보험법 · 국민연금법 · 국민건강보험법과 시행령이 있다
+- 최저임금법, 남녀고용평등법, 기간제법, 파견법, 공인노무사법, 노동 법령의 시행규칙, 노동 판례, 고용노동부 행정해석은 TaxDoctor 에 없다. korean-law 와 법제처 통합검색으로 읽는다
+- 참조 법령 응답에는 「세법이 아님」 표시가 붙는다. 세법 결론은 세법 조문으로 따로 확인한다
 - 웹은 법령 원문을 대신하지 않는다. 사건번호처럼 찾을 단서를 얻는 데만 쓴다
 
 첫 조회가 응답하면 연결 확인으로 친다. ToolSearch 로 korean-law 도구를 찾지 못하면 「준비」 절을 안내하고 멈춘다. 첫 조회가 실패하면 korean-law `search_law(법령명)`, TaxDoctor `list_laws` 로 서버가 살아 있는지 본다. 둘 다 응답하지 않으면 웹으로 잠정 조사하고 결과 첫 줄에 「법령 원문 미검증」을 적는다. TaxDoctor 가 없는 사용자는 세법도 korean-law 가 1차다.
@@ -131,7 +134,8 @@ description: 한국 법령(노무·근로기준법, 상법·회사법, 민법, �
 - 별표는 그 시행령의 판(MST@시행일)으로 적는다. 도구가 판을 주지 않으면 별표의 개정 표시(예: 「개정 2018. 6. 29.」)를 적는다
 - OC 값이 들어간 링크(`OC=***` 꼴)는 옮기지 않고 「도구가 주지 않음」으로 적는다
 - 결론에 쓰는 근거는 ★★★ 이어야 한다. ★★☆ 나 ☆ 가 하나라도 있으면 그 등급을 결론 옆에 적는다
-- 두 곳이 같은 판인지는 `MST@시행일` 로 본다. TaxDoctor 원천 스냅샷 `moleg-eflaw:<MST>@<시행일>` 이 korean-law 머리줄의 `MST`·`시행일` 과 같아야 한다
+- 세법 조문이 두 곳에서 같은 판인지는 `MST@시행일` 로 본다. TaxDoctor 원천 스냅샷 `moleg-eflaw:<MST>@<시행일>` 이 korean-law 머리줄의 `MST`·`시행일` 과 같아야 한다
+- 참조 법령은 원천이 `ref-eflaw:<MST>@<그 조문이 마지막으로 바뀐 판>` 이라 korean-law 현행 MST 와 번호가 다를 수 있다(근로기준법 제60조: TaxDoctor `283457@20260820`, korean-law `285279@20261008`). 응답의 「법령 현행 시행」 날짜와 조문 문장으로 맞춘다
 - 기준일이 오늘 뒤면 TaxDoctor 는 시행예정 판 본문을 다 주지 않는다. 두 곳 대조는 오늘 판으로 하고, 기준일 판은 korean-law 로 읽어 결론 조문이 오늘 판과 같은지 본다. 같으면 ★★★, 다르면 기준일 판 문장은 ★★☆ 다
 - 원문이 다르면 쓰지 않고 그 사실을 보고한다. 어느 쪽이 맞는지 추측하지 않는다
 - URL 은 도구가 준 것만 옮긴다. 도구가 주지 않으면 「도구가 주지 않음」을 적고 만들지 않는다

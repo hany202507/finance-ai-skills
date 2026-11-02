@@ -1,6 +1,6 @@
 ---
 name: 세법자문-회신
-description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳의 원문으로 검토해 결론 · 쟁점분석 · 실무해설 · 근거규정 네 절의 답변 md 를 만든다. 근거규정에는 결론을 직접 정하는 조문만 등급을 붙여 적는다. "세법자문", "세법검토", "세무 회신", "이거 가산세 붙나", "서식·명세서 미제출", "신고 누락", "법인세/소득세/부가세/원천세 쟁점", "예규·판례 확인", "세무 질의 답변"이 나오면 쓴다. 세법은 TaxDoctor 로 조사하고, 세법이 아닌 법령 · 부칙의 적용 시점 · 지난 과세기간 조문 · 근거 조문 대조는 korean-law 로 한다.
+description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳의 원문으로 검토해 결론 · 쟁점분석 · 실무해설 · 근거규정 네 절의 답변 md 를 만든다. 근거규정에는 결론을 직접 정하는 조문만 등급을 붙여 적는다. "세법자문", "세법검토", "세무 회신", "이거 가산세 붙나", "서식·명세서 미제출", "신고 누락", "법인세/소득세/부가세/원천세 쟁점", "예규·판례 확인", "세무 질의 답변"이 나오면 쓴다. 세법 조문 · 세법 판단에 쓰이는 비세법 참조 법령 · 부칙의 적용 시점 · 지난 과세기간 조문은 TaxDoctor 로 조사하고, 근거 조문 대조와 TaxDoctor 에 없는 법령은 korean-law 로 한다.
 ---
 
 # 세법자문-회신: 근거 조문과 등급이 달린 세무 답변
@@ -19,12 +19,12 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 ### 1. TaxDoctor 커넥터
 
-세법령 90종의 조문, 예규 · 해석례, 판례 · 조세심판원 결정을 조회하는 외부 커넥터다.
+세법령 90종과 세법 판단의 전제가 되는 비세법 참조 법령 81종(민법 · 상법 · 주택법 · 근로기준법 · 중소기업기본법 등)의 조문, 지난 판, 부칙, 예규 · 해석례, 판례 · 조세심판원 결정을 조회하는 외부 커넥터다(2026-11-02 `list_laws`).
 
 1. `taxdoctorai.com` 에서 무료 가입한다.
 2. 클로드 설정 → 커넥터 → 커스텀 커넥터 추가. 이름 `TaxDoctor`, 주소 `https://mcp.taxdoctorai.com/mcp`. 설정 화면에서 사람이 한다.
    터미널에서 Claude Code 를 쓰면 `claude mcp add --transport http taxdoctor https://mcp.taxdoctorai.com/mcp`.
-3. 확인: 「TaxDoctor 의 list_laws 로 수록 법령 수를 알려줘」. 90건 안팎이 나온다.
+3. 확인: 「TaxDoctor 의 list_laws 로 수록 법령 수를 알려줘」. 세법 90건 안팎과 비세법 참조 법령 80건 안팎이 나온다.
 
 ### 2. korean-law 법령 서버
 
@@ -75,8 +75,10 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 | 출처 | 맡는 것 |
 |---|---|
-| TaxDoctor | 세법 조문 조사, 예규 · 해석례, 판례 · 조세심판원 결정, 고시 · 훈령, 조세조약, 별표 |
-| korean-law | 세법이 아닌 법령(법률 · 시행령 · 시행규칙), 부칙의 적용례 · 경과조치, 지난 과세기간에 시행 중이던 조문, 여러 법을 내용으로 훑기, 조세심판원 결정 본문, 근거 조문 대조 |
+| TaxDoctor | 세법 조문 조사, 비세법 참조 법령 조문, 지난 과세기간에 시행 중이던 판(`as_of`), 부칙의 적용례 · 경과조치, 예규 · 해석례, 판례 · 조세심판원 결정, 고시 · 훈령, 조세조약, 별표 |
+| korean-law | 근거 조문 대조(현행 판 · 지난 판 · 부칙), TaxDoctor 에 없는 법령(최저임금법 · 남녀고용평등법, 노동 법령의 시행규칙 등), 여러 법을 내용으로 훑기, 조세심판원 결정 본문 |
+
+TaxDoctor 에 어떤 법령이 있는지는 `list_laws` 로 본다. 비세법 참조 법령은 2016-01-01 당시 판부터 싣는다.
 
 근거 줄마다 등급을 붙인다.
 
@@ -88,21 +90,22 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 - 근거규정에 적은 조문은 ★★★ 이어야 한다. 아니면 결론 바로 아래에 그 조문과 등급, 이유를 한 줄로 적는다.
 - TaxDoctor 가 「미검증」 표시를 붙인 조문이라도 korean-law 와 시행일 · 문언이 같으면 ★★★ 이다.
-- 링크는 도구가 준 것만 옮긴다. TaxDoctor 는 조문의 `law.go.kr` 링크를 주지 않는다. 조문 링크는 korean-law 에서 받는다. 판례 · 예규 링크는 TaxDoctor 가 준 것을 쓴다.
+- 링크는 도구가 준 것만 옮긴다. TaxDoctor 는 세법 조문의 `law.go.kr` 링크를 주지 않는다(3단보기 링크만 주고, `as_of` 응답의 3단보기는 현행 판이다). 조문 링크는 korean-law 에서 받는다. 판례 · 예규 링크는 TaxDoctor 가 준 것을 쓴다.
 - 고시 · 훈령은 korean-law 로 열리지 않는다. TaxDoctor 로 못 열었는데 결론이 그 고시에 걸리면 「확인할 사항」으로 돌린다.
-- 한 곳이 응답하지 않으면 남은 곳으로 조사하되 현행 세법 조문 등급은 ★★☆ 까지다. korean-law 가 없으면 세법이 아닌 법령, 부칙, 지난 과세기간 조문에 걸린 결론은 내지 않는다. 둘 다 없으면 웹으로 잠정 검토하고 답변 첫 줄에 「법령 원문 미검증」을 적는다.
+- 한 곳이 응답하지 않으면 남은 곳으로 조사하되 현행 세법 조문 등급은 ★★☆ 까지다. korean-law 가 없으면 비세법 참조 법령, 부칙, 지난 과세기간 조문도 TaxDoctor 로 읽고 ★★☆ 로 적는다. TaxDoctor 에도 없는 법령에 걸린 결론은 내지 않는다. 둘 다 없으면 웹으로 잠정 검토하고 답변 첫 줄에 「법령 원문 미검증」을 적는다.
 - 사용자가 TaxDoctor 만 쓰라고 했으면 그 지시를 따르고, 조문 등급은 ★★☆ 로 적는다.
 
 ## 도구
 
-도구 이름은 `mcp__<서버 id>__<도구>` 꼴이고 세션마다 id 가 다르다. 지연 로딩이면 ToolSearch 로 `search_tax get_article get_evidence verify_citations`, `korean-law` 를 찾아 한 번에 불러온다.
+도구 이름은 `mcp__<서버 id>__<도구>` 꼴이고 세션마다 id 가 다르다. 지연 로딩이면 ToolSearch 로 `search_tax get_article get_amendments get_reference_article get_evidence verify_citations`, `korean-law` 를 찾아 한 번에 불러온다.
 
 | 하려는 것 | TaxDoctor | korean-law | 주의 |
 |---|---|---|---|
 | 쟁점으로 조문 찾기 | `search_tax` | `scan_articles(law_names, keywords)` | 조문번호를 알면 `get_article` 로 바로 연다. `search_tax` 는 응답이 길다. `search_intents` 를 하나만 넣고 `limit` 를 5 이하로 둔다. korean-law `search_law` 는 법령명만 찾는다 |
-| 조문 원문 | `get_article` | `get_law_text` (`article` 은 `"60"`, `"75의8"`) | TaxDoctor 는 현행 판만 준다. 응답 머리줄의 법령명이 요청과 같은지 본다 |
-| 적용 시점 | `list_upcoming` (시행 예정) | `amendment_track`, `get_addenda` | 아래 3단계 |
-| 지난 과세기간 조문 | `search_tax` 의 `as_of` (참고) | `get_law_text(effective_date)`, `scan_articles(effective_date)` | 날짜는 쟁점 사실이 일어난 날을 넣는다 |
+| 조문 원문 | `get_article` | `get_law_text` (`article` 은 `"60"`, `"75의8"`) | 응답 머리줄의 법령명이 요청과 같은지 본다 |
+| 세법이 아닌 법령 | `get_reference_article`, `search_reference_articles` | `get_law_text` | TaxDoctor 응답에 「세법이 아님」 표시가 붙는다. TaxDoctor 에 없는 법령은 korean-law 로만 연다 |
+| 적용 시점 | `get_amendments(period_start, period_end)`, `list_upcoming` (시행 예정) | `amendment_track`, `get_addenda` | 아래 3단계 |
+| 지난 과세기간 조문 | `get_article(as_of)`, 비세법은 `get_reference_article(as_of)` | `get_law_text(effective_date)`, `scan_articles(effective_date)` | 날짜는 쟁점 사실이 일어난 날을 넣는다. 그날 판이 수록 전이면 TaxDoctor 는 현행으로 대신하지 않고 「확인 불가」 로 답한다 |
 | 위임 · 다른 법 인용 | `get_article` 의 위임 목록 | `trace_references` | 조문번호를 명시한 인용만 따라간다 |
 | 예규 · 해석례 | `search_interpretations` → 본문은 `get_evidence` (`source_field="content"`) | `search_rulings` (목록만) | `search_tax` 의 `ruling` 은 고시 · 훈령을 먼저 준다. 예규는 `search_interpretations` 로 찾는다 |
 | 판례 · 심판례 | `search_cases` | `search_rulings` → `get_ruling(source="tribunal")` | 조세심판원 결정부터 본다. 실제로 다툰 사안이다 |
@@ -135,7 +138,7 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 - 위임: 법 → 시행령 → 시행규칙 → 별표.
 - 특별법: 조세특례제한법에 같은 대상의 특례가 있는지 한 번 검색한다. 있으면 세목법보다 먼저 적용한다.
-- 세법이 인용한 다른 법령: 상법 · 민법 · 건축법 · 주택법 등은 korean-law 로 조문 원문까지 본다. 그 법 안에서 해석이 갈리는 지점은 결론을 바꿀 때만 「확인할 사항」에 적고 더 조사하지 않는다.
+- 세법이 인용한 다른 법령: 상법 · 민법 · 건축법 · 주택법 등은 TaxDoctor `get_reference_article` 로 조문 원문까지 본다. TaxDoctor 에 없으면 korean-law 로 연다. 그 법 안에서 해석이 갈리는 지점은 결론을 바꿀 때만 「확인할 사항」에 적고 더 조사하지 않는다.
 - 부칙: 3단계.
 
 해석은 국세기본법의 원칙을 따른다.
@@ -161,7 +164,7 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 ### 1단계. 조사 (1 · 2)
 
-TaxDoctor 로 조문을 찾아 `get_article` 로 연다. 이 단계에서 세법 조문을 korean-law 로 또 열지 않는다. 대조는 5단계에서 한 번에 하고 등급도 그때 확정한다. 서식 · 명세서 의무는 시행령에 있으니 법만 보고 끝내지 않는다. 결론의 행위(지급, 양도, 신고)에 바로 따르는 신고 · 납부 · 제출 의무는 질문이 묻지 않았어도 조사한다. 예규와 심판례는 결론이 조문만으로 정해지지 않을 때 찾는다. 세법이 아닌 법령이 걸리면 korean-law `get_law_text` 로 연다.
+TaxDoctor 로 조문을 찾아 `get_article` 로 연다. 이 단계에서 세법 조문을 korean-law 로 또 열지 않는다. 대조는 5단계에서 한 번에 하고 등급도 그때 확정한다. 서식 · 명세서 의무는 시행령에 있으니 법만 보고 끝내지 않는다. 결론의 행위(지급, 양도, 신고)에 바로 따르는 신고 · 납부 · 제출 의무는 질문이 묻지 않았어도 조사한다. 예규와 심판례는 결론이 조문만으로 정해지지 않을 때 찾는다. 세법이 아닌 법령이 걸리면 TaxDoctor `get_reference_article` 로 열고, TaxDoctor 에 없는 법령이면 korean-law `get_law_text` 로 연다. 지난 과세기간이면 `as_of` 에 쟁점 사실이 일어난 날을 넣는다.
 
 부수 쟁점은 질문이 묻지 않은 다른 세목이나 다른 사람의 세금이다(소득처분을 받는 사람의 소득세, 부가가치세 등). 따로 조사하지 않고 「실무해설」에 한 줄로 적는다. 결론이나 금액을 바꾸는 것이면 조사한다.
 
@@ -177,10 +180,10 @@ korean-law `scan_articles` 로 훑는다. 법령과 키워드는 `references/가
 
 ### 3단계. 적용 시점 (5)
 
-1. korean-law `amendment_track` 으로 그 법령이 과세기간 시작일 뒤에 개정됐는지 본다. 진행 중인 과세기간도, 결론을 정하는 세법이 아닌 법령도 같다. 이 도구는 법령 단위 이력만 준다.
-2. 개정이 없었으면 검토 기록에 「개정 없음」으로 적는다. 개정이 있었으면 `get_law_text(effective_date=과세기간 시작일)` 로 그때 판을 열어 인용한 항 · 호를 현행과 견준다. 그대로이거나 부처 이름 · 자구만 바뀌었으면 「개정 있음, 인용한 항 변동 없음」으로 적는다.
-3. 인용한 항 · 호가 바뀌었으면 `get_addenda(keywords=["적용례","경과조치"])` 로 부칙을 연다. 조문의 판정 기준일(예: 사업연도 종료일)과 부칙의 적용 기준일(예: 사업연도 개시일)은 다를 수 있다.
-4. `get_addenda(law_name)` 결과에 그 개정의 부칙이 없으면 `amendment_track` 이 준 그 판의 MST 로 `get_addenda(mst=…)` 를 부른다. 그래도 못 찾고 결론이 그 조문으로 갈리면 「확인할 사항」에 적는다.
+1. TaxDoctor `get_article(as_of=과세기간 시작일)` 로 그때 판을 연다. 응답의 판 목록(시행 구간)으로 과세기간 시작일 뒤에 바뀐 판이 있는지 본다. 진행 중인 과세기간도, 결론을 정하는 세법이 아닌 법령도 같다(비세법은 `get_reference_article(as_of)`). TaxDoctor 에 없는 법령은 korean-law `amendment_track` 으로 본다. 이 도구는 법령 단위 이력만 준다.
+2. 바뀐 판이 없으면 검토 기록에 「개정 없음」으로 적는다. 바뀌었으면 그때 판의 인용한 항 · 호를 현행과 견준다. 그대로이거나 부처 이름 · 자구만 바뀌었으면 「개정 있음, 인용한 항 변동 없음」으로 적는다. 결론에 쓰는 지난 판은 korean-law `get_law_text(effective_date=과세기간 시작일)` 로 같은 판인지 대조한다.
+3. 인용한 항 · 호가 바뀌었으면 TaxDoctor `get_amendments(period_start=과세기간 시작일, period_end=과세기간 종료일)` 로 적용례 · 경과조치를 찾고, korean-law `get_addenda(keywords=["적용례","경과조치"])` 로 같은 부칙을 대조한다. 조문의 판정 기준일(예: 사업연도 종료일)과 부칙의 적용 기준일(예: 사업연도 개시일)은 다를 수 있다.
+4. 개정 부칙에 그 조문 번호가 나오지 않으면 두 도구 모두 그 부칙을 찾지 못한다. `get_amendments` 는 이때 기간 시작 당시 판을 만든 옛 부칙을 내놓기도 한다(소득세법 시행령 제167조의10, 2026년 개정 2건, 11-02 시험). 판이 바뀐 날은 1번 판 목록으로 정하고, `get_addenda(law_name)` 결과에 그 개정의 부칙이 없으면 `amendment_track` 이 준 그 판의 MST 로 `get_addenda(mst=…)` 를 부른다. 그래도 못 찾고 결론이 그 조문으로 갈리면 「확인할 사항」에 적는다.
 
 ### 4단계. 답변 작성
 
@@ -191,7 +194,7 @@ korean-law `scan_articles` 로 훑는다. 법령과 키워드는 `references/가
 답변에 적은 번호를 전부 확인하고 등급을 확정한다.
 
 1. 세법 조문번호와 예규 · 판례 문서번호는 TaxDoctor `verify_citations` 로 실제로 있는지 확인한다. 쟁점분석 · 실무해설에 괄호로 적은 조문번호도 넣는다. 건수는 조 단위로 센다.
-2. 세법이 아닌 법령과 지난 과세기간 조문은 korean-law `get_law_text` 로 연 것으로 확인을 대신한다.
+2. 세법이 아닌 법령과 지난 과세기간 조문은 korean-law `get_law_text`(지난 판은 `effective_date`)로 원문을 열어 TaxDoctor 에서 읽은 판과 견준다. `verify_citations` 는 현행 세법만 보므로 이 대조로 대신한다.
 3. 「근거규정」에 등급을 붙여 적은 조문(부칙 포함)은 korean-law 에서 원문을 한 번 더 열어 인용한 취지와 맞는지 대조한다. 초안을 보지 않은 서브에이전트 하나에 조문마다 법령명 · 조항, 「이 취지로 인용했다」 한 줄, 쓸 도구(`get_law_text(law_name, article)`)만 주고 `일치` / `불일치(무엇이)` / `존재하지 않음` 으로 판정받는다. 초안을 쓴 쪽이 직접 대조하면 이미 쓴 문장에 맞춰 읽게 된다. 서브에이전트를 못 쓰면 조문마다 원문을 다시 열어 직접 본다.
 4. 존재하지 않는 번호는 지운다. 가까운 번호로 고쳐 짐작하지 않는다. 확인하지 못한 번호는 근거에 싣지 않는다.
 
@@ -298,7 +301,8 @@ korean-law `scan_articles` 로 훑는다. 법령과 키워드는 `references/가
 | `search_law` 로 검색했는데 안 나온다 | `search_law` 는 법령명만 찾는다. `scan_articles` 를 쓴다 |
 | 가산세 조문을 찾았으니 끝이다 | 감면 · 한도 · 중복배제와 지방소득세 가산세를 안 봤다 |
 | TaxDoctor 에 나왔으니 됐다 | 한 곳이면 ★★☆ 다. 근거 조문은 korean-law 로 대조한다 |
-| 세법이 아니니 조회하지 않아도 된다 | 세법이 인용한 법령은 판정에 쓰인다. korean-law 로 연다 |
+| 세법이 아니니 조회하지 않아도 된다 | 세법이 인용한 법령은 판정에 쓰인다. TaxDoctor 참조 법령으로 열고 korean-law 로 대조한다 |
+| TaxDoctor 는 현행 판만 준다 | `get_article(as_of)` 가 그날 판을 준다. 부칙은 `get_amendments` 로 찾는다 |
 | 개정됐다니까 올해부터 적용이다 | 적용례는 부칙에 있다. 3단계를 본다 |
 | 부칙 조회가 비었으니 적용례가 없다 | 그 개정 판의 MST 로 다시 부른다 |
 | 예규에 이렇게 나오니 결론도 같다 | 예규는 과세관청의 입장이다. 조문을 먼저 적는다 |
