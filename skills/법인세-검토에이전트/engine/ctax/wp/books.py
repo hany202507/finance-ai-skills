@@ -10,13 +10,51 @@ from pathlib import Path
 
 import yaml
 
+from ..case import MissingInput
+
 RATES_FILE = Path(__file__).with_name("rates_2025.yaml")
 
 
 RATES_DIR = Path(__file__).with_name("rates_2025")   # 3회차: 조서마다 `rates_2025/<id>.yaml` 한 파일(CONTRACT.md 15절)
 
+# 사업연도별 세율 표(11-03). rates_2025.yaml(+ rates_2025/)이 첫 표이고 2025 앞 사업연도도 이 표를 쓴다(이전과 같음).
+# 2026 부터는 rates_<연도>.yaml 이 앞 해 표 위에 바뀐 항목만 얹는다. 그 해 판으로 확인하지 못한 항목은 앞 해 값을 쓰되
+# 등급을 ☆ 로 낮추고 근거 앞에 「<연도> 판 미확인」 을 붙인다. 표가 없는 해는 NoRates 로 멈춘다.
+FIRST_YEAR = 2025
+META = ("fy", "since", "base", "checked", "source")
 
-def load_rates(path: Path = RATES_FILE) -> dict:
+
+class NoRates(MissingInput):
+    """그 사업연도에 쓸 세율 표(rates_<연도>.yaml)가 없다. 조서를 만들지 않는다."""
+
+
+def rates_year(fy_start: str | None) -> int:
+    """사업연도 개시일(YYYY-MM-DD)이 속한 해. 비었거나 2025 앞이면 2025."""
+    head = str(fy_start or "")[:4]
+    return max(int(head), FIRST_YEAR) if head.isdigit() else FIRST_YEAR
+
+
+def prior_start(fy_start: str | None) -> str:
+    """직전 사업연도 개시일(1년 앞). 결손금 소급공제가 직전 사업연도 세율을 쓴다(법인세법 제72조 제1항 제2호)."""
+    s = str(fy_start or "")
+    return f"{int(s[:4]) - 1}{s[4:]}" if s[:4].isdigit() else ""
+
+
+def load_rates(path: Path = RATES_FILE, *, fy_start: str | None = None) -> dict:
+    """세율 · 한도 표. fy_start(사업연도 개시일)가 2026 이후면 그 해 표(rates_<연도>.yaml)를 앞 해 표 위에 얹는다."""
+    year = rates_year(fy_start)
+    if path != RATES_FILE or year == FIRST_YEAR:
+        return _load_first(path)
+    over_path = path.with_name(f"rates_{year}.yaml")
+    if not over_path.exists():
+        raise NoRates(f"{year} 사업연도 세율 표가 없습니다(사업연도 개시일 {fy_start}). 법인세율 · 한도가 {year} 판에서 바뀌었을 수 "
+                      f"있어 ctax/wp/rates_{year}.yaml 을 법령 원문으로 확인해 만들기 전에는 조서를 만들지 않습니다")
+    over = yaml.safe_load(over_path.read_text(encoding="utf-8")) or {}
+    base_year = int(over.get("base") or year - 1)
+    return _overlay(load_rates(path, fy_start=f"{base_year}-01-01"), over, year, base_year)
+
+
+def _load_first(path: Path) -> dict:
     rates = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if path == RATES_FILE and RATES_DIR.is_dir():
         for f in sorted(RATES_DIR.glob("*.yaml")):
@@ -25,6 +63,26 @@ def load_rates(path: Path = RATES_FILE) -> dict:
                     raise ValueError(f"세율 묶음 {group} 이 rates_2025.yaml 과 {f.name} 에 함께 있습니다")
                 rates[group] = body
     return rates
+
+
+def _overlay(base: dict, over: dict, year: int, base_year: int) -> dict:
+    """앞 해 표 + 그 해 표. 그 해 표에 있는 항목은 그것으로 바꾸고(value 가 없으면 앞 해 값, 근거 · 등급만 바꿈), 없는 항목은
+    앞 해 값에 등급 ☆ 와 「<연도> 판 미확인」 을 붙인다."""
+    out = {k: v for k, v in over.items() if k in META}
+    for group, items in base.items():
+        if isinstance(items, dict):
+            out[group] = {key: {**item, "grade": "☆",
+                                "basis": f"{year} 판 미확인({base_year} 사업연도 값). {item.get('basis', '')}".rstrip()}
+                          for key, item in items.items()}
+    for group, items in over.items():
+        if group in META or not isinstance(items, dict):
+            continue
+        for key, item in items.items():
+            prev = (base.get(group) or {}).get(key) or {}
+            if "value" not in item and "value" not in prev:
+                raise ValueError(f"rates_{year}.yaml {group}.{key} 에 value 가 없고 {base_year} 표에도 없습니다")
+            out.setdefault(group, {})[key] = {**({"value": prev["value"]} if "value" in prev else {}), **item}
+    return out
 
 
 def rate(rates: dict, group: str, key: str):
@@ -99,6 +157,7 @@ class Books:
     info: dict
     rates: dict
     overrides: dict = field(default_factory=dict)   # (조서 id, key) → 회계사 값(조서입력.json)
+    prior_rates: dict = field(default_factory=dict)  # 직전 사업연도 세율 표(결손금 소급공제). 비면 rates 를 쓴다
     by_code: dict = field(init=False)
 
     def __post_init__(self):
@@ -122,6 +181,11 @@ class Books:
     @property
     def fy(self) -> str:
         return self.info.get("fy", "")
+
+    @property
+    def rates_fy(self) -> str:
+        """세율 표의 해(「기준 2026」 시트 이름)."""
+        return str(self.rates.get("fy") or FIRST_YEAR)
 
     @property
     def months(self) -> int:

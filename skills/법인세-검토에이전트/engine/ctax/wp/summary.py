@@ -129,8 +129,9 @@ def carryback(b: Books, ls: Paper, income: int, brackets) -> dict:
     """중소기업 결손금 소급공제 환급(법인세법 제72조 제1항, 시행령 제110조 제1항, 2025-12-31 시행판 원문 ★★★).
 
     환급세액 = min(직전 산출세액 - (직전 과세표준 - 소급공제 결손금) × 직전 세율, 직전 산출세액 - 직전 공제 · 감면세액).
-    직전 값은 전기 3호 10(과세표준) · 12(산출세액) · 17 + 19(공제감면세액)다. 세율은 직전 사업연도(2024)와 당기 세율표가 같아
-    기준 시트 세율을 쓴다(법인세법 제55조 제1항, 2024-12-31 · 2025-12-31 시행판 같은 표). 소급공제는 신청해야 하는 것이라
+    직전 값은 전기 3호 10(과세표준) · 12(산출세액) · 17 + 19(공제감면세액)다. brackets 는 직전 사업연도 세율표다(제72조 제1항
+    제2호 「직전 사업연도의 제55조제1항에 따른 세율」). 2025 사업연도는 직전(2024)과 당기 표가 같아 2025 표, 2026 사업연도는
+    2025 표(9 · 19 · 21 · 24%)를 쓴다(11-03, 2026-12-31 판 TaxDoctor 원문 ★★☆). 소급공제는 신청해야 하는 것이라
     노란 칸 「소급공제 결손금」 기본값은 0 이고, 넣으면 그만큼 당기 결손금 이월액이 준다. 신고기한 안에 결손 사업연도와 직전
     사업연도를 모두 신고한 경우에만 된다(제72조 제4항)."""
     zero = {CARRYBACK: 0, "소급공제 환급세액": 0, "소급공제 최대 결손금": 0, "소급공제 최대 환급세액": 0}
@@ -314,8 +315,8 @@ def run(b: Books) -> Result:
     _prepaid_notes(t3, pre, interim == interim0 and withholding == withholding0)
     t3.status = "작성"
 
-    # 결손금
-    back = carryback(b, ls, income, brackets)
+    # 결손금. 소급공제는 직전 사업연도 세율이다(법인세법 제72조 제1항 제2호, 2026 사업연도면 2025 표)
+    back = carryback(b, ls, income, rate(b.prior_rates or b.rates, "corporate_tax", "brackets"))
     losses = [{"year": r["year"], "incurred": r["incurred"], "used": r["used"], "remaining": r["closing"]} for r in lrows]
     if income < 0:
         row = {"year": b.fy, "incurred": -income, "used": 0, "remaining": -income - back["소급공제 결손금"]}

@@ -41,11 +41,15 @@ def write(result: Result, books: Books, path: Path) -> dict:
     return bk.cells
 
 
-# 기준 2025 ---------------------------------------------------------------------------------------
+# 기준 <연도> -------------------------------------------------------------------------------------
 
 def _basis(bk: Book, res: Result) -> None:
-    s = bk.sheet("기준 2025", [34, 18, 70, 8])
-    r = X.title(s.ws, "기준 2025: 세율 · 한도", "rates_2025.yaml 값입니다. 노란 칸은 회사마다 넣는 값입니다")
+    fy = bk.b.rates_fy
+    s = bk.sheet(f"기준 {fy}", [34, 18, 70, 8])
+    note = f"rates_{fy}.yaml 값입니다. 노란 칸은 회사마다 넣는 값입니다"
+    if fy != "2025":
+        note += f". 등급 ☆ 「{fy} 판 미확인」 줄은 {fy} 판으로 확인하지 못해 앞 해 값을 쓴 것입니다"
+    r = X.title(s.ws, f"기준 {fy}: 세율 · 한도", note)
     X.header(s.ws, r, ["항목", "값", "근거", "등급"])
     r += 1
     rates = bk.b.rates
@@ -71,6 +75,13 @@ def _basis(bk: Book, res: Result) -> None:
         if cap is not None:
             row(f"세율 구간{i} 상한", cap, br["basis"], br["grade"])
         row(f"세율 구간{i}", rt, br["basis"], br["grade"], fmt="0%")
+    # 결손금 소급공제는 직전 사업연도 세율(법인세법 제72조 제1항 제2호). 당기와 다를 때만 줄을 더한다(2026 사업연도부터)
+    pb = (bk.b.prior_rates or rates)["corporate_tax"]["brackets"]
+    if pb["value"] != br["value"]:
+        for i, (cap, rt) in enumerate(pb["value"], start=1):
+            if cap is not None:
+                row(f"직전 사업연도 세율 구간{i} 상한", cap, pb["basis"], pb["grade"])
+            row(f"직전 사업연도 세율 구간{i}", rt, pb["basis"], pb["grade"], fmt="0%")
     for p in res.papers:
         fn = getattr(res.mods[p.id], "basis", None)
         if fn:
@@ -186,7 +197,7 @@ def _tax3(bk: Book, res: Result) -> None:
         "09": (None, "input", ""),
         "10": (f"={G('06')}-{G('07')}-{G('08')}-{G('09')}", "body", ""),
         "11": (rate_f, "body", "과세표준 구간의 최고 세율"),
-        "12": (tax, "body", "법인세법 제55조 누진세율(기준 2025 시트)"),
+        "12": (tax, "body", f"법인세법 제55조 누진세율(기준 {bk.b.rates_fy} 시트)"),
         "17": (None, "input", _credits_src(bk, res, "최저한세 적용대상", "8호(갑) 150")),
         "18": (f"={G('12')}-{G('17')}", "body", ""),
         "19": (None, "input", _credits_src(bk, res, "최저한세 적용제외", "8호(갑) 110")),
@@ -309,7 +320,8 @@ def _loss(bk: Book, res: Result) -> None:
 
 
 def _carryback_rows(bk: Book, s: Sheet, p, row: int, at: dict) -> int:
-    """결손금 소급공제 환급세액(법인세법 제72조 제1항, 시행령 제110조 제1항). 직전 사업연도 12개월, 세율은 기준 시트."""
+    """결손금 소급공제 환급세액(법인세법 제72조 제1항, 시행령 제110조 제1항). 직전 사업연도 12개월, 세율은 기준 시트의 직전
+    사업연도 세율(당기와 같으면 당기 세율 줄)."""
     R, v = bk.ref, p.values
     row = s.section(row, "결손금 소급공제 환급세액(68호)")
     put = {}
@@ -330,8 +342,9 @@ def _carryback_rows(bk: Book, s: Sheet, p, row: int, at: dict) -> int:
     bk.reg(p.id, "소급공제 최대 결손금", s.addr(row, 7))
     most = f"G{row}"
     row += 1
-    c1, c2, c3 = R["세율 구간1 상한"], R["세율 구간2 상한"], R["세율 구간3 상한"]
-    r1, r2, r3, r4 = R["세율 구간1"], R["세율 구간2"], R["세율 구간3"], R["세율 구간4"]
+    pre = "직전 사업연도 " if "직전 사업연도 세율 구간1" in R else ""
+    c1, c2, c3 = R[f"{pre}세율 구간1 상한"], R[f"{pre}세율 구간2 상한"], R[f"{pre}세율 구간3 상한"]
+    r1, r2, r3, r4 = R[f"{pre}세율 구간1"], R[f"{pre}세율 구간2"], R[f"{pre}세율 구간3"], R[f"{pre}세율 구간4"]
 
     def tax(x):
         return (f"ROUNDDOWN(IF({x}<=0,0,IF({x}<={c1},{x}*{r1},IF({x}<={c2},{c1}*{r1}+({x}-{c1})*{r2},"

@@ -9,7 +9,7 @@ import sys
 
 from ..case import WP_DIR, Case, MissingInput, won
 from . import excel, inputs
-from .books import Books, load_rates, read_journal
+from .books import Books, NoRates, load_rates, prior_start, read_journal
 from .summary import Result, run
 
 OUT_XLSX = "조서.xlsx"
@@ -22,8 +22,11 @@ def build(case: Case, overrides: dict | None = None) -> tuple[Books, Result]:
     if not journal.exists():
         raise MissingInput(f"{journal.name} 이 없습니다. 먼저 ctax read 를 돌리세요")
     ar = case.read_json("AR.json") if case.has("AR.json") else None
-    books = Books(ledger=ledger, lines=read_journal(journal), prior=prior, ar=ar, info=case.info(), rates=load_rates(),
-                  overrides=overrides or {})
+    info = case.info()
+    start = str(info.get("fy_start") or "")
+    rates = load_rates(fy_start=start)            # 사업연도별 표. 표가 없는 해면 NoRates 로 멈춘다
+    books = Books(ledger=ledger, lines=read_journal(journal), prior=prior, ar=ar, info=info, rates=rates,
+                  overrides=overrides or {}, prior_rates=load_rates(fy_start=prior_start(start)))
     return books, run(books)
 
 
@@ -37,6 +40,9 @@ def main(argv: list[str] | None = None) -> int:
         xlsx_path = case.out_dir(WP_DIR) / OUT_XLSX
         overrides, problems = ({}, []) if args.fresh else inputs.collect(case, xlsx_path)
         books, result = build(case, overrides)
+    except NoRates as e:
+        print(f"멈춤: {e}")
+        return 2
     except MissingInput as e:
         print(f"입력이 없습니다: {e}")
         return 2

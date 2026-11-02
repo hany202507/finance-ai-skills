@@ -403,7 +403,7 @@ def write(bk: Book, p: Paper) -> None:
     r = Rows(bk, s, p, row)
     g = r.g
     r.put("이자율 선택", "이자율 선택(당좌대출이자율 · 가중평균차입이자율)", p.inputs["이자율 선택"], kind="input", input_kind="text")
-    r.put("당좌대출이자율", "당좌대출이자율(기준 2025)", f"={R['당좌대출이자율']}", fmt="0.00%")
+    r.put("당좌대출이자율", f"당좌대출이자율(기준 {bk.b.rates_fy})", f"={R['당좌대출이자율']}", fmt="0.00%")
     r.put("가중평균차입이자율", "가중평균차입이자율(차입금 자료로 계산해 넣음)", p.inputs["가중평균차입이자율"], kind="input",
           input_kind="ratio", fmt="0.00%")
     r.put("적용이자율", "적용이자율",

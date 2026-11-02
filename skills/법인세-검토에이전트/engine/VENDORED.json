@@ -13,5 +13,8 @@
   "stubs": [
     "forms/plugins",
     "forms/engine_forms.yaml"
+  ],
+  "patches": [
+    "academy-product 0fc96b3 2026-11-03 사업연도별 세율 표: wp/books.py · cli.py · summary.py · excel.py · papers/bad_debt.py · papers/loan_interest.py · rates_2026.yaml 만 옮김(그 사이 다른 변경은 옮기지 않음). rates_2026.yaml 에서 공개본 2025 표에 없는 brackets_small_rental · business_car.real_estate_* 를 뺐다"
   ]
 }
