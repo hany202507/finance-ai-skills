@@ -13,6 +13,23 @@ LEDGER_CHECK = True
 PICK = "부인 여부"
 # 23호(갑) ⑨ 문화 · ⑪ 전통시장 · ⑫ 지역사랑상품권 · ⑬ 온누리상품권 기업업무추진비 지출액(노란 칸 key = values key)
 SPENT = ("문화 지출액", "전통시장 지출액", "지역사랑상품권 지출액", "온누리상품권 지출액")
+# 온누리상품권은 법률 제21612호 시행일(2026-05-12)이 속하는 과세연도 지출분부터 ⑭ 한도에 넣는다(조특법 제136조 제6항 · 부칙 제4조).
+# 그 날이 속하는 12개월 사업연도는 개시일이 2025-05-13 이후다. 2025 표(값 0)를 쓰는 사업연도라도 개시일이 이 날 이후면 1 이다.
+# 12개월이 안 되는 사업연도는 확인 줄로 사람이 본다
+ONNURI_LAW_START = "2026-05-12"
+ONNURI_FROM = "2025-05-13"
+
+
+def onnuri_item(rates: dict, fy_start: str | None) -> dict:
+    """이 사업연도의 「온누리상품권 한도 적용(1 · 0)」 항목 {value, basis, grade}. 표 값이 0 이어도 개시일이 ONNURI_FROM 이후면 1."""
+    item = rates["entertainment"]["onnuri_applies"]
+    start = str(fy_start or "")
+    if item["value"] or start < ONNURI_FROM:
+        return item
+    return {"value": 1, "grade": "★★★",
+            "basis": f"조세특례제한법 제136조 제6항 (온누리상품권을 더함, 법률 제21612호 2026.5.12 공포 · 시행) · 부칙(법률 제21612호) "
+                     f"제4조 「이 법 시행일이 속하는 과세연도에 지출하는 분부터」. 사업연도 개시일 {start} 이 {ONNURI_FROM} 이후라 "
+                     "12개월 사업연도에 2026.5.12 이 속한다(2026-11-03 TaxDoctor · korean-law 원문 · 부칙)"}
 
 
 def basis(rates: dict) -> list[tuple]:
@@ -82,7 +99,11 @@ def compute(p: Paper, b: Books) -> None:
     rev_limit = lim_general + rd((lim_total - lim_general) * frac(rate(b.rates, "entertainment", "related_party_ratio")))
     general = base + rev_limit                                                       # ⑧
     culture = min(spent["문화 지출액"], rd(general * frac(rate(b.rates, "entertainment", "culture_ratio"))))   # ⑩
-    onnuri_in = spent["온누리상품권 지출액"] * int(rate(b.rates, "entertainment", "onnuri_applies"))
+    onnuri = onnuri_item(b.rates, b.info.get("fy_start"))
+    if onnuri is not b.rates["entertainment"]["onnuri_applies"]:
+        # 이 사업연도에 맞춘 세율 표. 기준 시트 「온누리상품권 한도 적용(1 · 0)」 줄도 이 값을 쓴다(excel._basis)
+        p.extra["rates"] = {**b.rates, "entertainment": {**b.rates["entertainment"], "onnuri_applies": onnuri}}
+    onnuri_in = spent["온누리상품권 지출액"] * int(onnuri["value"])
     market = min(spent["전통시장 지출액"] + spent["지역사랑상품권 지출액"] + onnuri_in,
                  rd(general * frac(rate(b.rates, "entertainment", "market_ratio"))))   # ⑭
     limit = general + culture + market                                              # ⑮
@@ -105,6 +126,17 @@ def compute(p: Paper, b: Books) -> None:
     if spent["온누리상품권 지출액"] and not onnuri_in:
         p.confirm.append("온누리상품권 기업업무추진비는 2026.5.12 이 속하는 과세연도 지출분부터 한도에 더합니다(법률 제21612호 부칙 제4조)."
                          " 이 사업연도 한도 계산에서는 뺐습니다(23호(갑) ⑬ 에는 적음)")
+    if spent["온누리상품권 지출액"] and onnuri_in and months < 12:
+        # 12개월이 안 되는 사업연도는 개시일만으로 시행일이 속하는지 알 수 없다(월수가 12 미만이면 개시일 · 종료일이 다 있다).
+        # 종료일이 시행일 앞이면 그 사업연도는 적용 전이라 확인 줄에 올린다. 값은 개시일 기준으로 둔다
+        start, end = str(b.info.get("fy_start") or ""), str(b.info.get("fy_end") or "")
+        msg = (f"사업연도({start} ~ {end})가 {months}개월이라 온누리상품권 한도 적용(1)을 개시일로만 정했습니다. 온누리상품권 "
+               "기업업무추진비는 2026.5.12 이 속하는 과세연도 지출분부터 한도에 더합니다(법률 제21612호 부칙 제4조)")
+        if end >= ONNURI_LAW_START:
+            p.notes.append(f"{msg}. 종료일이 2026.5.12 이후라 한도에 넣었습니다")
+        else:
+            p.confirm.append(f"{msg}. 종료일이 2026.5.12 앞이라 이 사업연도는 ⑬ 을 ⑭ 한도에서 빼야 합니다. 늘어나는 한도초과액을 "
+                             "15호 「직접 조정」 줄에 넣으세요")
     if sum(spent.values()) > net:
         p.confirm.append(f"문화 · 전통시장 등 지출액 합계 {sum(spent.values()):,}원이 ③ 차감 해당금액 {net:,}원보다 큽니다"
                          "(23호(갑) 작성방법 4 · 5: ③ 가운데 지출액)")

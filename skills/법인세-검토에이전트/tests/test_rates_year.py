@@ -87,3 +87,63 @@ def test_2027_case_stops(tmp_path, capsys):
     assert wp_cli.main([str(root)]) == 2
     assert "2027 사업연도 세율 표가 없습니다" in capsys.readouterr().out
     assert not (root / "_색인" / "조정.json").exists()
+
+
+# ---------------------------------------------------------------- 기업업무추진비 온누리상품권(사업연도가 역년이 아닐 때, 11-03)
+# 온누리상품권은 법률 제21612호 시행일(2026-05-12)이 속하는 과세연도 지출분부터 ⑭ 한도에 더한다(조특법 제136조 제6항 · 부칙 제4조).
+# 2025 표(onnuri_applies 0)를 쓰는 사업연도라도 개시일이 2025-05-13 이후면 12개월 사업연도에 그 날이 속한다.
+
+from ctax.case import Case
+from ctax.wp import excel
+
+ONNURI = {("entertainment", "전통시장 지출액"): 1_000_000, ("entertainment", "온누리상품권 지출액"): 1_000_000}   # ⑧ × 20% 아래
+
+
+def _fy_case(tmp_path, start, end):
+    root = _case(tmp_path / start, int(end[:4]))
+    info = {"company": "가상회사", "fy": end[:4], "fy_start": start, "fy_end": end, "steps": {}}
+    (root / "_색인" / "신고건.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    return Case(root)
+
+
+def _ent(res):
+    return next(p for p in res.papers if p.id == "entertainment")
+
+
+def _basis_value(path, fy, name):
+    ws = openpyxl.load_workbook(path)[f"기준 {fy}"]
+    for row in ws.iter_rows():
+        for c in row:
+            if c.value == name:
+                return ws.cell(row=c.row, column=c.column + 1).value
+    raise AssertionError(name)
+
+
+def test_onnuri_applies_from_2025_07_01_start(tmp_path):
+    books, res = wp_cli.build(_fy_case(tmp_path, "2025-07-01", "2026-06-30"), ONNURI)
+    assert books.rates["fy"] == "2025" and rate(books.rates, "entertainment", "onnuri_applies") == 0   # 표는 2025 표 그대로
+    p = _ent(res)
+    assert p.values["전통시장등한도"] == 1_000_000 + 1_000_000          # ⑭ 에 ⑬ 온누리상품권을 더한다
+    assert not any("한도 계산에서는 뺐습니다" in c for c in p.confirm)
+    out = tmp_path / "조서.xlsx"
+    excel.write(res, books, out)
+    assert _basis_value(out, "2025", "온누리상품권 한도 적용(1 · 0)") == 1   # 기준 시트 줄도 이 사업연도 값
+
+
+def test_onnuri_still_zero_before_2025_05_13(tmp_path):
+    _, res = wp_cli.build(_fy_case(tmp_path, "2025-05-12", "2026-05-11"), ONNURI)
+    p = _ent(res)
+    assert p.values["전통시장등한도"] == 1_000_000
+    assert any("한도 계산에서는 뺐습니다" in c for c in p.confirm)
+
+
+def test_onnuri_short_year(tmp_path):
+    # 12개월이 안 되는 사업연도: 값은 개시일로 정하고, 종료일이 2026.5.12 앞이면 확인 줄
+    _, res = wp_cli.build(_fy_case(tmp_path, "2025-07-01", "2025-12-31"), ONNURI)
+    p = _ent(res)
+    assert p.values["전통시장등한도"] == 1_000_000 + 1_000_000
+    assert any("6개월" in c and "2026.5.12 앞" in c and "직접 조정" in c for c in p.confirm)
+    _, res = wp_cli.build(_fy_case(tmp_path, "2025-09-01", "2026-06-30"), ONNURI)
+    p = _ent(res)
+    assert not any("2026.5.12 앞" in c for c in p.confirm)
+    assert any("10개월" in n and "2026.5.12 이후" in n for n in p.notes)

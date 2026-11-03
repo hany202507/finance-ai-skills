@@ -84,8 +84,8 @@ def _basis(bk: Book, res: Result) -> None:
             row(f"직전 사업연도 세율 구간{i}", rt, pb["basis"], pb["grade"], fmt="0%")
     for p in res.papers:
         fn = getattr(res.mods[p.id], "basis", None)
-        if fn:
-            for name, value, basis, grade, fmt in fn(rates):
+        if fn:   # 조서가 이 사업연도에 맞춰 고친 표(p.extra["rates"], 예: 기업업무추진비 온누리상품권)가 있으면 그 값을 쓴다
+            for name, value, basis, grade, fmt in fn(p.extra.get("rates") or rates):
                 row(name, value, basis, grade, fmt)
     ls = rates["loss"]
     row("이월결손금 공제율(중소기업)", ls["sme_ratio"]["value"], ls["sme_ratio"]["basis"], ls["sme_ratio"]["grade"], fmt="0%")
