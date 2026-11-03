@@ -126,7 +126,7 @@ def 요약(찾음):
     줄.append("인사카드 · 급여계약 · 항목규칙: " + ("있음 " + r(찾음["키트"]["hr_card.csv"].parent) if 찾음["키트"]
                                        else ("일부만 있음(" + ", ".join(찾음["키트일부"]) + ")" if 찾음["키트일부"] else "없음")))
     줄.append("회사기초정보: " + (", ".join(r(f) for f in 찾음["회사기초정보"]) or "없음"))
-    줄.append("추가행: " + (", ".join(r(f) for v in 찾음["추가행"].values() for f in v) or "없음"))
+    줄.append("받은 자료의 추가행: " + (", ".join(r(f) for v in 찾음["추가행"].values() for f in v) or "없음"))
     if 찾음["기타소득목록"]:
         줄.append("기타소득 목록: " + ", ".join(r(f) for f in 찾음["기타소득목록"]))
     if 찾음["근로계약서"]:

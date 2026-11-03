@@ -80,6 +80,8 @@ def run(키트, 연월, 산출, 근태=None, 회사=None, 확인사항=()):
             뺀사람.append((카드["성명"], "퇴사")); continue
         항목 = 계약.get(사번, {})
         구분 = 카드["소득구분"]
+        if 구분 != "일용" and not any(v for k, v in 항목.items() if k != "HOURLY"):   # 무급 휴직 · 그 달 대금 없음
+            뺀사람.append((카드["성명"], "그 달 지급 없음")); continue
         if 구분 == "일용":
             일급들 = 일급표.get(사번)
             if not 일급들:

@@ -120,9 +120,12 @@ def _대장(찾음, 연월, 회사, 출력):
     if len(있는) > 1:
         raise 확인필요(f"{연월} 급여대장 후보가 여럿입니다: {', '.join(f.name for f in 있는)}. 하나만 두세요")
     if 있는:
-        return 있는[0], "받은 급여대장"
+        return 있는[0], "받은 급여대장", {"확인": [], "뺀사람": []}
     if 찾음["키트"]:
-        return 대장만들기(찾음, 연월, 회사, 출력)[0], "인사카드 · 급여계약 · 항목규칙으로 만든 급여대장"
+        경로, r = 대장만들기(찾음, 연월, 회사, 출력)
+        확인 = [{"성명": x.성명, "내용": g} for x in r["행들"] for g in x.근거 if g.startswith("확인필요")]
+        뺀 = [{"성명": n, "까닭": w} for n, w in r["뺀사람"]]
+        return 경로, "인사카드 · 급여계약 · 항목규칙으로 만든 급여대장", {"확인": 확인, "뺀사람": 뺀}
     if 찾음["키트일부"]:
         raise 확인필요("인사카드 · 급여계약 · 항목규칙 csv 가운데 " + ", ".join(찾음["키트일부"]) + " 만 있습니다. 셋이 다 있어야 급여대장을 만듭니다")
     raise 확인필요(f"{연월} 급여대장이 없고 인사카드 · 급여계약 · 항목규칙 csv 도 없습니다. 둘 가운데 하나를 폴더에 넣어 주세요")
@@ -172,7 +175,7 @@ def 신고(입력, 연월=None, 지급연월=None, 출력=None, 계산값=True):
     기초, 회사 = _기초정보(찾음)
     연월 = _연월(찾음, 연월)
     작업 = Path(출력) if 출력 else 찾음["폴더"] / f"신고_{연월}"
-    대장, 출처 = _대장(찾음, 연월, 회사, 작업)
+    대장, 출처, 대장정보 = _대장(찾음, 연월, 회사, 작업)
 
     받은 = 작업 / "받은자료"
     if 받은.exists():
@@ -183,6 +186,10 @@ def 신고(입력, 연월=None, 지급연월=None, 출력=None, 계산값=True):
     추가 = list(찾음["추가행"].get(연월, [])) + ([작업 / f"추가행_{연월}.json"] if (작업 / f"추가행_{연월}.json").exists() else [])
     추가 = list(dict.fromkeys(Path(p).resolve() for p in 추가))
     추가행 = _추가행읽기(추가)
+    신고추가 = [p for p in 추가 if 작업.resolve() in p.parents]
+    if 신고추가:
+        print("신고 폴더의 추가행(퇴사 · 기타 명령이 쓴 것): " + ", ".join(p.relative_to(작업.resolve()).as_posix() for p in 신고추가)
+              + f" · 모두 {len(추가행)}행", flush=True)
     if 추가행:
         (받은 / f"추가행_{연월}.json").write_text(json.dumps(추가행, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -197,6 +204,8 @@ def 신고(입력, 연월=None, 지급연월=None, 출력=None, 계산값=True):
     코드, 글 = _실행(cmd)
     (작업 / "실행기록.txt").write_text(글, encoding="utf-8")
     요약 = _요약(결과, 연월, 대장, 출처, 추가행, 글, 코드)
+    요약["급여대장확인"] = 대장정보["확인"]
+    요약["급여대장뺀사람"] = 대장정보["뺀사람"]
     (결과 / "요약.json").parent.mkdir(parents=True, exist_ok=True)
     (결과 / "요약.json").write_text(json.dumps(요약, ensure_ascii=False, indent=1), encoding="utf-8")
     return 요약
@@ -253,6 +262,12 @@ def 보고(요약):
     빈 = [x["항목"] for x in 요약.get("확인사항", []) if not x.get("정한값")]
     if 요약.get("확인사항"):
         print(f"확인사항 {len(요약['확인사항'])}건" + (" · 아직 안 정한 것: " + ", ".join(빈) if 빈 else ""))
+    if 요약.get("급여대장뺀사람"):
+        print("급여대장에서 뺀 사람: " + ", ".join(f"{x['성명']}({x['까닭']})" for x in 요약["급여대장뺀사람"]))
+    if 요약.get("급여대장확인"):
+        print(f"급여대장 확인필요 {len(요약['급여대장확인'])}건")
+        for x in 요약["급여대장확인"]:
+            print(f"  {x['성명']}: {x['내용']}")
     for 줄 in 요약.get("멈춘까닭", []):
         print("  " + 줄)
     print("요약:", Path(요약["실행기록"]).parent / "결과" / "요약.json")
@@ -281,7 +296,8 @@ def 퇴사(폴더, 사번, 퇴사일, 월통상임금, 입사일=None, 생년월
     지급연월 = 지급연월 or 퇴사일[:7]
     작업 = 찾음["폴더"] / f"신고_{지급연월}"
     대장폴더 = 작업 / "급여대장"
-    필요 = [f"{연}-{m:02d}" for m in range(1, 월 + 1)]
+    첫 = int(입사일[5:7]) if int(입사일[:4]) == 연 else 1      # 그해 입사자는 입사한 달부터 대장이 있다
+    필요 = [f"{연}-{m:02d}" for m in range(첫, 월 + 1)]
     없는 = [m for m in 필요 if not (대장폴더 / f"급여대장_{m}.json").exists()]
     if 없는:
         if 찾음["키트"]:
@@ -292,7 +308,7 @@ def 퇴사(폴더, 사번, 퇴사일, 월통상임금, 입사일=None, 생년월
             있는 = 찾음["급여대장json"]
             모자람 = [m for m in 없는 if m not in 있는]
             if 모자람:
-                raise 확인필요("퇴사 정산에는 1월부터 퇴사월까지 이 스킬이 만든 급여대장 JSON 이 있어야 합니다. 없는 달: "
+                raise 확인필요("퇴사 정산에는 1월(그해 입사자는 입사월)부터 퇴사월까지 이 스킬이 만든 급여대장 JSON 이 있어야 합니다. 없는 달: "
                                + ", ".join(모자람) + ". 인사카드 · 급여계약 · 항목규칙 csv 를 주시면 만듭니다")
             대장폴더.mkdir(parents=True, exist_ok=True)
             for m in 없는:

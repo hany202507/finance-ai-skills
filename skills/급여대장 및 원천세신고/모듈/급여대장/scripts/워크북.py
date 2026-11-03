@@ -20,6 +20,9 @@ from openpyxl.utils import get_column_letter
 지급열 = [("BASE", "기본급"), ("OT", "연장수당"), ("MEAL", "식대"),
           ("CAR", "자가운전보조금"), ("CHILD", "육아수당"), ("OVERSEA", "국외근로수당"),
           ("BONUS", "상여금"), ("HOURLY", "일용급여"), ("SERVICE", "용역대가")]
+# 받은 사람이 있을 때만 열을 더한다. 이름은 신고서 단계(집계.py)가 지급항목으로 읽는 이름이다
+덧붙일열 = [("RESEARCH", "연구보조비"), ("BIRTH", "출산지원금"), ("PROD_OT", "생산직 연장수당"),
+            ("GROUP_INS", "단체보장성보험료")]
 제도들 = ("소득세", "국민연금", "건강보험", "고용보험")
 
 
@@ -35,8 +38,17 @@ def _머리(ws, r, 값들, 폭=None):
             ws.column_dimensions[get_column_letter(i)].width = w
 
 
+def _지급열(행들):
+    """대장에 둘 지급 열. 기본 열에 없는 항목이 빠지면 총지급액 수식에서 조용히 사라진다."""
+    있는 = {k for x in 행들 for k, v in x.지급.items() if v}
+    열 = list(지급열) + [(k, n) for k, n in 덧붙일열 if k in 있는]
+    아는 = {k for k, _ in 열}
+    return 열 + [(k, k) for k in sorted(있는 - 아는)]
+
+
 def build(경로, 회사, 귀속연월, 행들, 카드들, 확인사항=()):
     wb = Workbook()
+    지급열 = _지급열(행들)
 
     # ── 인사카드 ────────────────────────────────────────
     ws = wb.active

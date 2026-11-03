@@ -169,3 +169,24 @@ def test_명령행_종료코드(tmp_path):
     r = subprocess.run([sys.executable, str(스크립트), "신고", "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQ"],
                        capture_output=True, env=환경)
     assert r.returncode == 3
+
+
+def test_그해_입사자의_퇴사는_입사한_달부터_대장을_찾는다(tmp_path):
+    폴더 = tmp_path / "받은"
+    폴더.mkdir()
+    for m in range(4, 11):
+        행 = {"사번": "E009", "성명": "오가상", "소득구분": "상용", "소득코드": "A01", "지급": {"BASE": 2_800_000, "MEAL": 200_000},
+              "총지급액": 3_000_000, "표준": {"소득세": 2_800_000}, "비과세": {"소득세": 200_000}, "국민연금": 133_000,
+              "건강보험": 100_660, "장기요양보험": 13_220, "고용보험": 25_200, "소득세": 56_800, "지방소득세": 5_680}
+        (폴더 / f"급여대장_2026-{m:02d}.json").write_text(json.dumps([행], ensure_ascii=False), encoding="utf-8")
+    r = X.퇴사(폴더, "E009", "2026-10-31", 3_000_000, 입사일="2026-04-01", 생년월일="1998-07-07")
+    assert r["중도정산"]["총급여"] == 7 * 2_800_000 and r["퇴직금"]["퇴직금"] == 0
+
+
+def test_대장에서_뺀_사람과_까닭을_요약에_싣는다(tmp_path):
+    폴더 = tmp_path / "샘플"
+    shutil.copytree(샘플 / "받은자료", 폴더)
+    with open(폴더 / "hr_card.csv", "a", encoding="utf-8") as f:
+        f.write("E009,나가상,상용,2024-01-02,2026-06-30,1,0,0,Y,Y,Y,,,,1990-01-01\n")
+    r = X.신고(폴더, "2026-07", 계산값=False)
+    assert {"성명": "나가상", "까닭": "퇴사"} in r["급여대장뺀사람"]

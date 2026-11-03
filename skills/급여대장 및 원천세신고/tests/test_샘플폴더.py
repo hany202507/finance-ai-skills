@@ -80,3 +80,15 @@ def test_다시_돌려도_같다(끝까지):
     다시 = X.신고(폴더, "2026-07", 계산값=False)
     assert 다시["소득코드별"] == 요약["소득코드별"]
     assert Path(다시["전자파일"]).read_bytes() == Path(요약["전자파일"]).read_bytes()
+
+
+def test_급여대장_확인필요도_요약에_싣는다(끝까지):
+    _, _, _, 요약 = 끝까지
+    assert any("§73②" in x["내용"] for x in 요약["급여대장확인"])
+
+
+def test_신고_폴더의_추가행도_읽었다고_보인다(끝까지, capsys):
+    폴더 = 끝까지[0]
+    X.신고(폴더, "2026-07", 계산값=False)
+    글 = capsys.readouterr().out
+    assert "신고 폴더의 추가행" in 글 and "추가행_2026-07.json" in 글
