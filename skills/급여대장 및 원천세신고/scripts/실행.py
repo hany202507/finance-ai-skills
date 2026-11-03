@@ -95,8 +95,8 @@ def _기초정보(찾음):
 
 
 # ── 급여대장 ─────────────────────────────────────────────
-def 대장만들기(찾음, 연월, 회사, 출력):
-    """키트 csv 로 그 달 급여대장 엑셀 · JSON 을 만든다."""
+def 대장만들기(찾음, 연월, 회사, 출력, 지급연월=None):
+    """키트 csv 로 그 달 급여대장 엑셀 · JSON 을 만든다. 지급 달이 귀속 달과 다르면 간이세액표는 지급 달로 고른다."""
     급 = _모듈("run", "급여대장")
     키트 = 찾음["키트"]["hr_card.csv"].parent
     if any(찾음["키트"][k].name != k for k in 찾음["키트"]):      # 한글 이름 csv 는 표준 이름으로 모은다
@@ -107,13 +107,15 @@ def 대장만들기(찾음, 연월, 회사, 출력):
         키트 = 모음
     근태 = 찾음["근태"].get(연월)
     try:
-        r = 급.run(키트, 연월, Path(출력) / "급여대장", 근태=str(근태) if 근태 else None, 회사=회사["상호"])
+        세액기준일 = f"{지급연월}-01" if 지급연월 and 지급연월 != 연월 else None
+        r = 급.run(키트, 연월, Path(출력) / "급여대장", 근태=str(근태) if 근태 else None, 회사=회사["상호"],
+                  세액기준일=세액기준일)
     except Exception as e:                               # 급여대장 모듈의 확인필요 · 마스터 빠짐
         raise 확인필요(f"{연월} 급여대장을 만들다 멈췄습니다: {e}")
     return Path(r["엑셀"]), r
 
 
-def _대장(찾음, 연월, 회사, 출력):
+def _대장(찾음, 연월, 회사, 출력, 지급연월=None):
     있는 = 찾음["급여대장"].get(연월) or []
     if not 있는 and list(찾음["급여대장"]) == [None]:      # 이름에 달이 없는 대장 하나뿐이면 --연월 의 달로 읽는다
         있는 = 찾음["급여대장"][None]
@@ -122,7 +124,7 @@ def _대장(찾음, 연월, 회사, 출력):
     if 있는:
         return 있는[0], "받은 급여대장", {"확인": [], "뺀사람": []}
     if 찾음["키트"]:
-        경로, r = 대장만들기(찾음, 연월, 회사, 출력)
+        경로, r = 대장만들기(찾음, 연월, 회사, 출력, 지급연월)
         확인 = [{"성명": x.성명, "내용": g} for x in r["행들"] for g in x.근거 if g.startswith("확인필요")]
         뺀 = [{"성명": n, "까닭": w} for n, w in r["뺀사람"]]
         return 경로, "인사카드 · 급여계약 · 항목규칙으로 만든 급여대장", {"확인": 확인, "뺀사람": 뺀}
@@ -175,7 +177,7 @@ def 신고(입력, 연월=None, 지급연월=None, 출력=None, 계산값=True):
     기초, 회사 = _기초정보(찾음)
     연월 = _연월(찾음, 연월)
     작업 = Path(출력) if 출력 else 찾음["폴더"] / f"신고_{연월}"
-    대장, 출처, 대장정보 = _대장(찾음, 연월, 회사, 작업)
+    대장, 출처, 대장정보 = _대장(찾음, 연월, 회사, 작업, 지급연월)
 
     받은 = 작업 / "받은자료"
     if 받은.exists():
@@ -206,9 +208,25 @@ def 신고(입력, 연월=None, 지급연월=None, 출력=None, 계산값=True):
     요약 = _요약(결과, 연월, 대장, 출처, 추가행, 글, 코드)
     요약["급여대장확인"] = 대장정보["확인"]
     요약["급여대장뺀사람"] = 대장정보["뺀사람"]
+    요약["알림"] = []
+    if 찾음["기타소득목록"] and not any(str(r["소득코드"]).startswith("A4") or r["소득코드"] == "A59" for r in 추가행):
+        요약["알림"].append("기타소득 목록(" + ", ".join(f.name for f in 찾음["기타소득목록"]) + ")이 있는데 「기타」 명령을 돌리지 않아 "
+                          "이 신고에 들어가지 않았습니다. 「기타」를 먼저 돌리고 다시 신고하세요")
+    환급 = _환급까닭(json.loads(Path(요약["신고값"]).read_text(encoding="utf-8"))) if 요약.get("신고값") else None
+    if 요약["종료"] == 1 and 환급:
+        요약.setdefault("멈춘까닭", []).insert(0, 환급)
     (결과 / "요약.json").parent.mkdir(parents=True, exist_ok=True)
     (결과 / "요약.json").write_text(json.dumps(요약, ensure_ascii=False, indent=1), encoding="utf-8")
     return 요약
+
+
+def _환급까닭(값):
+    """가감계 소득세가 음수(환급)인 달. 환급세액을 ⑮일반환급 · 조정환급 가운데 어디에 적을지는 사람이 정한다."""
+    음수 = [c[0] for c in 값.get("명세", []) if c[0] in ("A10", "A20", "A30", "A40", "A99") and c[3] < 0]
+    if not 음수:
+        return None
+    return (f"{' · '.join(음수)} 소득세가 음수(환급)입니다. 환급 달은 환급세액을 ⑮일반환급 · 조정환급 가운데 어디에 적을지 "
+            "사람이 정해야 해서 이 스킬은 전자파일을 넘기지 않습니다. 홈택스에서 직접 작성하세요")
 
 
 def _요약(결과, 연월, 대장, 출처, 추가행, 글, 코드):
@@ -268,6 +286,8 @@ def 보고(요약):
         print(f"급여대장 확인필요 {len(요약['급여대장확인'])}건")
         for x in 요약["급여대장확인"]:
             print(f"  {x['성명']}: {x['내용']}")
+    for 줄 in 요약.get("알림", []):
+        print("알림: " + 줄)
     for 줄 in 요약.get("멈춘까닭", []):
         print("  " + 줄)
     print("요약:", Path(요약["실행기록"]).parent / "결과" / "요약.json")
@@ -281,7 +301,8 @@ def _카드(찾음, 사번):
         return next((r for r in csv.DictReader(f) if r.get("사번") == 사번), {})
 
 
-def 퇴사(폴더, 사번, 퇴사일, 월통상임금, 입사일=None, 생년월일=None, 지급연월=None, 소득공제신고=None, 제외항목=("CAR",)):
+def 퇴사(폴더, 사번, 퇴사일, 월통상임금, 입사일=None, 생년월일=None, 지급연월=None, 소득공제신고=None, 제외항목=("CAR",),
+         임금3개월=None, IRP이전=None):
     입퇴사 = _모듈("입퇴사", "입퇴사처리")
     찾음 = 입.찾기(폴더)
     카드 = _카드(찾음, 사번)
@@ -314,7 +335,8 @@ def 퇴사(폴더, 사번, 퇴사일, 월통상임금, 입사일=None, 생년월
             for m in 없는:
                 shutil.copyfile(있는[m], 대장폴더 / f"급여대장_{m}.json")
     try:
-        r = 입퇴사.퇴사처리(대장폴더, 사번, 입사일, 퇴사일, 생년월일, int(월통상임금), 소득공제신고=소득공제신고, 제외항목=tuple(제외항목))
+        r = 입퇴사.퇴사처리(대장폴더, 사번, 입사일, 퇴사일, 생년월일, int(월통상임금), 소득공제신고=소득공제신고, 제외항목=tuple(제외항목),
+                         임금3개월=임금3개월, IRP이전=IRP이전)
     except 입퇴사.확인필요 as e:
         raise 확인필요(str(e))
     r["추가행파일"] = str(추가행저장(작업, 지급연월, r["추가행"]))
@@ -379,6 +401,8 @@ def main(argv=None):
     t.add_argument("--입사일"); t.add_argument("--생년월일"); t.add_argument("--지급연월")
     t.add_argument("--소득공제신고", help="근로소득자 소득공제 신고 내용 JSON 파일")
     t.add_argument("--제외항목", default="CAR", help="퇴직금 임금 총액에서 뺄 항목코드, 쉼표로. 빈 값이면 다 넣는다")
+    t.add_argument("--임금3개월", type=int, help="평균임금 산정 기간 임금 총액. 월 중 퇴사면 일할로 정해 준다")
+    t.add_argument("--IRP이전", choices=("Y", "N"), help="퇴직금을 IRP 로 보냈는가. 주지 않으면 55세 미만은 Y 로 본다")
     g = sub.add_parser("기타"); g.add_argument("폴더"); g.add_argument("--목록")
     c = sub.add_parser("계약서"); c.add_argument("경로"); c.add_argument("--입사일", required=True)
     b = sub.add_parser("틀"); b.add_argument("폴더")
@@ -395,7 +419,8 @@ def main(argv=None):
         if a.일 == "퇴사":
             신고서 = json.loads(Path(a.소득공제신고).read_text(encoding="utf-8")) if a.소득공제신고 else None
             r = 퇴사(a.폴더, a.사번, a.퇴사일, a.월통상임금, a.입사일, a.생년월일, a.지급연월, 신고서,
-                     tuple(k for k in a.제외항목.split(",") if k))
+                     tuple(k for k in a.제외항목.split(",") if k), 임금3개월=a.임금3개월,
+                     IRP이전=None if a.IRP이전 is None else a.IRP이전 == "Y")
         elif a.일 == "기타":
             r = 기타(a.폴더, a.목록)
         elif a.일 == "계약서":

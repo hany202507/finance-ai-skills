@@ -85,6 +85,11 @@ def _표세액(conn, 월급여, 가족수, on_date):
         "ORDER BY eff_from DESC LIMIT 1",
         (가족수, 월급여, 월급여, on_date, on_date)).fetchone()
     if row is None:
+        최저 = conn.execute(
+            "SELECT MIN(pay_min) FROM ref_simple_tax_table WHERE dependents=? "
+            "AND eff_from<=? AND (eff_to IS NULL OR eff_to>=?)", (가족수, on_date, on_date)).fetchone()[0]
+        if 최저 is not None and 월급여 < 최저:      # 별표 2 는 770천원 구간부터 싣는다. 그 아래는 세액이 없다
+            return 0
         raise LookupError(
             f"간이세액표 미적재 구간: {on_date} 월급여 {월급여} 가족 {가족수}. 원문 적재 필요.")
     return row[0]

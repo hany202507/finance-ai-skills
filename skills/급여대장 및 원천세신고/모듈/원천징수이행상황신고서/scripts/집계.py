@@ -74,6 +74,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 # (령 §12 3호)이 그것이다. 식대(법 §12 3호 러목)·육아수당·국외근로(거목)는 면제 목록에 없어 남긴다.
 면제비과세열 = ["자가운전보조금", "자가운전", "차량유지비", "여비", "일직료", "숙직료",
               "제복", "작업복", "선원식료"]
+# 자가운전보조금은 령 §12 3호가 「월 20만원 이내의 금액」만 실비변상으로 본다. 넘는 몫은 과세라 총지급액에 남긴다
+면제한도 = {"자가운전보조금": 200_000, "자가운전": 200_000, "차량유지비": 200_000}
 
 
 class 확인필요(Exception):
@@ -193,7 +195,7 @@ def read_ledger(xlsx, sheet=None, 기본코드="A01", 귀속연월=None, 정보=
             총 = sum(_num(ws.cell(r, c).value) for c in 항목열.values())
         if 총 == 0:
             continue
-        면제 = sum(_num(ws.cell(r, c).value) for c in 면제열.values())
+        면제 = sum(min(_num(ws.cell(r, c).value), 면제한도.get(이름열, 10 ** 12)) for 이름열, c in 면제열.items())
         g = lambda k: _num(ws.cell(r, 열[k]).value) if k in 열 else 0
         코드 = 코드로(ws.cell(r, 열["소득구분"]).value if "소득구분" in 열 else "", 기본코드)
         사람.append({"성명": str(이름).strip(), "소득코드": 코드,

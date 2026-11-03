@@ -49,17 +49,24 @@ def 근태읽기(경로, 연월):
     ws = wb["근태기록"] if "근태기록" in wb.sheetnames else wb.worksheets[0]
     머리 = [c.value for c in ws[1]]
     i일자, i사번, i일급 = 머리.index("일자"), 머리.index("사번"), 머리.index("일급")
+    i지급 = 머리.index("지급일") if "지급일" in 머리 else None     # 있으면 지급 건별로 소액 부징수를 본다
     묶음 = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         일자 = row[i일자]
         s = 일자.strftime("%Y-%m") if hasattr(일자, "strftime") else str(일자)[:7]
         if s != 연월:
             continue
-        묶음.setdefault(row[i사번], []).append(int(row[i일급] or 0))
+        일급 = int(row[i일급] or 0)
+        if i지급 is None:
+            묶음.setdefault(row[i사번], []).append(일급)
+        else:
+            지급 = row[i지급]
+            지급 = 지급.strftime("%Y-%m-%d") if hasattr(지급, "strftime") else str(지급 or "")[:10]
+            묶음.setdefault(row[i사번], []).append((일급, 지급))
     return 묶음
 
 
-def run(키트, 연월, 산출, 근태=None, 회사=None, 확인사항=()):
+def run(키트, 연월, 산출, 근태=None, 회사=None, 확인사항=(), 세액기준일=None):
     if not 회사:
         raise ValueError("회사 이름이 필요합니다(--회사)")
     키트, 산출 = Path(키트), Path(산출)
@@ -91,7 +98,7 @@ def run(키트, 연월, 산출, 근태=None, 회사=None, 확인사항=()):
             행들.append(G.계산_사업(카드, 항목.get("SERVICE", 0), 기준일))
         else:
             지급 = {k: v for k, v in 항목.items() if k not in ("HOURLY", "SERVICE")}
-            행 = G.계산_상용(conn, 카드, 지급, 규칙, 기준일)
+            행 = G.계산_상용(conn, 카드, 지급, 규칙, 기준일, 세액기준일=세액기준일)
             행.근거 += 일할확인(카드, 연월, 기준일)
             행들.append(행)
 
