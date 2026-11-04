@@ -248,7 +248,7 @@ def write_review(d: Path, path: Path, items: list[dict], keep: dict, dart_path: 
 
     ws2, r = b.sheet("값 대사", [16, 30, 46, 18, 18, 16, 10, 24])
     c = counts(items)
-    b.put(ws2, r, 1, f"불일치 {c['불일치']}건 · 일치 {c['일치']}건 · 확인 {c['확인']}건", bold=True, color="B3261E" if c["불일치"] else None)
+    b.put(ws2, r, 1, f"불일치 {c['불일치']}건 · 일치 {c['일치']}건 · 확인 {c['확인']}건", bold=True, color=wp.RED if c["불일치"] else None)
     r += 2
     r = b.head(ws2, r, ["구분", "위치", "검사", "DART 금액", "대사 금액", "차이", "결과", "비고"])
     for x in sorted(items, key=lambda x: {"불일치": 0, "확인": 1, "일치": 2}[x["result"]]):

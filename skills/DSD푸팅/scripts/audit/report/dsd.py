@@ -146,7 +146,17 @@ def _kdate(x: date | None) -> str:
 
 def _heads(info: dict) -> dict:
     """dsd 머리 글. 기수가 없으면 표지는 【기입】 칸, 재무제표 머리는 「당기」 · 「전기」 로 쓴다. 날짜는 「2025년 12월 31일」."""
-    from .documents import kdate
+    try:
+        from .documents import kdate
+    except ImportError:                              # 공개 DSD푸팅 스킬(엔진 일부만 담는다)에는 documents 가 없다(2026-11-04)
+        def kdate(v):
+            if v is None:
+                return None
+            try:
+                x = v if isinstance(v, date) else date.fromisoformat(str(v)[:10])
+            except ValueError:
+                return None
+            return f"{x.year}년 {x.month}월 {x.day}일"
 
     t = info.get("term")
     pt = t - 1 if t and t > 1 else None

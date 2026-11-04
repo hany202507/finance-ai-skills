@@ -97,7 +97,9 @@ def _read_8100b(wb, path) -> list[Part]:
             continue
         rows, nums = [], []
         for r in range(head + 1, ws.max_row + 1):
-            label = str(ws.cell(r, lc).value or "").strip()
+            # 과목 앞 번호(「Ⅰ. 유동자산」 · 「(1) 당좌자산」)와 「(주석 …)」 를 뗀다. dsd 쪽 과목도 이렇게 읽는다. 떼지 않으면 번호가 붙은
+            # 소계 · 합계 줄(매출액 · 당기순손실 · 자본금)이 정산표 과목을 찾지 못해 대사에서 빠졌다(2026-10-26 도담소프트 WTB 양식)
+            label = _clean(ws.cell(r, lc).value)
             if not label:
                 continue
             a, b, c = _num(ws.cell(r, cur).value), (_num(ws.cell(r, pri).value) if pri else None), (_num(ws.cell(r, sub).value) if sub else None)
@@ -502,6 +504,7 @@ def checks(doc: Doc, wtb: Doc, totals: set | None = None) -> tuple[list[Check], 
                         if abs(abs(v) - abs(w)) >= 0.5 and _isnum(given) and abs(abs(v) - abs(given)) < 0.5 * max(t.unit, 1):
                             c.finding = (f"숫자 오류: dsd 금액 {v:,.0f}원이 정산표의 회사제시 금액과 같고 최종 금액 {w:,.0f}원과 다르다. "
                                          f"수정분개 {w - given:,.0f}원이 dsd 에 반영되지 않았다." + (f" 감사 수정분개 {refs}." if refs else ""))
+                            c.finding_by = "엔진"
                             c.when, c.usual = "", ""
                         elif abs(abs(v) - abs(w)) >= 0.5 and refs:
                             c.label += f" · 감사 수정분개 {refs}"

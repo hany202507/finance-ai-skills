@@ -21,11 +21,12 @@
 """
 from __future__ import annotations
 
+import re
 from itertools import combinations
 
 from .base import norm
 from .dsd_grid import Doc, Table
-from .dsd_links import _isnum, _labels, _ref, period_col, total_kind
+from .dsd_links import _isnum, _labels, _ref, period_col, period_labels, total_kind
 
 MIN_DIGITS = 4          # 금액이 이 자릿수보다 짧으면 우연히 같기 쉬워 근거로 쓰지 않는다
 NEAR = 0.1              # 참조 주석에서 한 기간만 같을 때, 다른 기간이 이 비율 안에서 다르면 같은 항목으로 본다
@@ -108,10 +109,24 @@ def twin_cells(doc: Doc) -> list[tuple]:
     return out
 
 
+def _interim_flow(doc: Doc, cell: tuple, plabels: dict) -> bool | None:
+    """전기 칸이 반기 · 분기 흐름(전반기 · 전분기)이면 True, 잔액(전기말 · 전반기말)이면 False, 모르면 None. 표 위 기간 이름(「전반기 (단위 : 백만원)」)과 열 이름으로 본다."""
+    t, _, c = cell
+    if t.id.startswith("재무상태표"):
+        return False
+    name = norm(plabels.get(t.id, "")) + norm(t.header[c])
+    if re.search(r"(기|반기|분기)말", name):
+        return False
+    if re.search(r"(전반기|전분기)|(반기|분기)(누적|3개월)", name):
+        return True
+    return None
+
+
 def _occurrences(doc: Doc) -> list[dict]:
     big = max((t.unit for t in doc.tables()), default=1)
     order = {t.id: n for n, t in enumerate(doc.tables())}
     pairs = [c for t in doc.tables() for c in period_cells(doc, t)] + twin_cells(doc)
+    plabels = {k: v for p in doc.parts if p.key.startswith("주석") for k, v in period_labels(p).items()}
     out = []
     for cur, pri in pairs:
         (t1, r1, c1), (t0, r0, c0) = cur, pri
@@ -121,8 +136,14 @@ def _occurrences(doc: Doc) -> list[dict]:
         out.append({"cur": cur, "pri": pri, "fs": not doc.part_of(t1.id).key.startswith("주석"), "order": order[t1.id],
                     "tables": {t1.id, t0.id}, "key": (round(v * t1.unit / big), round(w * t0.unit / big)),
                     "won": (v * t1.unit, w * t0.unit), "unit": max(t1.unit, t0.unit),
-                    "strong": _digits(v) >= MIN_DIGITS and _digits(w) >= MIN_DIGITS})
+                    "strong": _digits(v) >= MIN_DIGITS and _digits(w) >= MIN_DIGITS, "flow": _interim_flow(doc, pri, plabels)})
     return out
+
+
+def _clash(x: dict, y: dict) -> bool:
+    """한쪽 전기 칸은 전반기 · 전분기 흐름이고 다른 쪽은 전기말 잔액이다. 두 칸은 다른 시점이라 같은 항목의 전기로 보지 않는다
+    (반기보고서 주석7-2 전반기 변동표의 「반기말 유형자산」(작년 6월 말)과 재무상태표의 전기말(작년 12월 말), 한 상장사 2026 반기, 2026-11-04)."""
+    return {x.get("flow"), y.get("flow")} == {True, False}
 
 
 def same(x: dict, y: dict, k: int) -> bool:
@@ -240,6 +261,8 @@ def detect(doc: Doc, taken: set) -> list[dict]:
         half = []
         for no in refs:
             for x in by_note.get(no, []):
+                if _clash(x, y):
+                    continue
                 eq = (same(x, y, 0), same(x, y, 1))
                 if eq[0] != eq[1]:
                     k = 1 if eq[0] else 0                  # 안 맞는 기간: 부호가 같고 10% 안에서 다를 때만 같은 항목으로 본다

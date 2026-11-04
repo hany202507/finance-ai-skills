@@ -383,3 +383,75 @@ def match_numbers(new: Doc, old: Doc) -> dict:
         cols[0] = 0
         out[t.id] = (q.id, rows, cols, score[t.id])
     return out
+
+
+def _row_text(t: Table, r: int) -> str:
+    return " · ".join(f"{t.header[c]} {t.rows[r][c]}".strip() for c in range(1, len(t.header)) if t.rows[r][c])
+
+
+def _nonzero(t: Table, r: int, cols) -> int:
+    return sum(1 for c in cols if isinstance(t.nums[r][c], (int, float)) and t.nums[r][c] != 0)
+
+
+def diff_rows(new: Doc, old: Doc, m: Match) -> list[dict]:
+    """바뀐 곳 목록(2026-10-26 HTML 보기). 엑셀 「바뀐 곳」 시트와 HTML 보기가 같이 쓴다.
+    줄마다 kind(숫자 바뀜 · 숫자 든 글 바뀜 · 글 바뀜 · 새 문단 · 새 표 · 새 줄 · 새 열 · 새 주석 · 없어진 …), part, 자리(item 이면 문단 번호,
+    table · r · c 면 칸), name, old, new, diff, n 을 싣는다. n 은 그 줄이 changes() 에서 몇 곳으로 세어지는지다. n 의 합이 changes() 합과 같다(시험이 대조한다).
+    「새 열」 은 짝 지은 줄에서 짝 없는 열의 0 아닌 숫자 칸이고 엑셀 시트에는 싣지 않는다(지금까지와 같다)."""
+    olds = {p.key: p for p in old.parts}
+    nums = re.compile(r"\d[\d,]*(?:\.\d+)?")
+    out: list[dict] = []
+
+    def text_change(base, o, n):
+        a, b = nums.findall(o), nums.findall(n)
+        kind = "숫자 든 글 바뀜" if a != b and (a or b) else "글 바뀜"
+        out.append(dict(base, kind=kind, old=o, new=n, diff=None, n=1))
+
+    for p in new.parts:
+        op = olds.get(m.parts.get(p.key))
+        if op is None:
+            n = sum(1 for x in p.items if x[0] == "p")
+            n += sum(len(x[1].rows) + sum(_nonzero(x[1], r, range(1, len(x[1].header))) for r in range(len(x[1].rows))) for x in p.items if x[0] == "t")
+            out.append({"kind": "새 주석", "part": p.key, "name": p.title, "old": "", "new": "", "diff": None, "n": n})
+            continue
+        ot = {x[1].id: x[1] for x in op.items if x[0] == "t"}
+        for i, x in enumerate(p.items):
+            if x[0] == "p":
+                j = m.paras.get((p.key, i))
+                if j is None:
+                    out.append({"kind": "새 문단", "part": p.key, "item": i, "name": "", "old": "", "new": x[1], "diff": None, "n": 1})
+                elif op.items[j][1] != x[1]:
+                    text_change({"part": p.key, "item": i, "old_item": j, "name": ""}, op.items[j][1], x[1])
+                continue
+            t = x[1]
+            mt = m.tables.get(t.id)
+            cols = range(1, len(t.header))
+            if not mt:
+                for r in range(len(t.rows)):
+                    out.append({"kind": "새 표", "part": p.key, "table": t.id, "r": r, "c": 0, "name": f"{t.id} {t.rows[r][0]}", "old": "",
+                                "new": _row_text(t, r), "diff": None, "n": 1 + _nonzero(t, r, cols)})
+                continue
+            q = ot[mt[0]]
+            for r in range(len(t.rows)):
+                if r not in mt[1]:
+                    out.append({"kind": "새 줄", "part": p.key, "table": t.id, "r": r, "c": 0, "name": f"{t.id} {t.rows[r][0]}", "old": "",
+                                "new": _row_text(t, r), "diff": None, "n": 1 + _nonzero(t, r, cols)})
+                    continue
+                for c in cols:
+                    base = {"part": p.key, "table": t.id, "r": r, "c": c, "name": f"{t.id} {t.rows[r][0]} · {t.header[c]}"}
+                    v = t.nums[r][c]
+                    if c not in mt[2]:
+                        if isinstance(v, (int, float)) and v != 0:
+                            out.append(dict(base, kind="새 열", old="", new=v, diff=None, n=1))
+                        continue
+                    orow, ocol = mt[1][r], mt[2][c]
+                    w = q.nums[orow][ocol]
+                    base.update(old_table=q.id, old_r=orow, old_c=ocol)
+                    if numeric(t, r, c) and numeric(q, orow, ocol):
+                        if (v or 0) != (w or 0):
+                            out.append(dict(base, kind="숫자 바뀜", old=w or 0, new=v or 0, diff=(v or 0) - (w or 0), n=1))
+                    elif cell_text(t, r, c) != cell_text(q, orow, ocol):
+                        text_change(base, cell_text(q, orow, ocol), cell_text(t, r, c))
+        for g in m.gone.get(p.key, []):
+            out.append({"kind": g.split(":")[0], "part": p.key, "name": g.split(": ", 1)[-1][:200], "old": "", "new": "", "diff": None, "n": 1, "gone": True})
+    return out

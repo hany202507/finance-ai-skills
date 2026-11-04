@@ -88,6 +88,47 @@ def _is_area(no: str) -> bool:
     return bool(re.fullmatch(AREA_NO, no))
 
 
+SIZES = ("소규모", "일반")
+
+
+def is_small(case: dict) -> bool:
+    """감사인이 소규모기업으로 정한 감사 건인지(감사건.json company_size). 엔진은 회사 규모를 정하지 않는다."""
+    return (case or {}).get("company_size") == "소규모"
+
+
+def required_of(no: str, case: dict, why: str | None = None, std: dict | None = None) -> tuple[bool, str | None]:
+    """조서가 필수인지와 그 근거(2026-10-26).
+    소규모 감사 건: 한공회 소규모 일반조서목록(folder_standard.yaml small_entity.required)과 늘 만드는 4000 영역(workpapers.yaml always_areas).
+    그 밖의 감사 건: 지금처럼 조서목록 선정 이유가 「필수」 로 시작하면 필수(근거는 비워 둔다)."""
+    if not is_small(case):
+        return (why or "").startswith("필수"), None
+    std = std or load_standard()
+    basis = {str(k): v for k, v in ((std.get("small_entity") or {}).get("required") or {}).items()}.get(no)
+    if basis is None and _is_area(no):
+        always = read_yaml(DEFS / "workpapers.yaml").get("always_areas") or {}
+        basis = always.get(no[4:])
+    return basis is not None, basis
+
+
+def set_size(engagement_dir: Path, size: str | None) -> dict:
+    """감사건에 회사 규모(소규모 · 일반)를 적고 조서목록을 다시 쓴다. None 이면 지운다(미정)."""
+    if size is not None and size not in SIZES:
+        raise ValueError(f"회사 규모는 {' · '.join(SIZES)} 가운데 하나입니다: {size}")
+    d = Path(engagement_dir)
+    p = d / "_색인" / "감사건.json"
+    case = _read(p, None)
+    if case is None:
+        raise FileNotFoundError(f"감사건.json 이 없습니다: {p}")
+    if size is None:
+        case.pop("company_size", None)
+    else:
+        case["company_size"] = size
+    at = _now()
+    case.setdefault("log", []).insert(0, {"at": at, "who": "감사인", "what": f"회사 규모를 {size or '미정'}(으)로 적었습니다"})
+    _write(p, case)
+    return scan(d, now=at, quiet_log=True)
+
+
 def match_workpaper(stem: str, numbers: list[str]) -> str | None:
     """파일 이름(확장자 뺀)에서 조서번호를 찾는다. 긴 번호부터 본다(3600-JET 이 3600 보다 먼저)."""
     for no in sorted(numbers, key=len, reverse=True):
@@ -205,8 +246,9 @@ def periods(case: dict) -> dict:
 
 
 def scaffold(engagement_dir: Path, company: str, fiscal_year_end: str, kind: str = "계속감사", now: str | None = None,
-             fiscal_year_start: str | None = None) -> Path:
-    """fiscal_year_start: 반기 · 짧은 사업연도의 시작일(없으면 결산일 1년 전 다음 날로 본다, R8)."""
+             fiscal_year_start: str | None = None, size: str | None = None) -> Path:
+    """fiscal_year_start: 반기 · 짧은 사업연도의 시작일(없으면 결산일 1년 전 다음 날로 본다, R8).
+    size: 회사 규모(소규모 · 일반). 감사인이 소규모 1100 해당 여부 검토로 정한 값이다. 없으면 적지 않는다(미정)."""
     std = load_standard()
     d = Path(engagement_dir)
     for f in _folders(std):
@@ -230,6 +272,10 @@ def scaffold(engagement_dir: Path, company: str, fiscal_year_end: str, kind: str
         if not date.fromisoformat(fiscal_year_start) <= date.fromisoformat(fiscal_year_end):
             raise ValueError(f"사업연도 시작일 {fiscal_year_start} 이 결산일 {fiscal_year_end} 보다 뒤입니다")
         init["감사건.json"]["fiscal_year_start"] = fiscal_year_start
+    if size is not None:
+        if size not in SIZES:
+            raise ValueError(f"회사 규모는 {' · '.join(SIZES)} 가운데 하나입니다: {size}")
+        init["감사건.json"]["company_size"] = size
     for name, data in init.items():
         if not (idx / name).exists():
             _write(idx / name, data)
@@ -290,8 +336,8 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
         rel = p.relative_to(d).as_posix()
         parts = rel.split("/")
         top = parts[0]
-        if top == "_색인" or (folders.get(top) or {}).get("role") == "versions":
-            continue                         # _판(수정 반영 판)은 받은자료도 조서도 아니다
+        if top == "_색인" or (folders.get(top) or {}).get("role") in ("versions", "records", "scratch"):
+            continue                         # _판(수정 반영 판) · _기록(사람 기록) · _작업(AI 작업 파일)은 받은자료도 조서도 아니다
         entry = {"path": rel, "sha256": _sha(p), "size": p.stat().st_size,
                  "modified": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
                  "role": "unknown", "folder_kind": None, "kind": "알 수 없음", "kind_basis": "폴더", "confirmed": False,
@@ -346,6 +392,12 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
             _carry(entry, old)
         files.append(entry)
 
+    # 사람 기록(_기록)을 다시 입힌다. _색인 을 지우고 다시 만들어도 판독 확인 · 고침 · OCR 값 확인이 되살아난다(2026-10-22)
+    from . import records
+
+    rec = records.reapply(d, files)
+    warnings += [f"판독을 확인한 뒤 파일이 바뀌었습니다. 다시 확인해 주십시오: {p}" for p in rec["recheck"]]
+
     # 회사제시 판: 회사제시 폴더 파일 중 가장 높은 판
     vers = [f["version"] for f in files if f["role"] == "received" and f["folder_kind"] == "회사제시" and f["version"]]
     company_version = max(vers, key=lambda v: _version_key(v[1:])) if vers else None
@@ -389,6 +441,7 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
             rechecked.append(no)
         if assigned.get(no):
             w["assign"] = assigned[no]
+        w["required"], w["required_basis"] = required_of(no, case, w["why"], std)   # 회사 규모가 바뀌면 다음 훑기에 다시 정한다
         out_wps.append(w)
 
     new_files = [f["path"] for f in files if f["path"] not in old_docs]

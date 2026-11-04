@@ -13,6 +13,8 @@
   review    금액이 안 맞는 AI 연결마다 같은 주석 안에서 그 금액과 같은 다른 칸을 찾아 준다(총액과 순액을 바꿔 건 경우를 다시 보게).
   proposals 엔진이 금액을 보지 않고 위치 · 이름 · XBRL 코드로 낸 연결 후보(dsd_propose, 2026-10-22). AI 는 연결.json 의 proposals 에
             후보 번호로 O · X · 고침을 적고, 후보에 없는 연결만 links 에 적는다. O · 고침은 AI 연결과 같이 confirmed false 로 들어간다.
+  draft     연결_초안.json: 빈 연결.json 과 「할 일」(후보가 없는 표, 합계 구조를 찾지 못한 곳, 주석과 잇지 못한 과목). 2026-10-23
+읽기 자료의 표에는 줄 · 열 번호가 붙고(2026-10-23), AI 는 칸을 「표:줄:열」 로 적는다. 넣을 때 dsd_patch 가 이름 칸으로 바꾼다.
 """
 from __future__ import annotations
 
@@ -21,8 +23,8 @@ import re
 
 from .base import norm
 from .dsd_grid import Doc, Table
-from .dsd_links import (PAIR_ID, Check, _isnum, _labels, _ref, _resolve, col_prefix, cut_prefix, failed, find_col, find_row, is_rate, overlay, period_col,
-                        struct_text, total_kind)
+from .dsd_links import (_SCE_CLOSE, PAIR_ID, Check, _isnum, _labels, _ref, _resolve, _sce_blocks, col_prefix, cut_prefix, failed, find_col, find_row, is_rate,
+                        overlay, period_col, struct_text, total_kind)
 
 STATEMENTS = ("재무상태표", "손익계산서", "현금흐름표")
 PRIOR_VERDICTS = ("불일치", "작년 불일치", "설명됨", "걸지 않음")
@@ -78,13 +80,53 @@ def _no_money(t: Table) -> bool:
     return not any(_isnum(t.nums[i][j]) and not t.rate(i, j) and not is_rate(t.header[j]) for i in range(len(t.rows)) for j in range(1, len(t.header)))
 
 
+FORMAT = [      # 읽기 자료 맨 앞 한 화면(2026-10-23 분석 6.4). 연결.json 을 쓸 때 SKILL.md · 참고 문서 · 엔진 코드를 열지 않게 꼴과 자주 쓰는 규칙을 싣는다
+    "## 연결.json 쓰는 법",
+    "",
+    "연결_초안.json 을 연결.json 으로 복사해 채운다(「할 일」 은 엔진이 못 건 곳이다). 칸은 표 번호와 아래 표의 줄 · 열 번호로 「주석5-1:2:1」 처럼 적는다. "
+    "빼는 칸은 「-재무상태표:8:1」. 같은 표 안의 줄 · 열(합계 구조의 항)은 번호만 적고 빼는 항은 -3 이다. 이름으로 적어도 된다. "
+    "함께 낸 보고서의 칸은 「짝:주석18-1:3:1」(그 보고서의 dsd links 읽기 자료 번호, foot --links … --pair 로 넣을 때만)이나 이름으로 적는다.",
+    "",
+    "- proposals: 틀린 후보만 적는다. 적지 않은 후보는 그대로 연결로 들어간다. "
+    '{"X": {"P0012": "이유 한 줄"}, "고침": [{"id": "P0013", "right": ["재무상태표:12:1", "재무상태표:13:1"], "basis": "근거"}]}. 고칠 수 있는 키: left · right · grade · when · cmp · basis.',
+    '- tables: 후보가 없는 표는 표마다 한 줄. {"table": "주석9-1", "kind": "구성", "total": 7, "item": "재무상태표:15", "basis": "근거 문장"}. '
+    "kind 는 구성 · 변동(open 기초 줄 · close 기말 줄) · 범주 · 만기 · 일부(일부 ≤ 과목). 엔진이 기간 열마다 「합계 줄 = 과목」 연결을 만들고, 그 줄에 합계 구조가 없으면 위 줄의 합을 더한다. "
+    '과목이 여럿이면 목록(빼는 과목은 「-재무상태표:16」), 줄마다 과목이 다르면 "each": {"3": "재무상태표:5"}, 합계 구조만 원하면 item 을 뺀다. '
+    '기간 열을 엔진이 못 정하면 "cols": {"1": "당기", "5": "전기"}, 한 기간만 담은 표는 "period": "당기", "col": 합계 열.',
+    '- links: 그 밖의 연결. {"left": "주석12-1:9:5", "right": ["재무상태표:20:1", "재무상태표:31:1"], "basis": "근거 문장", "grade": "항등식"}. '
+    'grade: 항등식 · 조건부("when" 필수) · 약함(주석에 문장이 없음). 일부만 담은 표는 "cmp": "le".',
+    '- sums: {"table": "주석5-1", "total": 2, "rows": [1], "basis": "근거"}. 가로 합계는 "total_col" · "cols", 이어진 줄은 "from" · "to", '
+    '걸지 않을 열은 "skip", 걸 열만 "only"(열 번호). no_sums(합계가 아닌 줄): {"table": "주석7-3", "total": 4, "why": "이유"}.',
+    '- calcs(곱셈 · 나눗셈): {"left": "주석25-1:3:1", "expr": "ni / sh", "vars": {"ni": "주석25-1:1:1", "sh": "주석25-1:2:1"}, "basis": "근거"}. '
+    '표 단위와 다른 주식수 · 주당 금액 칸은 {"table": "주석25-1", "row": 2, "col": 1, "unit": 1}.',
+    '- workpapers: {"table": "주석20-2", "rows": [1, 2], "what": "은행조회서의 한도", "wp": "4000BBDD", "why": "보고서에 맞춰 볼 곳이 없다"}. '
+    'skipped: {"what": "재무상태표 미수금 ↔ 주석 21", "why": "이유"}. units: {"table": "주석18-3", "unit": 1, "why": "이유"}. '
+    'prior_pairs: {"table": "주석9-1", "row": 3, "prior_row": "작년 줄 이름", "why": "이유"}.',
+    "",
+    "자주 쓰는 규칙:",
+    "",
+    "- 금액을 보고 연결 · 합계 구조를 정하지 않는다. 뜻으로 정하고 근거 문장을 basis 에 적는다. AI 는 숫자를 만들지 않는다.",
+    "- 현금흐름표와 잇는 취득 · 처분 · 신규리스, 퇴직급여 설정액 ↔ 손익계산서는 조건부다. 조정 항목이 주석에 있으면 그 칸을 항으로 넣고 when 없이 건다.",
+    "- 일부만 담은 표(특수관계자 채권 · 채무, 외화 자산, 담보 제공 자산)는 같다고 걸지 않고 cmp le 로 건다. 판매비와관리비 명세와 성격별 분류의 같은 이름 줄은 걸지 않는다.",
+    "- 주당이익, 자본금 = 주식수 × 액면, 유효세율은 calcs 에 적는다. 민감도처럼 보고서에 계산 근거가 없는 것은 skipped 에 적는다.",
+    "- 항이 하나뿐인 합계도 적는다. 변동표의 기초는 전기 변동표의 기말과 재무상태표 전기 둘 다에 건다. 재무제표 본표의 중간 합계(유동자산 · 영업이익)도 본다.",
+    "- 자세한 꼴과 예외: 스킬의 references/연결-형식.md. 주석 유형별로 거는 연결: references/연결-유형.md(필요한 주석의 절만 찾아 읽는다).",
+    "",
+    "넣고 엑셀까지 한 번에: python -m audit dsd foot <dsd> --links 연결.json [--text 문장.json] [--wtb …] [--prior …] [--pair …] --out <폴더>. "
+    "이름 · 번호가 칸으로 풀리지 않으면 아무것도 넣지 않고 고칠 곳만 알린다.",
+]
+
+
 def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = None, proposals: list[dict] | None = None) -> str:
     """AI 가 읽을 자료: 재무제표 넷과 주석 전부를 원문 순서대로. 표는 이름을 글자 그대로 적는다(연결을 적을 때 이 이름을 쓴다).
     defs 와 checks 를 주면 표마다 엔진이 금액 근거로 찾은 합계 구조와, 합계 줄 · 열인데 구조를 찾지 못한 곳을 적는다."""
-    out = [f"# {doc.source} 읽기 자료", "",
-           "표 번호는 [대괄호], 표의 첫 열이 행 이름, 첫 줄이 열 이름이다. 재무제표 표의 마지막 열 「주석」 은 그 과목이 가리키는 주석 번호다.",
+    out = [f"# {doc.source} 읽기 자료", "", *FORMAT, "", "## 읽는 법", "",
+           "표 번호는 [대괄호]다. 표의 첫 칸은 줄 번호, 「열」 줄은 열 번호, 「줄」 줄은 열 이름이다. 칸은 「표:줄:열」 로 적는다. "
+           "재무제표 표의 마지막 열 「주석」 은 그 과목이 가리키는 주석 번호다.",
            "표 번호 옆에 「줄 이름: 앞의 N칸」 이라고 적힌 표는 앞의 N칸을 띄어 이은 것이 행 이름이다(「기초 | 취득원가」 줄은 「기초 취득원가」). 빈 칸은 건너뛴다.",
-           "표 아래 「엔진 합계」 는 엔진이 금액이 맞는 것을 근거로 찾은 합계 구조다. 틀렸거나 빠진 것은 sums · no_sums 로 적는다.",
+           "표 아래 「엔진 합계」 는 엔진이 금액이 맞는 것을 근거로 찾은 합계 구조다. 틀렸거나 빠진 것은 sums · no_sums 로 적는다. "
+           "「합계 구조를 찾지 못한 곳」 의 「항 하나」 는 위에 숫자가 한 줄뿐인 합계다(엔진은 금액이 맞아도 걸지 않는다). "
+           "「맨 위 합계(아래 2~5줄)」 는 아래 줄들이 이 줄 이름으로 시작하는 표의 맨 위 줄, 「자본변동표 기말 줄」 · 「총계 열」 은 이름에 합계가 없는 합계다.",
            "맞춰 볼 금액이 없는 표(지분율 목록, 글만 있는 표)는 한 줄로 줄였다. 칸이 필요하면 python -m audit dsd read 의 dsd_표.json 을 본다."]
     if proposals:
         out.append("표 아래 「후보 P0001」 줄은 엔진이 위치 · 이름 · XBRL 코드로 낸 연결 후보다(금액은 보지 않았다). 판정을 적지 않은 후보는 그대로 연결로 들어간다. "
@@ -95,7 +137,8 @@ def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = Non
         by_table.setdefault(x["left"]["table"], []).append(x)
     lost: dict[str, list] = {}
     for x in (unchecked_totals(doc, checks, defs) if checks is not None else []):
-        lost.setdefault(x["table"], []).append(f"「{x.get('row', x.get('col'))}」 {'줄' if x['what'] == '합계 줄' else '열'}({', '.join(x.get('cells', []))})")
+        lost.setdefault(x["table"], []).append(f"{'줄' if x['what'] == '합계 줄' else '열'} {x.get('at', '')} 「{x.get('row', x.get('col'))}」({', '.join(x.get('cells', []))})"
+                                               + (" · 항 하나" if x.get("one") else "") + (f" · {x['by']}" if x.get("by") else ""))
     for p in doc.parts:
         out.append(f"\n## {p.key} {p.title}")
         for x in p.items:
@@ -117,11 +160,12 @@ def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = Non
                        + (" · 주석 문단의 금액을 모은 표(원문에 없는 표). 줄 이름은 금액 앞의 글, 금액은 문장에 적힌 단위" if t.kind else "")
                        + (" · 칸에 단위가 붙은 칸은 숫자 뒤에 그 단위를 적었다" if t.cell_units else "")
                        + (f" · 열 이름 공통 앞부분 「{pre}」 은 떼고 적었다(연결에 뗀 이름을 그대로 써도 된다)" if pre else ""))
-            out.append("| " + " | ".join(cut_prefix(h, pre) if j else h for j, h in enumerate(t.header)) + (" | 주석" if t.refs else "") + " |")
+            out.append("| 열 |  | " + " | ".join(str(j) for j in range(1, len(t.header))) + (" |  |" if t.refs else " |"))      # 열 번호(2026-10-23 분석 6.3)
+            out.append("| 줄 | " + " | ".join(cut_prefix(h, pre) if j else h for j, h in enumerate(t.header)) + (" | 주석" if t.refs else "") + " |")
             words = {1: "원", 1000: "천원", 10000: "만원", 1000000: "백만원", 100000000: "억원", 10 ** 12: "조원", 0.01: "%"}
             for i, r in enumerate(t.rows):
-                cells = [r[0]] + [(f"{t.nums[i][j]:,}" + (words.get(t.cell_units[(i, j)], "") if t.cell_units and (i, j) in t.cell_units else ""))
-                                  if _isnum(t.nums[i][j]) else (r[j] or "") for j in range(1, len(t.header))]
+                cells = [str(i + 1), r[0]] + [(f"{t.nums[i][j]:,}" + (words.get(t.cell_units[(i, j)], "") if t.cell_units and (i, j) in t.cell_units else ""))
+                                              if _isnum(t.nums[i][j]) else (r[j] or "") for j in range(1, len(t.header))]
                 if t.refs:
                     cells.append(",".join(map(str, t.refs[i])))
                 out.append("| " + " | ".join(cells) + " |")
@@ -248,34 +292,105 @@ def evidence(doc: Doc, checks: list[Check]) -> list[dict]:
 
 
 FS_TOTALS = {      # 재무제표 본표에서 이름이 합계 꼴은 아니지만 다른 줄의 합인 줄. 과목 단계가 없는 K-IFRS 본표에서 구조가 없으면 알린다
-    "재무상태표": ("유동자산", "비유동자산", "유동부채", "비유동부채"),
-    "손익계산서": ("매출총이익", "매출총손실", "매출총손익", "영업이익", "영업손실", "영업손익", "법인세비용차감전", "당기순이익", "당기순손실", "당기순손익", "총포괄"),
-    "현금흐름표": ("영업활동", "투자활동", "재무활동", "현금의증가", "현금및현금성자산의순증가", "현금및현금성자산의증가", "기말의현금", "기말현금"),
+    "재무상태표": ("유동자산", "비유동자산", "유동부채", "비유동부채", "지배기업"),
+    "손익계산서": ("매출총이익", "매출총손실", "매출총손익", "영업이익", "영업손실", "영업손익", "법인세비용차감전", "당기순이익", "당기순손실", "당기순손익",
+              "반기순이익", "반기순손실", "반기순손익", "분기순이익", "분기순손실", "분기순손익", "총포괄", "당기총포괄", "반기총포괄", "분기총포괄"),
+    "현금흐름표": ("영업활동", "투자활동", "재무활동", "현금의증가", "현금및현금성자산의순증가", "현금및현금성자산의증가", "기말의현금", "기말현금",
+              "반기말의현금", "반기말현금", "분기말의현금", "분기말현금"),
 }
+FS_EXACT = {"손익계산서": ("기타포괄손익", "기타포괄이익", "기타포괄손실", "기타포괄손익(손실)", "세후기타포괄손익", "법인세비용차감후기타포괄손익")}      # 「기타포괄손익-공정가치…」 는 아니다
+_RECLASS = re.compile(r"재분류(되지않는|되는|될수있는|되지않을)(항목|포괄손익|기타포괄손익)(\(.*\))?$")      # 포괄손익의 「재분류되지 않는 항목」 소계
+_CASH_CHANGE = ("현금및현금성자산의증가", "현금및현금성자산의순증가", "현금및현금성자산의감소", "현금및현금성자산의순감소", "현금및현금성자산의순증감",
+                "현금및현금성자산의증감")      # 「환율변동 효과 적용 후 현금…의 증가」
 
 
 def _fs_total(t: Table, i: int, labels: list[str]) -> bool:
-    """재무제표 본표의 중간 합계로 보이는 줄. 과목 단계를 알면 하위 과목이 있는 줄, 모르면 이름으로 본다."""
-    if not t.refs and not t.levels:              # 재무제표 본표가 아니다
+    """재무제표 본표의 중간 합계로 보이는 줄. 과목 단계를 알면 하위 과목이 있는 줄, 모르면 이름으로 본다.
+    예전에는 주석 열 · 과목 단계가 없는 표를 본표로 보지 않아 공시 원문 xml(XBRL 꼴) 본표의 이름을 보지 않았다. 반기 · 분기의 「반기순이익」
+    「반기말의 현금」, 포괄손익의 「기타포괄손익」 「재분류되지 않는 포괄손익」 도 이름으로 본다(2026-11-04 한 상장사 2026 반기)."""
+    if not t.id.startswith(STATEMENTS):          # 재무제표 본표가 아니다
         return False
-    if t.levels and t.levels[i] is not None and not t.id.startswith("자본변동표"):      # 자본변동표는 줄이 기간이라 단계가 합계 관계를 뜻하지 않는다
+    if t.levels and t.levels[i] is not None:
         nxt = next((x for x in t.levels[i + 1:] if x is not None), None)
         if nxt is not None and nxt > t.levels[i]:
             return True
     name = "".join(labels[i].split())
     keys = next((v for k, v in FS_TOTALS.items() if t.id.startswith(k)), ())
-    if t.id.startswith("현금흐름표"):
-        return any(name.startswith(k) for k in keys) and ("현금흐름" in name or "현금" in name[:6] or name.startswith("기말"))
-    return any(name.startswith(k) for k in keys)
+    if t.id.startswith("현금흐름표"):        # 「투자활동으로 인한 현금유입액」 「영업으로부터 창출된 현금흐름」 도 소계다(한 상장사 2026 반기)
+        return ((any(name.startswith(k) for k in keys) and ("현금흐름" in name or "현금" in name[:6] or name.startswith("기말") or "현금유입" in name or "현금유출" in name))
+                or any(k in name for k in _CASH_CHANGE) or name.startswith(("영업으로부터창출된현금", "영업에서창출된현금")))
+    if t.id.startswith("손익계산서") and not any(_isnum(v) and v for r in t.nums[:i] for v in r[1:]):
+        return False                             # 포괄손익계산서 맨 위의 「반기순이익」 은 손익계산서에서 옮겨 온 항이다
+    exact = next((v for k, v in FS_EXACT.items() if t.id.startswith(k)), ())
+    return any(name.startswith(k) for k in keys) or name in exact or (t.id.startswith("손익계산서") and bool(_RECLASS.search(name)))
 
 
-_CLOSING = re.compile(r"^(기말|당기말|전기말)(잔액|금액|장부금액|장부가액|순장부금액)?(\(.*\))?$")      # 「기말상품재고액」 「기말 이연법인세자산」 은 변동표의 기말이 아니다
+_CLOSING = re.compile(r"^(기말|당기말|전기말|(?:당|전)?(?:반기|분기)말)(잔액|금액|장부금액|장부가액|순장부금액)?(\(.*\))?$")      # 「기말상품재고액」 「기말 이연법인세자산」 은 변동표의 기말이 아니다
 
 
 def _closing(names: list[str], i: int) -> bool:
-    """변동표의 기말: 이름이 「기말」 로 시작하고 앞에 「기초」 가 있다. 합계 이름은 아니지만 기초와 변동의 합이다."""
+    """변동표의 기말: 이름이 「기말」(「반기말」 「당분기말」 도)로 시작하고 앞에 「기초」 가 있다. 합계 이름은 아니지만 기초와 변동의 합이다.
+    공시 원문 xml 의 「반기말 유형자산」 「재무활동에서 생기는 기말 부채」 처럼 기말 낱말이 떨어져 있는 이름은 그 낱말을 「기초」 로 바꾼 이름
+    (「기초 유형자산」 「재무활동에서 생기는 기초 부채」)이 앞에 있을 때만 기말로 본다. 「기말상품재고액」 은 붙여 쓴 이름이라 보지 않는다."""
     low = ["".join(str(x).split()) for x in names]
-    return bool(_CLOSING.match(low[i])) and any(x.startswith("기초") for x in low[:i])
+    if not any(x.startswith("기초") for x in low[:i]) and not any(" 기초 " in f" {x} " for x in names[:i]):
+        return False
+    if _CLOSING.match(low[i]):
+        return True
+    words = str(names[i]).split()
+    opens = {"".join(str(x).split()) for x in names[:i]}
+    return len(words) > 1 and any(_CLOSING.match(w) and "".join(words[:k] + ["기초"] + words[k + 1:]) in opens for k, w in enumerate(words))
+
+
+_TAIL = re.compile(r"(\s+(?:\d+개월|누적|당기|전기|당기말|전기말|(?:당|전)?(?:반기|분기)말?|공시금액|장부금액))+$")
+
+
+def _total_name(name: str) -> bool:
+    """이름으로 본 합계. total_kind 에 공시 원문 xml 의 XBRL 이름 꼴 둘을 더한다: 쉼표 앞이 합계인 이름(「퇴직급여비용 합계, 확정급여제도」),
+    끝의 기간 낱말을 떼면 합계인 이름(「부문의 합계 합계 3개월」). 엔진의 합계 구조 찾기(total_kind)는 그대로 두고 알리기에만 쓴다."""
+    s = str(name)
+    return bool(total_kind(s) or ("," in s and total_kind(s.split(",")[0])) or total_kind(_TAIL.sub("", s)))
+
+
+def _head_total(labels: list[str], i: int, ends: bool = False) -> list[int]:
+    """맨 위 줄이 합계인 꼴(공시 원문 xml 의 XBRL 표). 바로 아래 줄들이 이 줄 이름 뒤에 낱말을 붙인 이름(「성격별 비용」 아래 「성격별 비용 급여」 …)이고,
+    ends 면(재무제표 본표) 이 줄 이름으로 끝나는 더 긴 이름(「자본금」 아래 「우선주자본금」 「보통주자본금」)도 받는다. 주석에서는 끝 이름을 받지 않는다
+    (한 상장사 주석10-1 「사채」 아래 「차감: 유동성사채」 「비유동성사채」 는 셋째 줄이 합이다). 그런 줄이 둘 이상 이어지면 그 줄 번호들, 아니면 []."""
+    me = " ".join(str(labels[i]).split())
+    key = "".join(me.split())
+    if not key:
+        return []
+    kids = []
+    for k in range(i + 1, len(labels)):
+        x = " ".join(str(labels[k]).split())
+        low = "".join(x.split())
+        if not (x.startswith(me + " ") or (ends and len(low) > len(key) and low.endswith(key))):
+            break
+        kids.append(k)
+    return kids if len(kids) >= 2 else []
+
+
+def _head_col(header: list[str], j: int) -> int:
+    """XBRL 꼴 총계 열: 열 이름이 다른 열 둘 이상의 이름 앞부분이다(자본변동표 「자본의 구성요소」 열과 「자본의 구성요소 자본금」 …). 그런 열의 수, 아니면 0."""
+    me = " ".join(str(header[j]).split())
+    n = sum(1 for k, h in enumerate(header) if k and k != j and " ".join(str(h).split()).startswith(me + " ")) if me else 0
+    return n if n >= 2 else 0
+
+
+def _sce_total(t: Table, i: int, labels: list[str]) -> bool:
+    """자본변동표 구간 안의 소계 줄: 「총포괄이익(손실)」 「기타포괄손익」 「자본에 직접 반영된 소유주와의 거래 등」(XBRL 꼴, 그 아래 줄들의 합)."""
+    if not t.id.startswith("자본변동표"):
+        return False
+    name = "".join(str(labels[i]).split())
+    return name.startswith("총포괄") or name in FS_EXACT["손익계산서"] or "소유주와의거래" in name
+
+
+def _sce_closing(t: Table) -> set[int]:
+    """자본변동표 구간(기초 줄에서 시작)의 마지막 줄이 기말(「06.30 (반기말자본)」 「2025.12.31(전기말)」)이면 그 줄 번호."""
+    if not t.id.startswith("자본변동표"):
+        return set()
+    labels = _labels(t)
+    return {b[-1] for b in _sce_blocks(t) if len(b) > 2 and _SCE_CLOSE.search(str(labels[b[-1]]))}
 
 
 def unchecked_totals(doc: Doc, checks: list[Check], defs: dict | None = None) -> list[dict]:
@@ -310,21 +425,49 @@ def unchecked_totals(doc: Doc, checks: list[Check], defs: dict | None = None) ->
 
         dense_c = {j: sum(1 for i in range(len(t.rows)) if _isnum(t.nums[i][j]) and t.nums[i][j]) for j in range(1, len(t.header))}
         dense_r = {i: sum(1 for j in range(1, len(t.header)) if _isnum(t.nums[i][j]) and t.nums[i][j]) for i in range(len(t.rows))}
+        n_totals = sum(1 for lab in labels if total_kind(lab))
+
+        def one(i, j):
+            """항이 하나뿐인 합계(2026-10-23): 표에 합계 줄이 하나이고, 그 열에 0 이 아닌 숫자가 합계 줄과 그 위 한 줄뿐이다(가온정밀 주석5-1 「합계」 = 「재고자산」).
+            엔진은 금액이 맞아도 항이 하나인 구조를 걸지 않아 읽기 자료에 아무 표시가 없었다. 공개 원문 280건에서 이 꼴 486칸 가운데 16칸은
+            일부만 담은 표라 금액이 달랐다. 그래서 엔진이 걸지 않고 「항 하나」 로 알려 AI 가 표를 읽고 sums 나 no_sums 로 적게 한다."""
+            nz = [k for k in range(len(t.rows)) if _isnum(t.nums[k][j]) and t.nums[k][j]]
+            return (n_totals == 1 and total_kind(labels[i]) is not None and len(nz) == 2 and nz[1] == i
+                    and not is_rate(labels[nz[0]]) and not str(labels[nz[0]]).strip().startswith(("-", "차감", "(차감", "가산", "(가산")))
+
+        sce = _sce_closing(t)
         for i, lab in enumerate(labels):
-            if is_rate(lab) or not (total_kind(lab) or (_closing(labels, i) and not t.refs) or _fs_total(t, i, labels)):
+            if is_rate(lab):
                 continue
+            by = ""                                      # 이름에 합계가 없는 합계 줄을 무엇으로 알아봤는지(2026-11-04). 읽기 자료 · 연결_초안에 적는다
+            if not (_total_name(lab) or (_closing(labels, i) and not t.refs) or _fs_total(t, i, labels) or _sce_total(t, i, labels)):
+                kids = _head_total(labels, i, t.id.startswith(STATEMENTS)) if not t.id.startswith("자본변동표") else []
+                if i in sce:
+                    by = "자본변동표 기말 줄"
+                elif kids:
+                    by = f"맨 위 합계(아래 {kids[0] + 1}~{kids[-1] + 1}줄)"
+                else:
+                    continue
             miss = [j for j in range(1, len(t.header)) if _isnum(t.nums[i][j]) and t.nums[i][j] and not t.rate(i, j) and not is_rate(t.header[j])
-                    and dense_c[j] >= 3 and (t.id, i, j) not in done_v and not skipped("v", i, j)]
+                    and (dense_c[j] >= 3 or one(i, j)) and (t.id, i, j) not in done_v and not skipped("v", i, j)]
             if miss:
                 name, nth = _ref(labels, i)
-                out.append({"table": t.id, "what": "합계 줄", "row": name, "row_nth": nth, "cells": [t.header[j] for j in miss]})
+                out.append({"table": t.id, "what": "합계 줄", "row": name, "row_nth": nth, "at": i + 1, "cells": [t.header[j] for j in miss],
+                            **({"one": True} if all(one(i, j) for j in miss) else {}), **({"by": by} if by else {})})
         for j in range(1, len(t.header)):
-            if is_rate(t.header[j]) or not (total_kind(t.header[j]) or _closing(t.header, j)):
+            if is_rate(t.header[j]):
                 continue
+            by = ""
+            if not (_total_name(t.header[j]) or _closing(t.header, j)):
+                n = _head_col(t.header, j)
+                if not n:
+                    continue
+                by = f"총계 열(이름이 이 열로 시작하는 열 {n}개)"
             miss = [i for i in range(len(t.rows)) if _isnum(t.nums[i][j]) and t.nums[i][j] and not t.rate(i, j) and not is_rate(labels[i])
                     and dense_r[i] >= 3 and (t.id, i, j) not in done_h and not skipped("h", i, j)]
             if miss:
-                out.append({"table": t.id, "what": "합계 열", "col": t.header[j], "col_nth": t.header[:j + 1].count(t.header[j]), "cells": [labels[i] for i in miss]})
+                out.append({"table": t.id, "what": "합계 열", "col": t.header[j], "col_nth": t.header[:j + 1].count(t.header[j]), "at": j, "cells": [labels[i] for i in miss],
+                            **({"by": by} if by else {})})
     return out
 
 
@@ -362,13 +505,33 @@ def request(doc: Doc, checks: list[Check], defs: dict | None = None, with_eviden
                                 if _isnum(w) and _isnum(v) and v and w and abs(abs(w) * q.unit - abs(v) * t.unit) <= 0.01 * abs(v) * t.unit:
                                     near.append({"table": q.id, "row": q.rows[i][0], "col": q.header[j], "value": w, "period": period,
                                                  "same": abs(abs(w) * q.unit - abs(v) * t.unit) < max(q.unit, t.unit)})
-            lines.append({"table": t.id, "row": lab[0], "row_nth": lab[1], "당기": cur, "전기": pri, "unit": t.unit,
+            lines.append({"table": t.id, "row": lab[0], "row_nth": lab[1], "at": r + 1, "당기": cur, "전기": pri, "unit": t.unit,
                           "notes": [f"주석{n}" for n in t.refs[r]], "near": near})
     return {"source": doc.source, "unlinked": lines, "unchecked_totals": unchecked_totals(doc, checks, defs),
             "amount_evidence": evidence(doc, checks) if with_evidence else [], "notes": notes,
             **({"proposals": proposal_list(doc, defs)} if with_proposals else {}),
             "how": "left 는 주석 칸, right 는 재무제표 과목(여러 칸이면 더한다). 표 · 행 · 열 이름은 이 파일에 적힌 글자 그대로. "
                    "회계상 같아야 하는 칸만 적는다. 일부만 담은 표(특수관계자 잔액, 외화 금액)는 과목 전체와 같지 않으므로 걸지 않는다."}
+
+
+def draft(doc: Doc, req: dict) -> dict:
+    """연결_초안.json(2026-10-23 분석 6.4): 빈 연결.json 과 「할 일」. 할 일은 엔진 후보가 없는 주석 표, 합계 구조를 찾지 못한 곳,
+    주석을 가리키는데 아직 연결이 없는 과목이다. 줄 번호는 읽기 자료의 번호다. 넣을 때 「할 일」 은 읽지 않는다."""
+    todo = []
+    props = req.get("proposals") or []
+    near = {x["left"]["table"] for x in props} | {r["table"] for x in props for r in x["right"]}
+    for t in doc.tables():
+        if t.kind or not t.id.startswith("주석") or t.id in near or _no_money(t):
+            continue
+        todo.append(f"{t.id}: 엔진 후보 없음. 과목과 이을 칸이 있으면 tables 한 줄이나 links, 조서와 맞출 숫자면 workpapers, 없으면 그대로 둔다")
+    for x in req.get("unchecked_totals") or []:
+        what = "줄" if x["what"] == "합계 줄" else "열"
+        todo.append(f"{x['table']} {what} {x.get('at', '')} 「{x.get('row', x.get('col'))}」: 합계 구조 없음({', '.join(x.get('cells', [])[:6])})"
+                    + (" · 항 하나" if x.get("one") else "") + (f" · {x['by']}" if x.get("by") else "") + ". sums 나 no_sums")
+    for x in req.get("unlinked") or []:
+        todo.append(f"{x['table']} 줄 {x.get('at', '')} 「{x['row']}」: 가리킨 {', '.join(x['notes'])} 과 연결 없음. tables · links, 걸지 않으면 skipped")
+    return {"할 일": todo, "proposals": {"X": {}, "고침": []}, "tables": [], "links": [], "sums": [], "no_sums": [], "calcs": [],
+            "workpapers": [], "skipped": [], "units": [], "prior_pairs": []}
 
 
 def proposal_list(doc: Doc, defs: dict | None = None) -> list[dict]:
@@ -408,6 +571,11 @@ def apply(doc: Doc, defs: dict, patch: dict, add: bool = False) -> tuple[dict, l
 
     patch 는 AI 연결의 전체 목록이다. 앞서 넣은 AI 연결은 지우고 이 목록으로 바꾼다(고치거나 뺀 연결이 남지 않게).
     add 면 앞서 넣은 것을 두고 더한다(다음 판에서 새로 생긴 표만 볼 때). 한 칸에 연결을 여럿 걸 수 있다(기초 = 전기 변동표의 기말, 기초 = 재무상태표 전기)."""
+    from . import dsd_patch
+
+    patch, problems, _ = dsd_patch.normalize(doc, patch)      # 번호 칸(「주석5-1:2:1」)과 표 한 줄(tables)을 이름 칸 · 연결로 푼다(2026-10-23)
+    if problems:
+        return defs, problems
     pmarks = {}
     if patch.get("proposals", {}) is not None:      # 엔진 후보의 O · X · 고침을 links · skipped 로 풀고, 판정이 없는 후보는 기본으로 넣는다(2026-10-22).
         patch, problems, pmarks = expand_proposals(doc, patch, defs, strict=not add)      # "proposals": null 이면 후보를 쓰지 않는다

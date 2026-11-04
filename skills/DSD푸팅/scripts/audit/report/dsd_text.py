@@ -6,7 +6,8 @@
 
 맡는 일
   엔진   글을 위치(S번호)와 함께 읽기, 기준 사실(기준사실.json)과 대조(회사명 · 대표이사 · 본점 주소 · 감사인 주소 · 감사기간 · 감사보고서일 ·
-         옛 값이 남은 곳), 보고서 안 일관성(대표이사 이름 · 감사보고서일), 오타 사전 · 기준서 용어 · 반복 낱말 · 띄어쓰기 · 율과 률 · 날짜 쉼표 · 괄호 짝,
+         옛 값이 남은 곳), 보고서 안 일관성(대표이사 이름 · 감사보고서일), 오타 사전 · 기준서 용어 · 반복 낱말 · 띄어쓰기(사전 규칙 · 한 글 안 섞임) ·
+         율과 률 · 날짜 쉼표 · 괄호 짝,
          작년 보고서와 같은 문장에 남은 작년 날짜, 외부감사 실시내용에 남은 작년 날짜
   AI     문장읽기.md 를 처음부터 끝까지 읽고 오타 · 어색한 표현 · 사실 불일치 · 공시가 필요한데 빠진 내용을 문장.json 에 적는다
          (발췌는 원문 글자 그대로. 엔진이 원문에 있는지 확인하고 없으면 받지 않는다)
@@ -19,7 +20,9 @@
 
   segments(path) -> [Seg]                          글 조각(S번호 · 부분 · 제목 · 종류 · 글)
   review(path, facts, prior=None, ai=None, case=None) -> {"segments", "engine", "ai", "invalid", "disclosures", "candidates"}
-  reading(result, facts) -> str                    AI 가 읽을 문장읽기.md
+  reading(result) -> str                           AI 가 읽을 문장읽기.md
+  reading_parts(result, n) -> [str]                문장읽기를 주석 제목에서 끊어 n 몫으로(에이전트 n 명이 동시에 읽는다)
+  merge_ai([문장.json …]) -> dict                  나눈 몫의 문장.json 을 하나로
   add_sheet(wb, result)                            「문장 검토」 시트
 """
 from __future__ import annotations
@@ -46,6 +49,8 @@ class Seg:
     kind: str          # 제목 · 문단 · 표 줄 · 표지
     text: str
     n: int = 0         # 그 제목 아래 몇 번째(문단 · 표 줄)
+    cells: tuple = ()  # 외부감사 실시내용 표 줄의 원래 칸(빈 칸 포함). 빈칸 규칙이 본다(2026-10-23)
+    hdr: tuple = ()    # 그 표의 첫 줄 칸
 
     @property
     def where(self) -> str:
@@ -111,8 +116,8 @@ def segments(path: Path) -> list[Seg]:
         return _pdf_segments(path)
     out: list[Seg] = []
 
-    def add(part, head, kind, text, n=0):
-        out.append(Seg(f"S{len(out) + 1}", part, head, kind, text, n))
+    def add(part, head, kind, text, n=0, cells=(), hdr=()):
+        out.append(Seg(f"S{len(out) + 1}", part, head, kind, text, n, cells, hdr))
 
     for i, line in enumerate(_cover(path), 1):
         add("표지", "", "표지", line, i)
@@ -131,10 +136,11 @@ def segments(path: Path) -> list[Seg]:
             continue
         if b[0] == "table":
             k_t += 1
+            ext = part == "외부감사 실시내용"
             for r, row in enumerate(b[1], 1):
                 cells = [x for x in row if x]
                 if any(re.search(r"[가-힣A-Za-z]", x) for x in cells):        # 숫자만 있는 줄은 숫자 푸팅 몫
-                    add(part, head, f"표 {k_t} 줄", " | ".join(cells), r)
+                    add(part, head, f"표 {k_t} 줄", " | ".join(cells), r, tuple(row) if ext else (), tuple(b[1][0]) if ext and b[1] else ())
     return out
 
 
@@ -301,6 +307,16 @@ def _addr_prefix(a: str, b: str) -> bool:
 _HEAD_MARK = re.compile(r"^\s*(?:\(\d+\)|\d+[.)]|[가-하][.)]|\([가-하]\)|[①-⑳]|[ⅰ-ⅹ][.)]?)\s*$")
 
 
+def _xbrl_total(s: "Seg", word: str) -> bool:
+    """표 머리줄의 XBRL 합계 열 이름(「부문의 합계 | 부문의 합계 합계」). DART 가 도메인 이름(「부문의 합계」) 뒤에 「합계」 를 붙여 만든 이름이라
+    회사가 고칠 오타가 아니다. 같은 줄에 「<도메인 이름>」 칸이 있고 이 칸이 「<도메인 이름> 합계」 일 때만 반복 낱말로 보지 않는다
+    (한 상장사 2026 반기 별도 주석27, 2026-11-04)."""
+    if not s.kind.startswith("표"):
+        return False
+    cells = [c.strip() for c in s.text.split(" | ")]
+    return any(c.endswith(f"{word} {word}") and c[: -len(word) - 1].strip() in cells for c in cells)
+
+
 _HOLDING = re.compile(r"[이가은는의]?\s*(?:(?:보통주|우선주|주식|지분율?)\s*)?\d[\d,]*(?:\.\d+)?\s*(?:주(?![당년간])|%)")
 _CEO_TITLE = re.compile(r"(?:공동)?대표이사\s*(?:인\s*)?$")
 
@@ -309,6 +325,105 @@ def _holding(text: str, end: int) -> bool:
     """이름 바로 뒤에 주식수 · 지분율이 붙었다(「김가온 240,000주(60%)」 「김가온이 지분 60%를」). 주주 명단의 이름이라 대표이사가 바뀌어도
     이름은 그대로고 직함만 틀린다(2026-10-21 가온정밀 실습 S101: 주주 김가온을 새 대표이사 이가온으로 바꾸라고 냈다)."""
     return bool(_HOLDING.match(text, end))
+
+
+_JOSA = ("에서는", "으로는", "으로서", "으로써", "에서", "으로", "에게", "에는", "에도", "은", "는", "이", "가", "을", "를", "의", "에", "과", "와", "로", "도")
+_GLUE_END = ("의", "을", "를", "에", "는", "은", "한", "된", "할", "될", "적인")     # 이 글자로 끝난 말 뒤에 붙은 낱말은 띄어 써야 한다
+_STUCK = re.compile(r"^(?:하(?:고|여|는|며|였|지|기|게|면)|한다|합니다|할|함|되(?:고|어|었|는|며|지|기)|된|될|됨|됩니다|적인|적으로|시키)")
+
+
+def _stem(w: str) -> str:
+    """낱말 끝 조사 하나를 뗀다(뗀 뒤 두 글자 이상일 때만)."""
+    for j in _JOSA:
+        if w.endswith(j) and len(w) - len(j) >= 2:
+            return w[: -len(j)]
+    return w
+
+
+def _word_span(text: str, a: int, b: int) -> tuple[int, int]:
+    """[a, b) 를 감싼 어절의 처음과 끝. 빈칸과 표 칸 구분(|)에서 끊는다."""
+    while a > 0 and not text[a - 1].isspace() and text[a - 1] != "|":
+        a -= 1
+    while b < len(text) and not text[b].isspace() and text[b] != "|":
+        b += 1
+    return a, b
+
+
+def _fs_row(s: Seg) -> bool:
+    return s.kind.startswith("표") and "재무제표" in s.part and "주석" not in s.part
+
+
+def _mixed(text: str) -> list[tuple[int, str, str]]:
+    """한 글 안에서 「A B」 와 「AB」 를 함께 쓴 곳 가운데 틀린 쪽이 분명한 것(2026-10-22). (고칠 자리, 띄움 · 붙임, 근거).
+    붙인 쪽이 틀림: A 가 조사 · 어미(의 · 을 · 에 · 는 · 한 · 된 …)로 끝난다(「자산의원가에」 「있는경우」). 띈 쪽이 틀림: B 가 「하고 · 되었습니다 ·
+    적인」 처럼 앞말에 붙는 말이다(「분류 하고」 「승인 되었습니다」). 둘 다 아니면 「공정가치 측정 · 공정가치측정」 같은 전문 용어라
+    맞춤법이 둘 다 허용하니 적지 않는다(공개 감사보고서 15건에서 이런 짝이 절반을 넘었다)."""
+    stems = {}
+    for m in re.finditer(r"(?<![가-힣])[가-힣]{4,}(?![가-힣])", text):
+        stems.setdefault(_stem(m.group(0)), []).append(m.start())
+    out = []
+    for m in re.finditer(r"(?<![가-힣])(?=([가-힣]{2,}) ([가-힣]{2,})(?![가-힣]))", text):
+        x, y = m.group(1), m.group(2)
+        at = stems.get(x + _stem(y))
+        if not at:
+            continue
+        why = f"한 글 안에서 「{x} {y}」 와 「{text[at[0]:at[0] + len(x + _stem(y))]}」 를 섞어 썼다"
+        if len(x) >= 3 and x.endswith(_GLUE_END):
+            out += [(i + len(x), "ins", why) for i in at]
+        elif _STUCK.match(y):
+            out.append((m.start() + len(x), "del", why))
+    return out
+
+
+def spacing_findings(segs: list[Seg], D: dict, xml: bool = False, skip: dict | None = None) -> list[dict]:
+    """띄어쓰기 규칙(definitions/dsd_text.yaml 의 spacing)과 한 글 안에서 「A B」 · 「AB」 를 섞어 쓴 곳(2026-10-22).
+    한 상장사 2026 반기 별도 문장 검토에서 AI 가 하나씩 적던 붙여 쓴 띄어쓰기 오타를 엔진으로 옮겼다. 한 어절에 규칙이 여럿 걸리면
+    고칠 안 하나로 합친다(「배당에관한사항 → 배당에 관한 사항」). 같은 어절은 보고서에 한 번만 적고 나온 곳(S번호)을 근거에 붙인다.
+    skip 은 조각마다 오타 사전이 이미 잡은 낱말이다(같은 곳을 두 번 적지 않는다)."""
+    rules = [(r, re.compile(r["pat"])) for r in D.get("spacing") or [] if not (xml and r.get("dsd_only"))]
+    skip = skip or {}
+    found: dict[tuple, dict] = {}
+    places: dict[tuple, list[str]] = {}
+    for s in segs:
+        fs = _fs_row(s)
+        edits: dict[tuple[int, str], str] = {}        # (자리, 띄움 ins · 붙임 del) → 근거. del 의 자리는 지울 빈칸
+        taken = [(m.start(), m.end()) for w in skip.get(s.id, ()) for m in re.finditer(re.escape(w), s.text)]
+        for r, pat in rules:
+            if fs and r.get("fs") is False:
+                continue
+            for m in pat.finditer(s.text):
+                if any(m.group(0) in w for w in skip.get(s.id, ())) or any(a < m.end() and m.start() < b for a, b in taken):
+                    continue
+                edits.setdefault((m.end("a"), "del") if r.get("join") else (m.start("b"), "ins"), r["basis"])
+        if not fs:
+            for pos, op, why in _mixed(s.text):
+                edits.setdefault((pos, op), why)
+        spans: list[list] = []                        # [처음, 끝, [고칠 것]]
+        for (pos, op), why in sorted(edits.items()):
+            a, b = _word_span(s.text, pos - 1, pos if op == "ins" else pos + 1)
+            if spans and a < spans[-1][1]:
+                spans[-1][1] = max(spans[-1][1], b)
+                spans[-1][2].append((pos, op, why))
+            else:
+                spans.append([a, b, [(pos, op, why)]])
+        for a, b, ed in spans:
+            word, fixed = s.text[a:b], s.text[a:b]
+            for pos, op, _ in sorted(ed, reverse=True):
+                i = pos - a
+                fixed = fixed[:i] + " " + fixed[i:] if op == "ins" else fixed[:i] + fixed[i + 1:]
+            k = (word, fixed)
+            places.setdefault(k, [])
+            if s.id not in places[k]:
+                places[k].append(s.id)
+            if k not in found:
+                why = ". ".join(dict.fromkeys(x for _, _, x in ed))
+                found[k] = _f(s, "띄어쓰기", "오타", _excerpt(s.text, word), f"{word} → {fixed}", why)
+    out = []
+    for k, x in found.items():
+        if len(places[k]) > 1:
+            x["basis"] += f". 보고서 안 {len(places[k])}곳(" + ", ".join(places[k][:8]) + (" 등" if len(places[k]) > 8 else "") + ")"
+        out.append(x)
+    return out
 
 
 def _f(seg: Seg, rule: str, kind: str, quote: str, fix: str, basis: str) -> dict:
@@ -353,7 +468,8 @@ def _fy_start(segs: list[Seg], fy: date) -> date:
         return date(fy.year - 1, fy.month, 28) + timedelta(days=1)
 
 
-def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None) -> list[dict]:
+def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None, xml: bool = False) -> list[dict]:
+    """xml 이면 OpenDART 원문이다. 문단 안 줄바꿈이 빠져 있어 띄어쓰기 규칙 가운데 dsd_only 를 쓰지 않는다."""
     D = defs()
     out: list[dict] = []
     # 1. 옛 값이 남은 곳(주소 · 대표이사 · 상호가 바뀌었는데 예전 글이 남음)
@@ -525,9 +641,11 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
     rate_ok = set(D.get("rate_ok") or [])
     rep_pat = re.compile(r"(?<![가-힣A-Za-z])([가-힣A-Za-z]{2,})\s+\1(?![가-힣A-Za-z])")
     term_at: dict[str, list[Seg]] = {}
+    typo_at: dict[str, list[str]] = {}
     for s in segs:
         for wrong, right in typos.items():
             if wrong in s.text or (_n(wrong) != wrong and _n(wrong) in _n(s.text)):
+                typo_at.setdefault(s.id, []).append(wrong)
                 out.append(_f(s, "오타 사전", "오타", _excerpt(s.text, wrong), f"{wrong} → {right}", "오타 사전(definitions/dsd_text.yaml)"))
         for wrong in terms:
             if wrong in s.text:
@@ -535,6 +653,8 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
         for m in rep_pat.finditer(s.text):
             if _HEAD_MARK.match(s.text[:m.start()]):
                 continue                                  # 「(1) 자산관련보조금 자산관련보조금(…)을」: 소제목 줄과 본문 첫 낱말이다(2026-10-18 B-7)
+            if _xbrl_total(s, m.group(1)):
+                continue                                  # 「부문의 합계 합계」: XBRL 도메인 이름 뒤에 DART 가 붙인 「합계」
             if m.group(1) not in ok:
                 out.append(_f(s, "반복 낱말", "오타", _excerpt(s.text, m.group(0)), f"{m.group(0)} → {m.group(1)}", "같은 낱말이 이어서 두 번 적혔다"))
         for m in _COPULA.finditer(s.text):
@@ -552,6 +672,7 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
     for wrong, ss in term_at.items():                  # 같은 옛 용어는 보고서에 한 번만 적는다(한 상장사 2026 반기에서 37칸에 따로 나옴, 10-18)
         more = f". 보고서 안 {len(ss)}곳(" + ", ".join(x.id for x in ss[:8]) + (" 등" if len(ss) > 8 else "") + ")" if len(ss) > 1 else ""
         out.append(_f(ss[0], "기준서 용어", "표현", _excerpt(ss[0].text, wrong), f"{wrong} → {terms[wrong]}", f"기준서의 용어와 다르다(definitions/dsd_text.yaml){more}"))
+    out += spacing_findings(segs, D, xml, typo_at)
     # 7. 작년 보고서와 같은 문장에 남은 작년 날짜
     if prior and fy:
         before = {_n(s.text) for s in prior if s.kind == "문단"}
@@ -576,6 +697,7 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
             if same:
                 out.append(_f(s, "작년 실시내용", "일관성", s.text[:60], "당기 감사에서 한 일이 맞는지 확인하고 아니면 뺀다",
                               f"작년 보고서의 외부감사 실시내용에도 같은 날짜({_k(same[0])})가 있다"))
+    out += blank_findings(segs)
     # 같은 조각 · 같은 규칙 · 같은 발췌는 한 번만
     seen_k, uniq = set(), []
     for x in out:
@@ -584,6 +706,73 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
             seen_k.add(k)
             uniq.append(x)
     return uniq
+
+
+EXT_UNITS = ("일", "명", "회", "시간")
+# 「감사참여자 구분별 인원수 및 감사시간」 표의 열 묶음(외부감사 실시내용 서식). 줄마다 끝 14칸이 묶음마다 당기 · 전기다
+EXT_GROUPS = ("품질관리 검토자", "담당이사", "등록 공인회계사", "수습 공인회계사", "전산감사 · 세무 · 가치평가 등 전문가", "건설계약 등 수주산업 전문가", "합계")
+
+
+def version_spacing(res: dict, changes: list, prev_name: str) -> int:
+    """판 비교(dsd_versions)에서 새 판에 띄어쓰기가 빠진 낱말을 문장 검토의 오타로 더한다(2026-11-04 한 회사 검토보고서 v2 → v3: 「2028년3월」 ·
+    「날사채권자의」 · 「대하여회사의」). 낱말이 든 S번호를 찾지 못하거나 엔진이 이미 같은 곳을 잡았으면 더하지 않는다. 더한 수."""
+    from .dsd_versions import space_lost
+
+    segs = res.get("segments") or []
+    n = 0
+    for c in changes:
+        if c.kind != "변경" or c.unit not in ("문단", "칸", "줄", "머리줄", "제목"):
+            continue
+        for glued, spaced in space_lost(c.old, c.new):
+            seg = next((s for s in segs if glued in s.text), None)
+            if seg is None or any(x["seg"] == seg.id and glued in (x.get("quote", "") + x.get("fix", "")) for x in res["engine"]):
+                continue
+            res["engine"].append(_f(seg, "판 비교 띄어쓰기 빠짐", "오타", _excerpt(seg.text, glued), f"{glued} → {spaced}",
+                                    f"옛 판({prev_name})에는 「{spaced}」 로 띄어 썼다"))
+            n += 1
+    return n
+
+
+def blank_findings(segs: list[Seg]) -> list[dict]:
+    """외부감사 실시내용 표의 빈칸(2026-10-23). 공시된 감사보고서 329건(공개 원문 · 스터디 · 정정공시 짝 · 한 상장사)의 실시내용 표에는
+    빈칸이 하나도 없었다(없는 값은 「-」 로 적는다). 회사가 준 dsd 에는 감사인이 채울 칸이 비어 있곤 하다. 가온정밀 실습에서 문장 검토 AI 가
+    일수 · 인원 · 장소 · 횟수 · 일자 빈칸을 줄마다 하나씩 적느라 지적의 절반 가까이를 썼다. 엔진이 줄마다 한 번 적는다.
+    빈칸 이름: 뒤 칸이 단위(일 · 명 · 회 · 시간)면 「일」 앞 숫자, 앞 칸이 글이면 「그 글」 옆 칸, 첫 줄과 칸 수가 같은 표(커뮤니케이션 표)면
+    그 열 이름, 인원수 · 감사시간 표면 열 묶음(「건설계약 등 수주산업 전문가」 당기 · 전기)."""
+    out = []
+    for s in segs:
+        if s.part != "외부감사 실시내용" or not s.cells:
+            continue
+        cells = [str(x or "").strip() for x in s.cells]
+        holes = [j for j, x in enumerate(cells) if j and not x]
+        if not holes:
+            continue
+        hdr = [str(x or "").strip() for x in s.hdr]
+        staff = any(_n(h).startswith("품질관리") for h in hdr) and len(cells) >= 15
+        base = len(cells) - 14
+        names: list[str] = []
+        if staff and all(not cells[j] for j in range(base, len(cells))):
+            names.append(f"「{' '.join(x for x in cells[:base] if x)}」 줄의 인원수 · 시간 전부")
+        else:
+            groups: dict[str, list[str]] = {}
+            for j in holes:
+                nxt = cells[j + 1] if j + 1 < len(cells) else ""
+                if staff and j >= base:
+                    k = j - base
+                    groups.setdefault(EXT_GROUPS[k // 2], []).append("당기" if k % 2 == 0 else "전기")
+                elif nxt in EXT_UNITS:
+                    names.append(f"「{nxt}」 앞 숫자")
+                elif re.search(r"[가-힣A-Za-z]", cells[j - 1]) and cells[j - 1] not in EXT_UNITS:
+                    names.append(f"「{cells[j - 1]}」 옆 칸")
+                elif len(hdr) == len(cells) and hdr != cells and hdr[j]:
+                    names.append(f"「{hdr[j]}」")
+            names += [f"「{g}」 {' · '.join(ps)}" for g, ps in groups.items()]
+        names = list(dict.fromkeys(names))
+        quote = next(x for x in cells if x)
+        what = ", ".join(names[:6]) if names else f"빈칸 {len(holes)}곳"
+        out.append(_f(s, "실시내용 빈칸", "공시 누락", quote, "빈칸에 값을 적는다(없으면 「-」)",
+                      f"외부감사 실시내용 표에 빈칸이 있다({what}). 공시된 감사보고서의 실시내용 표에는 빈칸이 없다(없는 값은 「-」)"))
+    return out
 
 
 # ---------------------------------------------------------------- AI 결과 넣기
@@ -639,31 +828,129 @@ def check_ai(segs: list[Seg], ai: dict, engine: list[dict]) -> tuple[list[dict],
     return ok, bad, disc
 
 
-def review(path: Path, facts: dict | None = None, prior: Path | None = None, ai: dict | Path | None = None, case: Path | None = None) -> dict:
+# 회사제시 초안의 감사인 절(2026-11-04 결정). 회사가 감사 중에 낸 dsd 에는 외부감사 실시내용 · 감사보고서 본문이
+# 비어 있는 것이 보통이다. 이 두 절의 공시 누락 지적은 「감사인 작성 전」 으로 따로 묶고 공시 누락에서 뺀다. 제출 직전 판은 지금처럼 센다
+AUDITOR_PARTS = ("외부감사 실시내용", "감사보고서")
+DRAFT_KIND = "감사인 작성 전"
+STAGES = ("회사제시", "제출")
+
+
+def stage_of(path: Path) -> str:
+    """dsd 가 회사가 낸 초안(회사제시)인지 DART 제출 직전 판(제출)인지. 파일 이름에 「회사제시」 가 있거나 받은자료 폴더 안이면 회사제시다.
+    감사-DART 가 만든 제출 파일(8000 감사완결)과 OpenDART 원문은 제출이다. 맞지 않으면 foot · text 의 --stage 로 정한다."""
+    p = Path(path)
+    return "회사제시" if "회사제시" in p.name or any("받은자료" in x for x in p.parts) else "제출"
+
+
+def mark_draft(segs: list[Seg], findings: list[dict]) -> int:
+    """회사제시 초안이면 감사인이 쓰는 절의 공시 누락 지적을 「감사인 작성 전」 으로 바꾼다. 바꾼 수를 돌려준다."""
+    part = {s.id: s.part for s in segs}
+    n = 0
+    for x in findings:
+        if x.get("kind") == "공시 누락" and part.get(x.get("seg")) in AUDITOR_PARTS:
+            x["kind"] = DRAFT_KIND
+            x["basis"] = (x.get("basis") or "") + " (회사제시 초안이라 감사인이 쓰는 절의 지적은 공시 누락에서 뺐다. 제출 직전 판에서 다시 본다)"
+            n += 1
+    return n
+
+
+def review(path: Path, facts: dict | None = None, prior: Path | None = None, ai: dict | Path | None = None, case: Path | None = None,
+           stage: str | None = None) -> dict:
+    """stage: 회사제시 · 제출. 없으면 stage_of(path) 로 정한다(2026-11-04)."""
     segs = segments(path)
     psegs = segments(prior) if prior else None
     facts = facts or {}
-    engine = engine_findings(segs, facts, psegs)
+    engine = engine_findings(segs, facts, psegs, xml=Path(path).suffix.lower() == ".xml")
     if isinstance(ai, (str, Path)):
         ai = json.loads(Path(ai).read_text(encoding="utf-8")) if Path(ai).exists() else None
     got, bad, disc = check_ai(segs, ai or {}, engine)
+    stage = stage or stage_of(path)
+    drafted = mark_draft(segs, engine + got) if stage == "회사제시" else 0
     return {"segments": segs, "engine": engine, "ai": got, "invalid": bad, "disclosures": disc, "candidates": candidates(case),
-            "facts": facts, "ai_given": ai is not None}
+            "facts": facts, "ai_given": ai is not None, "xml": Path(path).suffix.lower() == ".xml", "stage": stage, "drafted": drafted}
 
 
 # ---------------------------------------------------------------- AI 읽기 자료
-def reading(res: dict) -> str:
+PART_MIN = 100                                      # 나눈 몫 하나의 글 줄이 이보다 적으면 나누지 않는다
+
+
+def _units(res: dict) -> list[tuple[Seg, list[str]]]:
+    """읽기 자료에 적을 조각과 같은 글이 나온 S번호들. 같은 글은 처음 한 번만 적는다(제목 · 표지는 묶지 않는다)."""
+    segs = res["segments"]
+    shown = {s.id: _shown(s) for s in segs}
+    same: dict[str, list[str]] = {}
+    for s in segs:
+        if s.kind not in ("제목", "표지"):
+            same.setdefault(shown[s.id], []).append(s.id)
+    out = []
+    for s in segs:
+        ids = same.get(shown[s.id], [s.id]) if s.kind not in ("제목", "표지") else [s.id]
+        if ids[0] == s.id:
+            out.append((s, ids))
+    return out
+
+
+def _line(s: Seg, same: list[str]) -> str:
+    """문장읽기의 글 한 줄."""
+    mark = "**" if s.kind == "제목" else ""
+    tail = f" (같은 글 {len(same) - 1}곳 더: {', '.join(same[1:])})" if len(same) > 1 else ""
+    return f"{s.id} [{s.kind}{(' ' + str(s.n)) if s.n else ''}] {mark}{_shown(s)}{mark}{tail}"
+
+
+def _cuts(units: list, n: int) -> list[int]:
+    """units 를 글자 수가 비슷한 n 몫으로 나눌 자리(몫이 시작하는 units 번호). 주석 제목이나 부분이 바뀌는 곳에서만 끊는다."""
+    w = [len(_line(s, same)) + 1 for s, same in units]
+    total = sum(w)
+    ok = [i for i in range(1, len(units)) if (units[i][0].kind == "제목" and units[i][0].part == "주석") or units[i][0].part != units[i - 1][0].part]
+    acc, run = [], 0
+    for x in w:
+        acc.append(run)
+        run += x
+    cuts: list[int] = []
+    for k in range(1, n):
+        cand = [i for i in ok if not cuts or i > cuts[-1]]
+        if not cand:
+            break
+        cuts.append(min(cand, key=lambda i: abs(acc[i] - total * k / n)))
+    return [0] + cuts
+
+
+def _spacing_names() -> str:
+    return " · ".join(r["name"] for r in defs().get("spacing") or [])
+
+
+def reading(res: dict, part: tuple[int, int, list] | None = None) -> str:
+    """AI 가 읽을 문장읽기.md. part 를 주면(몇째, 모두 몇, 그 몫의 units) 나눈 몫 하나만 적는다(reading_parts)."""
     facts = res["facts"]
-    lines = ["# dsd 문장 읽기 자료", "",
-             "처음부터 끝까지 읽고 오타 · 어색한 표현 · 사실 불일치 · 공시 누락 · 일관성을 문장.json 에 적는다(형식은 감사-DSD푸팅 스킬 「문장 검토」).",
+    units = part[2] if part else _units(res)
+    ids = {s.id for s, _ in units}
+    for _, more in units:
+        ids |= set(more)
+    k, n = (part[0], part[1]) if part else (1, 1)
+    first, last = (units[0][0].id, units[-1][0].id) if units else ("", "")
+    lines = ["# dsd 문장 읽기 자료" + (f" ({k}/{n}: {first} ~ {last})" if n > 1 else ""), "",
+             "처음부터 끝까지 읽고 오타 · 어색한 표현 · 사실 불일치 · 공시 누락 · 일관성을 문장.json 에 적는다(형식은 감사-DSD푸팅 스킬의 references/문장-검토.md).",
              "발췌(quote)는 아래 글 그대로 적는다. 엔진이 이미 적은 것은 다시 적지 않는다. 엔진의 고칠 안이 틀렸거나 엔진이 잡은 줄에 다른 문제가 있으면 "
-             "그 줄을 발췌해 적는다(엑셀에 엔진 지적과 함께 나온다).", "", "## 기준 사실", ""]
+             "그 줄을 발췌해 적는다(엑셀에 엔진 지적과 함께 나온다).",
+             f"띄어쓰기는 엔진 규칙({_spacing_names()})이 보고서 전체에서 찾았다. 이 꼴은 적지 않는다. "
+             "규칙에 없는 띄어쓰기(낱말 가운데 든 빈칸, 한 글 안에서 띄어 쓴 말과 붙여 쓴 말이 섞인 용어)만 적는다."]
+    if res.get("xml"):
+        lines.append("원문이 OpenDART xml 이다. xml 에는 문단 안 줄바꿈이 빠져 있어 두 문장이나 목록 항목이 붙어 보인다(「…습니다.회사의」 「측정나머지」). "
+                     "이런 곳은 오타로 적지 않는다.")
+    if n > 1:
+        lines += ["", f"보고서 글을 {n} 몫으로 나눈 가운데 {k}번째다. 아래 「글」 에 있는 S번호만 맡는다. 다른 몫은 다른 에이전트가 읽는다. "
+                  "주석 참조 번호와 주석 제목은 「목차」 로 맞춰 본다.",
+                  "공시 확인 대상은 맡은 글에서 공시한 곳을 찾으면 「공시됨」 과 S번호, 맡은 글에 없으면 「공시 안 됨」 으로 적는다. "
+                  "엔진이 몫을 합칠 때 한 몫이라도 공시됨이면 공시됨으로 둔다.",
+                  ("필수 공시 목록 대조(스킬 「문장 검토」 3번)는 이 몫이 한다. 앞 몫의 주석은 「목차」 의 제목으로 본다." if k == n
+                   else "필수 공시 목록 대조(스킬 「문장 검토」 3번)는 마지막 몫이 한다. 이 몫은 하지 않는다.")]
+    lines += ["", "## 기준 사실", ""]
     if facts:
-        for k, v in facts.items():
+        for key, v in facts.items():
             if isinstance(v, list):
-                lines.append(f"- {k}: " + "; ".join(f"{x.get('구분', '')} {x.get('기간', '')}".strip() if isinstance(x, dict) else str(x) for x in v))
+                lines.append(f"- {key}: " + "; ".join(f"{x.get('구분', '')} {x.get('기간', '')}".strip() if isinstance(x, dict) else str(x) for x in v))
             else:
-                lines.append(f"- {k}: {' · '.join(_vals(v))}" + (f" (옛 값: {' · '.join(_olds(v))})" if _olds(v) else "")
+                lines.append(f"- {key}: {' · '.join(_vals(v))}" + (f" (옛 값: {' · '.join(_olds(v))})" if _olds(v) else "")
                              + (f" [{v.get('source')}]" if isinstance(v, dict) and v.get("source") else ""))
     else:
         lines.append("- 기준사실.json 이 없다. 보고서 안 일관성만 본다")
@@ -671,30 +958,71 @@ def reading(res: dict) -> str:
         lines += ["", f"## 공시 확인 대상 {len(res['candidates'])}건(감사 폴더 받은자료 사실)", "", "각 건이 주석에 공시됐는지 disclosures 에 적는다.", ""]
         for c in res["candidates"]:
             lines.append(f"- [{c['item']}] {c['fact']} ({c['source']}{', 확인 전' if not c['confirmed'] else ''})")
-    lines += ["", f"## 엔진이 찾은 것 {len(res['engine'])}건", ""]
-    for x in res["engine"]:
-        lines.append(f"- {x['seg']} [{x['kind']} · {x['rule']}] {x['quote']} → {x['fix']}")
-    segs = res["segments"]
-    shown = {s.id: _shown(s) for s in segs}
-    same: dict[str, list[str]] = {}                  # 보이는 글 → 그 글이 나온 S번호들(제목 · 표지는 묶지 않는다)
-    for s in segs:
-        if s.kind not in ("제목", "표지"):
-            same.setdefault(shown[s.id], []).append(s.id)
+    if n > 1:
+        lines += ["", "## 목차(보고서 전체의 제목)", ""]
+        for s in res["segments"]:
+            if s.kind == "제목":
+                lines.append(f"- {s.id} {s.part} · {s.text}" + ("" if s.id in ids else " (다른 몫)"))
+    eng = [x for x in res["engine"] if x["seg"] in ids]
+    lines += ["", f"## 엔진이 찾은 것 {len(eng)}건" + (f"(이 몫, 보고서 전체 {len(res['engine'])}건)" if n > 1 else ""), ""]
+    for x in eng:
+        if x["rule"] == "띄어쓰기":
+            lines.append(f"- {x['seg']} [띄어쓰기] {x['fix']}")
+        else:
+            lines.append(f"- {x['seg']} [{x['kind']} · {x['rule']}] {x['quote']} → {x['fix']}")
     lines += ["", "## 글", "",
               "표 줄은 글자가 든 칸만 적었다(숫자 칸은 숫자 푸팅이 본다). 외부감사 실시내용의 표는 숫자까지 적었다. 같은 글은 처음 한 번만 적고 같은 글이 나온 S번호를 붙였다. "
               "발췌는 그 S번호들의 글에 모두 그대로 있다. 적을 때는 맨 앞 번호를 쓴다.", ""]
-    part = None
-    for s in segs:
-        ids = same.get(shown[s.id], [s.id]) if s.kind not in ("제목", "표지") else [s.id]
-        if ids[0] != s.id:                            # 앞에서 적은 글
-            continue
-        if s.part != part:
-            part = s.part
-            lines += ["", f"### {part}", ""]
-        mark = "**" if s.kind == "제목" else ""
-        tail = f" (같은 글 {len(ids) - 1}곳 더: {', '.join(ids[1:])})" if len(ids) > 1 else ""
-        lines.append(f"{s.id} [{s.kind}{(' ' + str(s.n)) if s.n else ''}] {mark}{shown[s.id]}{mark}{tail}")
+    cur = None
+    for s, same in units:
+        if s.part != cur:
+            cur = s.part
+            lines += ["", f"### {cur}", ""]
+        lines.append(_line(s, same))
     return "\n".join(lines) + "\n"
+
+
+def reading_parts(res: dict, n: int = 2) -> list[str]:
+    """문장읽기를 앞뒤 n 몫으로 나눈다(2026-10-22). 문장 검토 에이전트 n 명이 한 몫씩 동시에 읽는다. 한 상장사 2026 반기 별도는 749줄을
+    한 에이전트가 읽어 17.6분이 걸렸다(숫자 쪽 12.7분). 주석 제목에서 끊고, 몫마다 기준 사실 · 공시 확인 대상 · 보고서 전체 목차 ·
+    그 몫의 엔진 지적을 싣는다. 글이 짧아 한 몫이 PART_MIN 줄보다 적으면 그만큼 덜 나눈다."""
+    units = _units(res)
+    n = max(1, min(n, len(units) // PART_MIN))
+    if n == 1:
+        return [reading(res)]
+    cuts = _cuts(units, n) + [len(units)]
+    parts = [units[cuts[i]:cuts[i + 1]] for i in range(len(cuts) - 1)]
+    return [reading(res, (i + 1, len(parts), u)) for i, u in enumerate(parts)]
+
+
+def _same_src(a: str, b: str) -> bool:
+    """근거 자료 글이 같은 자료다. 문장부호를 빼고 한쪽이 다른 쪽의 앞부분이다."""
+    a, b = re.sub(r"[\W_]", "", a or ""), re.sub(r"[\W_]", "", b or "")
+    return a.startswith(b) or b.startswith(a)
+
+
+def merge_ai(parts: list[dict]) -> dict:
+    """나눈 몫마다 적은 문장.json 을 하나로 합친다. findings 는 이어 붙이고 같은 S번호 · 발췌 · 고칠 안은 한 번만 둔다.
+    disclosures 는 항목이 같고 근거 자료가 같으면(문장부호를 빼고 한쪽이 다른 쪽의 앞부분이면 같다) 한 건으로, 상태는
+    공시됨 > 공시 안 됨 > 해당 없음 순으로 고른다(한 몫이라도 공시한 곳을 찾았으면 공시됨). 가온정밀 재기(10-22)에서 한 몫은
+    「이사회의사록 2025-09-01」, 다른 몫은 「이사회의사록 2025-09-01 대표이사 선임(…)」 으로 적어 같은 건이 둘로 갈렸다."""
+    rank = {"공시됨": 0, "공시 안 됨": 1, "해당 없음": 2}
+    findings, seen, disc = [], set(), []
+    for p in parts:
+        for x in p.get("findings") or []:
+            k = (str(x.get("seg")), _n(str(x.get("quote") or "")), _n(str(x.get("fix") or "")))
+            if k not in seen:
+                seen.add(k)
+                findings.append(x)
+        for d in p.get("disclosures") or []:
+            item = _n(str(d.get("item") or ""))
+            at = next((i for i, o in enumerate(disc) if _n(str(o.get("item") or "")) == item
+                       and _same_src(str(o.get("source") or ""), str(d.get("source") or ""))), None)
+            if at is None:
+                disc.append(d)
+            elif rank.get(d.get("status"), 9) < rank.get(disc[at].get("status"), 9):
+                disc[at] = d
+    return {"findings": findings, "disclosures": disc}
 
 
 def _shown(s: Seg) -> str:
@@ -722,6 +1050,20 @@ def stale_note(res: dict) -> str:
 
 # ---------------------------------------------------------------- 엑셀
 HEAD = ["번호", "찾은 곳", "종류", "규칙", "위치", "원문 발췌", "고칠 안", "근거", "확인(O · X)", "검토 메모"]
+
+
+def ai_mark(cell) -> None:
+    """AI 작성 칸 모양(audit/style.py). 연보라 · 왼쪽 보라 선 · 보라 글자."""
+    from .. import style
+    cell.fill, cell.border = style.FILL_AI, style.AI_BOX
+    cell.font = style.font(color=style.AI_INK)
+
+
+def ai_counts(res: dict) -> tuple[int, int]:
+    """(AI 문장 지적 수, AI 공시 판정 수). 엔진과 같은 곳을 적은 AI 지적은 따로 줄이 없어 세지 않는다."""
+    if not res:
+        return 0, 0
+    return sum(1 for x in res.get("ai", []) if not x.get("same_as_engine")), len(res.get("disclosures", []))
 WIDTHS = [7, 7, 11, 11, 30, 50, 40, 40, 10, 30]
 
 
@@ -739,17 +1081,20 @@ def add_sheet(wb, res: dict) -> None:
         c.font, c.fill = wp.font(bold=True, color="FFFFFF"), wp.FILL_H
         ws.column_dimensions[chr(64 + j)].width = w
     row = 5
-    order = {k: i for i, k in enumerate(("사실 불일치", "공시 누락", "일관성", "오타", "표현"))}
+    order = {k: i for i, k in enumerate(("사실 불일치", "공시 누락", "일관성", "오타", "표현", DRAFT_KIND))}
     items = sorted(res["engine"] + [x for x in res["ai"] if not x["same_as_engine"]], key=lambda x: (order.get(x["kind"], 9), int(x["seg"][1:])))
-    yellow = PatternFill("solid", fgColor="FFF2CC")
+    yellow = wp.FILL_IN
     for i, x in enumerate(items, 1):
         vals = [i, x["by"], x["kind"], x["rule"], f"{x['seg']} {x['where']}", x["quote"], x["fix"], x["basis"], None, None]
         for j, v in enumerate(vals, 1):
             c = ws.cell(row, j, v)
-            c.font = wp.font(color="B3261E" if j == 3 and x["kind"] in ("사실 불일치", "공시 누락") else None)
+            c.font = wp.font(color=wp.RED if j == 3 and x["kind"] in ("사실 불일치", "공시 누락") else None)
             c.alignment = Alignment(wrap_text=True, vertical="top")
         ws.cell(row, 9).fill = yellow
         ws.cell(row, 10).fill = yellow
+        if str(x["by"]).startswith("AI"):             # AI 가 찾은 지적은 발췌 · 고칠 안 · 근거를 연보라로(2026-11-03 조서 공통 서식)
+            for j in (6, 7, 8):
+                ai_mark(ws.cell(row, j))
         row += 1
     if not items:
         ws.cell(row, 1, "찾은 것이 없습니다").font = wp.font(color=wp.MUTED)
@@ -759,7 +1104,7 @@ def add_sheet(wb, res: dict) -> None:
         ws.cell(row, 1, f"공시 확인 대상 {len(res['candidates'])}건 (감사 폴더 받은자료 사실 → 주석 공시 여부)").font = wp.font(size=11, bold=True, color=wp.NAVY)
         row += 1
         if res.get("stale"):
-            ws.cell(row, 1, stale_note(res)).font = wp.font(color="B3261E")
+            ws.cell(row, 1, stale_note(res)).font = wp.font(color=wp.RED)
             row += 1
         for j, h in enumerate(["번호", "항목", "사실(받은자료)", "", "AI 판정", "공시 위치", "근거", "", "확인(O · X)"], 1):
             c = ws.cell(row, j, h)
@@ -773,17 +1118,20 @@ def add_sheet(wb, res: dict) -> None:
             for j, v in enumerate([i, item, src, None, st, where, basis, None, None], 1):
                 c = ws.cell(row, j, v)
                 c.alignment = Alignment(wrap_text=True, vertical="top")
-                c.font = wp.font(color="B3261E" if j == 5 and st == "공시 안 됨" else None)
+                c.font = wp.font(color=wp.RED if j == 5 and st == "공시 안 됨" else None)
+            if st != "AI 판정 전":                     # AI 의 공시 판정
+                for j in (5, 6, 7):
+                    ai_mark(ws.cell(row, j))
             ws.cell(row, 9).fill = yellow
             row += 1
         row += 1
     if res["invalid"]:
-        ws.cell(row, 1, "받지 않은 AI 적음 (발췌가 원문에 없거나 칸이 빠짐)").font = wp.font(size=11, bold=True, color="B3261E")
+        ws.cell(row, 1, "받지 않은 AI 적음 (발췌가 원문에 없거나 칸이 빠짐)").font = wp.font(size=11, bold=True, color=wp.RED)
         row += 1
         for x in res["invalid"]:
             ws.cell(row, 2, str(x.get("seg") or x.get("item") or "")).font = wp.font()
             ws.cell(row, 6, str(x.get("quote") or x.get("fact") or "")).font = wp.font()
-            ws.cell(row, 8, x["why"]).font = wp.font(color="B3261E")
+            ws.cell(row, 8, x["why"]).font = wp.font(color=wp.RED)
             row += 1
     ws.freeze_panes = "A5"
 
@@ -797,4 +1145,5 @@ def summary(res: dict) -> str:
     return (f"문장 검토 엔진 {len(res['engine'])} · AI {n_a}" + (" (AI 검토 전)" if not res["ai_given"] else "")
             + ("".join(f" · {k} {v}" for k, v in kinds.items()))
             + (f" · 공시 안 됨 {miss}" if miss else "") + (f" · 공시 확인 대상 {len(res['candidates'])}" if res["candidates"] or res.get("stale") else "")
+            + (" · 회사제시 초안(감사인 절 지적은 「감사인 작성 전」)" if res.get("stage") == "회사제시" else "")
             + (f" · {stale_note(res)}" if res.get("stale") else ""))

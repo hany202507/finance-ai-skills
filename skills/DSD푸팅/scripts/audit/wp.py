@@ -30,40 +30,33 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from . import folder
+from . import folder, style
 
-NAVY, INK, MUTED = "1B2A4A", "1A1C19", "6B7167"
-FILL_H = PatternFill("solid", fgColor=NAVY)
-FILL_IN = PatternFill("solid", fgColor="FFF2CC")
-FILL_SUB = PatternFill("solid", fgColor="F1F6EF")
-FILL_FLAG = PatternFill("solid", fgColor="F8E1E5")
-THIN = Side(style="thin", color="DFE5DB")
-BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-FONT = "맑은 고딕"
-WON = '#,##0;[Red]-#,##0;"-"'
-PCT = '0.0%;[Red]-0.0%;"-"'
+# 서식은 audit/style.py 한 곳에서 정한다(2026-11-03). 여기 이름은 예전 부르는 곳을 위해 남긴다
+NAVY, INK, MUTED, RED, GREEN = style.NAVY, style.INK, style.MUTED, style.RED, style.GREEN
+FILL_H, FILL_IN, FILL_SUB, FILL_FLAG, FILL_AI = style.FILL_HEAD, style.FILL_IN, style.FILL_SUB, style.FILL_FLAG, style.FILL_AI
+THIN, BOX = style.THIN, style.BOX
+FONT = style.FONT
+WON, PCT = style.WON, style.PCT
+font = style.font
 INPUT_SHEET, CHECK_SHEET, META_SHEET = "_기입란", "_검산", "_조서"
+# AI 작성 칸(2026-11-03). 확인 전 AI 칸은 연보라로 칠하고, 저장할 때 보이는 「AI 작성」 시트와 숨김 「_AI」 에 모은다
+AI_SHEET, AI_META, AI_LABEL = "AI 작성", "_AI", "AI 확인: "
+AI_HEAD = ["시트", "칸", "AI 가 쓴 것", "근거", "확인(O · X)"]
+# 엔진이 확인 전 AI 판독을 글에 옮길 때 붙이는 표시. 이 표시가 든 글 칸은 Book.text 가 AI 칸으로 칠한다
+AI_MARKS = ("(AI, 확인 전)", "(AI 판독, 확인 전)", "AI 짝(확인 전)", "AI 판독, 확인 전")
 RULES = ("required", "number", "yesno", "date", "optional")
+# 조서 상태 칸(2026-10-26, 감사 프로젝트관리 설계 4절). 첫 머리 시트(4000 은 표지)에 한 번 둔다. 담당 · 인차지가 고치고
+# 감시 · 보드가 읽는다. 엔진이 조서를 다시 만들 때 사람이 적은 값을 옮겨 싣는다(Book.save).
+DOC_STATUSES = ("초안", "작성중", "제출", "검토완료")
+APPLIES_VALUES = ("해당", "해당 없음")
+L_STATUS, L_APPLIES, L_REASON = "조서 상태", "조서 해당 여부", "해당 없음 사유"
+STATE_LABELS = {L_STATUS: "status", L_APPLIES: "applies", L_REASON: "reason"}
 SHEET_NAME_MAX = 31
 SHEET_NAME_BAD = "/\\?*[]:"
 NUMBERED = re.compile(r"^\.\d{2,} ")          # 번호가 붙은 절차 시트 이름 「.01 거래처별」
 # 수식 안의 시트 참조: 문자열 상수 · 따옴표 붙은 이름 · 따옴표 없는 이름. 문자열 상수는 건드리지 않으려고 함께 잡는다
 _SHEET_REF = re.compile(r'''"(?:[^"]|"")*"|'((?:[^']|'')+)'!|(?<![\w.'])([A-Za-z_가-힣][\w.]*)!''')
-
-
-@functools.lru_cache(maxsize=None)
-def _font(size, items: tuple) -> Font:
-    return Font(name=FONT, size=size, **dict(items))
-
-
-def font(**k):
-    """같은 인자의 글꼴은 하나만 만들어 함께 쓴다. 칸마다 새로 만들면 큰 엑셀에서 수 초가 든다(2026-10-22 DSD푸팅 실행 시간).
-    돌려받은 글꼴을 고치지 말고 새로 부른다."""
-    size = k.pop("size", 10)
-    try:
-        return _font(size, tuple(sorted(k.items())))
-    except TypeError:                                 # 목록처럼 해시할 수 없는 값
-        return Font(name=FONT, size=size, **k)
 
 
 def base_name(sheet: str) -> str:
@@ -129,10 +122,20 @@ class Book:
         self.fy_end = case.get("fiscal_year_end") or ""
         self.version = case.get("company_version")
         self.preparer = preparer or f"엔진 초안 {date.today().isoformat()}"
+        # 소규모 감사 건의 필수 조서면 그 근거(한공회 소규모 일반조서목록, 2026-10-26). 머리에 「필수」 로 보인다
+        req, basis = folder.required_of(no, case) if folder.is_small(case) else (False, None)
+        self.required = basis if req else None
         self.wb = Workbook()
         self.wb.remove(self.wb.active)
         self.inputs: list[tuple] = []     # (sheet, ref, label, rule)
         self.checks: list[tuple] = []     # (label, formula, expected)
+        self.state_placed = False
+        self.state_inputs: list[tuple] = []   # 조서 상태 칸(sheet, ref, label, rule). 저장 때 `_기입란` 에 붙는다
+        self.state_sheet: str | None = None   # 상태 칸을 둘 시트를 정한 책(4000 은 「표지」). None 이면 첫 머리 시트
+        self.ai_cells: list[tuple] = []       # AI 작성 칸 (sheet, ref, what, basis, confirmed). 저장 때 「AI 작성」 · 「_AI」 시트(2026-11-03)
+        self.summary_at: tuple | None = None  # 「AI 작성 칸 n개 · 엔진 검산 k줄」 을 적을 (시트, 행). 처음 legend 를 둔 시트
+        # 엔진이 제안 값을 미리 넣는 기입란 이름(2026-11-03, 4000 표지 성격 · 시기). 다시 만들 때 감사인이 고친 값이 엔진 값보다 앞선다(common.save)
+        self.prefill_labels: set = set()
 
     # ---------------------------------------------------------- 모양
     def sheet(self, name: str, widths: list[int], head: bool = True):
@@ -155,8 +158,74 @@ class Book:
                 ws.cell(r, 5, self.preparer).font = font()
             else:
                 self.ask(ws, r, 5, "검토자", rule="optional")
-        ws.cell(5, 1, "노란 칸은 감사인 기입란. 나머지는 엔진이 채운 값과 수식").font = font(size=9, color=MUTED, italic=True)
+        if self.state_sheet is None:
+            self.status_block(ws, 3, 7)
+        self.legend(ws, 5)
+        self.required_mark(ws, 3, 9)
         return ws, 7
+
+    def legend(self, ws, row: int) -> None:
+        """row 에 칸의 뜻(범례). 저장할 때 같은 칸 맨 앞에 「AI 작성 칸 n개 · 엔진 검산 k줄」 을 붙인다. 책마다 처음 부른 시트 한 곳이다.
+        다음 줄(6행)은 조서마다 안내 문장을 쓰는 자리라 비워 둔다(2026-11-03, 6행에 쓰던 첫 판이 2120A · 3800 안내를 덮었다)."""
+        ws.cell(row, 1, style.LEGEND).font = font(size=9, color=MUTED, italic=True)
+        if self.summary_at is None:
+            self.summary_at = (ws.title, row)
+
+    def text(self, ws, row: int, col: int, value, what: str, basis: str = "", **k):
+        """글 칸. 확인 전 AI 판독 표시(AI_MARKS)가 들어 있으면 AI 칸(ai), 아니면 보통 칸(put). 엔진 글과 AI 판독이 한 칸에 섞일 때 쓴다."""
+        if isinstance(value, str) and any(m in value for m in AI_MARKS):
+            k.pop("flag", None)
+            k.pop("color", None)
+            k.pop("bold", None)
+            return self.ai(ws, row, col, value, what=what, basis=basis, wrap=k.pop("wrap", True), fmt=k.pop("fmt", None))
+        return self.put(ws, row, col, value, **k)
+
+    def ai(self, ws, row: int, col: int, value, what: str, basis: str = "", confirmed: bool = False, wrap: bool = True, fmt=None):
+        """AI 가 쓴 칸(판독 · 사유 · 제안 · 판정 글). 확인 전이면 연보라 · 왼쪽 보라 선으로 칠하고 「AI 작성」 시트에 모은다.
+        확인 끝(confirmed)이면 보통 칸으로 두고 숨김 「_AI」 에만 남긴다. 숫자는 엔진만 만든다(AI 칸은 글이다)."""
+        c = self.put(ws, row, col, value, fmt=fmt, wrap=wrap)
+        if not confirmed:
+            c.fill = FILL_AI
+            c.border = style.AI_BOX
+            c.font = font(color=style.AI_INK)
+        self.ai_cells.append((ws.title, c.coordinate, str(what), str(basis or ""), bool(confirmed)))
+        return c
+
+    def status_block(self, ws, row: int, col: int) -> None:
+        """조서 상태 · 해당 여부 · 해당 없음 사유 칸(두 줄). 책마다 처음 부를 때 한 번만 둔다.
+        row 줄: 상태(초안 · 작성중 · 제출 · 검토완료), row+1 줄: 해당 여부와 해당 없음 사유.
+        노란 기입란이지만 조서 기입란 목록(self.inputs)과 따로 둔다(self.state_inputs). 저장할 때 `_기입란` 끝에 붙는다."""
+        if self.state_placed:
+            return
+        from openpyxl.worksheet.datavalidation import DataValidation
+        self.state_placed = True
+
+        def cell(r, c, label, value=None):
+            x = self.put(ws, r, c, value, wrap=False)
+            x.fill = FILL_IN
+            self.state_inputs.append((ws.title, x.coordinate, label, "optional"))
+            return x
+
+        ws.cell(row, col, L_STATUS).font = font(color=MUTED)
+        st = cell(row, col + 1, L_STATUS)          # 비워 둔다. 빈 칸은 초안으로 읽는다(엔진은 기입란을 미리 채우지 않는다)
+        ws.cell(row + 1, col, L_APPLIES).font = font(color=MUTED)
+        ap = cell(row + 1, col + 1, L_APPLIES)     # 빈 칸은 해당으로 읽는다
+        ws.cell(row + 1, col + 2, L_REASON).font = font(color=MUTED)
+        cell(row + 1, col + 3, L_REASON)
+        for x, vals in ((st, DOC_STATUSES), (ap, APPLIES_VALUES)):
+            dv = DataValidation(type="list", formula1='"' + ",".join(vals) + '"', allow_blank=True)
+            ws.add_data_validation(dv)
+            dv.add(x.coordinate)
+
+    def required_mark(self, ws, row: int, col: int) -> None:
+        """소규모 필수 조서 표시: (row, col) 에 「필수」, 오른쪽 칸에 근거(아래 줄은 상태 칸의 해당 없음 사유가 쓴다). 소규모가 아니거나 필수가 아니면 쓰지 않는다."""
+        if not self.required:
+            return
+        c = ws.cell(row, col, "필수")
+        c.font = font(bold=True, color=NAVY)
+        c.border = BOX
+        c.alignment = Alignment(horizontal="center")
+        ws.cell(row, col + 1, f"소규모기업 필수 조서({self.required})").font = font(size=9, color=MUTED)
 
     def section(self, ws, row: int, text: str) -> int:
         ws.cell(row, 1, text).font = font(size=11, bold=True, color=NAVY)
@@ -226,6 +295,10 @@ class Book:
                     if isinstance(c.value, str) and c.value.startswith("="):
                         c.value = rename_in_formula(c.value, old, new)
         self.inputs = [(new if sh == old else sh, ref, label, rule) for sh, ref, label, rule in self.inputs]
+        self.state_inputs = [(new if sh == old else sh, ref, label, rule) for sh, ref, label, rule in self.state_inputs]
+        self.ai_cells = [(new if sh == old else sh, ref, what, basis, ok) for sh, ref, what, basis, ok in self.ai_cells]
+        if self.summary_at and self.summary_at[0] == old:
+            self.summary_at = (new, self.summary_at[1])
         self.checks = [(label, rename_in_formula(formula, old, new), expected) for label, formula, expected in self.checks]
 
     def order(self, names: list[str]) -> None:
@@ -237,12 +310,88 @@ class Book:
             self.wb.move_sheet(ws, offset=i - self.wb.index(ws))
 
     # ---------------------------------------------------------- 저장
+    def carry_state(self, path: Path) -> dict:
+        """앞 파일(같은 경로, 없으면 같은 폴더의 같은 조서번호 다른 판 가운데 최근)의 조서 상태 칸 값을 새 책에 옮긴다.
+        사람이 「제출」 · 「해당 없음」 으로 고친 것을 엔진이 다시 만들어도 지우지 않는다. 옮긴 값 {label: value}."""
+        olds = [path] if path.is_file() else []
+        if not olds and path.parent.is_dir():
+            olds = sorted((p for p in path.parent.glob(f"{self.no}_*.xlsx") if not p.name.startswith("~$")),
+                          key=lambda p: p.stat().st_mtime, reverse=True)[:1]
+        if not olds:
+            return {}
+        try:
+            got = doc_state(olds[0]) or {}
+        except Exception:      # 열려 있거나 동기화 중인 앞 파일. 새 값(초안)으로 둔다
+            return {}
+        moved = {}
+        for sheet, ref, label, _ in self.state_inputs:
+            key = STATE_LABELS.get(label)
+            if key and got.get(key) not in (None, ""):
+                self.wb[sheet][ref].value = got[key]
+                moved[label] = got[key]
+        return moved
+
+    def _ai_sheets(self, path: Path) -> int:
+        """확인 전 AI 칸을 보이는 「AI 작성」 시트에, 전부를 숨김 「_AI」 에 적는다. 확인(O · X) 칸은 기입란(되읽기만)이고
+        앞 파일의 같은 이름 값을 옮긴다. 머리 요약 줄도 여기서 쓴다. 확인 전 AI 칸 수."""
+        todo = [x for x in self.ai_cells if not x[4]]
+        if todo:
+            from openpyxl.worksheet.datavalidation import DataValidation
+            ws = self.wb.create_sheet(AI_SHEET)
+            for i, w in enumerate([18, 10, 60, 40, 12], 1):
+                ws.column_dimensions[get_column_letter(i)].width = w
+            ws["A1"] = f"{self.no}  {self.title}: AI 작성 칸"
+            ws["A1"].font = font(size=style.SIZE_TITLE, bold=True, color=NAVY)
+            ws["A2"] = "AI 가 쓴 글(판독 · 사유 · 제안 · 판정)입니다. 숫자는 엔진이 만들었습니다. 칸을 누르면 그 칸으로 갑니다. 읽고 확인 칸에 O · X 를 적어 주십시오"
+            ws["A2"].font = font(size=9, color=MUTED, italic=True)
+            row = self.head(ws, 4, AI_HEAD)
+            dv = DataValidation(type="list", formula1='"O,X"', allow_blank=True)
+            ws.add_data_validation(dv)
+            old = {}
+            if path.is_file():
+                try:
+                    old = {x["label"]: x["value"] for x in readback(path)
+                           if str(x["label"] or "").startswith(AI_LABEL) and not _blank(x["value"])}
+                except Exception:          # 열려 있거나 동기화 중인 앞 파일
+                    old = {}
+            used: set = set()
+            for sheet, ref, what, basis, _ in todo:
+                self.put(ws, row, 1, sheet)
+                link = self.put(ws, row, 2, ref)
+                style.link(link, f"{sheet_ref(sheet)}{ref}")
+                self.put(ws, row, 3, what, wrap=True)
+                self.put(ws, row, 4, basis or None, wrap=True)
+                label, n = f"{AI_LABEL}{sheet} {what}"[:200], 2
+                while label in used:
+                    label, n = f"{AI_LABEL}{sheet} {what} ({n})"[:200], n + 1
+                used.add(label)
+                c = self.ask(ws, row, 5, label, rule="optional", value=old.get(label), wrap=False)
+                dv.add(c.coordinate)
+                row += 1
+            ws.freeze_panes = "A5"
+        if self.summary_at and self.summary_at[0] in self.wb.sheetnames:
+            sh, r = self.summary_at
+            text = (f"AI 작성 칸 {len(todo)}개(「{AI_SHEET}」 시트에서 확인) · 엔진 검산 {len(self.checks)}줄" if todo
+                    else f"AI 작성 칸 없음 · 엔진 검산 {len(self.checks)}줄")
+            c = self.wb[sh].cell(r, 1)
+            if c.value not in (None, "") and c.value != style.LEGEND:      # 범례가 아닌 글이 있으면 덮지 않는다
+                return len(todo)
+            c.value = text + (". " + style.LEGEND if c.value == style.LEGEND else "")
+            c.font = font(size=9, bold=True, color=style.AI_INK if todo else MUTED)
+            if todo:
+                style.link(c, f"{sheet_ref(AI_SHEET)}A1")
+                c.font = font(size=9, bold=True, color=style.AI_INK, underline="single")
+        return len(todo)
+
     def save(self, path: Path | None = None) -> Path:
         path = Path(path) if path else path_for(self.d, self.no)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if self.state_placed:
+            self.carry_state(path)
+        self._ai_sheets(path)
         ws = self.wb.create_sheet(INPUT_SHEET)
         ws.append(["시트", "셀", "항목", "규칙"])
-        for row in self.inputs:
+        for row in self.inputs + [x for x in self.state_inputs if x[0] in self.wb.sheetnames]:
             ws.append(list(row))
         ws.sheet_state = "hidden"
         ws = self.wb.create_sheet(CHECK_SHEET)
@@ -255,7 +404,14 @@ class Book:
                      ("만든 시각", datetime.now().strftime("%Y-%m-%d %H:%M")), ("만든 것", "audit 엔진")):
             ws.append([k, v])
         ws.sheet_state = "hidden"
+        if self.ai_cells:                                   # AI 칸이 있는 책만 숨김 「_AI」(확인 끝 칸 포함 전부)를 맨 뒤에 둔다
+            meta = self.wb.create_sheet(AI_META)
+            meta.append(["시트", "칸", "AI 가 쓴 것", "근거", "확인"])
+            for sheet, ref, what, basis, ok in self.ai_cells:
+                meta.append([sheet, ref, what, basis, "확인 끝" if ok else "확인 전"])
+            meta.sheet_state = "hidden"
         drop_empty_validations(self.wb)
+        style.finish(self.wb)
         self.wb.save(path)
         return path
 
@@ -287,6 +443,38 @@ def readback(path: Path) -> list[dict]:
 
 def _blank(v) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
+
+
+def doc_meta(path: Path) -> dict:
+    """조서 엑셀을 한 번 열어 {"made_at", "state"} 를 읽는다. state 는 {"status", "applies", "reason"} 이고
+    상태 칸이 없는 예전 조서 · 엔진이 만들지 않은 파일이면 None. 감시가 조서마다 부르므로 읽기 전용으로 연다."""
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        out: dict = {"made_at": None, "state": None}
+        names = wb.sheetnames
+        if META_SHEET in names:
+            for r in wb[META_SHEET].iter_rows(max_row=20, values_only=True):
+                if r and str(r[0] or "").strip() == "만든 시각":
+                    out["made_at"] = str(r[1] or "") or None
+        if INPUT_SHEET in names:
+            where = {}
+            for r in wb[INPUT_SHEET].iter_rows(min_row=2, values_only=True):
+                if r and len(r) >= 3 and r[2] in STATE_LABELS and r[0] in names:
+                    where[STATE_LABELS[r[2]]] = (r[0], r[1])
+            if where:
+                st = {}
+                for key, (sheet, ref) in where.items():
+                    v = wb[sheet][ref].value
+                    st[key] = v.strip() if isinstance(v, str) else v
+                out["state"] = {k: st.get(k) for k in ("status", "applies", "reason")}
+        return out
+    finally:
+        wb.close()
+
+
+def doc_state(path: Path) -> dict | None:
+    """조서 상태 칸 {"status", "applies", "reason"}. 칸이 없으면 None."""
+    return doc_meta(path)["state"]
 
 
 def check(path: Path) -> list[str]:

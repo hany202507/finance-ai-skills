@@ -41,6 +41,7 @@ class Check:
     left_div: float = 1            # 왼쪽 칸을 나눌 수(당기 표가 작년 표보다 잔 단위일 때)
     when: str = ""                 # 조건부 연결의 조건. 금액이 달라도 FALSE 가 아니고 「확인」 이다
     finding: str = ""              # 이 검증의 차이를 판정한 결과(보고서 불일치 · 확인 … 과 근거). 엑셀 「볼 것」 시트에 나온다
+    finding_by: str = ""           # 판정을 쓴 쪽: AI(연결.json findings · prior) · 엔진(정산표 수정분개 미반영). AI 면 엑셀에서 연보라(2026-11-03)
     usual: str = ""                # 늘 나는 차이의 유형 이름(취득과 현금흐름표, 범주별 표와 본표 …). 「볼 것」 시트에서 아래쪽에 모은다
     expr: str = ""                 # 계산 검증의 식. 항 자리는 {0} {1} …(terms 차례), 더하기 · 빼기 · 곱하기 · 나누기와 괄호. 비면 terms 를 부호대로 더한다
     minor_limit: float = 0         # 단수로 볼 차이의 한도(표시 단위). 천원 · 백만원 표나 단위를 바꿔 견준 검증은 MINOR, 원 단위끼리와 계산 검증은 0
@@ -230,6 +231,8 @@ def is_rate(name: str) -> bool:
     """더해도 뜻이 없는 열 · 행(지분율, 이자율, %)."""
     t = norm(name)
     if re.search(r"환율(변동|차이|효과|의변동|로인한)", t):      # 「환율변동효과」 는 변동표의 금액 줄이다
+        return False
+    if "율유형" in t:            # 「이자율 유형 변동이자율」 은 금액을 이자율 종류로 나눈 XBRL 열이다(한 상장사 2026 반기 주석4-8 단기차입금, 2026-11-04)
         return False
     return "%" in t or "율" in t
 
@@ -694,6 +697,7 @@ def apply_finding(c: Check, note: dict) -> None:
     「확인」 으로 두고 늘 나는 차이에서 뺀다. 걸지 않음 · 엔진 판독 · 설명됨: 판정으로 뺀다(회계사 확인 칸은 비워 둔다)."""
     v = verdict_name(note["verdict"])
     c.finding = f"{v}: {note['why']}"
+    c.finding_by = "AI"
     c.cause = str(note.get("cause") or c.cause or "")
     if v == "숫자 오류":
         c.when, c.usual, c.weak = "", "", False
@@ -901,6 +905,7 @@ def apply_prior_verdicts(checks: list[Check], verdicts: list[dict]) -> None:
         c.basis = (c.basis + " · " if c.basis else "") + f"판정 {v['verdict']}: {v['why']}"
         name = {"불일치": "숫자 오류", "작년 불일치": "작년 보고서 불일치"}.get(v["verdict"], v["verdict"])
         c.finding = f"{name}: {v['why']}"
+        c.finding_by = "AI"
         if v["verdict"] == "불일치":
             c.when = ""
         elif v["verdict"] == "작년 불일치":
@@ -1236,9 +1241,13 @@ _PERIOD_WORD = re.compile(r"(?:^|(?<=\s))(당|전)(반기말|분기말|기말|�
 
 def _period_cols(t: Table, label: str = "") -> dict:
     """{숫자 열: (기간 이름, 기간 이름을 뺀 열 이름)}. 열 이름에 「전반기 3개월」 처럼 기간이 있으면 그것을, 없으면 표 위 기간 이름(label)을 쓴다.
-    「당기손익인식금융자산」 의 「당기」 는 기간이 아니다(뒤에 빈칸 · 괄호 · 숫자가 오거나 끝일 때만 기간으로 읽는다)."""
+    「당기손익인식금융자산」 의 「당기」 는 기간이 아니다(뒤에 빈칸 · 괄호 · 숫자가 오거나 끝일 때만 기간으로 읽는다).
+    숫자가 하나도 없는 열(줄 이름이 둘인 표의 둘째 이름 칸)은 뺀다. 예전에는 작년 주석4-8 의 이름 칸을 올해 주석4-9 의 금액 열과 짝지어
+    「찾지 못함」 이 났다(한 상장사 2026 반기, 2026-11-04)."""
     out = {}
     for j in range(1, len(t.header)):
+        if not any(_isnum(r[j]) for r in t.nums if j < len(r)):
+            continue
         h = str(t.header[j] or "")
         mm = _PERIOD_WORD.search(h)
         if mm:
@@ -1314,19 +1323,26 @@ def _more_rows(t: Table, q: Table, rows: dict) -> None:
     _loose_rows(t, q, rows)
 
 
-def _cross_cols(tp: dict, qp: dict, n_cols: int) -> list[tuple[int, int]]:
+def _cross_cols(tp: dict, qp: dict, n_cols: int, empty: frozenset = frozenset()) -> list[tuple[int, int]]:
     """올해 표의 전기 열 ↔ 작년 표의 당기 열 짝. 기간 이름이 짝(PERIOD_PAIRS)이고 기간을 뺀 열 이름이 같거나 한쪽이 다른 쪽의 끝이면 짝짓는다
-    (올해 XBRL 「장부금액 공시금액 3개월」 ↔ 작년 「당반기 3개월」). 기간을 뺀 이름이 비면 숫자 열이 하나인 표끼리만 짝짓는다."""
+    (올해 XBRL 「장부금액 공시금액 3개월」 ↔ 작년 「당반기 3개월」). 올해 표의 숫자 열(n_cols)이 하나면 기간을 뺀 이름이 비었거나
+    작년 표에 그 기간의 숫자 열이 하나뿐일 때도 짝짓는다(올해 「위험 유형 시장위험 이자율 유형 변동이자율」 ↔ 작년 「위험 시장위험 이자율위험 …」).
+    작년 표에 이름이 같은 열이 둘 이상이면 숫자가 모두 0 이거나 빈 열(empty)은 건너뛴다. 예전에는 첫째 열과 짝지어 작년 주석18-1 의 빈
+    「신한은행」 열(0)과 견줘 거짓 「확인」 이 났다(한 상장사 2026 반기, 2026-11-04)."""
     out, taken = [], set()
     for j, (per, core) in tp.items():
         wants = PERIOD_PAIRS.get(per, ("당" + per[1:],))
-        for b, (qper, qcore) in qp.items():
-            if b in taken or qper not in wants:
-                continue
-            if _same_core(core, qcore) or ((not core or not qcore) and n_cols == 1):
-                out.append((j, b))
-                taken.add(b)
-                break
+        alone = sum(1 for qper, _ in qp.values() if qper in wants) == 1
+        cands = [b for b, (qper, qcore) in qp.items()
+                 if b not in taken and qper in wants and (_same_core(core, qcore) or ((not core or not qcore or alone) and n_cols == 1))]
+        if not cands:
+            continue
+        b = cands[0]
+        twins = [x for x in cands if qp[x][1] == qp[b][1]]
+        if len(twins) > 1 and b in empty:
+            b = next((x for x in twins if x not in empty), b)
+        out.append((j, b))
+        taken.add(b)
     return out
 
 
@@ -1368,6 +1384,7 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
             if not tp:
                 continue
             n_rows = max(1, sum(1 for i in range(len(t.rows)) if any(_isnum(v) for v in t.nums[i][1:])))
+            n_num = len(_period_cols(t, "-"))         # 숫자 열의 수(기간 이름은 보지 않는다)
             best = None
             mt = m.tables.get(t.id)
             first = by_id.get(mt[0]) if mt and not label else None
@@ -1377,7 +1394,8 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
                     break                                         # (한 상장사 2025 주석9-4 는 짝지은 표가 틀려 작년 9-3 을 찾아야 했다)
                 if label and q.id in used:
                     continue
-                cols = _cross_cols(tp, _period_cols(q, lo.get(q.id, "")), len(t.header) - 1)
+                empty = frozenset(b for b in range(1, len(q.header)) if not any(_isnum(r[b]) and r[b] for r in q.nums if b < len(r)))
+                cols = _cross_cols(tp, _period_cols(q, lo.get(q.id, "")), n_num, empty)
                 if label and lo.get(q.id) in PERIOD_PAIRS.get(label, ()) and not cols:
                     cols = _col_pairs(t, q) or []
                 if not cols:

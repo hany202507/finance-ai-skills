@@ -31,6 +31,7 @@ from openpyxl.utils import get_column_letter as L
 from openpyxl.worksheet.hyperlink import Hyperlink
 
 from .. import wp
+from .. import style
 from . import dsd_compare
 from .dsd_compare import Match
 from .dsd_grid import Doc
@@ -40,7 +41,7 @@ from .dsd_links import MINOR, PAIR_ID, PRIOR_ID, Check
 COLS = ["묶음", "구분", "칸", "이 칸 값", "대사 대상", "대사 대상 값", "차이", "결과", "출처", "근거", "확인", "id", "단위"]
 K_GROUP, K_KIND, K_CELL, K_LEFT, K_LABEL, K_RIGHT, K_DIFF, K_OK, K_SRC, K_BASIS, K_MARK, K_ID, K_UNIT = range(13)
 NUM = '#,##0;(#,##0);"-"'
-RED = "B3261E"
+RED = wp.RED
 GREEN = "1E7B34"
 LINK = "1B2A4A"
 FILL_MINOR = PatternFill("solid", fgColor="FFE699")
@@ -355,6 +356,81 @@ def result_at(lay: Layout, tabs: dict, c: Check) -> tuple[str, int, int]:
     return sheet, row, lay.cb[sheet] + K_OK
 
 
+def _ai_mark(cell) -> None:
+    """AI 작성 칸 모양(audit/style.py, 2026-11-03). 연보라 · 왼쪽 보라 선 · 보라 글자."""
+    cell.fill, cell.border = style.FILL_AI, style.AI_BOX
+    cell.font = style.font(color=style.AI_INK)
+
+
+def ai_summary(checks: list[Check], tres: dict | None) -> dict:
+    """AI 몫의 건수. links: AI 연결(엔진 후보를 판정 없이 넣은 것 포함), sums: AI 합계 구조 검증, findings: AI 판정, text · disclosures: 문장 검토."""
+    from . import dsd_text
+    t, dsc = dsd_text.ai_counts(tres or {})
+    return {"links": sum(1 for c in checks if c.source == "AI" and c.group != SUM),
+            "sums": sum(1 for c in checks if c.source == "AI" and c.group == SUM),
+            "findings": sum(1 for c in checks if c.finding and c.finding_by == "AI" and not c.dropped),
+            "text": t, "disclosures": dsc}
+
+
+def ai_text(n: dict) -> str:
+    parts = [f"AI 연결 {n['links']}건", f"AI 합계 구조 {n['sums']}칸", f"AI 판정 {n['findings']}건"]
+    if n["text"] or n["disclosures"]:
+        parts.append(f"문장 검토 AI {n['text']}건 · 공시 판정 {n['disclosures']}건")
+    return " · ".join(parts) + "(연보라 칸, 「" + wp.AI_SHEET + "」 시트)"
+
+
+def _ai_sheet(wb, checks: list[Check], tres: dict | None) -> None:
+    """「AI 작성」 시트(2026-11-03 조서 공통 서식). 판정은 줄마다, AI 연결 · 합계 구조 · 문장 검토는 한 줄 요약이다(연결은 수백 건이라
+    검증 목록의 출처 AI 줄과 확인 칸이 그 목록이다). 확인은 각 시트의 확인 칸에 적는다(이 시트에는 기입란이 없다)."""
+    from . import dsd_text
+    n = ai_summary(checks, tres)
+    if not any(n.values()):
+        return
+    ws = wb.create_sheet(wp.AI_SHEET)
+    ws.cell(1, 1, "AI 작성 칸").font = style.font(size=style.SIZE_TITLE, bold=True, color=wp.NAVY)
+    ws.cell(2, 1, "AI 가 정한 연결 · 합계 구조와 판정 글 · 문장 지적입니다. 금액 비교는 엔진과 엑셀이 했습니다. 칸을 누르면 그 자리로 갑니다. "
+                  "확인은 「확인하는 곳」 의 칸에 O · X 로 적어 주십시오").font = style.font(size=9, color=wp.MUTED, italic=True)
+    for j, h in enumerate(["시트", "칸", "AI 가 쓴 것", "근거", "확인하는 곳"], 1):
+        _style_head(ws.cell(4, j, h))
+    row = 5
+    todo = wb[TODO] if TODO in wb.sheetnames else None
+    at = {}
+    if todo is not None:
+        for r in range(4, todo.max_row + 1):
+            v = todo.cell(r, len(TODO_HEAD)).value
+            if v:
+                at[str(v)] = r
+    mine = [c for c in checks if c.finding and c.finding_by == "AI" and not c.dropped]
+    for c in sorted(mine, key=lambda c: at.get(c.id, 10 ** 9)):
+        r = at.get(c.id)
+        ws.cell(row, 1, TODO if r else LIST).font = style.font()
+        x = ws.cell(row, 2, f"{L(TODO_COL['판정'])}{r}" if r else c.id)
+        if r:
+            _link(x, f"{_q(TODO)}{L(TODO_COL['판정'])}{r}")
+        y = ws.cell(row, 3, c.finding)
+        _ai_mark(y)
+        y.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.cell(row, 4, (c.cause or c.id)).font = style.font()
+        review = (f"독립 검증 {c.verified}" if c.verified else "독립 검증 대상 아님(엔진 근거 확인 · 늘 나는 차이)" if dsd_links.no_review(c) else "독립 검증 전")
+        ws.cell(row, 5, "볼 것 「확인」 → 검증 목록 K열 · " + review).font = style.font()
+        row += 1
+    for what, cnt, sheet, where in (("AI 연결(엔진 후보를 판정 없이 넣은 것 포함)", n["links"], LIST, "검증 목록 K열 O · X(출처 AI 줄이 연보라)"),
+                                     ("AI 합계 구조(검증 칸)", n["sums"], LIST, "검증 목록 K열 O · X(구분 합계 · 출처 AI)"),
+                                     ("문장 검토 AI 지적", n["text"], dsd_text.SHEET, "문장 검토 시트 확인(O · X)"),
+                                     ("공시 확인 대상 AI 판정", n["disclosures"], dsd_text.SHEET, "문장 검토 시트 공시 확인 대상 확인(O · X)")):
+        if not cnt or sheet not in wb.sheetnames:
+            continue
+        ws.cell(row, 1, sheet).font = style.font()
+        _link(ws.cell(row, 2, "A1"), f"{_q(sheet)}A1")
+        _ai_mark(ws.cell(row, 3, f"{what} {cnt}건"))
+        ws.cell(row, 4, "연결.json · 문장.json 의 AI 몫(확인 전, confirmed: false)").font = style.font()
+        ws.cell(row, 5, where).font = style.font()
+        row += 1
+    for col, w in zip("ABCDE", (14, 10, 80, 40, 36)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A5"
+
+
 def _style_head(cell):
     cell.font = Font(name=wp.FONT, size=10, bold=True, color="FFFFFF")
     cell.fill = wp.FILL_H
@@ -530,7 +606,7 @@ def _part_sheet(wb, lay: Layout, tabs: dict, sheet_of: dict, p, checks_by_id: di
                 wpc: dict | None = None):
     ws = wb.create_sheet(p.key)
     cb = lay.cb[p.key]
-    ws.cell(1, 1, _title(p)).font = Font(name=wp.FONT, size=12, bold=True)
+    ws.cell(1, 1, _title(p)).font = Font(name=wp.FONT, size=12, bold=True, color=wp.NAVY)
     for k, name in enumerate(COLS):
         _style_head(ws.cell(HEAD_ROW, cb + k, "확인(검증 목록)" if k == K_MARK else name))
     _original(ws, lay.items[p.key])
@@ -604,7 +680,7 @@ def _light(states: list) -> object:
 def _overview(wb, lay: Layout, doc: Doc, checks: list[Check], unresolved: list, prev: Doc | None, prior: Doc | None, m: Match | None,
               ratios: dict | None = None, wtb: bool = False, pair: Doc | None = None):
     ws = wb[OVERVIEW]
-    ws.cell(1, 1, "DSD 푸팅 오버뷰").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "DSD 푸팅 오버뷰").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     src = (f"새 판 {doc.source}" + (f" · 기존 판 {prev.source}" if prev is not None else "") + (f" · 작년 보고서 {prior.source}" if prior is not None else "")
            + (f" · 함께 본 보고서 {pair.source}" if pair is not None else ""))
     ws.cell(1, 3, src).font = wp.font(color=wp.MUTED)
@@ -713,6 +789,10 @@ def _list(wb, lay: Layout, tabs: dict, checks: list[Check]):
                 x.fill = wp.FILL_IN
             if j in (14, 15, 16):
                 x.alignment = Alignment(wrap_text=True, vertical="top")
+            if c.source == "AI" and j in (10, 14):          # AI 가 정한 연결 · 합계 구조(2026-11-03 조서 공통 서식)
+                _ai_mark(x)
+            if j == 16 and c.finding and c.finding_by == "AI":
+                _ai_mark(x)
         _link(ws.cell(n, 2), f"{_q(lay.addr[(c.table, c.r, c.c)][0])}{cell}")      # 시트 이름을 누르면 그 칸으로 간다
     end = max(len(checks) + 1, 2)
     ws.conditional_formatting.add(f"I2:I{end}", CellIsRule(operator="equal", formula=["FALSE"], font=Font(name=wp.FONT, bold=True, color=RED), fill=wp.FILL_FLAG))
@@ -820,9 +900,10 @@ def last_year(doc: Doc, tabs: dict, checks: list[Check]) -> dict:
     return out
 
 
-def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
+def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check], wtb: Doc | None = None, unresolved: list | None = None) -> None:
     """「볼 것」 시트: TRUE 가 아닌 검증만 모은다. FALSE(원인으로 묶음), 확인, 작년 보고서의 오류, 늘 나는 차이, 근거가 약한 연결, 단수 순이고
     맨 아래에 판정으로 뺀 검증과 회계사가 X 를 적은 검증을 흐린 글씨로 둔다(무엇을 뺐는지 한 장에서 보이게).
+    그 아래에 정산표 대사(리드 최종 숫자) 줄을 늘 둔다(wtb_summary, 2026-10-26). 정산표 없이 돌렸으면 그렇다고 적는다.
     판정은 셋째 열이다(10단계 재평가: 열한째 열이라 노트북 화면에서 가로로 넘겨야 보였다).
     상태와 금액은 검증 목록 시트를 가리키는 수식이라 원문 칸을 고치면 따라 바뀐다. 줄 구성은 만든 때의 것이다."""
     ws = wb.create_sheet(TODO, 1)
@@ -848,7 +929,7 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
         return (7, 0, 0)
 
     rows = sorted((c for c in checks if c.ok is False), key=lambda c: (rank(c), -abs((c.left or 0) - (c.right or 0))))
-    ws.cell(1, 1, "볼 것").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "볼 것").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     live = [c for c in rows if not (c.dropped or c.excluded)]
     states = [shown(c) for c in live]
     n_group = len({cause[c.id][0] for c in live if c.id in cause})
@@ -937,6 +1018,8 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
                 _link(ws.cell(n, TODO_COL["원인"]), f"{_q(at[0])}{L(at[2])}{at[1]}")
         _link(ws.cell(n, TODO_COL["확인"]), f"{_q(LIST)}K{k}")
         ws.cell(n, TODO_COL["검토 메모"]).fill = wp.FILL_IN
+        if c.finding and c.finding_by == "AI":
+            _ai_mark(ws.cell(n, TODO_COL["판정"]))
     end = max(len(rows) + 3, 4)
     rng = f"A4:A{end}"
     ws.conditional_formatting.add(rng, CellIsRule(operator="equal", formula=["FALSE"], font=Font(name=wp.FONT, bold=True, color=RED), fill=wp.FILL_FLAG))
@@ -948,7 +1031,49 @@ def _todo(wb, lay: Layout, doc: Doc, tabs: dict, checks: list[Check]) -> None:
         ws.column_dimensions[L(j)].width = w
     for h in ("묶음", "id"):
         ws.column_dimensions[L(TODO_COL[h])].hidden = True
+    _todo_wtb(ws, end + 2, checks, wtb, unresolved or [])
     print_setup(ws, 3)
+
+
+WTB_KIND = "조서-재무제표"
+TODO_WTB = "정산표 대사(리드 최종 숫자, 늘 보는 항목)"
+
+
+def wtb_summary(checks: list[Check], wtb: Doc | None, unresolved: list) -> list[str]:
+    """「볼 것」 맨 아래 정산표 대사 줄(2026-10-26). 정산표를 주지 않았거나 모두 맞아도 늘 쓴다.
+    감사한 숫자와 맞추는 것이 푸팅의 첫 순서라, 「볼 것」 이 비어 있을 때 정산표와 맞춰 봤는지가 보이지 않던 것을 채운다."""
+    if wtb is None:
+        return ["정산표 없이 돌렸다. 본표를 감사한 숫자(8100B · 감사인 WTB 의 최종 금액)와 맞추지 않았으므로 「dsd 안에서 서로 맞는다」 까지만 말할 수 있다. "
+                "정산표를 --wtb 로 주어 다시 돌린다."]
+    mine = [c for c in checks if c.kind == WTB_KIND and not c.excluded]
+    live = [c for c in mine if not c.dropped]
+    st = [shown(c) for c in live]
+    n_bs = sum(1 for c in live if c.table == "재무상태표")
+    unbooked = sum(1 for c in live if shown(c) is False and "반영되지 않았다" in str(c.finding or ""))
+    lost = [u for u in unresolved if u.get("kind") == "조서"]
+    out = [f"정산표 {wtb.source}: 본표 과목 대사 {len(live)}건(재무상태표 {n_bs} · 손익계산서 {len(live) - n_bs}) · 맞음 {st.count(True)} · "
+           f"FALSE {st.count(False)}(그중 수정분개 미반영 {unbooked}) · 확인 {st.count(ASK_TEXT)} · 단수 {st.count(MINOR_TEXT)}"
+           + (f" · 판정으로 뺌 {len(mine) - len(live)}" if len(mine) > len(live) else "") + f" · 정산표에서 못 찾은 과목 {len(lost)}"]
+    from . import dsd_wtb
+
+    if dsd_wtb.no_adjustments(wtb):
+        out.append("정산표의 당기(회사제시)와 당기(최종)이 모든 과목에서 같다. 수정분개를 넣기 전의 정산표라면 회사 장부와 맞춘 것일 뿐이다. 수정분개를 다 넣은 정산표로 다시 돌린다.")
+    for c in live:
+        if shown(c) is False:
+            parts = str(c.id).split("|")                 # 조서|<표>|<과목>#<몇 번째>|<당기(최종) · 전기>
+            name = parts[2].split("#")[0] if len(parts) > 3 else c.label
+            word = parts[3] if len(parts) > 3 else ""
+            out.append(f"FALSE {c.table} {name} {word}: dsd {c.left:,.0f} · 정산표 {c.right:,.0f} · 차이 {c.left - c.right:,.0f}"
+                       + (". 수정분개 미반영(dsd 가 정산표의 회사제시 금액과 같다)" if "반영되지 않았다" in str(c.finding or "") else ""))
+    for u in lost[:20]:
+        out.append(f"못 찾음 {u['table']}: {str(u['why']).removeprefix('조서: ')}")
+    return out
+
+
+def _todo_wtb(ws, row: int, checks: list[Check], wtb: Doc | None, unresolved: list) -> None:
+    ws.cell(row, 1, TODO_WTB).font = wp.font(bold=True)
+    for k, line in enumerate(wtb_summary(checks, wtb, unresolved), 1):
+        ws.cell(row + k, 1, line).font = wp.font(color=RED) if line.startswith("FALSE") or (k == 1 and wtb is None) else wp.font()
 
 
 def print_setup(ws, head_row: int) -> None:
@@ -961,6 +1086,14 @@ def print_setup(ws, head_row: int) -> None:
 
 _AMOUNT = re.compile(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?%")
 _NUMS = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _visible(t: str) -> str:
+    """띄어쓰기 · 줄바꿈만 든 조각은 엑셀이 받지 못한다(openpyxl 이 xml:space 를 붙이지 않아 「<t> </t>」 가 되면 엑셀이 파일을 열지 못했다,
+    2026-10-26 판 비교). 띄어쓰기는 줄바꿈 없는 띄어쓰기(U+00A0)로, 줄바꿈은 「↵」 를 붙여 보이게 한다."""
+    if t and not t.strip(" \t\r\n"):
+        return t.replace(" ", "\u00a0").replace("\t", "\u00a0").replace("\r", "").replace("\n", "↵\n")
+    return t
 
 
 def _rich_diff(old: str, new: str, width: int = 70) -> tuple:
@@ -988,7 +1121,7 @@ def _rich_diff(old: str, new: str, width: int = 70) -> tuple:
                     out[-1] = (font, out[-1][1] + piece)
                 else:
                     out.append((font, piece))
-        blocks = [TextBlock(f, t) for f, t in out if t]
+        blocks = [TextBlock(f, _visible(t)) for f, t in out if t]
         return CellRichText(*blocks) if blocks else ""
 
     so = [(a0, a1, plain if tag == "equal" else gone) for tag, a0, a1, b0, b1 in ops]
@@ -1001,61 +1134,32 @@ def _changes_sheet(wb, lay: Layout, doc: Doc, prev: Doc, m: Match, compare: list
     숫자가 든 글이 바뀌면(지분율, 문장 속 금액) 「숫자 든 글 바뀜」 으로 글 바뀜보다 앞에 둔다. 새 표는 줄마다 한 줄로 푼다.
     compare 를 주면 기존 판과 새 판의 검증 결과가 달라진 것을 맨 아래에 모은다(고쳐 달라고 한 곳이 고쳐졌는지)."""
     ws = wb.create_sheet(CHANGES, 3)
-    ws.cell(1, 1, "바뀐 곳").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "바뀐 곳").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     ws.cell(2, 1, "기존 판과 견줘 바뀐 숫자와 글이다. 숫자가 바뀐 칸, 숫자가 든 글, 그 밖의 글, 새로 생긴 것, 없어진 것 순이고 숫자는 차이가 큰 순이다. "
                   "글은 바뀐 글자를 빨갛게 적었고 긴 글은 바뀐 곳 앞뒤만 남겼다. 시트 이름을 누르면 그 칸으로 간다. 맨 아래에 두 판의 검증 결과가 달라진 것을 모았다. "
                   "오버뷰의 바뀐 곳 수는 칸마다 세어 이 시트의 줄 수보다 크다.").font = wp.font(size=9, color=wp.MUTED)
     for j, h in enumerate(("종류", "시트", "칸", "표 · 줄 · 열", "기존 값", "새 값", "차이"), 1):
         _style_head(ws.cell(3, j, h))
-    olds = {p.key: p for p in prev.parts}
+    rank = {"숫자 바뀜": 1, "숫자 든 글 바뀜": 2, "글 바뀜": 3, "새 문단": 4, "새 표": 4, "새 줄": 4, "새 주석": 5}
     rows = []
-
-    def text_change(where, name, old, new, sheet):
-        a, b = _NUMS.findall(old), _NUMS.findall(new)
-        kind, rank = ("숫자 든 글 바뀜", 2) if a != b and (a or b) else ("글 바뀜", 3)
-        rows.append((rank, kind, sheet, where, name, old, new, None))
-
-    for p in doc.parts:
-        op = olds.get(m.parts.get(p.key))
-        if op is None:
-            rows.append((5, "새 주석", p.key, "A1", p.title, "", "", None))
+    for x in dsd_compare.diff_rows(doc, prev, m):         # HTML 보기와 같은 목록(2026-10-26)
+        k = x["kind"]
+        if k == "새 열":
             continue
-        ot = {x[1].id: x[1] for x in op.items if x[0] == "t"}
-        for i, x in enumerate(p.items):
-            if x[0] == "p":
-                j = m.paras.get((p.key, i))
-                where = f"A{lay.para_row[(p.key, i)]}"
-                if j is None:
-                    rows.append((4, "새 문단", p.key, where, "", "", x[1][:300], None))
-                elif op.items[j][1] != x[1]:
-                    text_change(where, "", op.items[j][1], x[1], p.key)
-                continue
-            t = x[1]
-            mt = m.tables.get(t.id)
-            if not mt:
-                for r in range(len(t.rows)):
-                    rows.append((4, "새 표", p.key, _a1(lay, t.id, r, 0, p.key), f"{t.id} {t.rows[r][0]}", "",
-                                 " · ".join(f"{t.header[c]} {t.rows[r][c]}".strip() for c in range(1, len(t.header)) if t.rows[r][c])[:200], None))
-                continue
-            q = ot[mt[0]]
-            for r in range(len(t.rows)):
-                if r not in mt[1]:
-                    rows.append((4, "새 줄", p.key, _a1(lay, t.id, r, 0, p.key), f"{t.id} {t.rows[r][0]}", "",
-                                 " · ".join(f"{t.header[c]} {t.rows[r][c]}".strip() for c in range(1, len(t.header)) if t.rows[r][c])[:200], None))
-                    continue
-                for c in range(1, len(t.header)):
-                    if c not in mt[2]:
-                        continue
-                    orow, ocol = mt[1][r], mt[2][c]
-                    v, w = t.nums[r][c], q.nums[orow][ocol]
-                    where, name = _a1(lay, t.id, r, c, p.key), f"{t.id} {t.rows[r][0]} · {t.header[c]}"
-                    if dsd_compare.numeric(t, r, c) and dsd_compare.numeric(q, orow, ocol):
-                        if (v or 0) != (w or 0):
-                            rows.append((1, "숫자 바뀜", p.key, where, name, w or 0, v or 0, (v or 0) - (w or 0)))
-                    elif dsd_compare.cell_text(t, r, c) != dsd_compare.cell_text(q, orow, ocol):
-                        text_change(where, name, dsd_compare.cell_text(q, orow, ocol), dsd_compare.cell_text(t, r, c), p.key)
-        for g in m.gone.get(p.key, []):
-            rows.append((6, g.split(":")[0], p.key, "A1", g.split(": ", 1)[-1][:200], "", "", None))
+        if x.get("gone"):
+            where, rk = "A1", 6
+        elif k == "새 주석":
+            where, rk = "A1", 5
+        elif "item" in x:
+            where, rk = f"A{lay.para_row[(x['part'], x['item'])]}", rank[k]
+        else:
+            where, rk = _a1(lay, x["table"], x["r"], x["c"], x["part"]), rank[k]
+        new = x["new"]
+        if k == "새 문단":
+            new = new[:300]
+        elif k in ("새 표", "새 줄"):
+            new = new[:200]
+        rows.append((rk, k, x["part"], where, x["name"], x["old"], new, x["diff"]))
     rows.sort(key=lambda r: (r[0], -abs(r[7] or 0)))
     n = 4
     for _, kind, sheet, where, name, old, new, diff in rows:
@@ -1129,10 +1233,10 @@ def _cell_key(c: Check, back: dict) -> tuple | None:
     return (c.group, c.kind, left, tuple(sorted(terms)))
 
 
-def compare_checks(lay: Layout, new: list[Check], old: list[Check], m: Match | None = None) -> list[dict]:
-    """기존 판과 새 판의 검증 결과 비교. 고쳐짐 · 새로 틀림 · 여전히 틀림 · 새 검증(틀림) 을 낸다.
+def check_changes(new: list[Check], old: list[Check], m: Match | None = None) -> list[tuple]:
+    """기존 판과 새 판의 검증 결과 비교. [(새 검증, 달라진 것, 기존 결과, 새 결과)]. 달라진 것은 고쳐짐 · 새로 틀림 · 여전히 틀림 · 새 검증에서 틀림.
     m 을 주면 옛 검증의 칸을 표 · 줄 · 열 짝으로 새 칸에 옮겨 (묶음, 구분, 칸, 대사 대상 칸)으로 짝짓는다. 주석 번호가 밀린 판에서 검증 id(표 번호)로
-    짝지으면 다른 검증끼리 견주게 된다(10단계 재평가). 칸으로 짝을 못 지은 것만 id 로 짝짓는다."""
+    짝지으면 다른 검증끼리 견주게 된다(10단계 재평가). 칸으로 짝을 못 지은 것만 id 로 짝짓는다. 엑셀과 HTML 보기(2026-10-26)가 같이 쓴다."""
     before = {c.id: c for c in old}
     by_cell: dict = {}
     if m is not None:
@@ -1161,11 +1265,19 @@ def compare_checks(lay: Layout, new: list[Check], old: list[Check], m: Match | N
             what = "여전히 틀림"
         else:
             continue
+        out.append((c, what, a, b))
+    order = {"새로 틀림": 0, "여전히 틀림": 1, "새 검증에서 틀림": 2, "고쳐짐": 3}
+    return sorted(out, key=lambda x: order[x[1]])
+
+
+def compare_checks(lay: Layout, new: list[Check], old: list[Check], m: Match | None = None) -> list[dict]:
+    """check_changes 를 엑셀 「바뀐 곳」 시트 줄로. 시트 · 칸 주소를 붙인다."""
+    out = []
+    for c, what, a, b in check_changes(new, old, m):
         sheet, row, col = lay.addr[(c.table, c.r, c.c)]
         out.append({"what": what, "sheet": sheet, "cell": f"{L(col)}{row}", "label": f"{c.kind} {c.table}: {c.label}", "old": a, "new": b,
                     "diff": None if c.right is None else round(c.left - c.right, 6)})
-    order = {"새로 틀림": 0, "여전히 틀림": 1, "새 검증에서 틀림": 2, "고쳐짐": 3}
-    return sorted(out, key=lambda x: order[x["what"]])
+    return out
 
 
 def _scope(wb, lay: Layout, doc: Doc, cover: set, extra: dict | None, cross: set | None = None, wpc: dict | None = None) -> dict:
@@ -1174,7 +1286,7 @@ def _scope(wb, lay: Layout, doc: Doc, cover: set, extra: dict | None, cross: set
     TRUE 가 많은 것과 다 본 것은 다르다. 회색 칸과 이 시트가 보지 못한 곳을 알려 준다. {시트: 비율}"""
     ws = wb.create_sheet(SCOPE, 2)
     wpc = wpc or {}
-    ws.cell(1, 1, "검증 범위").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "검증 범위").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     ws.cell(2, 1, "숫자 칸(0 이 아닌 금액, % 칸 제외) 가운데 어느 검증에든 들어간 칸의 비율이다. 검증에 들어가지 않은 칸은 두 가지다. 보고서 안에 맞춰 볼 곳이 없어 조서와 맞출 칸(하늘색, "
                   "「조서 대사」 시트)과 검증이 없는 칸(회색, 눈으로 본다). 검증된 칸에는 표 안 합계에만 들어간 칸도 있어 다른 표 · 정산표와 맞춘 칸은 따로 센다. "
                   "문장 속 금액은 주석 문단에서 꺼내 「주석N-문장」 표로 모은 칸이다.").font = wp.font(size=9, color=wp.MUTED)
@@ -1266,7 +1378,7 @@ def _wp_sheet(wb, lay: Layout, doc: Doc, workpapers: list[dict], wpc: dict, cove
     """「조서 대사」 시트: 보고서 안에서는 맞춰 볼 곳이 없는 숫자(약정 한도, 담보, 특수관계자 거래, 보험)를 조서와 맞출 목록.
     AI 가 연결.json 의 workpapers 에 적은 것이다. 회계사가 조서 번호 · 결과 · 메모를 적는다."""
     ws = wb.create_sheet(WPS)
-    ws.cell(1, 1, "조서 대사").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "조서 대사").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     ws.cell(2, 1, "보고서 안에서는 맞춰 볼 곳이 없어 조서 · 증빙과 맞출 숫자다. 원문 시트에서 하늘색 칸이다. 조서 번호, 결과(O · X), 메모는 회계사가 적는다.").font = wp.font(size=9, color=wp.MUTED)
     head = ("시트", "표", "줄", "숫자 칸", "무엇과 맞추나", "조서(제안)", "까닭", "조서 번호", "결과", "메모")
     for j, h in enumerate(head, 1):
@@ -1313,11 +1425,11 @@ def done_text(checks: list[Check], n_wp: int) -> str:
 
 
 def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, prior: Doc | None, wtb: Doc | None, pair: Doc | None,
-           ratios: dict, n_wp: int, n_wpc: int = 0) -> None:
+           ratios: dict, n_wp: int, n_wpc: int = 0, ai_line: str = "") -> None:
     """「표지」 시트: 조서로 편철할 때의 표지. 조서 번호 · 회사 · 결론 · 작성자 · 검토자 · 일자는 회계사가 적는다.
     결과 요약은 다른 시트를 세는 수식이다(9단계 재평가: 조서로 편철하려면 표지를 따로 만들어야 했다)."""
     ws = wb.create_sheet(COVER, 0)
-    ws.cell(1, 1, "DSD 푸팅 조서(재무제표 · 주석 숫자 대사)").font = Font(name=wp.FONT, size=14, bold=True)
+    ws.cell(1, 1, "DSD 푸팅 조서(재무제표 · 주석 숫자 대사)").font = Font(name=wp.FONT, size=14, bold=True, color=wp.NAVY)
     live = [c for c in checks if not c.dropped]
     states = [shown(c) for c in live]
     total_cells = sum(len(_money_cells(p)) for p in doc.parts)
@@ -1327,6 +1439,7 @@ def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, pri
         ("견준 자료", " · ".join(x for x in ((f"작년 보고서 {prior.source}" if prior is not None else ""), (f"정산표 {wtb.source}" if wtb is not None else ""),
                                           (f"기존 판 {prev.source}" if prev is not None else ""), (f"함께 본 보고서 {pair.source}" if pair is not None else "")) if x) or "없음", False),
         ("한 일", done_text(checks, n_wp), False),
+        ("AI 작성", ai_line or "AI 작성 칸 없음", False),
     ]
     r = 3
     for name, v, inp in rows:
@@ -1380,6 +1493,7 @@ def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, pri
         r += 1
     r += 1
     ws.cell(r, 1, "노란 칸은 회계사가 적는다. FALSE 와 확인의 판정은 「볼 것」 시트, 검증에 들어가지 않은 숫자는 「검증 범위」 시트, 조서와 맞출 숫자는 「조서 대사」 시트에 있다.").font = wp.font(size=9, color=wp.MUTED)
+    ws.cell(r + 1, 1, style.LEGEND).font = wp.font(size=9, color=wp.MUTED, italic=True)
     ws.column_dimensions["A"].width = 22
     ws.column_dimensions["B"].width = 90
     ws.page_setup.orientation = "portrait"
@@ -1441,7 +1555,7 @@ def write(path: Path, doc: Doc, checks: list[Check], unresolved: list[dict], pre
     for p in doc.parts:
         _part_sheet(wb, lay, tabs, sheet_of, p, by_id, prev, m, cover, wpc)
     _list(wb, lay, tabs, checks)
-    _todo(wb, lay, doc, tabs, checks)
+    _todo(wb, lay, doc, tabs, checks, wtb, unresolved)
     ratios = _scope(wb, lay, doc, cover, extra, dsd_links.covered([c for c in checks if c.group != SUM]), wpc)
     if prev is not None and m is not None:
         _changes_sheet(wb, lay, doc, prev, m, compare_checks(lay, checks, old_checks, m) if old_checks is not None else None)
@@ -1471,12 +1585,23 @@ def write(path: Path, doc: Doc, checks: list[Check], unresolved: list[dict], pre
         c = wb[OVERVIEW].cell(r, 1, dsd_text.SHEET)
         _link(c, f"{_q(dsd_text.SHEET)}A1")
         wb[OVERVIEW].cell(r, 2, dsd_text.summary(tres)).font = wp.font(bold=True)
+    draft = (extra or {}).get("draft")
+    if draft is not None:                            # 원고 엑셀로 돌렸을 때(2026-10-26 DSD 네 기능 C): 원고 검사 시트
+        from .dsd_draft_book import write_issues
+
+        write_issues(wb, draft)
+        wb.move_sheet("원고 검사", offset=-(len(wb.sheetnames) - 2))
     n_wpc = sum(1 for p in doc.parts for k in _money_cells(p) if k not in cover and k in wpc)   # 숫자 칸만 센다(2026-10-20: 글자 칸까지 세어 비율이 100% 를 넘었다)
-    _cover(wb, lay, doc, checks, prev, prior, wtb, pair, ratios, len(workpapers), n_wpc)
+    _ai_sheet(wb, checks, tres)
+    ai_n = ai_summary(checks, tres)
+    _cover(wb, lay, doc, checks, prev, prior, wtb, pair, ratios, len(workpapers), n_wpc, ai_text(ai_n) if any(ai_n.values()) else "")
+    if wp.AI_SHEET in wb.sheetnames:
+        _link(wb[COVER].cell(next(r for r in range(3, 12) if wb[COVER].cell(r, 1).value == "AI 작성"), 2), f"{_q(wp.AI_SHEET)}A1")
     wb.active = wb.sheetnames.index(OVERVIEW)        # 표지가 맨 앞이지만 열면 오버뷰가 보인다
     wb.calculation.fullCalcOnLoad = True
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    style.finish(wb)
     wb.save(path)
     _inject(path, wb, lay.cache)
     return path

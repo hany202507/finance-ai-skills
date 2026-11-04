@@ -343,6 +343,36 @@ def _sce(units: list[Unit], ni: int) -> dict:
     return {"cols": cols, "rows": [(lab, vals + [sum(vals)]) for lab, vals in rows], "other": any(other)}
 
 
+UNAPPROPRIATED = ("미처분이익잉여금", "미처리결손금", "이익잉여금", "결손금")
+
+
+def appropriation(fs: dict) -> dict | None:
+    """이익잉여금처분계산서(결손금처리계산서) 엔진 값(2026-11-03, 외부 조서 개념 대조 3번).
+    근거: 상법 제447조 제1항 제3호 · 같은 법 시행령 제16조 제1항 단서(외부감사 대상 회사는 자본변동표 · 처분계산서 · 현금흐름표 · 주석 모두),
+    일반기업회계기준 문단 2.89(상법 등이 요구하면 재무상태표 이익잉여금의 보충정보로 주석 공시).
+    엔진이 아는 숫자만 낸다: 미처분(미처리) 잔액(당기순손익 포함), 전기이월 = 잔액 − 당기순손익, 당기순손익,
+    전기 열의 차기이월 = 당기 전기이월. 처분액 · 이입액 · 처분 예정일은 주주총회 결의라 기입이다.
+    당기말 잔액이 음수면 결손금처리계산서 꼴. 미처분 과목을 찾지 못하면 None."""
+    us = [u for u in fs["units"] if u.group == "자본" and any(is_re(c) for c in u.codes)
+          and norm(u.name) in {norm(x) for x in UNAPPROPRIATED}]
+    if not us:
+        us = [u for u in fs["units"] if u.group == "자본" and any(is_re(c) for c in u.codes)]
+    if len(us) != 1:
+        return None
+    u, ni = us[0], fs["ni"]
+    v = statement_values(fs)["is"].get(norm("당기순이익"))
+    ni_prior = v[1] if v else None
+    cur, prior = u.cur, u.prior
+    carried = cur - ni                                    # 당기 전기이월 = 전기 처분계산서의 차기이월
+    out = {"line": u.name, "deficit": cur < 0, "cur": cur, "ni": ni, "carried": carried,
+           "prior": prior, "ni_prior": ni_prior,
+           "prior_carried": (prior - ni_prior) if prior is not None and ni_prior is not None else None,
+           "prior_next": carried if prior is not None else None}
+    # 전기 처분계산서의 (처분액 − 이입액). 이익이면 Ⅲ − Ⅱ, 결손이면 처리액(Ⅱ). 전기말 잔액 − 당기 전기이월
+    out["prior_settled"] = (prior - carried) if prior is not None else None
+    return out
+
+
 def statement_values(fs: dict) -> dict:
     """{'bs': {과목: (당기, 전기)}, 'is': {...}} 엔진 값. 이익 계산 줄은 보이는 이름(…손실)과 계산 이름(…이익) 둘 다로 찾는다."""
     out = {k: {norm(r["label"]): (r["cur"], r["prior"]) for r in fs[k] if r["kind"] != "header"} for k in ("bs", "is")}
