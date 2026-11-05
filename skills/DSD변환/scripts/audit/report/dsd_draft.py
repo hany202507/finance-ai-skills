@@ -37,6 +37,7 @@ class Cell:
     covered: bool = False            # 원본 병합(span)이 덮는 칸
     span: tuple = (1, 1)             # (ROWSPAN, COLSPAN)
     tag: str = ""
+    unit: str = ""                   # TU 칸의 AUNIT(PERIODFROM · SUB_PERIODTO 등)
 
     @property
     def value(self):
@@ -159,7 +160,7 @@ def _cell(src: Source, n: Node) -> Cell:
     if num is not None and n.kids:
         num, fmt = None, None                      # 칸 안에 요소가 든 칸은 글자로 둔다
     rs, cs = int(n.get("ROWSPAN") or 1), int(n.get("COLSPAN") or 1)
-    return Cell(n.k, text, num, fmt, span=(max(rs, 1), max(cs, 1)), tag=n.tag)
+    return Cell(n.k, text, num, fmt, span=(max(rs, 1), max(cs, 1)), tag=n.tag, unit=n.get("AUNIT") or "")
 
 
 def _table_lines(src: Source, t: Node, no: int) -> list[Line]:
@@ -624,7 +625,8 @@ def _period_of_text(text: str) -> str | None:
 
 
 def roll(d: Draft) -> Draft:
-    """작년 판 원고를 당기 초안으로: 당기 숫자를 전기 칸으로 옮기고 당기 칸을 비운다. 머리줄 기수 · 해 +1, 표지 · 재무제표 머리 표 · TU 날짜 +1.
+    """작년 판 원고를 당기 초안으로: 당기 숫자를 전기 칸으로 옮기고 당기 칸을 비운다. 머리줄 기수 · 해 +1, 표지 · 재무제표 머리 표 · TU 날짜 +1,
+    외부감사 실시내용 「감사대상 사업연도」(TU SUB_PERIODFROM · SUB_PERIODTO) +1.
     당기 · 전기를 두는 꼴 셋을 옮긴다: 열(「당기말 · 전기말」 열), 한 표 안 줄 묶음(첫 열 「당기 · 전기」 병합 칸), 따로 둔 두 표(표 위 문단 「당기 · 전기」
     또는 「① 당기말 | (단위: 원)」 한 줄 표). 변동표는 새 당기 기초를 작년 당기 기말로 채운다(fill_opening).
     문단 속 날짜는 바꾸지 않는다(문장 검토가 작년 날짜를 잡는다). 정하지 못한 표는 손대지 않고 notes 에 적는다.
@@ -638,6 +640,10 @@ def roll(d: Draft) -> Draft:
     fy = int(end[:4]) if re.fullmatch(r"\d{8}", end) else None
     rolled = []
     for s in d.sheets:
+        for ln in s.lines:                     # 외부감사 실시내용 「감사대상 사업연도」 는 표지 기간과 같아야 편집기 검사를 넘는다(2026-11-06)
+            for c in ln.cells:
+                if c.unit in ("SUB_PERIODFROM", "SUB_PERIODTO") and not c.covered:
+                    c.text = bump(c.text)
         blocks = _blocks(s.lines)
         done: set = set()
         if s.kind in ("재무제표", "주석"):
