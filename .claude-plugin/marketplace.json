@@ -6,15 +6,73 @@
   },
   "metadata": {
     "description": "재무·회계·세무 실무에 쓰는 Claude Code 스킬",
-    "version": "0.17.1"
+    "version": "0.18.0"
   },
   "plugins": [
     {
       "name": "finance-ai-skills",
       "source": "./",
-      "description": "현금흐름표, 세법자문-회신, 회계기준검토, 리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 결산자동화, 법령검토, 양도소득세, 법인세-통합고용, AI면접점검, 급여대장 및 원천세신고 스킬",
-      "version": "0.17.1",
+      "description": "스킬 전체. 분야별로 하나만 받으려면 tax · accounting · audit · career 를 설치한다",
+      "version": "0.18.0",
       "license": "MIT"
+    },
+    {
+      "name": "tax",
+      "source": "./",
+      "strict": false,
+      "description": "세무 스킬. 양도소득세 · 법인세 분석적 검토 · 통합고용세액공제 · 급여대장과 원천세 신고 · 부가세 신고서 검토 · 세법자문 회신 · 법령검토",
+      "version": "0.18.0",
+      "license": "MIT",
+      "skills": [
+        "./skills/양도소득세",
+        "./skills/법인세-검토에이전트",
+        "./skills/법인세-통합고용",
+        "./skills/급여대장 및 원천세신고",
+        "./skills/부가세신고서검토",
+        "./skills/세법자문-회신",
+        "./skills/법령검토"
+      ]
+    },
+    {
+      "name": "accounting",
+      "source": "./",
+      "strict": false,
+      "description": "회계 · 결산 스킬. 현금흐름표 · 리스회계(K-IFRS 1116) · 매입매출장 검토 · 자금일보 · 결산자동화 · 회계기준 검토",
+      "version": "0.18.0",
+      "license": "MIT",
+      "skills": [
+        "./skills/현금흐름표",
+        "./skills/리스회계",
+        "./skills/매입매출장검토",
+        "./skills/자금일보",
+        "./skills/결산자동화",
+        "./skills/회계기준검토"
+      ]
+    },
+    {
+      "name": "audit",
+      "source": "./",
+      "strict": false,
+      "description": "외부감사 스킬. 분개 테스트(JET) 조서 · DSD 푸팅 · DART 공시 감사보고서를 편집기 dsd 로 변환 · 감사 진행 대시보드",
+      "version": "0.18.0",
+      "license": "MIT",
+      "skills": [
+        "./skills/분개테스트",
+        "./skills/DSD푸팅",
+        "./skills/DSD변환",
+        "./skills/감사대시보드"
+      ]
+    },
+    {
+      "name": "career",
+      "source": "./",
+      "strict": false,
+      "description": "재무 면접에서 AI 를 쓴 경험을 어떻게 말할지 대화로 준비하고 1~4점으로 채점하는 스킬",
+      "version": "0.18.0",
+      "license": "MIT",
+      "skills": [
+        "./skills/AI면접점검"
+      ]
     }
   ]
 }

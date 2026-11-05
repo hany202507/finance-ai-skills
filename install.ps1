@@ -2,8 +2,14 @@
 #                    the korean-law MCP server into ~/.claude/mcp/korean-law
 #                    and the tax-source-guard hook into ~/.claude/hooks
 # usage (PowerShell):  irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex
+# one group only:      $env:FAS_PLUGIN = 'audit'; irm .../install.ps1 | iex     (tax, accounting, audit, career)
+#                      The groups are the plugins in .claude-plugin/marketplace.json. Unset FAS_PLUGIN for all skills
 $ErrorActionPreference = 'Stop'
 $repo = 'hany202507/finance-ai-skills'
+$group = "$env:FAS_PLUGIN"
+if ($group -and $group -notin @('tax', 'accounting', 'audit', 'career')) {
+    throw "unknown group: $group (use tax, accounting, audit or career, or unset FAS_PLUGIN for all skills)"
+}
 $dest = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $HOME '.claude\skills' }
 $mcpRoot = if ($env:CLAUDE_MCP_DIR) { $env:CLAUDE_MCP_DIR } else { Join-Path $HOME '.claude\mcp' }
 $mcpDest = Join-Path $mcpRoot 'korean-law'
@@ -17,7 +23,13 @@ try {
     $root = Join-Path $tmp 'finance-ai-skills-main'
     $py = Get-Command python -ErrorAction SilentlyContinue
     if (-not $py) { $py = Get-Command py -ErrorAction SilentlyContinue }
-    foreach ($d in Get-ChildItem -Directory (Join-Path $root 'skills')) {
+    $skillDirs = Get-ChildItem -Directory (Join-Path $root 'skills')
+    if ($group) {
+        $market = [IO.File]::ReadAllText((Join-Path $root '.claude-plugin\marketplace.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
+        $names = @(($market.plugins | Where-Object { $_.name -eq $group }).skills | ForEach-Object { ($_ -split '/')[-1] })
+        $skillDirs = $skillDirs | Where-Object { $names -contains $_.Name }
+    }
+    foreach ($d in $skillDirs) {
         $target = Join-Path $dest $d.Name
         if (Test-Path $target) { Remove-Item -Recurse -Force $target }
         Copy-Item -Recurse $d.FullName $target
@@ -44,6 +56,12 @@ try {
             Remove-Item -LiteralPath $old -Recurse -Force
             Write-Host "removed: $old"
         }
+    }
+
+    # the law server, the tax hook and the law server check are for the tax and accounting review skills only
+    if ($group -in @('audit', 'career')) {
+        Write-Host "done. restart Claude Code."
+        return
     }
 
     # korean-law MCP (used by the tax and accounting review skills)

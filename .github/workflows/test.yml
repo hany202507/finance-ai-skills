@@ -123,6 +123,26 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install pyyaml
+      - name: 분야별 플러그인(marketplace.json)이 있는 스킬만 가리키고, 모든 스킬이 한 분야에 한 번만 들어 있는지 확인
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          d = json.load(open(".claude-plugin/marketplace.json", encoding="utf-8"))
+          have = {n for n in os.listdir("skills") if os.path.isfile(os.path.join("skills", n, "SKILL.md"))}
+          seen, bad = {}, 0
+          for p in d["plugins"]:
+              for s in p.get("skills", []):
+                  name = s.rsplit("/", 1)[1]
+                  if name not in have:
+                      print("없는 스킬", p["name"], s); bad += 1
+                  if name in seen:
+                      print("두 분야에 있음", name, seen[name], p["name"]); bad += 1
+                  seen[name] = p["name"]
+          # 원천세신고는 옛 이름 안내라 전체 플러그인에만 둔다
+          for name in sorted(have - set(seen) - {"원천세신고"}):
+              print("분야가 없는 스킬", name); bad += 1
+          sys.exit(1 if bad else 0)
+          PY
       - name: 스킬마다 머리말의 name 이 폴더 이름과 같고 description 이 있는지 확인
         run: |
           python - <<'PY'

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 설치 방법 · 준비물
+    url: https://github.com/hany202507/finance-ai-skills#설치
+    about: 법령 서버 · TaxDoctor 커넥터 · 세법 훅을 붙이는 방법은 README 설치 절에 있습니다

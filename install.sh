@@ -3,7 +3,14 @@
 #                    the korean-law MCP server into ~/.claude/mcp/korean-law
 #                    and the tax-source-guard hook into ~/.claude/hooks
 # usage (macOS/Linux):  curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh
+# one group only:       curl -fsSL .../install.sh | sh -s -- audit     (tax, accounting, audit, career)
+#                       or FAS_PLUGIN=audit in the environment. The groups are the plugins in .claude-plugin/marketplace.json
 set -e
+group="${1:-${FAS_PLUGIN:-}}"
+case "$group" in
+  ""|tax|accounting|audit|career) ;;
+  *) echo "unknown group: $group (use tax, accounting, audit or career, or nothing for all skills)"; exit 1 ;;
+esac
 dest="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 mcpdest="${CLAUDE_MCP_DIR:-$HOME/.claude/mcp}/korean-law"
 tmp="$(mktemp -d)"
@@ -12,10 +19,21 @@ mkdir -p "$dest"
 curl -fsSL -o "$tmp/main.zip" https://github.com/hany202507/finance-ai-skills/archive/refs/heads/main.zip
 unzip -q "$tmp/main.zip" -d "$tmp"
 src="$tmp/finance-ai-skills-main"
-for d in "$src"/skills/*/; do
-  name="$(basename "$d")"
+if [ -z "$group" ]; then
+  for d in "$src"/skills/*/; do basename "$d"; done > "$tmp/skills.txt"
+else
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 not found: install Python 3.10+ to pick one group, or run without a group to install all skills"; exit 1
+  fi
+  python3 -c 'import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+p = [x for x in d["plugins"] if x["name"] == sys.argv[2]][0]
+sys.stdout.buffer.write("".join(s.rsplit("/", 1)[1] + "\n" for s in p["skills"]).encode("utf-8"))' \
+    "$src/.claude-plugin/marketplace.json" "$group" > "$tmp/skills.txt"
+fi
+while IFS= read -r name; do
   rm -rf "$dest/$name"
-  cp -R "$d" "$dest/$name"
+  cp -R "$src/skills/$name" "$dest/$name"
   echo "installed: $dest/$name"
   if [ -f "$dest/$name/requirements.txt" ]; then
     if command -v python3 >/dev/null 2>&1; then
@@ -24,7 +42,7 @@ for d in "$src"/skills/*/; do
       echo "python3 not found: install Python 3.10+ and run  pip3 install -r $dest/$name/requirements.txt"
     fi
   fi
-done
+done < "$tmp/skills.txt"
 
 # 2026-10-19 the law lookup skill was renamed. Remove its old install folder (exact old name, real folder only;
 # a symlink is left alone) so the old skill does not show next to the new one.
@@ -34,6 +52,11 @@ if [ -d "$old" ] && [ ! -L "$old" ]; then
   rm -rf "$old"
   echo "removed: $old"
 fi
+
+# the law server, the tax hook and the law server check are for the tax and accounting review skills only
+case "$group" in
+  audit|career) echo "done. restart Claude Code."; exit 0 ;;
+esac
 
 # korean-law MCP (used by the tax and accounting review skills)
 rm -rf "$mcpdest"

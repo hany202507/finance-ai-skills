@@ -1,0 +1,79 @@
+name: 스킬 개선 제안 · 틀린 결과
+description: 스킬이 틀린 값을 냈거나 근거 조문 · 기준서가 다를 때, 다뤘으면 하는 자료 · 경우가 있을 때
+title: "[스킬 이름] "
+labels: ["개선 제안"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **고객 실명, 사업자번호, 주민등록번호, 실제 장부 파일은 올리지 마십시오.** 이 저장소는 누구나 봅니다.
+        숫자와 이름을 바꾼 예시나 스킬에 든 합성 자료(`tests/fixtures`)로 다시 돌린 결과를 적어 주십시오.
+  - type: dropdown
+    id: skill
+    attributes:
+      label: 스킬
+      options:
+        - 양도소득세
+        - 법인세-검토에이전트
+        - 법인세-통합고용
+        - 급여대장 및 원천세신고
+        - 부가세신고서검토
+        - 세법자문-회신
+        - 법령검토
+        - 현금흐름표
+        - 리스회계
+        - 매입매출장검토
+        - 자금일보
+        - 결산자동화
+        - 회계기준검토
+        - 분개테스트
+        - DSD푸팅
+        - DSD변환
+        - 감사대시보드
+        - AI면접점검
+        - 설치 · 저장소 전체
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 종류
+      options:
+        - 틀린 값 · 틀린 판정
+        - 근거 조문 · 기준서 문단이 다르다
+        - 다루지 않는 자료 · 경우가 있다
+        - 설치 · 실행이 안 된다
+        - 설명 문서가 틀렸거나 모자라다
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: 어떤 자료로 무엇을 했는지
+      description: "입력 자료의 종류(예: 더존 계정별원장, 급여대장 엑셀), 스킬에 한 말이나 돌린 명령, 사업연도 · 과세기간"
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 스킬이 낸 결과 · 맞다고 보는 결과
+      description: 스킬이 낸 값 · 판정과, 맞다고 보는 값 · 판정
+    validations:
+      required: true
+  - type: textarea
+    id: basis
+    attributes:
+      label: 근거
+      description: 조문(법 · 시행령 · 시행규칙 조항), 기준서 문단, 해석례 · 판례 번호, 서식 작성요령 쪽수. 세법 · 회계 판단을 바꾸는 제안에 근거가 없으면 관리자가 근거를 확인한 뒤 반영합니다
+  - type: input
+    id: version
+    attributes:
+      label: 판 번호
+      description: .claude-plugin/plugin.json 의 version 이나 설치한 날짜
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 확인
+      options:
+        - label: 고객 실명 · 식별번호 · 실제 장부 파일을 넣지 않았습니다
+          required: true

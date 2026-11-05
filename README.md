@@ -6,6 +6,8 @@
 
 실무에서 매달 쓰는 것을 공개합니다. 공통 원칙은 세 가지입니다. 계산은 결정적인 코드가 하고, 판단 근거는 원문으로 남기고, 결과는 AI 와 무관한 방법으로 한 번 더 검산합니다.
 
+세무 · 회계 · 감사 · 커리어 가운데 쓰는 분야만 골라 받을 수 있습니다([설치](#설치)).
+
 | 이름 | 분야 | 하는 일 |
 |---|---|---|
 | [현금흐름표](skills/현금흐름표/) | 회계 | 전기 재무상태표와 당기 분개장(또는 계정별원장)으로 현금흐름표 직접법·간접법을 만들고 서로 맞춰 본다 |
@@ -63,18 +65,50 @@ python ~/.claude/skills/결산자동화/scripts/run_close.py <원천폴더> <산
 
 ### 설치
 
-스킬만 설치합니다(플러그인 아님). 한 줄을 붙여 넣으면 스킬 폴더에 들어가고 파이썬 패키지까지 설치합니다.
+스킬 전체를 받거나 분야 하나만 받습니다. 받은 스킬이 많으면 Claude 가 요청과 맞지 않는 스킬을 고르는 일이 생기니, 쓰는 분야만 받는 편이 낫습니다.
 
-윈도우 PowerShell
+| 분야 | 이름 | 스킬 |
+|---|---|---|
+| 세무 | `tax` | 양도소득세 · 법인세-검토에이전트 · 법인세-통합고용 · 급여대장 및 원천세신고 · 부가세신고서검토 · 세법자문-회신 · 법령검토 |
+| 회계 · 결산 | `accounting` | 현금흐름표 · 리스회계 · 매입매출장검토 · 자금일보 · 결산자동화 · 회계기준검토 |
+| 감사 | `audit` | 분개테스트 · DSD푸팅 · DSD변환 · 감사대시보드 |
+| 커리어 | `career` | AI면접점검 |
+
+설치 스크립트는 스킬을 스킬 폴더에 넣고 파이썬 패키지까지 설치합니다.
+
+윈도우 PowerShell, 전체
 
 ```powershell
 irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex
 ```
 
-맥 · 리눅스 터미널
+윈도우 PowerShell, 분야 하나(예: 감사)
+
+```powershell
+$env:FAS_PLUGIN = 'audit'; irm https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.ps1 | iex
+```
+
+`FAS_PLUGIN` 은 그 PowerShell 창을 닫을 때까지 남습니다. 같은 창에서 전체를 다시 받으려면 `Remove-Item Env:FAS_PLUGIN` 을 먼저 실행합니다.
+
+맥 · 리눅스 터미널, 전체
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh
+```
+
+맥 · 리눅스 터미널, 분야 하나(예: 감사)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hany202507/finance-ai-skills/main/install.sh | sh -s -- audit
+```
+
+분야 하나만 받을 때는 파이썬 3.10 이상이 있어야 합니다(설치 스크립트가 파이썬으로 분야 목록을 읽습니다). 감사 · 커리어는 법령 서버와 세법 훅을 설치하지 않습니다.
+
+Claude Code 플러그인으로 받아도 됩니다. 플러그인으로 받으면 파이썬 패키지와 법령 서버는 설치되지 않으니, 스킬 폴더의 `requirements.txt` 를 따로 설치하고 법령 서버는 아래 「법령 서버는 한 번만 등록합니다」 순서대로 등록합니다. 전체(`finance-ai-skills`)와 분야 플러그인을 함께 설치하면 같은 스킬이 두 번 보이니 하나만 설치합니다. 아래는 감사 분야를 받는 예이고, 전체는 마지막 줄의 `audit` 을 `finance-ai-skills` 로 바꿉니다.
+
+```
+/plugin marketplace add hany202507/finance-ai-skills
+/plugin install audit@finance-ai-skills
 ```
 
 `~/.claude/skills/` 아래에 스킬 폴더가 들어가고, 법령 조회 서버는 `~/.claude/mcp/korean-law` 에, 세법 훅은 `~/.claude/hooks/tax-source-guard.mjs` 에 들어갑니다. Claude Code 를 다시 열면 잡힙니다. 회계·세무 스킬은 파이썬 3.10 이상, 법령 서버는 Node.js 18 이상이 필요합니다. 새 판이 나오면 같은 줄을 다시 실행하면 덮어씁니다.
@@ -252,6 +286,10 @@ claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈 폴더 절�
 - **감사대시보드.** 위 스킬들이 감사 전체 흐름(다섯 단계 · 조서 58개 · 스킬)의 어디에 붙는지 보는 화면입니다. 감사 폴더의 `_색인` 을 읽어 단계별 조서 상태 · 스킬 적용 현황 · 이슈를 보입니다. 예시는 가온정밀(가상) 모의 감사 폴더의 `_색인` 과 완성 화면입니다.
 
 예시 자료의 회사 · 사람 · 거래처 이름과 숫자는 모두 지어냈습니다. 고객 자료와 결과 파일은 저장소나 공유 폴더에 올리지 마십시오.
+
+## 개선 제안
+
+틀린 값, 다른 근거 조문, 다뤘으면 하는 경우를 [이슈 양식](https://github.com/hany202507/finance-ai-skills/issues/new/choose)으로 알려 주십시오. git 을 몰라도 됩니다. 고쳐서 PR 로 보내는 방법과 반영 방식은 [CONTRIBUTING](CONTRIBUTING.md)에 있습니다. 고객 실명과 실제 장부 파일은 올리지 않습니다.
 
 ## 고지
 
