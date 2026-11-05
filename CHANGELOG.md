@@ -2,6 +2,12 @@
 
 릴리스 노트는 이 파일에 쌓는다. 버전은 `.claude-plugin/plugin.json` 의 `version` 과 같다.
 
+## v0.18.1 분야별 플러그인이 로드되지 않던 것 (2026-11-06)
+
+- 0.18.0 의 분야별 플러그인 넷이 설치는 되지만 「failed to load」 로 떴다. 마켓플레이스 항목의 `"strict": false` 와 `.claude-plugin/plugin.json` 이 함께 있으면 Claude Code 가 둘이 부딪힌다고 본다. `strict` 를 빼서 고쳤다. `claude plugin validate` 는 이것을 잡지 못한다.
+- 확인: 빈 설정 폴더에서 이 판의 마켓플레이스를 더하고 audit · tax · career 를 함께 설치했다. 셋 다 켜지고 각각 스킬 4 · 7 · 1개만 잡힌다. 세션마다 붙는 설명 비용은 audit 약 630, tax 약 970, career 약 60 토큰이다.
+- 버전 0.18.1(plugin.json · marketplace.json · 양도소득세 SERVER_VERSION).
+
 ## v0.18.0 분야별 설치 · 개선 제안 양식 (2026-11-06)
 
 - 분야별 플러그인 넷을 더했다. `tax`(세무 7) · `accounting`(회계 · 결산 6) · `audit`(감사 4) · `career`(AI면접점검). 전체 플러그인 `finance-ai-skills` 는 그대로 있다. 스킬 폴더와 내용은 바뀌지 않았다.
