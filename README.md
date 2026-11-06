@@ -2,7 +2,11 @@
 
 [![tests](https://github.com/hany202507/finance-ai-skills/actions/workflows/test.yml/badge.svg)](https://github.com/hany202507/finance-ai-skills/actions/workflows/test.yml)
 
-재무·회계·세무 실무에 쓰는 Claude Code 스킬입니다. 하나씩 추가합니다.
+한국 회계사 · 세무사 · 재무팀이 Claude Code 와 Claude 데스크톱 앱에서 쓰는 재무 · 회계 · 세무 · 감사 실무 스킬 모음입니다. MIT 라이선스 오픈소스로 공개하고, 하나씩 추가합니다.
+
+법인세 신고 검토(경정청구 후보), 통합고용세액공제, 부가세 신고서 검토, 양도소득세 예정신고서, 급여대장 · 원천세 전자신고, 세법 · 회계기준 자문 회신, 현금흐름표(직접법 · 간접법), 리스회계(K-IFRS 1116), 월 결산과 더존 업로드, 자금일보, 외부감사 분개 테스트(JET), DART 감사보고서 DSD 푸팅 · 변환을 다룹니다. 일반기업회계기준과 K-IFRS, 국세청 · 법제처 서식 기준입니다.
+
+Claude Code skills for Korean accounting, tax and audit work: corporate tax return review, VAT return review, capital gains tax filing, payroll and withholding tax e-filing, cash flow statements, K-IFRS 16 leases, month-end close, journal entry testing (JET) and DART audit report footing. Documents and answers are in Korean.
 
 실무에서 매달 쓰는 것을 공개합니다. 공통 원칙은 세 가지입니다. 계산은 결정적인 코드가 하고, 판단 근거는 원문으로 남기고, 결과는 AI 와 무관한 방법으로 한 번 더 검산합니다.
 

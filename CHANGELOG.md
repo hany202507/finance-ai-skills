@@ -2,6 +2,12 @@
 
 릴리스 노트는 이 파일에 쌓는다. 버전은 `.claude-plugin/plugin.json` 의 `version` 과 같다.
 
+## v0.18.2 저장소 소개 · 검색어 (2026-11-06)
+
+- README 첫머리에 누가 쓰는지(한국 회계사 · 세무사 · 재무팀), 다루는 업무(법인세 · 부가세 · 양도소득세 · 원천세 · 현금흐름표 · 리스 · 결산 · 분개 테스트 · DART DSD), 기준(일반기업회계기준 · K-IFRS)을 적고 영문 소개 한 문단을 더했다. AI 검색과 GitHub 검색에서 찾히게 하려는 것이다.
+- plugin.json 키워드에 영문 검색어를 더했다(claude-code, claude-skills, corporate tax, capital gains tax, DART 등). 저장소 소개 문구와 토픽 20개도 같은 날 고쳤다.
+- 스킬 내용은 바뀌지 않았다. 버전 0.18.2(plugin.json · marketplace.json · 양도소득세 SERVER_VERSION).
+
 ## v0.18.1 분야별 플러그인이 로드되지 않던 것 (2026-11-06)
 
 - 0.18.0 의 분야별 플러그인 넷이 설치는 되지만 「failed to load」 로 떴다. 마켓플레이스 항목의 `"strict": false` 와 `.claude-plugin/plugin.json` 이 함께 있으면 Claude Code 가 둘이 부딪힌다고 본다. `strict` 를 빼서 고쳤다. `claude plugin validate` 는 이것을 잡지 못한다.
