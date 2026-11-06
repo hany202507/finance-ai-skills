@@ -290,6 +290,58 @@ def _직접법(r):
         후보 = [x for x in lines if 계정[x["코드"]]["성격"] in ("명확", "잉여금")]
         return max(후보, key=lambda x: abs(효과(x)), default=None)
 
+    def 원천구성(v, i, d):
+        """추적 줄 v[i](차-대 = d)가 생긴 원천 전표를 활동별 순액 묶음으로 나눈다. 결제 금액은 이 무게 비율로 나눈다.
+
+        줄마다 총액 비율로 나누면 틀린다. 장부가 0 인 기계를 1,100(부가세 100 포함)에 팔면 반대쪽 줄은 기계 2,000 ·
+        처분이익 1,000 · 부가세 100 이라 355 / 710 / 35 로 나뉜다. 그래서
+          1. 같은 활동 · 같은 항목(결제 방향 기준)의 줄은 차변 · 대변을 상계해 한 묶음으로 둔다(기계 - 누계액 + 처분손익 = 처분대금).
+          2. 부가세 같은 부속 줄은 실제 금액을 그 전표의 명확 묶음들에 순액 비율로 얹는다(활동이 섞이면 비율대로 따라간다).
+          3. 다른 추적 줄은 따로 묶어 다시 추적한다. 같은 쪽 추적 줄은 같은 비율을 쓰므로 뺀다.
+          4. 상계 뒤 순액이 추적 줄과 같은 쪽인 묶음(사는 쪽이 뗀 수수료 같은 것)은 버린다. 받은 돈을 총액으로 부풀리지 않는다.
+        돌려주는 것: [{"줄": 대표 줄, "무게": 양수, "묶음": [같이 묶인 다른 계정 이름]}]
+        """
+        묶음 = {}
+        부속 = []
+        for j, y in enumerate(v):
+            b = y["차변"] - y["대변"]
+            if j == i or b == 0:
+                continue
+            a = 계정[y["코드"]]
+            if a["성격"] == "추적":
+                if b * d < 0:
+                    묶음[("추적", j)] = [y]
+                continue
+            if a["성격"] in ("부속", "환율"):
+                부속.append(y)
+                continue
+            묶음.setdefault((a["활동"], a["유입"] if d > 0 else a["유출"]), []).append(y)   # 결제 현금의 방향은 d 와 같다
+        순 = {k: sum(y["차변"] - y["대변"] for y in ys) for k, ys in 묶음.items()}
+        명확 = [k for k in 묶음 if k[0] != "추적" and 순[k] * d < 0]
+        if 명확:
+            for y in 부속:
+                for k, e in zip(명확, 정수배분(y["차변"] - y["대변"], [abs(순[k]) for k in 명확])):
+                    순[k] += e
+                    if e:
+                        묶음[k].append(y)
+        else:
+            for y in 부속:
+                k = ("부속", id(y))
+                묶음[k], 순[k] = [y], y["차변"] - y["대변"]
+        out = []
+        for k, ys in 묶음.items():
+            if 순[k] * d >= 0:
+                continue
+            대표 = max(ys, key=lambda y: (계정[y["코드"]]["성격"] not in ("부속", "환율"), (y["차변"] - y["대변"]) * d < 0,
+                                         abs(y["차변"] - y["대변"])))
+            이름 = []
+            for y in ys:
+                n = 계정[y["코드"]]["계정"]
+                if y is not 대표 and n != 계정[대표["코드"]]["계정"] and n not in 이름:
+                    이름.append(n)
+            out.append({"줄": 대표, "무게": abs(순[k]), "묶음": 이름})
+        return out
+
     # ── 원천 풀: 비현금분의 추적 계정 줄. 역분개(부호만 반대인 같은 금액)는 먼저 서로 지운다
     원천 = defaultdict(list)
     for k, v in r.비현금부.items():
@@ -299,7 +351,7 @@ def _직접법(r):
             d = x["차변"] - x["대변"]
             if d == 0:
                 continue
-            구성 = [y for j, y in enumerate(v) if j != i and (y["차변"] - y["대변"]) * d < 0]
+            구성 = 원천구성(v, i, d)
             if not 구성:
                 continue
             원천[(x["코드"], 1 if d > 0 else -1)].append(
@@ -353,16 +405,17 @@ def _직접법(r):
 
     def 소비(u, 금액):
         u["남은"] -= abs(금액)
-        return list(zip(u["구성"], 정수배분(금액, [abs(y["차변"] - y["대변"]) for y in u["구성"]])))
+        return [(g["줄"], e, g["묶음"]) for g, e in zip(u["구성"], 정수배분(금액, [g["무게"] for g in u["구성"]]))]
 
     def 분류_원천(줄들, 경로, 원천id, 방법, 깊이, 기반):
         out = []
-        주 = 주계정([y for y, _ in 줄들])
-        for y, 금액 in 줄들:
+        주 = 주계정([y for y, _, _ in 줄들])
+        섞임 = len({계정[y["코드"]]["활동"] for y, e, _ in 줄들 if e and 계정[y["코드"]]["성격"] != "추적"}) > 1
+        for y, 금액, 묶음 in 줄들:
             if 금액 == 0:
                 continue
             a = 계정[y["코드"]]
-            p = 경로 + [a["계정"]]
+            p = 경로 + [a["계정"] + (f"({'·'.join(묶음)} 포함)" if 묶음 else "")]
             if a["성격"] == "추적":
                 if 깊이 < 최대깊이:
                     out += _추적1(y["코드"], 금액, y["차변"] - y["대변"], y["일자"], y["거래처"], p, 원천id, 깊이 + 1,
@@ -379,7 +432,8 @@ def _직접법(r):
                 활, 항 = 영업, "기타 영업활동"
             else:
                 활, 항 = 항목(y["코드"], 금액)
-            out.append(dict(기반, 금액=금액, 활동=활, 항목=항, 경로=" → ".join(p), _원천=(원천id, 0), 방법=방법, 확인=""))
+            out.append(dict(기반, 금액=금액, 활동=활, 항목=항, 경로=" → ".join(p), _원천=(원천id, 0), 방법=방법,
+                            확인="원천 전표에 활동이 여럿이라 활동별 순액 비율로 나눴다" if 섞임 else ""))
         return _합치기(out)
 
     def 원천판정(원, x):
@@ -733,24 +787,40 @@ def _간접법(r):
         for x in v:
             m[x["코드"]] += 효과(x)
     for k, v in r.비현금부.items():
-        활동들 = {계정[x["코드"]]["활동"] for x in v}
+        # 부가세 같은 부속 줄은 직접법과 같게 그 전표의 명확 줄 활동을 순액 비율로 따라간다. 계정 기본활동(영업)으로 두면
+        # 기계를 외상으로 팔고 받은 부가세가 영업 「부가세예수금의 증가」로 남고, 미수금은 그만큼 덜 빠져 직접법과 줄이 어긋난다
+        활순 = defaultdict(int)
+        for x in v:
+            if 계정[x["코드"]]["성격"] in ("명확", "잉여금"):
+                활순[계정[x["코드"]]["활동"]] += 효과(x)
+        활순 = {활: s for 활, s in 활순.items() if s}
+        영업몫 = {}
+        활동들 = set()
+        for x in v:
+            if 계정[x["코드"]]["성격"] in ("부속", "환율") and 활순:
+                나눔 = dict(zip(활순, 정수배분(효과(x), [abs(s) for s in 활순.values()])))
+                영업몫[id(x)] = 나눔.get(영업, 0)
+                활동들 |= {활 for 활, e in 나눔.items() if e} or set(활순)
+            else:
+                영업몫[id(x)] = 효과(x) if 계정[x["코드"]]["활동"] == 영업 else 0
+                활동들.add(계정[x["코드"]]["활동"])
         if len(활동들) <= 1:
             continue
-        비영업 = [x for x in v if 계정[x["코드"]]["활동"] != 영업]
-        영업줄 = [x for x in v if 계정[x["코드"]]["활동"] == 영업]
-        제외 = {id(x): 효과(x) for x in 비영업}
-        필요 = sum(효과(x) for x in 영업줄)
+        비영업 = [x for x in v if 효과(x) - 영업몫[id(x)]]
+        영업줄 = [x for x in v if 영업몫[id(x)]]
+        제외 = {id(x): 효과(x) - 영업몫[id(x)] for x in 비영업}
+        필요 = sum(영업몫[id(x)] for x in 영업줄)
         if 필요:
             부호 = 1 if 필요 > 0 else -1
             for 층 in (("자산", "부채", "자본"), ("수익", "비용")):
                 if not 필요:
                     break
-                후보 = [x for x in 영업줄 if 계정[x["코드"]]["구분"] in 층 and 효과(x) * 부호 > 0]
-                용량 = sum(abs(효과(x)) for x in 후보)
+                후보 = [x for x in 영업줄 if 계정[x["코드"]]["구분"] in 층 and 영업몫[id(x)] * 부호 > 0]
+                용량 = sum(abs(영업몫[id(x)]) for x in 후보)
                 if not 용량:
                     continue
                 뺄 = min(abs(필요), 용량) * 부호
-                for x, y in zip(후보, 정수배분(뺄, [abs(효과(x)) for x in 후보])):
+                for x, y in zip(후보, 정수배분(뺄, [abs(영업몫[id(x)]) for x in 후보])):
                     제외[id(x)] = 제외.get(id(x), 0) + y
                 필요 -= 뺄
         손익 = any(계정[x["코드"]]["구분"] in ("수익", "비용") and 제외.get(id(x)) for x in v)
