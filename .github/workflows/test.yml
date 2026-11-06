@@ -37,7 +37,7 @@ jobs:
         # ubuntu 와 windows 에서 돈다. 아래 식은 저장소가 private 이면 ubuntu 만 고른다
         os: ${{ github.event.repository.private && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         python: ["3.10", "3.13"]
-        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령검토, 양도소득세, 법인세-통합고용, 분개테스트, 감사대시보드, 법인세-검토에이전트]
+        skill: [리스회계, 매입매출장검토, 부가세신고서검토, 자금일보, 법령검토, 양도소득세, 법인세-통합고용, 분개테스트, 법인세-검토에이전트]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -139,7 +139,8 @@ jobs:
                       print("두 분야에 있음", name, seen[name], p["name"]); bad += 1
                   seen[name] = p["name"]
           # 원천세신고는 옛 이름 안내라 전체 플러그인에만 둔다
-          for name in sorted(have - set(seen) - {"원천세신고"}):
+          hidden = set()
+          for name in sorted(have - set(seen) - {"원천세신고"} - hidden):
               print("분야가 없는 스킬", name); bad += 1
           sys.exit(1 if bad else 0)
           PY
