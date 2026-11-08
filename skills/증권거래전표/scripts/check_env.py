@@ -1,0 +1,79 @@
+"""설치 확인: 이 스킬이 쓰는 프로그램과 패키지가 있는지 본다. 거래 자료는 읽지 않는다.
+
+python scripts/check_env.py
+
+| 필요 | 무엇에 | 없으면 |
+|---|---|---|
+| 파이썬 3.10 이상, openpyxl · xlrd · pdfplumber | 엑셀 · 글자 있는 PDF 읽기, 워크북 만들기 | 실행 안 됨 |
+| Excel(Windows) 또는 LibreOffice | 워크북 수식을 다시 계산해 검산하고 위하고 업로드 파일 쓰기 | 워크북은 나오지만 검산 · 업로드 파일이 없다 |
+| Node.js(npx) | kordoc 으로 PDF 읽기(첫 후보) | pdfplumber 로만 읽는다 |
+| requirements-ocr.txt 패키지 | 스캔 PDF · 화면 캡처 | 스캔본을 못 읽는다 |
+| 인터넷(한국은행 ECOS) | 환율표 받기(fetch_rates.py) | 환율표를 직접 만들어 넣는다 |
+"""
+import importlib
+import platform
+import shutil
+import subprocess
+import sys
+
+
+def ok(b):
+    return "있음" if b else "없음"
+
+
+def has(mod):
+    try:
+        importlib.import_module(mod)
+        return True
+    except Exception:
+        return False
+
+
+def excel():
+    if platform.system() != "Windows":
+        return False
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "$x = New-Object -ComObject Excel.Application; $x.Quit(); 'ok'"],
+                           capture_output=True, text=True, timeout=60)
+        return "ok" in r.stdout
+    except Exception:
+        return False
+
+
+def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+    py = sys.version_info >= (3, 10)
+    core = {m: has(m) for m in ("openpyxl", "xlrd", "pdfplumber")}
+    ocr = {m: has(m) for m in ("cv2", "numpy", "PIL", "rapidocr", "onnxruntime")}
+    xl = excel()
+    lo = bool(shutil.which("soffice") or shutil.which("soffice.exe"))
+    npx = bool(shutil.which("npx") or shutil.which("npx.cmd"))
+    rows = [
+        ("파이썬 3.10 이상", ok(py), "필수"),
+        *[(f"패키지 {m}", ok(v), "필수") for m, v in core.items()],
+        ("Excel(Windows)", ok(xl), "재계산 · 업로드 파일(둘 중 하나)"),
+        ("LibreOffice(soffice)", ok(lo), "재계산 · 업로드 파일(둘 중 하나)"),
+        ("Node.js(npx, kordoc)", ok(npx), "선택: PDF 첫 후보"),
+        ("OCR 패키지(requirements-ocr.txt)", ok(all(ocr.values())), "선택: 스캔 PDF · 캡처 이미지"),
+    ]
+    w = max(len(r[0]) for r in rows)
+    for name, v, note in rows:
+        print(f"{name.ljust(w)}  {v}  {note}")
+    need = py and all(core.values())
+    print()
+    if not need:
+        print("필수 항목이 빠졌다. 스킬 폴더에서 pip install -r requirements.txt 를 실행한다")
+        return 1
+    if not (xl or lo):
+        print("Excel 도 LibreOffice 도 없다. 워크북은 만들지만 수식 검산과 위하고 업로드 파일은 만들지 못한다")
+        return 2
+    print("준비됨. 증권사 거래내역 파일 하나로 시작한다")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

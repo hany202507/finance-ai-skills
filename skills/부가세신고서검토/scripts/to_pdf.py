@@ -107,11 +107,11 @@ def _is_browser_error(pdf_path):
 
     PyMuPDF 가 없으면 확인하지 않는다. 그 경우 크기만 보고 통과시킨다."""
     try:
-        import fitz
+        import pymupdf
     except ImportError:
         return False
     try:
-        with fitz.open(pdf_path) as doc:
+        with pymupdf.open(pdf_path) as doc:
             if doc.page_count != 1:
                 return False
             head = doc[0].get_text()[:400]
@@ -290,12 +290,12 @@ def read_return_pdf(path):
 
     못 읽은 란은 0 으로 채우지 않고 빼고 돌려준다. 회계사가 읽은 값을 확인해야 한다."""
     try:
-        import fitz
+        import pymupdf
     except ImportError:
         return None, "PyMuPDF 가 없습니다. pip install pymupdf"
 
     out, cx, old_form = {}, None, False
-    with fitz.open(path) as doc:
+    with pymupdf.open(path) as doc:
         for pno, pg in enumerate(doc):
             if pno == 0:
                 m = re.search(r"개정\s*(\d{4})", pg.get_text())

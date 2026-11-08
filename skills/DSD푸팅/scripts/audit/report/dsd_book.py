@@ -1,11 +1,11 @@
 """DSD 푸팅 엑셀(2026-10-12). 부분마다 시트 하나: 왼쪽에 원문(문단과 표), 표 바로 오른쪽에 합계 검증, 그 오른쪽에 표 사이 연결의 검증 줄,
 그 오른쪽에 기존 판 대비 차이.
 
-표 안 합계 검증은 합계 칸과 같은 줄, 표 오른쪽의 같은 차례 열에 TRUE · 단수 · FALSE 로 보인다. 재무상태표가 A~C 열이면
+표 안 합계 검증은 합계 칸과 같은 줄, 표 오른쪽의 같은 차례 열에 TRUE · 단수 · FALSE 로 보인다(대표 10-13). 재무상태표가 A~C 열이면
 유동자산 줄의 D · E 열이 당기 · 전기 합계가 맞는지다. 칸의 수식이 합계 칸과 더한 칸들을 직접 가리킨다.
 단수(차이가 표시 단위로 MINOR 이하, 천원 · 백만원 표만)는 노랑, FALSE 는 빨강이다.
 검증 줄의 값 · 차이 · 결과와 기존 판 대비 차이는 모두 수식이다. 오버뷰는 시트마다 네 가지를 신호등으로 보인다:
-합계(표 안 소계 · 합계), 레퍼(표 사이 연결과 계산), 전기(작년 보고서와 일치), 버전(기존 판 대비 바뀐 곳, 바뀐 곳이 있으면 노랑).
+합계(표 안 소계 · 합계), 레퍼(표 사이 연결과 계산), 전기(작년 보고서와 일치), 버전(기존 판 대비 바뀐 곳, 바뀐 곳이 있으면 노랑. 대표 10-15).
 신호등은 조건부 서식 아이콘이고 칸의 값은 각 시트의 결과 열과 「바뀜」 열을 세는 수식이다. 바뀐 칸과 문단은 원문에서 빨간 글자가 된다.
 두 시트에 걸친 연결은 검증 줄의 칸이 있는 시트에 한 번 적고, 대사 대상이 있는 시트에는 결과를 끌어온 줄을 둔다.
 기존 판 원문은 「전_」, 작년 보고서 원문은 「작년_」, 정산표는 「조서_」, 함께 낸 다른 보고서는 「짝_」 시트에 값으로 둔다.
@@ -1040,7 +1040,7 @@ TODO_WTB = "정산표 대사(리드 최종 숫자, 늘 보는 항목)"
 
 
 def wtb_summary(checks: list[Check], wtb: Doc | None, unresolved: list) -> list[str]:
-    """「볼 것」 맨 아래 정산표 대사 줄(2026-10-26). 정산표를 주지 않았거나 모두 맞아도 늘 쓴다.
+    """「볼 것」 맨 아래 정산표 대사 줄(2026-10-26, TASK-4.2). 정산표를 주지 않았거나 모두 맞아도 늘 쓴다.
     감사한 숫자와 맞추는 것이 푸팅의 첫 순서라, 「볼 것」 이 비어 있을 때 정산표와 맞춰 봤는지가 보이지 않던 것을 채운다."""
     if wtb is None:
         return ["정산표 없이 돌렸다. 본표를 감사한 숫자(8100B · 감사인 WTB 의 최종 금액)와 맞추지 않았으므로 「dsd 안에서 서로 맞는다」 까지만 말할 수 있다. "
@@ -1424,6 +1424,37 @@ def done_text(checks: list[Check], n_wp: int) -> str:
     return text
 
 
+def _company(doc: Doc) -> str:
+    """재무제표 머리 문단 「주식회사 가온정밀 (단위 : 원)」 에서 회사 이름."""
+    for p in doc.parts[:4]:
+        for kind, x in p.items:
+            if kind == "p" and isinstance(x, str):
+                m = re.match(r"^\s*(.+?)\s*\(\s*단\s*위", x)
+                if m and re.search(r"주식회사|\(주\)|㈜|회사", m.group(1)) and len(m.group(1)) <= 40:
+                    return m.group(1).strip()
+    return ""
+
+
+def conclusion_draft(live: list[Check], states: list, with_wtb: bool) -> str:
+    """표지 결론 칸 위의 엔진 초안. 숫자는 검증 결과에서만 센다. 회계사가 고쳐 결론 칸에 적는다."""
+    n = len(live)
+    false = [c for c, s in zip(live, states) if s is False]
+    ask = sum(1 for s in states if s == ASK_TEXT)
+    wtb_checks = [c for c in live if c.id.startswith("조서|")]
+    wtb_false = sum(1 for c in false if c.id.startswith("조서|"))
+    causes = list(dict.fromkeys(c.cause for c in false if c.cause))
+    no_cause = sum(1 for c in false if not c.cause)
+    wtb_txt = (f"정산표 대사 {len(wtb_checks)}건 가운데 맞지 않는 과목은 {wtb_false}건이다. " if with_wtb and wtb_checks
+               else "정산표 없이 돌려 감사한 숫자와는 맞추지 않았다. " if not with_wtb else "")
+    if not false and not ask:
+        return f"검증 {n}건이 모두 맞는다. {wtb_txt}문장 검토 지적에 O · X 를 적고 「조서 대사」 숫자를 조서와 맞춘 뒤 결론을 적는다."
+    head = f"검증 {n}건 가운데 숫자 오류 {len(false)}건과 확인 {ask}건이 남았다. "
+    if causes:
+        head += f"원인 {len(causes) + (1 if no_cause else 0)}가지: {', '.join(causes[:4])}" + (" 외" if len(causes) > 4 else "") + \
+                (f", 판정을 적지 않은 숫자 오류 {no_cause}건" if no_cause else "") + ". "
+    return head + wtb_txt + "회사가 고친 판으로 다시 돌려 숫자 오류가 0건이 된 것을 본 뒤 결론을 적는다."
+
+
 def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, prior: Doc | None, wtb: Doc | None, pair: Doc | None,
            ratios: dict, n_wp: int, n_wpc: int = 0, ai_line: str = "") -> None:
     """「표지」 시트: 조서로 편철할 때의 표지. 조서 번호 · 회사 · 결론 · 작성자 · 검토자 · 일자는 회계사가 적는다.
@@ -1435,7 +1466,7 @@ def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, pri
     total_cells = sum(len(_money_cells(p)) for p in doc.parts)
     hit = sum(r * len(_money_cells(p)) for p in doc.parts if (r := ratios.get(p.key)) is not None)
     rows = [
-        ("조서 번호", None, True), ("회사", None, True), ("대상 파일", doc.source, False),
+        ("조서 번호", "8820", True), ("회사", _company(doc) or None, True), ("대상 파일", doc.source, False),
         ("견준 자료", " · ".join(x for x in ((f"작년 보고서 {prior.source}" if prior is not None else ""), (f"정산표 {wtb.source}" if wtb is not None else ""),
                                           (f"기존 판 {prev.source}" if prev is not None else ""), (f"함께 본 보고서 {pair.source}" if pair is not None else "")) if x) or "없음", False),
         ("한 일", done_text(checks, n_wp), False),
@@ -1480,6 +1511,11 @@ def _cover(wb, lay: Layout, doc: Doc, checks: list[Check], prev: Doc | None, pri
         r += 1
     r += 1
     ws.cell(r, 1, "결론").font = wp.font(bold=True, size=11)
+    r += 1
+    ws.cell(r, 1, "엔진 초안").font = wp.font(size=9, color=wp.MUTED)    # 회계사가 고쳐 쓰는 출발점(2026-11-06 90점 조서 평가: 결론 칸이 비어 있었다)
+    x = ws.cell(r, 2, conclusion_draft(live, states, wtb is not None))
+    x.font, x.alignment = wp.font(size=9, color=wp.MUTED), Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[r].height = 64
     r += 1
     x = ws.cell(r, 1, None)
     x.fill = wp.FILL_IN
@@ -1613,7 +1649,7 @@ def read_marks(path: Path) -> dict:
     out = {}
     if not Path(path).exists():
         return out
-    wb = load_workbook(path, read_only=True)          # 값만 읽는다. 한 상장사 반기 별도 엑셀 1.3초 → 0.5초(2026-10-22 실행 시간 P5)
+    wb = load_workbook(path, read_only=True)          # 값만 읽는다. 삼성전자 반기 별도 엑셀 1.3초 → 0.5초(2026-10-22 실행 시간 P5)
 
     def at(row, j):
         return row[j] if j < len(row) else None

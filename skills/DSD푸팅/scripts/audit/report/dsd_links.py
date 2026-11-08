@@ -59,7 +59,7 @@ class Check:
     zero_left: bool = False        # 왼쪽 칸이 보고서에 없어 0 으로 견준다(12단계: 처분계산서에 이익준비금 적립 줄이 없음). 칸 주소는 그 줄이 들어갈 곳
 
 
-MINOR = 3     # 단수 차이로 보는 한도(표시 단위). 천원 단위 주석끼리 1~3 다른 연결이 공시 보고서 세 건에서 35건 나왔다
+MINOR = 3     # 단수 차이로 보는 한도(표시 단위). 천원 단위 주석끼리 1~3 다른 연결이 공시 보고서 세 건에서 35건 나왔다(대표 10-13: 노랑으로 구분)
 
 
 def failed(c: Check) -> bool:
@@ -88,14 +88,14 @@ def asks(c: Check) -> bool:
 
 
 def sampled(c: Check) -> bool:
-    """독립 검증을 하지 않고 회계사가 표본으로 보는 「늘 나는 차이」(2026-10-22 결정). 늘 나는 차이 유형(usual)이 붙은 검증이
+    """독립 검증을 하지 않고 회계사가 표본으로 보는 「늘 나는 차이」(2026-10-22 대표 결정). 늘 나는 차이 유형(usual)이 붙은 검증이
     판정까지 「확인」 으로 끝난 것만이다. 숫자 오류 · 표시 오류 · 설명 부족 · 작년 보고서 불일치로 판정되면 apply_finding 이 usual 을 지우고,
-    판정이 없거나 근거가 약한 연결이면 여기 들지 않는다. 한 상장사 2026 반기 별도에서 이런 확인 9건의 독립 검증에 10분이 들었고 결론이 모두 같았다."""
+    판정이 없거나 근거가 약한 연결이면 여기 들지 않는다. 삼성전자 2026 반기 별도에서 이런 확인 9건의 독립 검증에 10분이 들었고 결론이 모두 같았다."""
     return asks(c) and bool(c.usual) and not c.weak and c.finding.startswith("확인")
 
 
 def engine_checked(c: Check) -> bool:
-    """독립 검증을 하지 않는 숫자 오류(2026-10-22 결정). 판정이 숫자 오류이고 엔진이 「근거 확인」 을 낸 것이다. 근거 칸(검증한 두 칸이 아닌
+    """독립 검증을 하지 않는 숫자 오류(2026-10-22 대표 결정). 판정이 숫자 오류이고 엔진이 「근거 확인」 을 낸 것이다. 근거 칸(검증한 두 칸이 아닌
     작년 보고서 · 다른 주석 · 정산표 칸)으로 계산한 금액이 판정의 맞는 숫자와 같다는 것을 엔진이 이미 확인했다. 부호만 바꾸는 고침은 작년 보고서의
     같은 줄만 근거로 받는다(「근거 확인(부호)」). 「고칠 쪽 미정」 은 계속 독립 검증한다. 가온정밀 모의 dsd 의 FALSE 1건이 이 경우였다."""
     return failed(c) and c.finding.startswith(("숫자 오류", "보고서 불일치")) and c.fix_note.startswith("근거 확인")
@@ -232,7 +232,7 @@ def is_rate(name: str) -> bool:
     t = norm(name)
     if re.search(r"환율(변동|차이|효과|의변동|로인한)", t):      # 「환율변동효과」 는 변동표의 금액 줄이다
         return False
-    if "율유형" in t:            # 「이자율 유형 변동이자율」 은 금액을 이자율 종류로 나눈 XBRL 열이다(한 상장사 2026 반기 주석4-8 단기차입금, 2026-11-04)
+    if "율유형" in t:            # 「이자율 유형 변동이자율」 은 금액을 이자율 종류로 나눈 XBRL 열이다(씨앤씨인터내셔널 2026 반기 주석4-8 단기차입금, 2026-11-04)
         return False
     return "%" in t or "율" in t
 
@@ -616,7 +616,7 @@ _LOSS_MARK = re.compile(r"\((?:\*|주)\s*\d*\)|\[[^\]]*\]|\s")
 
 def income_sign(label: str, v) -> int:
     """이익 방향으로 읽는 배수. 「당기순손실」 처럼 손실만 적는 줄의 양수는 손실 금액이라 -1 이다.
-    「당기순이익(손실)」 · 「당기순이익」 줄과 음수로 적은 손실 줄은 적힌 부호 그대로다(DART 정정공시 짝 · 실제 회사 자료의 보고서 13건, 검증 26건이 손익계산서에 손실을 양수로 적었다)."""
+    「당기순이익(손실)」 · 「당기순이익」 줄과 음수로 적은 손실 줄은 적힌 부호 그대로다(DART 정정공시 짝 · 샘플 A 의 보고서 13건, 검증 26건이 손익계산서에 손실을 양수로 적었다)."""
     return -1 if _isnum(v) and v > 0 and _LOSS_MARK.sub("", str(label)).endswith("순손실") else 1
 
 
@@ -740,7 +740,7 @@ def build(doc: Doc, defs: dict | None = None, amount_links: bool = False, other:
 
     표 사이 연결(레퍼)은 AI 가 주석을 읽고 뜻으로 정의해 defs 의 links 에 넣은 것을 쓴다(dsd_ai). amount_links 를 켜면
     금액이 같은 칸을 엔진이 찾아 함께 건다(dsd_refs). 금액 대조는 뜻을 모르고 금액이 같은 칸만 이어서 틀린 숫자를 잡지 못하고
-    우연히 같은 칸(만기분석의 명목현금흐름, 법인세가 0 일 때의 세전손실)을 건다. 그래서 기본은 끄고 AI 의 참고와 채점에 쓴다."""
+    우연히 같은 칸(만기분석의 명목현금흐름, 법인세가 0 일 때의 세전손실)을 건다. 그래서 기본은 끄고 AI 의 참고와 채점에 쓴다(대표 10-12)."""
     defs = defs or {}
     stored = {(s["table"], tuple(s.get("sig") or [])): s for s in defs.get("structures", [])}
     sums, no_sums = list(defs.get("sums", [])), list(defs.get("no_sums", []))      # AI 가 표를 읽고 정한 합계 구조와, 합계가 아니라고 한 줄 · 열
@@ -836,7 +836,7 @@ def _scale(t: Table, q: Table, rows: dict, a: int, b: int) -> float:
                 continue
             v, w = t.nums[i][a], q.nums[j][b]
             if not (_isnum(v) and _isnum(w) and v and w):      # 0 이 든 칸은 배수를 말해 주지 않는다. 올해 0 · 작년 351,882 를
-                continue                                        # ×0.000001 에서 맞는 줄로 세어 작년 146,134,773 을 146 으로 견줬다(한 상장사 2025 연결)
+                continue                                        # ×0.000001 에서 맞는 줄로 세어 작년 146,134,773 을 146 으로 견줬다(더존비즈온 2025 연결)
             if k == 1:
                 hit = v == w
             else:                                   # 큰 단위에서 맞춘다
@@ -887,7 +887,7 @@ def _same_name_rows(t: Table, q: Table, rows: dict, pairs: list) -> None:
         left = [i for i in left if any(_isnum(t.nums[i][a]) and t.nums[i][a] for a, _ in pairs)]      # 견줄 금액이 없는 줄(0 · 빈칸)은 짝을 찾지 않는다
         free = [j for j in free if any(_isnum(q.nums[j][b]) and q.nums[j][b] for _, b in pairs)]
         if len(left) == 1 and len(free) == 1 and _text_sig(t, left[0]) == _text_sig(q, free[0]):
-            rows[left[0]] = free[0]                 # 글자 칸(채무자 · 대출기간 · 차입처)까지 같을 때만 잇는다(한 상장사 2025 PF 보증 표에서 다른 사업장끼리 이었다)
+            rows[left[0]] = free[0]                 # 글자 칸(채무자 · 대출기간 · 차입처)까지 같을 때만 잇는다(현대건설 2025 PF 보증 표에서 다른 사업장끼리 이었다)
 
 
 def _text_sig(t: Table, i: int) -> tuple:
@@ -1005,7 +1005,7 @@ def _ai_rows(t: Table, q: Table, rows: dict, pairs: list) -> None:
             rows[i] = j
 
 
-# 전기 대사의 XBRL 항목과 표현 차이 사전(2026-10-22 실행 시간 P4). 한 상장사 2026 반기 별도에서 AI 가 prior_pairs 30건으로 메운 31줄을 엔진이 먼저 잇는다
+# 전기 대사의 XBRL 항목과 표현 차이 사전(2026-10-22 실행 시간 P4). 삼성전자 2026 반기 별도에서 AI 가 prior_pairs 30건으로 메운 31줄을 엔진이 먼저 잇는다
 _XBRL_PRIOR = re.compile(r"^(BP|P)(FY\d{4})([ed])([A-Z0-9]+)(.*)$", re.S)
 
 
@@ -1028,7 +1028,7 @@ def xbrl_prior(fact: tuple) -> list[tuple]:
 def _xbrl_rows(t: Table, q: Table, rows: dict, cols: list) -> None:
     """XBRL 항목이 같은 줄을 잇는다. rows 를 고친다. 같은 항목은 같은 사실이라 이름 짝보다 앞선다. 다만 이름 짝이 가리킨 작년 칸에도 항목이 있고
     그것이 다를 때만 바꾼다. 작년 표의 같은 열에 그 항목이 한 줄뿐일 때만 잇는다. 줄 이름 키(row_keys)가 앞 두 칸만 써서
-    셋째 칸만 다른 줄이 같은 키가 되면 이름으로 잇지 못한다(한 상장사 2026 반기 별도 주석 19-2 판매비와관리비 열한 줄, 21-2 이자수익 · 이자비용)."""
+    셋째 칸만 다른 줄이 같은 키가 되면 이름으로 잇지 못한다(삼성전자 2026 반기 별도 주석 19-2 판매비와관리비 열한 줄, 21-2 이자수익 · 이자비용)."""
     if not t.xbrl or not q.xbrl:
         return
     idx: dict = {}
@@ -1087,7 +1087,7 @@ def _alias_rows(t: Table, q: Table, rows: dict) -> None:
 
 def _xbrl_lost(doc: Doc, prior: Doc, tag: str, out: list[Check], lost: list[dict]) -> list[dict]:
     """줄 짝으로 작년 칸을 찾지 못한 전기 금액을 작년 보고서 전체에서 같은 XBRL 항목으로 찾는다. 찾은 칸은 out 에 검증을 더하고,
-    남은 「못 찾은 줄」 을 돌려준다. 표 짝을 찾지 못한 주석(한 상장사 2026 반기 별도 주석 3-2 · 3-4 · 16-2 ↔ 작년 사업보고서 4-1 · 4-3 · 19-1)에 쓴다.
+    남은 「못 찾은 줄」 을 돌려준다. 표 짝을 찾지 못한 주석(삼성전자 2026 반기 별도 주석 3-2 · 3-4 · 16-2 ↔ 작년 사업보고서 4-1 · 4-3 · 19-1)에 쓴다.
     작년 보고서에 같은 항목이 여러 칸이면 처음 나온 칸과 견준다(같은 사실이라 금액이 같아야 한다)."""
     idx: dict = {}
     for q in prior.tables():
@@ -1243,7 +1243,7 @@ def _period_cols(t: Table, label: str = "") -> dict:
     """{숫자 열: (기간 이름, 기간 이름을 뺀 열 이름)}. 열 이름에 「전반기 3개월」 처럼 기간이 있으면 그것을, 없으면 표 위 기간 이름(label)을 쓴다.
     「당기손익인식금융자산」 의 「당기」 는 기간이 아니다(뒤에 빈칸 · 괄호 · 숫자가 오거나 끝일 때만 기간으로 읽는다).
     숫자가 하나도 없는 열(줄 이름이 둘인 표의 둘째 이름 칸)은 뺀다. 예전에는 작년 주석4-8 의 이름 칸을 올해 주석4-9 의 금액 열과 짝지어
-    「찾지 못함」 이 났다(한 상장사 2026 반기, 2026-11-04)."""
+    「찾지 못함」 이 났다(씨앤씨인터내셔널 2026 반기, 2026-11-04)."""
     out = {}
     for j in range(1, len(t.header)):
         if not any(_isnum(r[j]) for r in t.nums if j < len(r)):
@@ -1268,7 +1268,7 @@ _XBRL_WORDS = re.compile(r"^(?:장부금액|공시금액|금액)+$")
 
 def _same_core(a: str, b: str) -> bool:
     """기간을 뺀 열 이름이 같은가. 한쪽이 다른 쪽의 끝이면 앞에 붙은 말이 XBRL 의 「장부금액 · 공시금액」 일 때만 같다고 본다
-    (올해 「장부금액 공시금액 3개월」 = 작년 「3개월」). 한 상장사 2026 반기의 「부문의 합계 연결실체 내 내부거래조정 지역 합계」 를
+    (올해 「장부금액 공시금액 3개월」 = 작년 「3개월」). 삼성전자 2026 반기의 「부문의 합계 연결실체 내 내부거래조정 지역 합계」 를
     작년 「지역 합계」 와 짝지었다(11단계 재평가)."""
     if a == b:
         return True
@@ -1296,7 +1296,7 @@ def _agree(t: Table, q: Table, rows: dict, cols: list) -> float:
 
 def _loose_rows(t: Table, q: Table, rows: dict) -> None:
     """이름 짝에서 빠진 줄을 느슨한 이름(_loose_key)으로 잇는다. rows 를 고친다. 느슨한 이름이 양쪽 표에 하나뿐인 줄만 잇는다
-    (한 상장사 2025 주석8-6 「(주)가나다」 ↔ 작년 「(주)가나다[주]」)."""
+    (더존 2025 주석8-6 「(주)테크핀레이팅스」 ↔ 작년 「(주)테크핀레이팅스[주]」)."""
     from .dsd_compare import row_keys
 
     a, b = [_loose_key(k) for k in row_keys(t)], [_loose_key(k) for k in row_keys(q)]
@@ -1312,7 +1312,7 @@ def _loose_rows(t: Table, q: Table, rows: dict) -> None:
 
 def _more_rows(t: Table, q: Table, rows: dict) -> None:
     """짝지은 두 표에서 matcher 가 잇지 않은 줄을 줄 이름 짝(dsd_compare._pairs)과 느슨한 이름(_loose_rows)으로 더 잇는다. rows 를 고친다.
-    이미 이은 작년 줄은 다시 쓰지 않는다. 11단계 첫 판은 이 줄들을 다른 작년 표에서까지 찾다가 틀린 표와 짝지었다(한 상장사 주석8-6 ↔ 작년 8-1)."""
+    이미 이은 작년 줄은 다시 쓰지 않는다. 11단계 첫 판은 이 줄들을 다른 작년 표에서까지 찾다가 틀린 표와 짝지었다(더존 주석8-6 ↔ 작년 8-1)."""
     from .dsd_compare import _pairs, row_keys
 
     taken = set(rows.values())
@@ -1328,7 +1328,7 @@ def _cross_cols(tp: dict, qp: dict, n_cols: int, empty: frozenset = frozenset())
     (올해 XBRL 「장부금액 공시금액 3개월」 ↔ 작년 「당반기 3개월」). 올해 표의 숫자 열(n_cols)이 하나면 기간을 뺀 이름이 비었거나
     작년 표에 그 기간의 숫자 열이 하나뿐일 때도 짝짓는다(올해 「위험 유형 시장위험 이자율 유형 변동이자율」 ↔ 작년 「위험 시장위험 이자율위험 …」).
     작년 표에 이름이 같은 열이 둘 이상이면 숫자가 모두 0 이거나 빈 열(empty)은 건너뛴다. 예전에는 첫째 열과 짝지어 작년 주석18-1 의 빈
-    「신한은행」 열(0)과 견줘 거짓 「확인」 이 났다(한 상장사 2026 반기, 2026-11-04)."""
+    「신한은행」 열(0)과 견줘 거짓 「확인」 이 났다(씨앤씨인터내셔널 2026 반기, 2026-11-04)."""
     out, taken = [], set()
     for j, (per, core) in tp.items():
         wants = PERIOD_PAIRS.get(per, ("당" + per[1:],))
@@ -1348,7 +1348,7 @@ def _cross_cols(tp: dict, qp: dict, n_cols: int, empty: frozenset = frozenset())
 
 def doc_span(doc: Doc) -> str:
     """보고서의 기간 종류(반기 · 분기 · 연). 재무상태표 · 손익계산서 · 현금흐름표의 당기 열 이름으로 정한다.
-    본표의 다른 열은 보지 않는다(한 상장사 2025 연결 자본변동표의 열 이름 때문에 감사보고서를 「분기」 로 읽었다)."""
+    본표의 다른 열은 보지 않는다(삼성전자 2025 연결 자본변동표의 열 이름 때문에 감사보고서를 「분기」 로 읽었다)."""
     for name in ("재무상태표", "손익계산서", "현금흐름표"):
         t = doc.table(name)
         a = period_col(t, "당기") if t is not None else None
@@ -1363,7 +1363,7 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
     (「전기말」 ↔ 「당기말」 · 「당기」, 「전기」 ↔ 「당기」). 열 이름이 같거나 거의 같은 표끼리, 같은 머리줄이 여럿이면 줄 이름이 많이 겹치는 표와 짝짓는다.
     줄은 이름으로 짝짓는다. 기간 이름이 맞는 표가 작년 보고서에 없으면 견주지 않는다(반기보고서의 전반기 표를 사업보고서와 견주지 않는다).
     11단계: 반기 주석은 「전기말」, 사업보고서는 같은 표에 「당기」 를 적고 열 이름도 조금씩 달라(「금융자산의 범주 합계」 · 「금융자산, 범주 합계」)
-    한 상장사 2026 반기 주석의 전기 대사가 0건이었다."""
+    씨앤씨인터내셔널 2026 반기 주석의 전기 대사가 0건이었다."""
     from .dsd_compare import _pairs, row_keys
 
     out, lost, done = [], [], done or {}
@@ -1391,7 +1391,7 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
             cands = ([first] + [q for q in old_tabs if q is not first]) if first is not None else old_tabs
             for q in cands:
                 if best is not None and best[1] is first:         # 짝지은 작년 표로 짝이 지어지면 다른 표는 보지 않는다. 짝이 안 지어질 때만 찾는다
-                    break                                         # (한 상장사 2025 주석9-4 는 짝지은 표가 틀려 작년 9-3 을 찾아야 했다)
+                    break                                         # (삼성전자 2025 주석9-4 는 짝지은 표가 틀려 작년 9-3 을 찾아야 했다)
                 if label and q.id in used:
                     continue
                 empty = frozenset(b for b in range(1, len(q.header)) if not any(_isnum(r[b]) and r[b] for r in q.nums if b < len(r)))
@@ -1409,7 +1409,7 @@ def _prior_split_tables(doc: Doc, prior: Doc, m, tag: str, have: set, ai_pairs: 
                 if (share >= 0.5 or len(rows) >= 3) and (best is None or (share, len(cols)) > (best[0], len(best[3]))):
                     if q is not first and not label and _agree(t, q, rows, cols) < 0.5:
                         continue                  # 짝지은 표도 기간 표시도 없이 이름만으로 찾은 다른 표는 금액이 반 넘게 맞을 때만 쓴다
-                    best = (share, q, rows, cols)  # (한 상장사 2025 주석7-4 통화선도 표가 「유동항목 · 비유동항목 · 합계」 만 맞아 작년 7-1 과 짝지어졌다)
+                    best = (share, q, rows, cols)  # (NAVER 2025 주석7-4 통화선도 표가 「유동항목 · 비유동항목 · 합계」 만 맞아 작년 7-1 과 짝지어졌다)
             if best is None:
                 continue
             share, q, rows, cols = best

@@ -1,4 +1,4 @@
-"""DSD 푸팅: 판 비교와 숫자 레퍼 체크를 브라우저에서 보는 HTML 한 파일(2026-10-26).
+"""DSD 푸팅: 판 비교와 숫자 레퍼 체크를 브라우저에서 보는 HTML 한 파일(2026-10-26, 설계 docs/specs/2026-10-26-감사-DSD푸팅-HTML보기-design.md).
 
   build(doc, checks, pdoc, m, old_checks, extra) -> dict      dsd_보기.json 에 쓰는 자료
   render(data, out) -> Path                                   템플릿 dsd_view.html 에 자료를 넣은 한 파일
@@ -295,7 +295,7 @@ def build(doc: Doc, checks: list, pdoc: Doc | None = None, m=None, old_checks: l
         from . import dsd_fix, dsd_text
 
         summary["문장"] = dsd_text.summary(text)
-        # AI 가 엔진 지적과 같은 곳에 다른 안을 적은 S번호(11-04 실제 회사 자료: 엔진은 대표이사 옛 이름을 새 이름으로 고치라 했고, AI 는 주주 이름이라 고치지 않는다고 적었다).
+        # AI 가 엔진 지적과 같은 곳에 다른 안을 적은 S번호(11-04 채널코퍼레이션 S209: 엔진 「김재홍 → 최시원」, AI 「주주 이름이라 고치지 않는다」).
         # 두 안이 엇갈리면 엔진 줄에는 단추를 내지 않는다. 회계사가 둘을 견줘 보고 정한다
         disputed = {x.get("seg") for x in text.get("ai", []) if x.get("rule") == "AI(엔진과 같은 곳)"}
         for x in text.get("engine", []) + [x for x in text.get("ai", []) if not x.get("same_as_engine")]:

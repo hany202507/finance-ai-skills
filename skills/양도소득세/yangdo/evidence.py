@@ -16,6 +16,7 @@
 
 경비 목록 문항(M08~M11)은 서류마다 따로 낸다. 이번 실행에서 넣은 목록에는 다음 서류의 줄을 이어 붙인다.
 같은 줄은 일치로 세고, 지급일·금액이 같은데 다른 칸이 다른 줄은 같은 지출을 서류 두 장으로 낸 것일 수 있어 충돌로 올린다.
+다음 서류의 줄에서 빈 칸(이체 확인증의 사업자번호 등)은 견주지 않는다. 적힌 칸이 모두 앞 줄과 같으면 일치다.
 사실관계에 원래 있던 목록은 늘리지 않는다(충돌).
   확인필요  스캔본·사진이거나 확신이 불확실이거나 값이 발췌에서 대조되지 않는다. 정황만 보여 주는 값(A07 등기)은 제안으로 둔다.
            사용자가 확인표에서 고른다
@@ -81,8 +82,8 @@ def read_pages(path):
     """쪽별 글자 목록. 글자를 읽을 수 없는 종류는 빈 목록."""
     ext = os.path.splitext(path)[1].lower()
     if ext == PDF:
-        import fitz
-        with fitz.open(path) as d:
+        import pymupdf
+        with pymupdf.open(path) as d:
             return [p.get_text() for p in d]
     if ext in PLAIN:
         for enc in ("utf-8-sig", "cp949"):
@@ -446,14 +447,23 @@ def _payment(r):
     return (r.get("지급일"), r.get("금액")) if isinstance(r, dict) else None
 
 
+def _covered(old, r):
+    """새 줄 r 에 적힌 칸이 앞 줄 old 와 모두 같은지. r 의 빈 칸(None, "")은 견주지 않는다. 앞 줄이 빈 칸인데 r 에 값이 있으면 다르다."""
+    return isinstance(old, dict) and all(old.get(k) == v for k, v in r.items() if v not in (None, ""))
+
+
 def _join_rows(have, rows):
-    """(새로 붙일 줄, 충돌 사유). 이미 있는 줄과 똑같은 줄은 건너뛴다."""
+    """(새로 붙일 줄, 충돌 사유). 이미 있는 줄과 똑같은 줄과, 지급일·금액이 같고 빈 칸 말고는 앞 줄과 같은 줄은 건너뛴다."""
     new = []
     for r in rows:
         if r in have or r in new:
             continue
-        if _payment(r) is not None and any(_payment(h) == _payment(r) for h in have + new):
-            return [], SAME_PAYMENT_MSG
+        if _payment(r) is not None:
+            same = [h for h in have + new if _payment(h) == _payment(r)]
+            if any(_covered(h, r) for h in same):   # 이체 확인증처럼 사업자번호가 없는 서류로 같은 지출을 다시 낸 것
+                continue
+            if same:
+                return [], SAME_PAYMENT_MSG
         new.append(r)
     return new, None
 
@@ -470,6 +480,8 @@ def apply(facts, items, inv, texts=None):
     seen = {}
     added = {}      # 이번 실행에서 넣은 경비 목록. 다음 서류의 줄을 여기에 이어 붙인다
     for item in items:
+        if isinstance(item, dict) and "값" in item:   # 사업자번호 하이픈 같은 표기는 앞 서류의 줄과 견주기 전에 맞춘다
+            item = dict(item, 값=Q.normalize(item.get("문항"), item["값"]))
         verdict, why = check_item(item, docs, texts, bank)
         row = _brief(item, bank) if isinstance(item, dict) else {"문항": None}
         if verdict == "반영가능" and why:

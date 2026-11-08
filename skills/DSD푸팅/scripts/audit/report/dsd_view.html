@@ -590,7 +590,7 @@ function diffList(){
     else if (x.kind === "추가") w = short(x.new);
     else if (x.kind === "삭제") w = short(x.old);
     else w = short(x.old) + " → " + short(x.new);
-    var wh = w === null ? snip(x.old, x.new) : esc(w);        // 글 변경은 바뀐 곳 앞뒤만(긴 문단은 앞 80자가 같아 보였다, 11-04 한 회사 검토보고서)
+    var wh = w === null ? snip(x.old, x.new) : esc(w);        // 글 변경은 바뀐 곳 앞뒤만(긴 문단은 앞 80자가 같아 보였다, 11-04 네온테크)
     if (x.memo) wh += (wh ? " · " : "") + esc(x.memo);
     h += '<div class="item" data-i="' + i + '"><span class="kb ' + KC[x.k] + '">' + esc(x.k) + "</span> <b>" + esc(x.part) + "</b> " + esc(x.where) +
       (wh ? '<span class="w">' + wh + "</span>" : "") + "</div>";
@@ -620,7 +620,7 @@ function goChange(x){
     showX(target);
   }
 }
-// 넓은 표 안의 칸이 가로로 잘려 보이지 않게 가로 스크롤을 맞춘다(2026-11-04 한 회사 검토보고서 주석36-3)
+// 넓은 표 안의 칸이 가로로 잘려 보이지 않게 가로 스크롤을 맞춘다(2026-11-04 네온테크 주석36-3)
 function showX(td){
   for (var e = td.parentElement; e && e.id !== "doc"; e = e.parentElement) {
     if (e.scrollWidth > e.clientWidth + 2 && /(auto|scroll)/.test(getComputedStyle(e).overflowX)) {
@@ -653,7 +653,7 @@ try { pending = JSON.parse(localStorage.getItem(PKEY) || "[]") || []; } catch (e
 function fixedItems(){ return LIVE ? (LIVE.items || []) : pending; }
 function isFixedCell(t, r, c){ return fixedItems().some(function(x){ return x.kind === "num" && x.table === t && +x.r === +r && +x.c === +c; }); }
 function isFixedText(x){ return fixedItems().some(function(y){ return y.kind === "text" && y.old === x.old && y.new === x.new; }); }
-// 표 안 합계 칸(합계 검증의 왼쪽 칸). 합계만 고치면 그 표의 합계 검증이 새로 안 맞을 수 있다(11-04 실제 회사 자료: 1원이 어느 내역 줄에서 났는지 보고서로 정할 수 없었다)
+// 표 안 합계 칸(합계 검증의 왼쪽 칸). 합계만 고치면 그 표의 합계 검증이 새로 안 맞을 수 있다(11-04 채널코퍼레이션 주석13: 1원이 어느 내역 줄에서 났는지 보고서로 정할 수 없었다)
 var TOTNOTE = "이 칸은 표 안 합계 칸입니다. 합계만 고치면 그 표의 합계 검증이 새로 안 맞을 수 있어, 어느 내역 줄에서 차이가 났는지 함께 봅니다.";
 function isTotal(t, r, c){ var tb = findTable(t), i = tb && tb.cells[r + "," + c]; return !!(i && i.tot); }
 function cellText(t, r, c){ var tb = findTable(t); return tb && tb.rows[r] ? tb.rows[r][c] : ""; }

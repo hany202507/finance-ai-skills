@@ -18,6 +18,7 @@ judge.engine_values 로 계산한다. 아직 모르는 답이나 엔진값에 �
 """
 import copy
 import os
+import re
 
 from yangdo import RULES_DIR, judge, regions, ruleset
 from yangdo import facts as F
@@ -28,6 +29,24 @@ _RULES = {}
 OPS = {"==": lambda a, b: a == b, "!=": lambda a, b: a != b, "in": lambda a, b: a in b,
        "not_in": lambda a, b: a not in b, ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b,
        "<": lambda a, b: a < b, ">": lambda a, b: a > b}
+EXPENSE_QUESTIONS = {문항 for _, 문항 in F.EXPENSE_GROUPS}   # M08~M11
+BIZ_NO_MARKS = re.compile(r"[\s\-]")
+
+
+def normalize(qid, value):
+    """답의 표기를 사실관계 형식으로 맞춘다. 필요경비 목록(M08~M11)의 사업자번호는 영수증에 찍힌 대로 「000-00-00015」라고
+    적어도 하이픈과 띄어쓰기를 지워 숫자 10자리로 둔다. 지워도 10자리가 아니면 그대로 두고, 전자신고 때 F07 이 다시 묻는다."""
+    if qid not in EXPENSE_QUESTIONS or not isinstance(value, list):
+        return value
+    out = []
+    for it in value:
+        v = it.get("사업자번호") if isinstance(it, dict) else None
+        if isinstance(v, str):
+            digits = BIZ_NO_MARKS.sub("", v)
+            if digits != v and re.fullmatch(r"[0-9]{10}", digits):
+                it = dict(it, 사업자번호=digits)
+        out.append(it)
+    return out
 
 
 def _is_iso(v):
@@ -383,6 +402,7 @@ def answer(f, qid, value, 자산=None, 주택=None):
         raise ValueError("%s 라는 문항이 없다" % qid)
     if value is None:
         raise ValueError("%s 의 답이 비었다. 모르면 MOREUM 으로 답한다" % qid)
+    value = normalize(qid, value)
     f2 = copy.deepcopy(f)
     kind = unit_kind(q)
     asset = next((a for a in f2.get("자산") or [] if a.get("id") == 자산), None) if 자산 else None

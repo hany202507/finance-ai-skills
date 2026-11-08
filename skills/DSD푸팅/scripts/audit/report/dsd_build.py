@@ -70,6 +70,20 @@ def _text_between(src: Source, a: int, b: int) -> str:
     return unescape(src.raw[a:b].decode("utf-8"), {"&quot;": '"', "&apos;": "'"})
 
 
+def _escape_like(old_raw: bytes, new: str) -> str:
+    """escape 와 같되 원문 조각의 줄바꿈 꼴(글 속 줄바꿈 문자 · &amp;cr;)을 차례대로 살린다. 줄바꿈 수가 같을 때만.
+    원문의 글 속 줄바꿈 문자를 &cr;(편집기 줄바꿈)로 바꾸면 편집기 화면에서 「12,345」 와 「주」 가 두 줄로 갈렸다(2026-11-06)."""
+    out = escape(new)
+    try:
+        kinds = re.findall(r"\r?\n|&amp;cr;", old_raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        return out
+    parts = out.split("&amp;cr;")
+    if all(k == "&amp;cr;" for k in kinds) or len(parts) - 1 != len(kinds):
+        return out
+    return parts[0] + "".join(k + p for k, p in zip(kinds, parts[1:]))
+
+
 def text_edit(src: Source, n: Node, new: str) -> tuple[list, bool]:
     """요소 글을 new 로. (고침 구간들, 서식을 잃었는지). 바뀐 곳이 한 조각 안이면 그 조각만, 아니면 안 글 전체를 바꾼다."""
     new = new.replace("\r\n", "\n").replace("\r", "\n")
@@ -99,7 +113,7 @@ def text_edit(src: Source, n: Node, new: str) -> tuple[list, bool]:
                 piece = list(t)
                 for tag, i1, i2, j1, j2 in sorted(items, key=lambda z: -z[1]):
                     piece[i1 - x0:i2 - x0] = list(new[j1:j2])
-                edits.append((a, b, escape("".join(piece)).encode("utf-8")))
+                edits.append((a, b, _escape_like(src.raw[a:b], "".join(piece)).encode("utf-8")))
             return edits, False
     if n.es is None:
         return [], True
@@ -170,6 +184,8 @@ def _cell_value(rv, orig: dsd_draft.Cell, sheet: str, where: str, plan: Plan, ca
             return "" if orig.text.strip() else None
         if abs(float(num) - float(orig.num)) < 1e-9:
             return None
+        if num == 0 and not (orig.fmt or {}).get("zero"):
+            return "-"                                     # dsd 는 0 을 「-」 로 적는다(롤포워드가 「-」 를 「0」 으로 바꿨다, 2026-11-06 D8)
         return format_num(num, orig.fmt)
     if num is not None and text != orig.text:
         o = orig.text.strip()
@@ -185,6 +201,8 @@ def _cell_value(rv, orig: dsd_draft.Cell, sheet: str, where: str, plan: Plan, ca
 def _num_text(rv, cached, ref: dsd_draft.Cell | None) -> str:
     text, num, _ = value_text(rv, cached)
     if num is not None:
+        if num == 0 and not (ref.fmt if ref is not None and ref.fmt else {}).get("zero"):
+            return "-"                                     # 새 줄도 0 은 「-」(2026-11-06 D8)
         return format_num(num, ref.fmt if ref is not None and ref.fmt else None)
     return text
 
@@ -360,7 +378,7 @@ def _table_plan(src: Source, s: dsd_draft.Sheet, name: str, t: Node, block: list
                 edits, lost = text_edit(src, n, new)
                 p.edits += edits
                 p.changed += 1 if edits else 0
-                if lost:
+                if lost and new.strip():           # 비운 칸(롤포워드 당기 칸)은 서식이 남을 글이 없다(2026-11-06)
                     p.issues.append(issue("서식 잃음", name, where, "칸 안 서식을 잃었다"))
                 if n.tag == "TU" and n.get("AUNITVALUE") is not None:
                     d = _tu_date(new)
@@ -505,6 +523,9 @@ def build(xlsx: Path, out: Path | None = None) -> dict:
     summary = orig.info.get("summary") or {}
     if (r.info.get("rolled") or summary.get("SUPV_OPIN")) and any(summary.values()):
         p.issues.append(issue("요약 코드", "", "", "바탕의 요약 코드(자산총계 · 감사의견 구분 등)가 그대로 남아 있다. 제출 전 편집기 「문서 헤더정보」 와 8600 에서 확인한다"))
+    empty = len(re.findall(rb"<TBODY[^>]*>\s*</TBODY>", contents))
+    if empty:                                   # 편집기 스키마(Dart4.xsd)는 TBODY 에 TR 이 하나 이상 있어야 한다(2026-11-07 엘리스그룹 초안)
+        p.issues.append(issue("편집기 구조", "", "", f"줄이 하나도 없는 표 {empty}개. DART 편집기가 「문서를 열 수 없습니다」 로 거절한다", "막음"))
     path = zip_dsd(out, contents, r.meta, _stamp(hashlib.sha256(xlsx.read_bytes()).hexdigest(), r.sha256))
     return {"path": path, "issues": p.issues, "changed": p.changed, "added": p.added, "removed": p.removed, "mode": "바탕 고치기",
             "same_bytes": contents == r.contents}

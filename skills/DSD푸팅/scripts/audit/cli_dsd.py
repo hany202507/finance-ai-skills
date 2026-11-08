@@ -51,7 +51,7 @@
 
   python -m audit dsd quick <dsd> [--wtb …] [--prior …] [--prev …] [--pair …] [--facts …] [--case …] --out <폴더> [--serve [--port 8791]]
       빠른 검토(2026-11-04): links --text 와 foot --html 을 한 번에 돈다. AI 연결 정의가 아직 없으면 연결_초안.json 을 넣어 엔진 후보를
-      판정 없이 건다. AI 없이 첫 HTML 까지 간다(실제 회사 자료 14초). --serve 면 끝나고 검토 화면 서버를 띄운다
+      판정 없이 건다. AI 없이 첫 HTML 까지 간다(채널코퍼레이션 vF 14초). --serve 면 끝나고 검토 화면 서버를 띄운다
   python -m audit dsd serve <결과 폴더> [--port 8791] [--no-open]
       검토 화면 서버(2026-11-04): DSD보기 HTML 을 127.0.0.1 에서 열고, 화면의 「수정」 을 받아 원본은 두고 <이름>_수정판.dsd 에 쓴 뒤
       foot 을 다시 돌린다(옵션은 foot --html 이 남긴 dsd_실행.json). 수정 기록은 수정기록.json, 되돌리기는 마지막 묶음을 뺀다
@@ -122,6 +122,8 @@ def register(sub) -> None:
     k.add_argument("--case", default=None, help="--text 와 함께: 감사 폴더")
     k.add_argument("--prior", default=None, nargs="+", help="--text 와 함께: 작년 보고서(같은 문장에 작년 날짜가 남은 곳을 본다). foot 처럼 둘을 줘도 되고 첫째만 쓴다")
     k.add_argument("--split", type=int, default=0, help="--text 와 함께: 문장읽기를 N 몫으로도 나눠 쓴다")
+    # quick 이 --stage 를 links 에 넘긴다. 옵션이 없어 「unrecognized arguments」 로 멈췄다(2026-11-06 실제 회사 시험)
+    k.add_argument("--stage", choices=("회사제시", "제출"), default=None, help="--text 와 함께: foot 의 --stage 와 같다")
     k.add_argument("--out", default=None)
     k.add_argument("--defs", default=None)
     k.set_defaults(func=_links)
@@ -146,6 +148,12 @@ def register(sub) -> None:
     g.add_argument("--out", default=None, help="받을 폴더. 없으면 PDF 가 있는 폴더(접수번호면 지금 폴더). 그 아래 원문_<접수번호>/ 에 둔다")
     g.add_argument("--no-prior", action="store_true", help="작년 비교 보고서를 받지 않는다")
     g.set_defaults(func=_fetch)
+    cv = ps.add_parser("convert", help="DART 공시 원문 → 편집기 dsd: 본문은 원문 그대로 두고 편집기 뼈대(삽입 위치 · 목차 · 안내문 · 머리)만 되살린다")
+    cv.add_argument("src", help="접수번호(14자리), DART 에서 받은 PDF, 또는 공시 원문 xml(감사보고서 · 연결감사보고서)")
+    cv.add_argument("--out", default=None, help="결과 폴더. 없으면 원문 xml 이 있는 폴더(접수번호면 지금 폴더)")
+    cv.add_argument("--roll", action="store_true", help="다음 기수 초안도 만든다: 당기 숫자 → 전기 칸, 기수 · 해 +1, 당기 칸 비움(dsd sheet --roll → build)")
+    cv.add_argument("--bare", action="store_true", help="뼈대 없이: 머리 감싸개와 meta.xml 만 더한다(편집기 확인용 비교판)")
+    cv.set_defaults(func=_convert)
     q = ps.add_parser("quick", help="빠른 검토: links --text 와 foot --html 을 한 번에(엔진 후보는 판정 없이 넣는다). AI 없이 첫 HTML 까지")
     q.add_argument("dsd")
     for name in ("prev", "wtb", "pair", "facts", "case", "mask"):
@@ -307,11 +315,11 @@ def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = No
             "wtb": wdoc, "view": view, "versions": versions}
 
 
-SHOW, SHOW_LOST = 40, 10      # foot 화면에 줄마다 적는 수. 넘으면 「외 n건」 과 전체가 있는 엑셀 시트를 적는다(2026-11-04)
+SHOW, SHOW_LOST = 40, 10      # foot 화면에 줄마다 적는 수. 넘으면 「외 n건」 과 전체가 있는 엑셀 시트를 적는다(2026-11-04 TASK-29)
 
 
 def _more(items: list, shown: int, what: str, sheet: str) -> None:
-    """화면 목록을 shown 줄에서 끊었으면 남은 수와 전체가 있는 시트를 한 줄로 적는다. 예전에는 알림 없이 끊겨 한 상장사 2026 반기의
+    """화면 목록을 shown 줄에서 끊었으면 남은 수와 전체가 있는 시트를 한 줄로 적는다. 예전에는 알림 없이 끊겨 씨앤씨인터내셔널 2026 반기의
     FALSE 56건 가운데 40건만 보이고 나머지가 없는 것처럼 읽혔다."""
     if len(items) > shown:
         print(f"  {what} 외 {len(items) - shown}건(엑셀 「{sheet}」)")
@@ -347,7 +355,7 @@ def _foot(a) -> int:
         r = foot(src, out, Path(a.prev) if a.prev else None, [Path(p) for p in a.prior] if a.prior else None, Path(a.defs) if a.defs else None, a.amount_links,
                  Path(a.wtb) if a.wtb else None, Path(a.pair) if a.pair else None, Path(a.facts) if a.facts else None,
                  Path(a.case) if a.case else None, text, draft, a.html or bool(a.mask), Path(a.mask) if a.mask else None, a.stage)
-    except dsd_wtb.WtbFormatError as e:               # 정산표 양식을 못 읽으면 역추적 없이 한 줄(2026-10-18 실제 회사 자료 B-1)
+    except dsd_wtb.WtbFormatError as e:               # 정산표 양식을 못 읽으면 역추적 없이 한 줄(2026-10-18 샘플 A B-1)
         print(f"이 WTB 양식을 읽지 못함: {e}")
         return 2
     except dsd_view.MaskError as e:                   # 치환 뒤에도 실제 이름이 남으면 HTML 을 만들지 않는다(설계 4.3)
@@ -377,7 +385,7 @@ def _foot(a) -> int:
     if kinds.count("표시 오류") or kinds.count("설명 부족"):
         line += f" · 표시 오류 {kinds.count('표시 오류')} · 설명 부족 {kinds.count('설명 부족')}"
     judged = [c for c in checks if not c.excluded and c.ok is False and not c.minor and not dsd_links.no_review(c) and (not c.dropped or c.verified)]
-    # 늘 나는 차이 · 근거 확인 숫자 오류는 독립 검증 대상이 아니다(2026-10-22). 검증 뒤 판정으로 뺀 검증도 센다(10-23 한 상장사: 전기 대사 1건이 「걸지 않음」 으로 바뀌어 9/9 로 보였다)
+    # 늘 나는 차이 · 근거 확인 숫자 오류는 독립 검증 대상이 아니다(2026-10-22). 검증 뒤 판정으로 뺀 검증도 센다(10-23 삼성전자: 전기 대사 1건이 「걸지 않음」 으로 바뀌어 9/9 로 보였다)
     if any(c.verified for c in judged):
         line += f" · 독립 검증 {sum(1 for c in judged if c.verified)}/{len(judged)}(바꿈 {sum(1 for c in judged if c.verified == '바꿈')})"
     n_sampled = sum(1 for c in live if dsd_links.sampled(c))
@@ -617,7 +625,8 @@ def _links(a) -> int:
     for x in req["unlinked"][:40]:
         print(f"  {x['table']} {x['row']} (가리킨 주석 {', '.join(x['notes'])})")
     if a.text:                                       # 문장읽기도 같은 프로세스에서 쓴다(2026-10-23 분석 6.7)
-        return text_run(src, out, Path(a.facts) if a.facts else None, Path(a.case) if a.case else None, Path(a.prior[0]) if a.prior else None, None, a.split)
+        return text_run(src, out, Path(a.facts) if a.facts else None, Path(a.case) if a.case else None, Path(a.prior[0]) if a.prior else None, None, a.split,
+                        getattr(a, "stage", None))
     return 0
 
 
@@ -830,6 +839,72 @@ def _diff(a) -> int:
             for w in v["warnings"]:
                 print(f"  HTML {w}")
     return 0
+
+
+def _convert(a) -> int:
+    import json
+    from xml.parsers.expat import ExpatError
+
+    from .report import dart_fetch as F, dsd_convert as C
+
+    src = a.src.strip()
+    try:
+        if re.fullmatch(r"\d{14}", src) or (src.lower().endswith(".pdf") and Path(src).exists()):
+            rcept = src if re.fullmatch(r"\d{14}", src) else F.from_pdf(Path(src))[0]
+            base = Path(a.out) if a.out else (Path.cwd() if re.fullmatch(r"\d{14}", src) else Path(src).resolve().parent)
+            xp = Path(F.fetch_one(rcept, base)["main"])
+        elif src.lower().endswith(".xml") and Path(src).exists():
+            xp = Path(src)
+        else:
+            print(f"바꿀 것을 알지 못함: {src}. 접수번호(14자리), DART 에서 받은 PDF, 공시 원문 xml 중 하나를 주십시오")
+            return 2
+    except F.FetchError as e:                         # 오류 글에는 인증키가 없다
+        print(f"원문을 받지 못함: {e}")
+        return 2
+    out = Path(a.out) if a.out else xp.resolve().parent
+    out.mkdir(parents=True, exist_ok=True)
+    raw = xp.read_bytes()
+    try:
+        r = C.convert(raw, bare=a.bare)
+    except (ValueError, ExpatError) as e:
+        print(f"바꾸지 못함: {e}")
+        return 2
+    year = r.period_end[:4]
+    stem = C.file_stem(r.company, year, C.FORMS[r.form])
+    path = C.write(out / f"{stem}_변환{'_뼈대없음' if a.bare else ''}.dsd", r, C.sha(raw))
+    same = C.same_body(raw, r.contents)
+    print(f"{xp.name} → {path.name}: {C.FORMS[r.form]}({r.form}) · {r.company} · 결산 {r.period_end or '?'} · "
+          f"삽입 위치 {r.counts.get('삽입 위치', 0)}(넣은 LIBRARY {r.counts.get('넣은 LIBRARY', 0)}) · ENG 뺌 {r.counts.get('ENG 뺌', 0)} · "
+          f"본문 원문과 {'같음' if same else '다름'}")
+    for x in r.notes:
+        print(f"  {x}")
+    print("  편집기에서: 재무제표마다 [재무제표 > 재무제표 검사] 를 돌린 뒤 파일형식 검사를 한다(공시 원문에는 그 검사 기록이 없다)")
+    code = 0 if same else 1
+    if a.roll:
+        from .report import dsd_build, dsd_draft, dsd_draft_book
+
+        d = dsd_draft.read(path)
+        dsd_draft.roll(d)
+        nxt = str(int(year) + 1) if year.isdigit() else "다음"
+        book = dsd_draft_book.write(out / f"원고_{C.file_stem(r.company, nxt, C.FORMS[r.form])}_초안.xlsx", d,
+                                    f"python -m audit dsd convert {xp.name} --roll")
+        res = dsd_build.build(book, out / f"{C.file_stem(r.company, nxt, C.FORMS[r.form])}_초안.dsd")
+        (out / f"원고검사_{book.stem}.json").write_text(json.dumps(res["issues"], ensure_ascii=False, indent=1), encoding="utf-8")
+        rolled = d.info.get("rolled_tables") or []
+        print(f"다음 기수 초안 → {Path(res['path']).name}: 롤포워드 표 {len(rolled)} · 고친 요소 {res['changed']} · 원고 {book.name}")
+        issues = [f"[{x['수준']} · {x['분류']}] {x['시트']} {x['칸']} {x['내용']}".rstrip() for x in res["issues"]]
+        guide = out / f"초안안내_{book.stem}.txt"          # 화면은 앞 몇 줄만, 전체는 파일로(2026-11-06 다른 회사 시험 E6: 말없이 잘렸다)
+        guide.write_text("\n".join(["[롤포워드 안내]", *d.notes, "", "[원고 검사]", *issues]) + "\n", encoding="utf-8")
+        for x in d.notes[:30]:
+            print(f"  {x}")
+        if len(d.notes) > 30:
+            print(f"  … 안내 외 {len(d.notes) - 30}건은 {guide.name}")
+        for x in issues[:20]:
+            print(f"  {x}")
+        if len(issues) > 20:
+            print(f"  … 원고 검사 외 {len(issues) - 20}건은 {guide.name}")
+        print("  그대로 남은 것: 감사인의 감사보고서 · 외부감사 실시내용 · 문단 속 날짜와 금액은 작년 글이다. 원고 엑셀에서 고쳐 dsd build 로 다시 만든다")
+    return code
 
 
 def _fetch(a) -> int:

@@ -8,7 +8,7 @@
 | 담보로 제공한 자산의 장부금액이 그 자산의 재무상태표 금액보다 크다 | KICPA-2025-42 · 43 (일반기업회계기준 10.48) | 부분 대사(≤) |
 
 연결은 뜻으로만 짓는다. 특수관계자 주석과 보증 주석은 상대방 이름이 같은 줄끼리, 담보 표와 재무상태표는 자산 이름이 같은 과목끼리 잇고,
-금액이 같다는 것으로 잇지 않는다(4단계 반려). 담보 표에서 같은 자산을 담보권자마다 줄을 나눠 적는 회사가 많아 줄을 더하지 않고 줄마다 견준다.
+금액이 같다는 것으로 잇지 않는다(4단계 대표 반려). 담보 표에서 같은 자산을 담보권자마다 줄을 나눠 적는 회사가 많아 줄을 더하지 않고 줄마다 견준다.
 """
 from __future__ import annotations
 
@@ -125,6 +125,45 @@ def fund_alerts(doc: Doc) -> list[dict]:
     return out
 
 
+# 차입금은 보지 않는다. 현금흐름표의 차입금 증가는 대개 은행 차입이라 특수관계자 거래와 가를 수 없다(공개 원문 304건에서 알림 대부분이 차입금이었다)
+_DIRECTION = {"대여금": (r"대여(?!금)|회수|기초|증가|감소|변동", r"대여금의?증가")}
+
+
+def fund_direction_alerts(doc: Doc) -> list[dict]:
+    """특수관계자 대여금(차입금) 당기말 잔액이 있고 현금흐름표에 대여금의 증가(차입금의 증가)가 있는데, 특수관계자 주석 어디에도 대여 · 회수
+    (차입 · 상환) 거래가 없다. 자금거래 표가 차입 · 상환만 적으면 fund_alerts 는 공시가 있다고 보고 넘어간다(2026-11-06 다른 회사 시험 N4:
+    주요 경영진 대여금 기말 잔액과 현금흐름표 단기대여금의 증가가 있는데 자금거래 표는 차입 · 상환뿐). 잔액 표가 당기말만 있어도 본다."""
+    from .dsd_ai import period_col
+
+    cf = doc.table("현금흐름표")
+    if cf is None:
+        return []
+    j = period_col(cf, "당기")
+    labs = _labels(cf)
+    out = []
+    for p in _notes(doc, RP_NOTE):
+        tabs = _tables(p)
+        text = norm(" ".join(_paras(p) + [" ".join(t.header) + t.caption + " ".join(c for r in t.rows for c in r[:3]) for t in tabs]))
+        got: dict = {}
+        for t in tabs:
+            hint = _period_of(t.caption) or _period_of(t.header[0] if t.header else "") or _period_of(" ".join(_paras(p)))
+            for k, v in _fund_totals(t, hint or "당기").items():
+                got[k] = got.get(k, 0) + v
+        for w, (flow, cf_pat) in _DIRECTION.items():
+            bal = got.get((w, "당기"), 0)
+            if not bal or re.search(flow, text):
+                continue
+            rows = [i for i, x in enumerate(labs) if re.search(cf_pat, norm(x).replace(" ", ""))]
+            amt = [cf.nums[i][j] * cf.unit for i in rows if j is not None and j < len(cf.nums[i]) and _isnum(cf.nums[i][j]) and cf.nums[i][j]]
+            if not amt:
+                continue
+            out.append({"what": f"{LEGEND}: 특수관계자 {w} 잔액이 있고 현금흐름표에 {w} 증가가 있는데 자금거래 공시에 그 거래가 없음", "n": 1,
+                        "why": f"{p.key}: 특수관계자 {w} 당기말 {bal:,.0f}원, 현금흐름표 「{labs[rows[0]]}」 {amt[0]:,.0f}원. "
+                               f"특수관계자 주석에 대여 · 회수 금액이나 대여금 변동이 없다. 현금흐름표의 대여가 특수관계자와의 거래인지 확인한다"
+                               f"(일반기업회계기준 25.6, K-IFRS 1024 문단 18, 감리지적 KICPA-2025-37 · 38)"})
+    return out
+
+
 # ---------------------------------------------------------------- 2. 특수관계자에게 제공한 보증
 _GIVEN = re.compile(r"제공한(?!자)|제공하고|제공하는(?!자)|제공받는자|제공받은자|피보증|보증받는|보증대상|채무자")
 _TAKEN = re.compile(r"제공받고|제공받은(?!자)|받은(?!자)|로부터|받고있|제공자|제공한자|제공하는자|보증인|보증제공자")
@@ -147,7 +186,7 @@ def _guarantee_given(t: Table) -> bool:
 
 def _amount_col(t: Table) -> int | None:
     """보증 금액 열. 당기 금액 열이 하나뿐일 때만 고른다. 실행금액 · 보증한도 · 보증금액처럼 금액 열이 여럿이면 두 주석의 어느 열끼리
-    같아야 하는지 이름만으로 정할 수 없다(한 상장사 2025: 특수관계자 주석의 「보증한도」 와 보증 주석의 「보증금액」 이 같은 금액)."""
+    같아야 하는지 이름만으로 정할 수 없다(계룡건설 2025: 특수관계자 주석의 「보증한도」 와 보증 주석의 「보증금액」 이 같은 금액)."""
     cols = [j for j, h in enumerate(t.header) if j and _AMOUNT.search(norm(h)) and any(_isnum(r[j]) for r in t.nums) and _period_of(h) != "전기"]
     return cols[0] if len(cols) == 1 else None
 
@@ -386,4 +425,4 @@ def checks(doc: Doc) -> list:
 def alerts(doc: Doc) -> list[dict]:
     """원문 대조에 붙이는 알림(공시가 빠졌을 수 있는 곳)."""
     _, al = guarantee_checks(doc)
-    return fund_alerts(doc) + al
+    return fund_alerts(doc) + fund_direction_alerts(doc) + al

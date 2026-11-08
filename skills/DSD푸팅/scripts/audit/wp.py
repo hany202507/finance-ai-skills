@@ -136,6 +136,10 @@ class Book:
         self.summary_at: tuple | None = None  # 「AI 작성 칸 n개 · 엔진 검산 k줄」 을 적을 (시트, 행). 처음 legend 를 둔 시트
         # 엔진이 제안 값을 미리 넣는 기입란 이름(2026-11-03, 4000 표지 성격 · 시기). 다시 만들 때 감사인이 고친 값이 엔진 값보다 앞선다(common.save)
         self.prefill_labels: set = set()
+        # 기입란 AI 초안(2026-11-05, audit/drafts.py). 시트마다 초안을 적을 열. draft_column 으로 정한 시트에서만 ask 가 초안을 옆에 둔다
+        self.draft_cols: dict[str, int] = {}
+        self._drafts: dict | None = None
+        self._draft_at: list[tuple] = []      # (시트, -, 초안 칸, 기입란 이름)
 
     # ---------------------------------------------------------- 모양
     def sheet(self, name: str, widths: list[int], head: bool = True):
@@ -252,23 +256,79 @@ class Book:
         c.alignment = Alignment(vertical="top", wrap_text=wrap, horizontal="right" if fmt and not wrap else None)
         return c
 
+    def draft_column(self, ws, col: int, width: int = 44) -> None:
+        """이 시트의 기입란 AI 초안을 col 열에 둔다(audit/drafts.py). 초안이 하나라도 있을 때만 열 너비를 잡는다."""
+        self.draft_cols[ws.title] = col
+        if self.drafts():
+            ws.column_dimensions[get_column_letter(col)].width = width
+
+    def drafts(self) -> dict:
+        if self._drafts is None:
+            from . import drafts
+
+            self._drafts = drafts.for_wp(self.d, self.no)
+        return self._drafts
+
+    def _draft_beside(self, ws, row: int, col: int, label: str, value) -> None:
+        if ws.title not in self.draft_cols or (value is not None and str(value).strip()):
+            return
+        x = self.drafts().get(label)
+        if not x:
+            return
+        from . import drafts
+
+        c = self.ai(ws, row, col, x["text"], what=f"기입란 초안: {label[:40]}", basis=drafts.basis_text(x.get("basis")))
+        self._draft_at.append((ws.title, "", c.coordinate, label))
+        # 초안 글이 다 보이게 줄 높이를 늘린다(열 너비 44 에 한글 약 26자)
+        need = 15 * min(12, len(str(x["text"])) // 26 + 1)
+        cur = ws.row_dimensions[row].height or 15
+        if need > cur:
+            ws.row_dimensions[row].height = need
+
+    def _drop_filled_drafts(self) -> None:
+        """기입란이 (옮겨 적은 값으로) 채워졌으면 그 옆 초안을 지운다. 점검표는 앞 판 값을 ask 뒤에 옮겨 적기 때문이다."""
+        refs = {(s, lab): ref for s, ref, lab, _ in self.inputs}
+        for sheet, _, ai_ref, label in self._draft_at:
+            in_ref = refs.get((sheet, label))
+            if in_ref is None:
+                continue
+            v = self.wb[sheet][in_ref].value
+            if v is not None and str(v).strip():
+                cell = self.wb[sheet][ai_ref]
+                cell.value = None
+                cell.fill, cell.border = PatternFill(fill_type=None), Border()
+                self.ai_cells = [x for x in self.ai_cells if not (x[0] == sheet and x[1] == ai_ref)]
+
     def ask(self, ws, row: int, col: int, label: str, rule: str = "required", value=None, fmt=None, wrap=True):
-        """회계사 기입란. 노란 칸으로 칠하고 `_기입란` 에 등록한다."""
+        """회계사 기입란. 노란 칸으로 칠하고 `_기입란` 에 등록한다. 그 기입란에 AI 초안이 있고 비어 있으면 초안 열에 연보라로 둔다."""
         if rule not in RULES:
             raise ValueError(f"기입란 규칙이 아닙니다: {rule}")
         c = self.put(ws, row, col, value, fmt=fmt, wrap=wrap)
         c.fill = FILL_IN
         self.inputs.append((ws.title, c.coordinate, label, rule))
+        if label != getattr(self, "_concluding", None) and ws.title in self.draft_cols:
+            self._draft_beside(ws, row, self.draft_cols[ws.title], label, value)
         return c
 
     def conclusion(self, ws, row: int, ncols: int, label: str = "감사 결론") -> int:
         row = self.section(ws, row + 1, label)
         ws.merge_cells(start_row=row, start_column=1, end_row=row + 2, end_column=ncols)
-        self.ask(ws, row, 1, label, rule="required")
+        self._concluding = label            # 결론 초안은 옆이 아니라 아래 줄에 둔다
+        c0 = self.ask(ws, row, 1, label, rule="required")
+        self._concluding = None
         for r in range(row, row + 3):
             for c in range(1, ncols + 1):
                 ws.cell(r, c).fill = FILL_IN
                 ws.cell(r, c).border = BOX
+        x = self.drafts().get(label) if ws.title in self.draft_cols and c0.value in (None, "") else None
+        if x:                       # 결론 초안은 결론 칸 아래 줄에 둔다(2026-11-05)
+            from . import drafts
+
+            ws.merge_cells(start_row=row + 3, start_column=1, end_row=row + 3, end_column=ncols)
+            ws.row_dimensions[row + 3].height = 15 * max(2, min(8, len(x["text"]) // 90 + 1))
+            c = self.ai(ws, row + 3, 1, f"AI 초안(확인 전): {x['text']}", what=f"기입란 초안: {label}", basis=drafts.basis_text(x.get("basis")))
+            self._draft_at.append((ws.title, "", c.coordinate, label))
+            return row + 5
         return row + 4
 
     def verify(self, label: str, formula: str, expected) -> None:
@@ -388,6 +448,7 @@ class Book:
         path.parent.mkdir(parents=True, exist_ok=True)
         if self.state_placed:
             self.carry_state(path)
+        self._drop_filled_drafts()
         self._ai_sheets(path)
         ws = self.wb.create_sheet(INPUT_SHEET)
         ws.append(["시트", "셀", "항목", "규칙"])

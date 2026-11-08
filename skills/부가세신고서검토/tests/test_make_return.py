@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-fitz = pytest.importorskip("fitz")
+pymupdf = pytest.importorskip("pymupdf")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
@@ -37,7 +37,7 @@ def made(tmp_path_factory):
 def test_서식_원본이_들어_있다():
     path = form21_pdf.find_form()
     assert path and os.path.basename(path) == form21_pdf.FORM_NAME
-    with fitz.open(path) as d:
+    with pymupdf.open(path) as d:
         head = d[0].get_text()[:120]
         assert d.page_count == 6
         assert not d.metadata.get("author")
@@ -59,7 +59,7 @@ def test_시스템_글꼴이_없으면_내장_CJK로_쓴다(tmp_path, monkeypatc
     path, err = form21_pdf.build(out, company="(주)예시상사", rows=rows, 확정=True,
                                  기간=(2026, 1, "01", "01", "06", "30"))
     assert err is None
-    with fitz.open(path) as d:
+    with pymupdf.open(path) as d:
         t = d[0].get_text()
     assert "(주)예시상사" in t and "448,000" in t
 
@@ -69,7 +69,7 @@ def test_신고서_PDF를_서식_원본에_채운다(made):
     assert p.returncode == 0, p.stdout + p.stderr
     assert "검증식 A1~A4 통과" in p.stdout
     pdf = os.path.join(out, "신고서_2026-1기확정.pdf")
-    with fitz.open(pdf) as d:
+    with pymupdf.open(pdf) as d:
         assert d.page_count == 2
         t = d[0].get_text()
     for s in ("(주)예시상사", "7,200,000", "640,000", "453,000", "448,000"):

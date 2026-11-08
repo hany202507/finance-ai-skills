@@ -37,6 +37,7 @@ class Cell:
     covered: bool = False            # 원본 병합(span)이 덮는 칸
     span: tuple = (1, 1)             # (ROWSPAN, COLSPAN)
     tag: str = ""
+    unit: str = ""                   # TU 칸의 AUNIT(PERIODFROM · SUB_PERIODTO 등)
 
     @property
     def value(self):
@@ -106,7 +107,8 @@ def parse_num(text: str) -> tuple[float | None, dict | None]:
     style = {"(": "paren", "(-)": "paren-minus", "△": "tri", "▲": "tri-b", "-": "minus", "−": "minus-u"}.get(neg, "")
     v = -v if style else v
     v = int(v) if v == int(v) and not m.group("dec") else v
-    return v, {"neg": style, "comma": "," in num, "dec": len(m.group("dec") or "") - 1 if m.group("dec") else 0,
+    # 세 자리 이하 원문은 쉼표 꼴을 알 수 없다. 쉼표로 둔다(「(120)」 칸에 4,321 을 쓰면 「(3157)」 이 됐다, 2026-11-06 D8)
+    return v, {"neg": style, "comma": "," in num or len(num) <= 3, "dec": len(m.group("dec") or "") - 1 if m.group("dec") else 0,
                "suf": (m.group("suf") or "").strip(), "raw": t}
 
 
@@ -125,6 +127,12 @@ def format_num(v, fmt: dict | None) -> str:
     if v < 0:
         style = f.get("neg") or "paren"
         body = {"paren": f"({body})", "paren-minus": f"(-){body}", "tri": f"△{body}", "tri-b": f"▲{body}", "minus-u": f"−{body}"}.get(style, f"-{body}")
+    raw = f.get("raw") or ""
+    m = _NUMLIKE.match(raw) if "\n" in raw else None
+    if m:                                  # 「12,345⏎주⏎」 처럼 칸 안 줄바꿈이 든 원문은 숫자만 바꾸고 줄바꿈 · 끝 글자를 둔다(2026-11-06 D3)
+        a = m.start("neg") if m.group("neg") else m.start("num")
+        b = max(m.end(g) for g in ("num", "dec", "close") if m.group(g))
+        return raw[:a] + body + raw[b:]
     return body + (f.get("suf") or "")
 
 
@@ -156,10 +164,10 @@ def _raw(path: Path) -> tuple[bytes, bytes, str]:
 def _cell(src: Source, n: Node) -> Cell:
     text = shown(src.text(n))
     num, fmt = parse_num(text)
-    if num is not None and n.kids:
-        num, fmt = None, None                      # 칸 안에 요소가 든 칸은 글자로 둔다
+    if num is not None and n.kids and not all(k.tag == "SPAN" and not k.kids for k in n.kids):
+        num, fmt = None, None                      # 칸 안에 요소가 든 칸은 글자로 둔다. 「12,345<SPAN>주</SPAN>」 처럼 SPAN 만 든 칸은 숫자다(2026-11-06 D3)
     rs, cs = int(n.get("ROWSPAN") or 1), int(n.get("COLSPAN") or 1)
-    return Cell(n.k, text, num, fmt, span=(max(rs, 1), max(cs, 1)), tag=n.tag)
+    return Cell(n.k, text, num, fmt, span=(max(rs, 1), max(cs, 1)), tag=n.tag, unit=n.get("AUNIT") or "")
 
 
 def _table_lines(src: Source, t: Node, no: int) -> list[Line]:
@@ -227,10 +235,7 @@ class _Walker:
             if c.tag in SECTIONS:
                 if stop_sections:
                     continue
-                t = c.find("TITLE")
-                if t is not None:
-                    self.lines.append(_p_line(self.src, t, "제목"))
-                self.walk(c)
+                self.walk(c)                                 # 절 제목(TITLE)은 절 안을 돌 때 한 번 들어간다. 따로 넣으면 원고에 두 줄이 되어 dsd 에 제목이 두 번 쓰였다(2026-11-06)
             elif c.tag in ("TITLE", "COVER-TITLE"):
                 self.lines.append(_p_line(self.src, c, "제목"))
             elif c.tag == "P":
@@ -454,7 +459,8 @@ def cell_index(d: Draft) -> dict:
 # ---------------------------------------------------------------- 롤포워드(--roll, 설계 3.1)
 _TERM = re.compile(r"(제\s*)(\d+)(\s*(?:\(\s*[당전]\s*\))?\s*기)")
 _YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?=\s*(?:년|[.\-/]\s*\d{1,2}))")
-_CUR = re.compile(r"당\s*(?:기말|기|반기말|반기|분기말|분기)|\(\s*당\s*\)")
+# 「당기손익-공정가치 측정」 「당기순이익」 의 당기는 기간이 아니다. 금융상품 범주 열을 당기 열로 세어 열이 엇갈려 옮겨졌다(2026-11-07 엘리스그룹 주석5)
+_CUR = re.compile(r"당\s*(?:기말|기(?!\s*(?:손익|순이익|순손익|순손실|법인세|손실|이익))|반기말|반기|분기말|분기)|\(\s*당\s*\)")
 _PRI = re.compile(r"전\s*(?:기말|기|반기말|반기|분기말|분기)|\(\s*전\s*\)")
 
 
@@ -488,8 +494,11 @@ def _head_rows(rows: list[Line]) -> int:
     return 0
 
 
-def period_columns(rows: list[Line], head: int, term: int | None, fy: int | None) -> tuple[list[int], list[int]]:
-    """머리 줄 글로 당기 · 전기 열. 병합으로 덮인 머리 칸은 왼쪽 칸 글을 따른다."""
+_RATE = re.compile(r"율|률|%")
+
+
+def head_names(rows: list[Line], head: int) -> list[str]:
+    """열마다 머리 줄 글(병합으로 덮인 머리 칸은 왼쪽 칸 글을 따른다)."""
     width = max((len(ln.cells) for ln in rows), default=0)
     names = [""] * width
     for ln in rows[:head]:
@@ -499,9 +508,17 @@ def period_columns(rows: list[Line], head: int, term: int | None, fy: int | None
             t = c.text if not c.covered else last
             last = t if not c.covered else last
             names[j] = (names[j] + " " + t).strip()
+    return names
+
+
+def period_columns(rows: list[Line], head: int, term: int | None, fy: int | None) -> tuple[list[int], list[int]]:
+    """머리 줄 글로 당기 · 전기 열. 「당기말이자율(%)」 처럼 율 · % 열은 금액 열이 아니라 세지 않는다(2026-11-06 D6)."""
+    names = head_names(rows, head)
     cur, pri = [], []
-    for j in range(1, width):
+    for j in range(1, len(names)):
         h = names[j]
+        if _RATE.search(h) and not re.fullmatch(r"[당전]기(?:말|초)?\(%\)", norm(h)):
+            continue                      # 「당기말(%)」 처럼 율만 적은 기간 열은 센다(2026-11-07 엘리스그룹 주석18 할인율 표)
         terms = [int(x) for x in re.findall(r"제\s*(\d+)\s*(?:\(\s*[당전]\s*\))?\s*기", h)]
         years = [int(x) for x in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", h)]
         if _CUR.search(h) or (term and term in terms) or (fy and fy in years and not _PRI.search(h)):
@@ -511,6 +528,14 @@ def period_columns(rows: list[Line], head: int, term: int | None, fy: int | None
     return cur, pri
 
 
+_UNIT_CELL = re.compile(r"^\s*\(?\s*단\s*위\s*[:：]")
+
+
+def _unit_like(t: str) -> bool:
+    """「(단위: 원)」 · 「(단위: USD, JPY ,원)」 · 「(단위: 주, 원)」 처럼 단위만 적은 칸. dsd_grid._UNIT 은 원 · 천원 · 백만원만 본다(2026-11-06 D5)."""
+    return bool(dsd_grid._UNIT.search(t) or _UNIT_CELL.match(t or "")) and len(norm(t)) <= 24
+
+
 _LABEL_PERIOD = re.compile(r"(?:^|[\s(<\[〈①-⑳\d)])(당|전)\s*(반기|분기|기)(말)?(?![가-힣])")
 
 
@@ -518,42 +543,204 @@ def _row_key(ln: Line, skip: int = 0) -> str:
     return norm(next((c.text for c in ln.cells[skip:] if not c.covered and c.num is None and c.text.strip()), ""))
 
 
-def _copy_rows(cur: list[Line], pri: list[Line], skip: int = 0) -> tuple[int, list[str]]:
-    """당기 줄의 숫자 칸을 이름이 같은 전기 줄로 옮기고 당기 숫자 칸을 비운다. (옮긴 줄 수, 전기에 없는 당기 줄 이름)."""
+def _row_keys(cur: list[Line], pri: list[Line], skip: int = 0) -> tuple[list[str], list[str]]:
+    """두 묶음의 줄 이름. 첫 글자 칸이 같은 줄이 있으면(「보통예금 | USD」 · 「보통예금 | JPY」) 앞 두 글자 칸으로 가르고,
+    그래도 같으면 차례 번호를 붙인다. 첫 칸만 보면 둘째 줄이 첫째 줄 자리로 옮겨졌다(2026-11-06 실제 회사 시험 D5)."""
+    base_c, base_p = [_row_key(ln, skip) for ln in cur], [_row_key(ln, skip) for ln in pri]
+    dup = {k for ks in (base_c, base_p) for k in ks if k and ks.count(k) > 1}
+
+    def keys(lines, base):
+        out, seen = [], {}
+        for ln, k in zip(lines, base):
+            if k in dup:
+                k = "|".join([norm(c.text) for c in ln.cells[skip:] if not c.covered and c.num is None and c.text.strip()][:2])
+            n = seen.get(k, 0)
+            seen[k] = n + 1
+            out.append(k if n == 0 or not k else f"{k}#{n}")
+        return out
+
+    return keys(cur, base_c), keys(pri, base_p)
+
+
+def _new_row(src: Line, table: int | None) -> Line:
+    """당기 줄을 본뜬 새 전기 줄(위치 번호 없음. 원고 → dsd 에서 위 줄 TR 을 복사해 넣는다)."""
+    cells = [Cell(None, c.text, c.num, dict(c.fmt) if c.fmt else None, c.covered, c.span, c.tag, c.unit) for c in src.cells]
+    return Line("줄", None, cells, table=table, tag="TR")
+
+
+def _copy_rows(cur: list[Line], pri: list[Line], skip: int = 0, cols: dict | None = None,
+               add: list | None = None) -> tuple[int, list[str]]:
+    """당기 줄의 숫자 칸을 이름이 같은 전기 줄로 옮기고 당기 숫자 칸을 비운다. (옮긴 줄 수, 전기에 없는 당기 줄 이름).
+    cols 는 당기 열 → 전기 열(두 표 머리가 다를 때 머리 이름으로 맞춘 것, 없으면 같은 열). 대응이 없는 전기 열과
+    당기에 없는 전기 줄의 숫자 칸은 비운다(작년의 전기 숫자가 남지 않게, 2026-11-05).
+    add 를 주면(두 표 머리가 같을 때) 전기 표에 없는 당기 줄을 바로 위 당기 줄이 옮겨 간 전기 줄 아래에 새 줄로 더한다.
+    (뒤 줄, 새 줄)을 add 에 모으고 시트에 넣는 일은 부른 쪽이 한다(2026-11-06 D5: 외화 표의 미지급금 줄을 버렸다)."""
+    kc, kp = _row_keys(cur, pri, skip)
     by = {}
-    for ln in pri:
-        by.setdefault(_row_key(ln, skip), ln)
-    moved, missing = 0, []
-    for ln in cur:
-        k = _row_key(ln, skip)
+    for ln, k in zip(pri, kp):
+        by.setdefault(k, ln)
+    moved, missing, hit = 0, [], set()
+    after = None
+    for ln, k in zip(cur, kc):
         dst = by.get(k)
         nums = [j for j, c in enumerate(ln.cells) if c.num is not None or (not c.text.strip() and not c.covered and j >= skip + 1)]
         if dst is None:
-            if any(ln.cells[j].num is not None for j in nums):
+            has = any(ln.cells[j].num is not None for j in nums)
+            same = cols is None or all(j == jp for j, jp in cols.items())      # 열이 자리마다 같으면(이름만 다름) 줄을 더해도 칸이 맞는다
+            if has and add is not None and same and after is not None and len(after.cells) == len(ln.cells):
+                new = _new_row(ln, after.table)
+                add.append((after, new))
+                after = new
+            elif has:
                 missing.append(k)
             for j in nums:
                 ln.cells[j].text, ln.cells[j].num = "", None
             continue
+        after = dst
+        hit.add(id(dst))
         for j in nums:
-            if j >= len(dst.cells) or dst.cells[j].covered:
+            jp = cols.get(j) if cols is not None else j
+            c = ln.cells[j]
+            if jp is None or jp >= len(dst.cells) or dst.cells[jp].covered:
+                c.text, c.num = ("", None) if c.num is not None else (c.text, c.num)
                 continue
-            c, t = ln.cells[j], dst.cells[j]
+            t = dst.cells[jp]
             if c.num is None and t.num is None and not c.text.strip():
                 continue
             t.text, t.num, t.fmt = c.text, c.num, c.fmt or t.fmt
             c.text, c.num = "", None
+        if cols is not None:
+            mapped = set(cols.values())
+            for jp, t in enumerate(dst.cells):
+                if jp > skip and jp not in mapped and t.num is not None:
+                    t.text, t.num = "", None
         moved += 1
+    gone = [ln for ln, k in zip(pri, kp) if id(ln) not in hit and k and add is not None and cols is None
+            and any(t.num is not None for t in ln.cells[skip + 1:])]
+    if gone and len(gone) == len(pri):
+        gone = gone[1:]                        # 표의 줄을 모두 지우면 편집기가 열지 못한다(빈 TBODY, 2026-11-07). 한 줄은 숫자만 비운다
+    for ln, k in zip(pri, kp):
+        if id(ln) not in hit and k:
+            if any(ln is g for g in gone):
+                add.append((ln, None))         # 머리가 같은 두 표: 작년 당기에 없던 재작년 줄은 지운다(전기 표 = 작년 당기 표)
+                continue
+            for t in ln.cells[skip + 1:]:
+                if t.num is not None:
+                    t.text, t.num = "", None
     return moved, missing
 
 
+def col_map(cur_head: list[Line], pri_head: list[Line]) -> dict | None:
+    """두 표 머리가 다를 때 당기 열 → 전기 열을 머리 이름으로 맞춘다. 머리가 한 줄이고 첫 열이 같을 때만(병합 머리는 맞추지 않는다)."""
+    if len(cur_head) != 1 or len(pri_head) != 1:
+        return None
+    # 각주 표시는 이름에서 뗀다. 「대 체(*)」 와 「대 체(*1, *2)」 를 다른 열로 보면 대체 값을 버린다(2026-11-06 실제 회사 시험 D4)
+    mark = lambda t: re.sub(r"\(\s*\*[^)]*\)|\*\d*", "", norm(t))  # noqa: E731
+    hc = [mark(c.text) for c in cur_head[0].cells]
+    hp = [mark(c.text) for c in pri_head[0].cells]
+    if hc and hp and _period_of_text(cur_head[0].cells[0].text) == "cur" and _period_of_text(pri_head[0].cells[0].text) == "pri":
+        hp[0] = hc[0]                       # 왼쪽 위 칸 「당 기」 · 「전 기」 는 같은 열이다(2026-11-06 E2)
+    if not hc or not hp or hc[0] != hp[0] or len(set(hp)) != len(hp):
+        return None
+    out = {j: hp.index(t) for j, t in enumerate(hc) if j > 0 and t and t in hp}
+    if len(hc) == len(hp):                  # 열 수가 같으면 이름이 맞지 않는 열은 같은 자리 열로(「1년 미만」 · 「3개월 미만」, 2026-11-06 N10)
+        used = set(out.values())
+        for j in range(1, len(hc)):
+            if j not in out and j not in used and hc[j] and hp[j]:
+                out[j] = j
+    return out if len(out) >= max(1, (len(hc) - 1) // 2) else None
+
+
+_OPEN = re.compile(r"^기초(금액|잔액|장부금액)?$")
+_CLOSE = re.compile(r"^기말(금액|잔액|장부금액)?$")
+
+
+def _put(dst: Cell, src: Cell) -> None:
+    dst.text, dst.num, dst.fmt = src.text, src.num, src.fmt or dst.fmt
+
+
+def fill_opening(cur: list[Line], pri: list[Line], hc: int, hp: int, skip: int = 0) -> int:
+    """변동표에서 새 당기 기초를 옮긴 전기(작년 당기) 기말로 채운다(2026-11-05 DSD변환). 채운 칸 수.
+    열 꼴: 머리 칸 「기초」 · 「기말」 열이 있으면 줄 이름이 같은 전기 줄의 기말 칸을 당기 줄 기초 칸에 넣는다.
+    줄 꼴: 본문 첫 칸이 「기초」 인 당기 줄에 전기 「기말」 줄의 숫자 칸을 넣는다. _copy_rows 뒤에 부른다."""
+    n = 0
+
+    def find(head, rx):
+        for ln in head:
+            for j, c in enumerate(ln.cells):
+                if not c.covered and rx.match(norm(c.text)):
+                    return j
+        return None
+
+    j0, j1 = find(cur[:hc], _OPEN), find(pri[:hp], _CLOSE)
+    if j0 is not None and j1 is not None:
+        by = {}
+        kc, kp = _row_keys(cur[hc:], pri[hp:], skip)
+        for ln, k in zip(pri[hp:], kp):
+            by.setdefault(k, ln)
+        for ln, k in zip(cur[hc:], kc):
+            p = by.get(k)
+            if p is None or j0 >= len(ln.cells) or j1 >= len(p.cells):
+                continue
+            if p.cells[j1].num is not None and not ln.cells[j0].covered:
+                _put(ln.cells[j0], p.cells[j1])
+                n += 1
+        return n
+    o = next((ln for ln in cur[hc:] if _OPEN.match(_row_key(ln, skip))), None)
+    c = next((ln for ln in pri[hp:] if _CLOSE.match(_row_key(ln, skip))), None)
+    if o is not None and c is not None:
+        for j in range(skip + 1, min(len(o.cells), len(c.cells))):
+            if c.cells[j].num is not None and not o.cells[j].covered:
+                _put(o.cells[j], c.cells[j])
+                n += 1
+    return n
+
+
+# 문단 끝에 붙은 기간 머리: 「… 다음과 같습니다.5.2.1 당기말」 「… 같습니다.17.2.1 당기」(줄바꿈이 빠진 공시 원문, 2026-11-06 다른 회사 시험 E2).
+# 「전기초」 는 셋째 기간이라 보지 않는다
+_TAIL_PERIOD = re.compile(r"(?:^|[\s.)\d])(당|전)\s*기(?:말)?\s*$")
+
+
 def _period_of_text(text: str) -> str | None:
-    m = _LABEL_PERIOD.search(text[:40])
+    m = _TAIL_PERIOD.search(text[-12:])                                          # 끝에 붙은 기간이 앞 문장의 「당기와 전기 중」 보다 앞선다
+    if not m:
+        if {"당", "전"} <= set(re.findall(r"(당|전)\s*(?:반기|분기|기)", text[:40])):
+            return None                     # 「당기와 전기 중 …」 은 두 기간을 함께 말한다. 「전기」 만 읽어 전기 표로 보았다(2026-11-07 주석28.3)
+        m = _LABEL_PERIOD.search(text[:40])
     return None if not m else ("cur" if m.group(1) == "당" else "pri")
 
 
+_FS_KINDS = ("표지", "재무제표 표지", "재무제표", "주석 머리", "주석")
+# 괄호 · 따옴표로 감싼 꼴만: 「(감사받지 아니한 재무제표)」 「"감사받지 않은 재무제표"」(2026-11-06 다른 회사 시험 N8 · E3)
+_UNAUDITED = re.compile(r"\s*(?:\(\s*감사\s*받지\s*(?:않은|아니한)\s*재무제표\s*\)|[\"“]\s*감사\s*받지\s*(?:않은|아니한)\s*재무제표\s*[\"”])")
+
+
+def _drop_unaudited(d: Draft) -> None:
+    """작년 전기가 감사받지 않은 숫자였으면(초도 감사) 「(감사받지 않은 재무제표)」 표시는 재작년 칸을 가리킨다. 새 전기는 작년에 감사받은
+    당기라 표지 · 재무제표 · 주석의 이 표시를 지운다. 감사보고서 기타사항 같은 문장은 고치지 않고 알린다(2026-11-06 다른 회사 시험 N8)."""
+    n = 0
+    for s in d.sheets:
+        for ln in s.lines:
+            for c in ln.cells:
+                if c.covered or not c.text:
+                    continue
+                if s.kind in _FS_KINDS:
+                    t = _UNAUDITED.sub("", c.text)
+                    if t != c.text:
+                        c.text, n = t, n + 1
+    if n:
+        d.notes.append(f"「(감사받지 않은 재무제표)」 표시 {n}곳을 지웠다. 작년 전기(재작년)를 가리키던 표시이고 새 전기는 작년에 감사받은 당기다")
+    said = [s.key for s in d.sheets if s.kind not in _FS_KINDS
+            and any(re.search(r"감사\s*받지\s*(?:않|아니)", c.text or "") for ln in s.lines for c in ln.cells)]
+    if said:
+        d.notes.append(f"{', '.join(dict.fromkeys(said))}: 전기 재무제표를 감사받지 않았다는 작년 문장이 남았다. 새 전기는 감사받은 해라 그 문단(기타사항 등)을 고치거나 지운다")
+
+
 def roll(d: Draft) -> Draft:
-    """작년 판 원고를 당기 초안으로: 당기 숫자를 전기 칸으로 옮기고 당기 칸을 비운다. 머리줄 기수 · 해 +1, 표지 · 재무제표 머리 표 · TU 날짜 +1.
-    당기 · 전기를 두는 꼴 셋을 옮긴다: 열(「당기말 · 전기말」 열), 한 표 안 줄 묶음(첫 열 「당기 · 전기」 병합 칸), 따로 둔 두 표(표 위 문단 「당기 · 전기」).
+    """작년 판 원고를 당기 초안으로: 당기 숫자를 전기 칸으로 옮기고 당기 칸을 비운다. 머리줄 기수 · 해 +1, 표지 · 재무제표 머리 표 · TU 날짜 +1,
+    외부감사 실시내용 「감사대상 사업연도」(TU SUB_PERIODFROM · SUB_PERIODTO) +1.
+    당기 · 전기를 두는 꼴 셋을 옮긴다: 열(「당기말 · 전기말」 열), 한 표 안 줄 묶음(첫 열 「당기 · 전기」 병합 칸), 따로 둔 두 표(표 위 문단 「당기 · 전기」
+    또는 「① 당기말 | (단위: 원)」 한 줄 표). 변동표는 새 당기 기초를 작년 당기 기말로 채운다(fill_opening).
     문단 속 날짜는 바꾸지 않는다(문장 검토가 작년 날짜를 잡는다). 정하지 못한 표는 손대지 않고 notes 에 적는다.
     1차에서 뺀다: 자본변동표(두 해를 위아래 줄 묶음으로 둔다), 반기 · 분기 보고서(재무상태표 비교가 직전 사업연도 말이다)."""
     doc = norm(d.info.get("document") or "")
@@ -565,8 +752,13 @@ def roll(d: Draft) -> Draft:
     fy = int(end[:4]) if re.fullmatch(r"\d{8}", end) else None
     rolled = []
     for s in d.sheets:
+        for ln in s.lines:                     # 외부감사 실시내용 「감사대상 사업연도」 는 표지 기간과 같아야 편집기 검사를 넘는다(2026-11-06)
+            for c in ln.cells:
+                if c.unit in ("SUB_PERIODFROM", "SUB_PERIODTO") and not c.covered:
+                    c.text = bump(c.text)
         blocks = _blocks(s.lines)
         done: set = set()
+        grow: list = []                         # (뒤 줄, 새 줄). 표 위치가 바뀌지 않게 시트를 다 본 뒤 넣는다
         if s.kind in ("재무제표", "주석"):
             # 따로 둔 두 표: 표 위 세 줄 안의 문단이 「당기 · 전기」
             tagged = []
@@ -575,7 +767,15 @@ def roll(d: Draft) -> Draft:
             def unit_only(a, b):
                 rows = [ln for ln in s.lines[a + 1:b] if ln.kind in ("머리", "줄")]
                 texts = [c.text for ln in rows for c in ln.cells if c.text.strip()]
-                return len(texts) == 1 and bool(dsd_grid._UNIT.search(texts[0])) and len(norm(texts[0])) <= 14
+                return len(texts) == 1 and _unit_like(texts[0])
+
+            def label_table(a, b):
+                rows = [ln for ln in s.lines[a + 1:b] if ln.kind in ("머리", "줄")]
+                if len(rows) != 1 or any(c.num is not None for c in rows[0].cells):
+                    return None
+                texts = [re.sub(r"\s+", " ", c.text).strip() for c in rows[0].cells if c.text.strip()]
+                texts = [t for t in texts if not _unit_like(t)]
+                return _period_of_text(texts[0]) if len(texts) == 1 and len(norm(texts[0])) <= 12 else None
 
             for a, b in blocks:
                 per = None
@@ -586,6 +786,9 @@ def roll(d: Draft) -> Draft:
                 seen = 0
                 while k >= 0 and seen < 4:
                     ln = s.lines[k]
+                    if ln.kind == "표끝" and k in start_of and label_table(start_of[k], k):
+                        per = label_table(start_of[k], k)               # 「① 당기말 | (단위: 원)」 한 줄 표(2026-11-05)
+                        break
                     if ln.kind == "표끝" and k in start_of and unit_only(start_of[k], k):
                         k = start_of[k] - 1                            # 「(단위 : 원)」 한 칸 표는 건너뛴다
                         continue
@@ -594,11 +797,29 @@ def roll(d: Draft) -> Draft:
                     seen += 1
                     if ln.kind in ("문단", "제목") and ln.cells and ln.cells[0].text.strip():
                         t = re.sub(r"\s+", " ", ln.cells[0].text).strip()
-                        if not (dsd_grid._UNIT.search(t) and len(norm(t)) <= 14):
+                        if re.match(r"\(?\s*\*", t):
+                            break                          # 「(*) 전기는 …」 은 앞 표의 각주다. 다음 표의 기간 표시로 읽지 않는다(2026-11-07)
+                        if not _unit_like(t):
                             per = _period_of_text(t)
                             break
                     k -= 1
+                if per is None:                        # 표 왼쪽 위 칸이 「당 기」 · 「전 기」 뿐인 표(2026-11-06 다른 회사 시험 E2)
+                    top = next((ln for ln in s.lines[a + 1:b] if ln.kind in ("머리", "줄")), None)
+                    if top is not None and top.cells and len(norm(top.cells[0].text)) <= 4:
+                        per = _period_of_text(top.cells[0].text)
+                head = next((ln for ln in s.lines[a + 1:b] if ln.kind == "머리"), None)
+                if per is not None and head is not None and {"cur", "pri"} <= {_period_of_text(c.text) for c in head.cells[1:]}:
+                    per = None                         # 머리에 당기 · 전기 열이 다 있는 표는 열 꼴이다. 다른 표와 짝짓지 않는다(2026-11-07)
                 tagged.append((a, b, per))
+            numeric = [i for i, (a, b, _) in enumerate(tagged) if any(c.num is not None for ln in s.lines[a + 1:b] for c in ln.cells)]
+            for x, y in zip(numeric, numeric[1:]):  # 「(전기말)」 표시만 있고 바로 앞 표에 「당기」 표시가 없으면 그 표를 당기 표로 본다(2026-11-06 N10)
+                (a, b, per), (a2, b2, per2) = tagged[x], tagged[y]
+                if per is None and per2 == "pri":
+                    hc_ = [ln for ln in s.lines[a + 1:b] if ln.kind == "머리"]
+                    hp_ = [ln for ln in s.lines[a2 + 1:b2] if ln.kind == "머리"]
+                    if hc_ and hp_ and len(hc_[-1].cells) == len(hp_[-1].cells) and norm(hc_[0].cells[0].text) == norm(hp_[0].cells[0].text):
+                        tagged[x] = (a, b, "cur")
+                        d.notes.append(f"{s.key} 표 {s.lines[a].table}: 「당기」 표시가 없어 바로 뒤 전기 표(표 {s.lines[a2].table})의 당기 표로 보았다")
             for i, (a, b, per) in enumerate(tagged):
                 if per != "cur" or (a, b) in done:
                     continue
@@ -608,14 +829,55 @@ def roll(d: Draft) -> Draft:
                 rows_c = [ln for ln in s.lines[a + 1:b] if ln.kind in ("머리", "줄")]
                 rows_p = [ln for ln in s.lines[mate[0] + 1:mate[1]] if ln.kind in ("머리", "줄")]
                 hc, hp = _head_rows(rows_c), _head_rows(rows_p)
-                if [_row_key(x) for x in rows_c[:hc]] != [_row_key(x) for x in rows_p[:hp]]:
-                    continue
-                moved, missing = _copy_rows(rows_c[hc:], rows_p[hp:])
+                cols = None
+                if [_row_key(x) for x in rows_c[:hc]] != [_row_key(x) for x in rows_p[:hp]] or                         [[norm(c.text) for c in x.cells] for x in rows_c[:hc]] != [[norm(c.text) for c in x.cells] for x in rows_p[:hp]]:
+                    cols = col_map(rows_c[:hc], rows_p[:hp])
+                    if cols is None:
+                        continue
+                added: list = []
+                lost = []                          # 당기 표에만 있는 열(「처 분」): 전기 표에 열이 없어 옮기지 못한 값을 안내에 남긴다(2026-11-06 D4)
+                if cols is not None:
+                    for j, c in enumerate(rows_c[hc - 1].cells if hc else []):
+                        if j > 0 and j not in cols and not c.covered and c.text.strip():
+                            vals = [f"{_row_key(ln)} {ln.cells[j].text.strip()}" for ln in rows_c[hc:]
+                                    if j < len(ln.cells) and ln.cells[j].num not in (None, 0)]
+                            lost.append(f"「{c.text.strip()}」({', '.join(vals[:6]) or '값 없음'})")
+                # 줄 꼴 변동표의 새 당기 기초 = 작년 당기 기말. 같은 표의 기말 줄을 옮기기 전에 잡아 둔다. 옮긴 전기 표에서 가져오면
+                # 두 표의 열이 다를 때(당기에만 「기계장치」 열) 한 칸씩 밀려 들어갔다(2026-11-07 엘리스그룹 주석9)
+                o_row = next((ln for ln in rows_c[hc:] if _OPEN.match(_row_key(ln))), None)
+                c_row = next((ln for ln in rows_c[hc:] if _CLOSE.match(_row_key(ln))), None)
+                snap = ([Cell(None, text=c.text, num=c.num, fmt=c.fmt) for c in c_row.cells]
+                        if o_row is not None and c_row is not None and o_row is not c_row else None)
+                moved, missing = _copy_rows(rows_c[hc:], rows_p[hp:], cols=cols, add=added)
+                if snap is not None:
+                    opened = 0
+                    for j in range(1, min(len(o_row.cells), len(snap))):
+                        if snap[j].num is not None and not o_row.cells[j].covered:
+                            _put(o_row.cells[j], snap[j])
+                            opened += 1
+                else:
+                    opened = fill_opening(rows_c, [x for x in rows_p if all(x is not o for o, n in added if n is None)] + [n for _, n in added if n], hc, hp)
+                grow += added
+                plus, minus = [n for _, n in added if n], [o for o, n in added if n is None]
+                if plus or minus:
+                    d.notes.append(f"{s.key} 표 {s.lines[a].table} → 표 {s.lines[mate[0]].table}: 전기 표를 작년 당기 표의 줄로 맞췄다"
+                                   f"(더한 줄 {len(plus)}{': ' + ', '.join(_row_key(n, 0) for n in plus[:4]) if plus else ''}"
+                                   f" · 지운 재작년 줄 {len(minus)}{': ' + ', '.join(_row_key(o, 0) for o in minus[:4]) if minus else ''})")
                 done |= {(a, b), mate}
                 name = f"{s.key} 표 {s.lines[a].table} → 표 {s.lines[mate[0]].table}"
+                if cols is not None:
+                    d.notes.append(f"{name}: 두 표의 열이 달라 머리 이름으로 맞춰 옮겼다. 전기 표에만 있는 열은 비웠다(열 더하기 · 빼기는 편집기에서)")
+                    hn_c, hn_p = rows_c[hc - 1].cells, rows_p[hp - 1].cells
+                    pos = [f"「{hn_c[j].text.strip()}」 → 「{hn_p[k].text.strip()}」" for j, k in sorted(cols.items())
+                           if j == k and j < len(hn_c) and k < len(hn_p) and norm(hn_c[j].text) != norm(hn_p[k].text)]
+                    if pos:
+                        d.notes.append(f"{name}: 이름이 다른 열을 같은 자리 열로 옮겼다({', '.join(pos)}). 회사가 머리 이름을 바꿨는지 확인한다")
+                if lost:
+                    d.notes.append(f"{name}: 당기 표에만 있던 열 {', '.join(lost)} 은 전기 표에 열이 없어 옮기지 못했다. "
+                                   "편집기에서 전기 표에 열을 더하고 이 값을 넣어야 줄마다 기초 + 변동 = 기말이 맞는다")
                 if missing:
                     d.notes.append(f"{name}: 전기 표에 없는 당기 줄은 옮기지 못하고 비웠다({', '.join(missing[:5])})")
-                rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "표",
+                rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "표", "opening": opened,
                                "cells": [c.loc for ln in rows_c[hc:] for c in ln.cells if c.loc is not None and c.fmt is not None]})
         for a, b in blocks:
             if (a, b) in done:
@@ -631,7 +893,8 @@ def roll(d: Draft) -> Draft:
                 continue
             if s.kind not in ("재무제표", "주석"):
                 continue
-            has_num = any(c.num is not None for ln in rows for c in ln.cells)
+            has_num = any(c.num is not None or re.fullmatch(r"\(?-?[\d,]*\.?\d+\s*%\)?", c.text.strip())
+                          for ln in rows for c in ln.cells)          # 「4.66%」 율만 있는 표도 옮긴다(2026-11-07 주석18 할인율 표)
             if not has_num:
                 continue
             if s.key == "자본변동표":
@@ -652,16 +915,46 @@ def roll(d: Draft) -> Draft:
                     groups.setdefault(cur_g, []).append(ln)
             if set(groups) == {"cur", "pri"}:
                 moved, missing = _copy_rows(groups["cur"], groups["pri"], skip=1)
+                opened = fill_opening(groups["cur"], groups["pri"], 0, 0, skip=1)
                 if missing:
                     d.notes.append(f"{name}: 전기 묶음에 없는 당기 줄은 옮기지 못하고 비웠다({', '.join(missing[:5])})")
                 for ln in rows[:head]:
                     for c in ln.cells:
                         if not c.covered:
                             c.text = bump(c.text)
-                rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "줄 묶음",
+                rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "줄 묶음", "opening": opened,
                                "cells": [c.loc for ln in groups["cur"] for c in ln.cells if c.loc is not None and c.fmt is not None]})
                 continue
             cur, pri = period_columns(rows, head, term, fy)
+            names = head_names(rows, head)
+            first = [j for j in pri if re.search(r"기초|전환일", norm(names[j]))]
+            rest = [j for j in pri if j not in first]
+            pairs, extra = None, []
+            if cur and first and len(rest) == len(cur):
+                pairs = list(zip(cur, rest))
+            elif cur and first:
+                # 기간마다 범주 열이 다른 표(당기말 2열 · 전기말 3열 · 전기초 3열): 기간 말을 뗀 열 이름으로 맞춘다(2026-11-07 엘리스그룹 주석5)
+                bare = lambda t: norm(re.sub(r"[당전]\s*기\s*[말초]?|기\s*초|전환일", "", t))  # noqa: E731
+                by: dict = {}
+                for j in rest:
+                    by.setdefault(bare(names[j]), []).append(j)
+                m = [(cj, (by.get(bare(names[cj])) or [None])[0]) for cj in cur]
+                if all(p is not None for _, p in m) and len({p for _, p in m}) == len(m):
+                    pairs = m
+                    extra = [j for j in rest if j not in {p for _, p in m}]
+            if pairs is not None:
+                # 당기말 · 전기말 · 전기초 세 기간 표(K-IFRS 최초 채택 · 재작성 해, 2026-11-06 다른 회사 시험 E1): 당기말은 전기말 열로,
+                # 전기초 열은 다음 해에 둘 까닭이 없어 값을 비우고 열을 지우라고 알린다(열 빼기는 편집기에서).
+                # 「151.48%」 처럼 숫자로 읽지 않은 율 칸도 비운다(2026-11-07). 당기에 없던 범주의 전기말 열도 재작년 값이라 비운다
+                for ln in rows[head:]:
+                    for j in first + extra:
+                        if j < len(ln.cells) and not ln.cells[j].covered and (ln.cells[j].num is not None or re.search(r"\d", ln.cells[j].text)):
+                            ln.cells[j].text, ln.cells[j].num = "", None
+                d.notes.append(f"{s.key} 표 {s.lines[a].table}: 세 기간 표다. 당기말을 전기말 열로 옮기고 「{names[first[0]].strip()}」 열은 비웠다. "
+                               "편집기에서 그 열을 지운다(재작성이 없으면 전기초 재무상태표는 두지 않는다)"
+                               + (f". 당기 열이 없는 「{', '.join(names[j].strip() for j in extra)}」 열은 재작년 값이라 비웠다" if extra else ""))
+                cur, pri = [c for c, _ in pairs], [p for _, p in pairs]
+            rate = [j for j in range(1, len(names)) if j not in cur and _RATE.search(names[j]) and _CUR.search(names[j]) and not _PRI.search(names[j])]
             if not cur or len(cur) != len(pri):
                 d.notes.append(f"{name}: 당기 · 전기 칸을 찾지 못해 옮기지 않았다(당기 {len(cur)}열 · 전기 {len(pri)}열)")
                 continue
@@ -681,7 +974,29 @@ def roll(d: Draft) -> Draft:
                     c.text, c.num = "", None
                     if c.loc is not None and c.fmt is not None:
                         cells.append(c.loc)
-            rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "열", "cells": cells})
+            opened = 0                            # 줄 꼴 변동표(「기초금액 · 기말금액」 줄): 새 당기 기초 = 새 전기 기말(2026-11-06 N11)
+            row_open = next((ln for ln in body if ln.cells and _OPEN.match(norm(ln.cells[0].text))), None)
+            row_close = next((ln for ln in body if ln.cells and _CLOSE.match(norm(ln.cells[0].text))), None)
+            if row_open is not None and row_close is not None and row_open is not row_close:
+                for cj, pj in zip(cur, pri):
+                    if (max(cj, pj) < min(len(row_open.cells), len(row_close.cells)) and not row_open.cells[cj].covered
+                            and row_close.cells[pj].num is not None):
+                        _put(row_open.cells[cj], row_close.cells[pj])
+                        opened += 1
+            for ln in body:                       # 당기에만 있는 율 열(「당기말이자율(%)」)은 작년 값이라 비운다
+                for j in rate:
+                    if j < len(ln.cells) and not ln.cells[j].covered:
+                        ln.cells[j].text, ln.cells[j].num = "", None
+            if rate:
+                d.notes.append(f"{name}: 당기에만 있는 열({', '.join(names[j] for j in rate)})은 작년 값이라 비웠다. 만기일 같은 글 칸은 작년 글이 남았다")
+            rolled.append({"sheet": s.key, "table": s.lines[a].table, "loc": s.lines[a].loc, "mode": "열", "cells": cells, "opening": opened})
+        for prev, new in grow:                    # 전기 표에 더할 당기 줄은 뒤 줄 바로 아래(새 줄끼리는 차례대로), 지울 재작년 줄은 뺀다
+            at = next(i for i, ln in enumerate(s.lines) if ln is prev)
+            if new is None:
+                del s.lines[at]
+            else:
+                s.lines.insert(at + 1, new)
+    _drop_unaudited(d)
     d.rolled = True
     d.info["rolled_tables"] = rolled
     if term:

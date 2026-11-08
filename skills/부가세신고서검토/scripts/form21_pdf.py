@@ -24,7 +24,7 @@ import os
 import re
 import sys
 
-import fitz
+import pymupdf
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -57,7 +57,7 @@ def _font_candidates():
 
 
 def load_font():
-    """(fitz.Font, 글꼴 바이트, 출처) 를 돌려준다.
+    """(pymupdf.Font, 글꼴 바이트, 출처) 를 돌려준다.
 
     재는 글꼴과 쓰는 글꼴이 같아야 숫자가 옆 칸을 침범하지 않는다. 그래서 한 벌을
     정해 두 곳에 같이 쓴다. 시스템 글꼴이 없으면 PyMuPDF 에 든 CJK 글꼴을 쓴다."""
@@ -66,10 +66,10 @@ def load_font():
             try:
                 with open(p, "rb") as f:
                     buf = f.read()
-                return fitz.Font(fontbuffer=buf), buf, p
+                return pymupdf.Font(fontbuffer=buf), buf, p
             except Exception:  # noqa: BLE001  글꼴을 못 읽으면 다음 후보
                 continue
-    f = fitz.Font("cjk")
+    f = pymupdf.Font("cjk")
     return f, f.buffer, "PyMuPDF 내장 CJK"
 
 
@@ -233,10 +233,10 @@ def _erase_line(page, key, x_max=None):
             and (x_max is None or w[2] <= x_max)]
     if not line:
         return
-    page.draw_rect(fitz.Rect(min(w[0] for w in line) - 2,
-                             min(w[1] for w in line) - 1,
-                             max(w[2] for w in line) + 2,
-                             max(w[3] for w in line) + 1),
+    page.draw_rect(pymupdf.Rect(min(w[0] for w in line) - 2,
+                                min(w[1] for w in line) - 1,
+                                max(w[2] for w in line) + 2,
+                                max(w[3] for w in line) + 1),
                    color=None, fill=(1, 1, 1))
 
 
@@ -251,7 +251,7 @@ def _page_label(page, sheet, text):
     x1 = max(w[2] for w in ws) + 2
     y0 = min(w[1] for w in ws) - 1
     y1 = max(w[3] for w in ws) + 1
-    page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=None, fill=(1, 1, 1))
+    page.draw_rect(pymupdf.Rect(x0, y0, x1, y1), color=None, fill=(1, 1, 1))
     sheet.right(x1, y0, y1, text, 7, pad=0)
 
 
@@ -298,8 +298,8 @@ def build(out_path, *, company, rows, p2=None, 확정=True,
     if not src_path:
         return None, ("서식 원본을 못 찾았습니다. python assets/_받기.py 로 받으십시오 · "
                       + FORM)
-    src = fitz.open(src_path)
-    doc = fitz.open()
+    src = pymupdf.open(src_path)
+    doc = pymupdf.open()
     doc.insert_pdf(src, from_page=0, to_page=0)
     doc.insert_pdf(src, from_page=3, to_page=3)
     # 재는 폰트와 쓰는 폰트가 다르면 숫자가 옆 칸을 침범한다. 한 벌로 재고 쓴다

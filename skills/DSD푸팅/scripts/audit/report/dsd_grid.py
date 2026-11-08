@@ -29,7 +29,7 @@ _CELL_UNIT = (("백만원", 1000000), ("천원", 1000), ("%", 0.01))
 def cell_unit(s) -> float | None:
     """칸 글자 끝에 단위가 붙어 있으면 그 단위(원으로 몇 배인지, % 는 0.01). 「346,820천원」 은 1000, 「27.19%」 는 0.01.
     붙은 단위가 없거나 「원」 · 「주」 면 None(표의 단위를 쓴다). 「원」 · 「주」 는 예전부터 떼고 표의 단위로 읽었다. 단위 줄이 없어
-    백만원을 이어받은 주식수 표와 견주는 연결이 이미 많아, 「주」 칸만 1 로 두면 그 연결이 어긋난다(10단계 스터디, 한 상장사 별도 배당받을 주식).
+    백만원을 이어받은 주식수 표와 견주는 연결이 이미 많아, 「주」 칸만 1 로 두면 그 연결이 어긋난다(10단계 스터디, 삼성전자 별도 배당받을 주식).
     주식수 · 주당 금액을 계산에 쓸 때는 calcs 의 칸에 단위를 적는다."""
     t = str(s or "").replace("　", "").replace(" ", "").strip()
     for word, u in _CELL_UNIT:
@@ -146,6 +146,9 @@ UNITS = {"원": 1, "천원": 1000, "백만원": 1000000}
 _UNIT = re.compile(r"단위\s*[:：]\s*(백만원|천원|원)")
 _NOTE_HEAD = re.compile(r"^(\d+)\s*\.\s*(?!\d)(.+)$", re.S)
 _TITLE_END = re.compile(r"\s(?:가\.|\(1\)|\(가\)|1\)|①)")
+# 공개 원문에서 제목과 첫 문장이 띄어쓰기 없이 붙은 꼴: 「15. 차입금당기말과 전기말 …」 「9. 유형자산9.1 당기와 …」 「35. 보고기간 후 사건연결회사의 …」.
+# 20자에서 자르면 「차입금당기말과 전기말 및」 이 제목이 되어 작년 보고서와 주석을 잇지 못했다(2026-11-06 다른 회사 시험 E7)
+_TITLE_GLUE = re.compile(r"(?<=[가-힣)])(?:\s?(?P<sub>\d{1,2})\.\d|당기(?:말|와|\s*중|\s*및)|연결회사(?:는|의|가)|당사(?:는|의|가)|회사는)")
 FS, NOTES, OTHER = "(첨부) 재무제표", "주석", "그 외 절"
 
 
@@ -319,7 +322,7 @@ def _cells(t):
 
 def _layout(t) -> bool:
     """칸 안에 표가 든 테두리 없는 표. 정기보고서(XBRL) 주석은 주석 하나를 이런 틀 표 한 칸에 문단과 표로 넣는다.
-    칸 글자를 한 줄로 이으면 안의 표가 문장이 되어 숫자 칸이 하나도 안 생긴다(한 상장사 2026 반기 연결의 관계기업 투자 주석, 9단계 평가)."""
+    칸 글자를 한 줄로 이으면 안의 표가 문장이 되어 숫자 칸이 하나도 안 생긴다(삼성전자 2026 반기 연결의 관계기업 투자 주석, 9단계 평가)."""
     return any(x.tag in ("TABLE", "TABLE-GROUP") for c in _cells(t) for x in c.iter() if x is not c)
 
 
@@ -400,11 +403,15 @@ def _note_starts(blocks: list) -> dict:
         rest = m.group(2).strip()
         short = len(text) <= 40 and not text.endswith("다.")
         score = 3 if b[0] == "h" else (2 if short else 1)
-        if b[0] == "h" or short:
+        g = next((x for x in _TITLE_GLUE.finditer(rest) if x.start() >= 2 and x.start() <= 40
+                  and (x.group("sub") is None or x.group("sub") == m.group(1))), None) if b[0] != "h" else None
+        if b[0] == "h" or (short and g is None):
             title, tail = rest, ""
         else:
             e = _TITLE_END.search(rest)
             k = e.start() if e and e.start() <= 30 else min(len(rest), 20)
+            if g and (not e or e.start() > 30 or g.start() < e.start()):
+                k = g.start()
             title, tail = rest[:k].strip(), rest[k:].strip()
         cands.setdefault(int(m.group(1)), []).append((i, score, re.sub(r"\s*[:：]\s*$", "", title), tail))
     flat = sorted((c[0], n, c[1], c[2], c[3]) for n, cs in cands.items() for c in cs)      # (블록 번호, 주석 번호, 점수, 제목, 본문)
@@ -634,7 +641,7 @@ def _parts(blocks: list) -> tuple[list[Part], int]:
 
 _SENT_AMOUNT = re.compile(r"(?<![\d,.])((?:\d[\d,]*(?:\.\d+)?\s*조\s*)?(?:\d[\d,]*(?:\.\d+)?\s*억\s*)?(?:\d[\d,]*(?:\.\d+)?\s*만\s*)?(?:\d[\d,]*(?:\.\d+)?)?)\s*(백만원|천원|원)(?![가금재화본칙천])")
 _SENT_STOP = re.compile(r"[다요]\.\s*|[.;]\s+|\n")
-# 외화 금액(2026-10-18 실제 회사 자료 B-7): 「JPY 184,000,000」 「USD 300,000」 처럼 통화 기호가 앞에 붙거나 「184,000,000엔」 처럼 뒤에 붙은 금액.
+# 외화 금액(2026-10-18 샘플 A B-7): 「JPY 184,000,000」 「USD 300,000」 처럼 통화 기호가 앞에 붙거나 「184,000,000엔」 처럼 뒤에 붙은 금액.
 # 원으로 바꾸지 않고 「외화 금액」 열에 적힌 값 그대로 둔다(외화 표의 외화 금액 칸과 견준다)
 _FX_CODES = "USD|EUR|JPY|CNY|RMB|GBP|HKD|SGD|VND|AUD|CAD|CHF|TWD|THB|IDR|INR|PHP|MYR|NZD"
 _FX_NUM = r"((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"

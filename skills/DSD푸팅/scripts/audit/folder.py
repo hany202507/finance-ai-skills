@@ -492,16 +492,20 @@ def check(engagement_dir: Path) -> list[str]:
     return problems
 
 
-def validate_index(engagement_dir: Path) -> None:
+def validate_index(engagement_dir: Path, names=None, data: dict | None = None) -> None:
+    """_색인 JSON 을 스키마로 검사한다. names 를 주면 그 파일만 본다. data 가 있으면 디스크 대신 그 내용을 검사한다
+    (쓰기 전에 검사해 형식이 틀린 파일이 디스크에 남지 않게 한다, 2026-11-06)."""
     import jsonschema
 
     schema = _schema()
     d = Path(engagement_dir) / "_색인"
     for name in schema:
+        if names is not None and name not in names:
+            continue
         p = d / name
-        if p.exists():
+        if (data is not None and name in data) or p.exists():
             try:
-                jsonschema.validate(_read(p, None), schema[name])
+                jsonschema.validate(data[name] if data is not None and name in data else _read(p, None), schema[name])
             except jsonschema.ValidationError as e:
                 path = "/".join(str(x) for x in e.absolute_path)
                 raise DefinitionError(f"_색인/{name} 형식 오류({path}): {e.message}") from None

@@ -1,0 +1,9 @@
+# 스캔 PDF · 화면 캡처 이미지를 읽을 때만 필요하다(수백 MB). 엑셀 · 글자 있는 PDF 만 쓰면 설치하지 않아도 된다
+-r requirements.txt
+opencv-python
+numpy
+Pillow
+rapidocr
+onnxruntime
+# 숫자 칸을 한 번 더 읽는 보조 엔진. Tesseract 프로그램(kor 언어팩)이 따로 있어야 쓴다
+pytesseract

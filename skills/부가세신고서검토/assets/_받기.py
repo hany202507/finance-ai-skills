@@ -64,11 +64,11 @@ def fetch(seq):
 def strip_meta(path):
     """문서 속성(작성자·작성 프로그램)을 지운다. 서식 본문은 그대로다."""
     try:
-        import fitz
+        import pymupdf
     except ImportError:
         return
     tmp = path + ".tmp"
-    with fitz.open(path) as d:
+    with pymupdf.open(path) as d:
         d.del_xml_metadata()
         d.set_metadata({})
         d.save(tmp, garbage=4, deflate=True)

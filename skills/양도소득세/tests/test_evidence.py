@@ -4,7 +4,7 @@ import copy
 import json
 import os
 
-import fitz
+import pymupdf
 import pytest
 
 from yangdo import evidence as E
@@ -16,7 +16,7 @@ CONTRACT_P2 = ["제3조 잔금은 2026년 11월 15일에 지급한다.", "제7�
 
 
 def _pdf(path, pages):
-    d = fitz.open()
+    d = pymupdf.open()
     for lines in pages:
         p = d.new_page()
         for i, line in enumerate(lines):
@@ -33,7 +33,7 @@ def folder(tmp_path):
     _pdf(str(f / "2_세금계산서.pdf"), [["공급가액 12,000,000원", "작성일자 2022-03-02", "공급자 사업자등록번호 123-45-67890",
                                         "품목 샷시 교체 공사"]])
     # 글자층이 없는 이미지: 쪽을 그림으로 찍어 PNG 로 저장한다
-    d = fitz.open()
+    d = pymupdf.open()
     p = d.new_page()
     p.insert_text((50, 80), "취득세 납부 2,100,000원", fontname="korea", fontsize=14)
     p.get_pixmap(dpi=80).save(str(f / "3_취득세영수증.png"))
@@ -220,6 +220,43 @@ def test_list_question_same_payment_from_another_document_waits_for_the_user(inv
     assert len(rep["반영"]) == 1 and len(rep["충돌"]) == 1 and "같은 지급일·금액" in rep["충돌"][0]["사유"], rep
 
 
+def _balcony_pair(second):
+    """공사계약서(D04 로 대신) 줄 다음에 같은 지출의 둘째 서류 줄 second 를 낸다."""
+    first = _row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어", 사업자번호="1234567890")
+    return [_item("M09", [first], "D04", BALCONY_QUOTE), _item("M09", [second], "D04", BALCONY_QUOTE)]
+
+
+@pytest.mark.parametrize("blank", ["", None])
+def test_same_payment_with_only_blank_cells_on_the_second_document_is_a_match(inv_two_receipts, blank):
+    """이체 확인증에는 사업자번호가 없어 빈칸으로 낸다. 적힌 칸이 모두 앞 줄과 같으면 같은 지출로 보고 일치로 센다."""
+    second = _row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어", 사업자번호=blank)
+    f, rep = E.apply(FACTS, _balcony_pair(second), inv_two_receipts)
+    rows = f["자산"][0]["필요경비"]["자본적지출"]
+    assert len(rows) == 1 and rows[0]["사업자번호"] == "1234567890"
+    assert len(rep["반영"]) == 1 and len(rep["일치"]) == 1 and not rep["충돌"], rep
+
+
+@pytest.mark.parametrize("second", [
+    _row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어", 사업자번호="2234567890"),
+    _row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="다른인테리어", 사업자번호=""),
+])
+def test_same_payment_with_a_written_cell_that_differs_is_still_a_conflict(inv_two_receipts, second):
+    """빈 칸이 아닌 칸이 하나라도 앞 줄과 다르면 같은 지출인지 모르므로 지금처럼 충돌로 올린다."""
+    f, rep = E.apply(FACTS, _balcony_pair(second), inv_two_receipts)
+    assert len(f["자산"][0]["필요경비"]["자본적지출"]) == 1
+    assert len(rep["반영"]) == 1 and len(rep["충돌"]) == 1 and not rep["일치"], rep
+
+
+def test_blank_cell_on_the_first_document_is_not_filled_by_the_second(inv_two_receipts):
+    """앞 서류가 빈칸이고 뒤 서류에 값이 있으면 앞 줄을 고치지 않고 충돌로 올린다. 빈 칸은 새 줄 쪽만 건너뛴다."""
+    first = _row("발코니확장", "2022-05-10", 18000000, 증빙종류="계좌이체", 상대방="합성인테리어", 사업자번호="")
+    second = dict(first, 사업자번호="1234567890")
+    items = [_item("M09", [first], "D04", BALCONY_QUOTE), _item("M09", [second], "D04", BALCONY_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv_two_receipts)
+    assert f["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] == ""
+    assert len(rep["충돌"]) == 1 and not rep["일치"], rep
+
+
 def test_list_question_already_in_facts_is_not_extended(inv_two_receipts):
     """사실관계에 원래 있던 목록은 덮어쓰지도 늘리지도 않는다. 이번 실행에서 넣은 목록만 이어 붙인다."""
     facts = {"자산": [{"id": "A", "필요경비": {"자본적지출": [_row("보일러", "2021-01-05", 3000000)]}}]}
@@ -227,6 +264,37 @@ def test_list_question_already_in_facts_is_not_extended(inv_two_receipts):
     f, rep = E.apply(facts, items, inv_two_receipts)
     assert [r["내용"] for r in f["자산"][0]["필요경비"]["자본적지출"]] == ["보일러"]
     assert len(rep["충돌"]) == 1 and not rep["반영"], rep
+
+
+def test_business_number_copied_with_hyphens_is_stored_as_ten_digits(inv):
+    """영수증에 찍힌 대로 「123-45-67890」이라고 적어도 하이픈을 지워 넣는다. 전자신고 07 레코드는 숫자 10자리만 받는다."""
+    items = [_item("M09", [_row("샷시", "2022-03-02", 12000000, 사업자번호="123-45-67890")], "D02", SASH_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv)
+    assert f["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] == "1234567890"
+    assert len(rep["반영"]) == 1 and rep["반영"][0]["값"][0]["사업자번호"] == "1234567890", rep
+
+
+def test_business_number_with_and_without_hyphens_is_the_same_row(inv_two_receipts):
+    """같은 지출을 한 서류는 하이픈을 넣어, 다른 서류는 숫자만 적어도 같은 줄로 보고 일치로 센다."""
+    items = [_item("M09", [_row("샷시", "2022-03-02", 12000000, 사업자번호="123-45-67890")], "D02", SASH_QUOTE),
+             _item("M09", [_row("샷시", "2022-03-02", 12000000, 사업자번호="1234567890")], "D02", SASH_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv_two_receipts)
+    assert len(f["자산"][0]["필요경비"]["자본적지출"]) == 1
+    assert len(rep["반영"]) == 1 and len(rep["일치"]) == 1 and not rep["충돌"], rep
+
+
+@pytest.mark.parametrize("written", ["123-45-6789", "사업자 123-45-67890", ""])
+def test_business_number_that_is_not_ten_digits_is_left_for_the_filing_question(inv, written):
+    """하이픈을 지워도 숫자 10자리가 아니면 고치지 않고 그대로 둔다. 전자신고 때 F07 이 다시 묻는다."""
+    items = [_item("M09", [_row("샷시", "2022-03-02", 12000000, 사업자번호=written)], "D02", SASH_QUOTE)]
+    f, rep = E.apply(FACTS, items, inv)
+    assert f["자산"][0]["필요경비"]["자본적지출"][0]["사업자번호"] == written, rep
+
+
+def test_answer_also_strips_hyphens_from_business_numbers():
+    from yangdo import questions as Q
+    f = Q.answer(FACTS, "M11", [_row("중개수수료", "2026-11-15", 5000000, 사업자번호="123 45 67890")], 자산="A")
+    assert f["자산"][0]["필요경비"]["양도비"][0]["사업자번호"] == "1234567890"
 
 
 def test_cli_inventory_then_apply_writes_facts_and_table(folder, tmp_path):

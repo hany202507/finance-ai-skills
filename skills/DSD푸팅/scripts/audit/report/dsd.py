@@ -950,14 +950,16 @@ def _rows(t) -> list[list[str]]:
     return rows
 
 
-def _finance_rows(t) -> list[list[str]]:
-    """FINANCE 표: 머리줄의 COLSPAN 으로 묶인 열(내역 · 합계)을 한 칸으로 합치고 과목 이름의 번호와 (주석 …) 를 뗀다."""
+def _finance_rows(t, note_refs: bool = False) -> list[list[str]]:
+    """FINANCE 표: 머리줄의 COLSPAN 으로 묶인 열(내역 · 합계)을 한 칸으로 합치고 과목 이름의 번호와 (주석 …) 를 뗀다.
+    note_refs 면 「(주석 …)」 는 남긴다(문장 검토가 과목 옆 주석 번호를 맞춰 본다, 2026-11-06 다른 회사 시험 N1)."""
+    label = (lambda x: _LABEL_HEAD.sub("", x, count=1).strip()) if note_refs else _label  # noqa: E731
     head = t.find("THEAD/TR")
     if head is None:
         return _rows(t)
     spans = [int(c.get("COLSPAN") or 1) for c in head if c.tag in ("TH", "TD", "TE")]
     out = [[_text(c) for c in head if c.tag in ("TH", "TD", "TE")]]
-    out[0][0] = _label(out[0][0]) if out[0] else ""
+    out[0][0] = label(out[0][0]) if out[0] else ""
     for tr in t.findall("TBODY/TR"):
         cells = [_text(c) for c in tr if c.tag in ("TD", "TH", "TE", "TU")]
         row, i = [], 0
@@ -966,14 +968,15 @@ def _finance_rows(t) -> list[list[str]]:
             row.append(grp[-1] if grp else "")
             i += sp
         if row:
-            row[0] = _label(row[0])
+            row[0] = label(row[0])
         out.append(row)
     return out
 
 
 class _Reader:
-    def __init__(self):
+    def __init__(self, note_refs: bool = False):
         self.out, self.part, self.note, self.ntab, self.last_cap = [], None, None, 0, False
+        self.note_refs = note_refs
 
     def add(self, b):
         self.out.append(b)
@@ -1015,7 +1018,7 @@ class _Reader:
                 if line:
                     self.add(("p", line))
             return
-        rows = _finance_rows(t) if t.get("ACLASS") == "FINANCE" else _rows(t)
+        rows = _finance_rows(t, self.note_refs) if t.get("ACLASS") == "FINANCE" else _rows(t)
         if self.part == "주석" and self.note is not None:
             self.ntab += 1
             if not self.last_cap:
@@ -1033,7 +1036,25 @@ class _Reader:
             rest = (first.tail or "") + "".join(ET.tostring(c, encoding="unicode", method="text") for c in kids[1:])
             self.para(re.sub(r"\s+", " ", rest.replace(CR, " ")).strip())
             return
+        if _bold_level(e.get("USERMARK")) and any("!B" in (k.get("USERMARK") or "").split() for k in kids):
+            self.P_unbold(e)
+            return
         self.para(_text(e), e.get("USERMARK"))
+
+    def P_unbold(self, e):
+        """굵은 P 안에 굵지 않은 SPAN(USERMARK 「!B」)으로 본문을 넣은 꼴: 「12. 법인세등<SPAN !B>본문</SPAN>13. 부가가치 …」.
+        P 의 글과 SPAN 꼬리는 제목, 「!B」 SPAN 은 문단으로 읽는다. 통째로 제목 하나로 읽으면 본문이 제목에 묻히고 줄바꿈이 빠져
+        붙은 다음 주석 제목(「13.」)을 앞 주석으로 읽었다(2026-11-06 다른 회사 시험 N2)."""
+        mark = e.get("USERMARK")
+        one = lambda t: re.sub(r"\s+", " ", (t or "").replace(CR, " ")).strip()  # noqa: E731
+        self.para(one(e.text), mark)
+        for c in e:
+            t = one("".join(c.itertext())) if c.tag == "SPAN" else ""
+            if c.tag == "SPAN" and "!B" in (c.get("USERMARK") or "").split():
+                self.para(t)
+            else:
+                self.para(t, mark)
+            self.para(one(c.tail), mark)
 
     def P_split(self, e):
         """감사보고서 절에서 한 P 안에 굵은 소제목 SPAN 이 여럿 이어진 꼴(공개 원문에 흔하다: 「감사의견근거」 SPAN 뒤에 본문,
@@ -1056,7 +1077,10 @@ class _Reader:
         flush()
 
     def walk(self, e, depth_section: int = 0):
-        from .dart_file import WARN_TITLE
+        try:
+            from .dart_file import WARN_TITLE
+        except ImportError:                    # dart_file 을 담지 않은 공개 스킬 DSD변환에서도 읽는다(2026-11-07 시연)
+            WARN_TITLE = "검토 전 초안"
 
         for c in e:
             tag = c.tag
@@ -1116,7 +1140,7 @@ def lenient_xml(raw: bytes) -> bytes:
     return s.encode("utf-8")
 
 
-def read_dsd(path: Path) -> list:
+def read_dsd(path: Path, note_refs: bool = False) -> list:
     """dsd 를 블록 목록으로 읽는다. HTML(read_html)과 같은 꼴이다: 부분 이름은 h1, 그 안 제목은 h2 이하.
     .xml 이면 OpenDART 공시서류원본파일 XML(contents.xml 과 같은 dart4 · dart3 꼴, 편집기용 INSERTION 이 없는 판)로 읽는다."""
     if Path(path).suffix.lower() == ".xml":
@@ -1128,7 +1152,7 @@ def read_dsd(path: Path) -> list:
                 raise ValueError(f"dsd 안에 contents.xml 이 없습니다: {path}")
             root = ET.fromstring(z.read(name))
     body = root.find("BODY")
-    r = _Reader()
+    r = _Reader(note_refs)
     if body is not None:
         r.walk(body)
     real = any(b[0] == "cap" and len(b) == 2 for b in r.out)      # 「표 N-k」 설명이 하나라도 있으면 붙인 번호는 쓰지 않는다
