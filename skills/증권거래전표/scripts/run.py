@@ -205,9 +205,14 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8")) if a.config else {}
     paths = [Path(p) for p in a.inputs]
+    # 새 양식은 코드를 고치지 않고 설정으로 더한다: 「머리글」 {원문: 표준열}, 「적요규칙」 [{pattern, event}]
+    RS.EXTRA_ALIASES = dict(cfg.get("머리글") or {})
+    NZ.EXTRA_RULES = list(cfg.get("적요규칙") or [])
 
     tables, notes, ocr_issues, md_texts = [], [], [], []
+    source_kinds = set()
     if a.standard:
+        source_kinds.add("표준거래표")
         txs = []
         for p in paths:
             txs += NZ.load_standard_csv(p)
@@ -216,8 +221,10 @@ def main(argv=None):
             if p.suffix.lower() == ".pdf":
                 ts, md, cand_note = pick_pdf_reader(p, a.password, cfg, load_rates(a.rates))
                 notes.append(cand_note)
+                source_kinds.add("OCR" if "OCR 선택" in cand_note else "글자 PDF")
             else:
                 ts, md = RS.read_tables(p, password=a.password)
+                source_kinds.add("OCR" if any(t.ocr is not None for t in ts) else "엑셀 · CSV")
             tables += ts
             md_texts.append(md or "")
             if md is not None:
@@ -243,9 +250,12 @@ def main(argv=None):
         res.issues[:0] = ocr_issues
         res.issues.insert(0, ("OCR", None, "OCR 로 읽은 자료다. 잔액 대사([대사])가 0 이어도 의심 칸은 원본과 한 번 대조한다"))
 
+    import diagnose as DG
+    diag = DG.diagnose(tables, txs, cfg, res, hint, source_kinds, rates_rows)
+
     company = cfg.get("회사") or "회사"
     wbp = out / f"증권전표_{company}.xlsx"
-    BW.build(res, rates_rows, wbp, broker=broker, opening_hint=hint)
+    BW.build(res, rates_rows, wbp, broker=broker, opening_hint=hint, diag=diag)
 
     # 표준거래표(감사 추적용)
     with open(out / "표준거래표.csv", "w", newline="", encoding="utf-8-sig") as f:
@@ -264,8 +274,9 @@ def main(argv=None):
     for r in res.rows:
         kinds[r.kind] = kinds.get(r.kind, 0) + 1
     report.append("- 이벤트: " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))
+    report += ["", "## 자료 진단", "", "전표를 믿기 전에 볼 것. 위험이 있으면 검산이 OK 여도 결과를 그대로 쓰지 않는다.", ""] + DG.as_markdown(diag)
 
-    status = 0
+    status = 2 if any(v == "위험" for _, v, _, _ in diag) else 0
     if not a.no_recalc:
         how = recalc(wbp)
         if not how:

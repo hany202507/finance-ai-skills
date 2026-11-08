@@ -404,6 +404,15 @@ def run(txs, cfg, rates: RateBook):
         r.lines = make_lines(r, cfg)
         rows.append(r)
 
+    # 기초 수량은 있는데 장부금액이 0 인 종목(역산한 기초)을 팔면 원가가 낮게 잡혀 처분이익이 부풀려진다
+    for key, (q0, w0, _) in b_sec.items():
+        if q0 > 0 and w0 == 0:
+            sold = [r for r in rows if r.kind in ("국내매도", "해외매도") and r.tx.key == key]
+            if sold:
+                nm = sold[0].tx.name
+                ab = sum((r.AB for r in sold), Z)
+                issues.append(("확인", None, f"{nm} 기초 {q0}주의 장부금액이 0 이라 매도 {len(sold)}건의 원가가 낮게 잡혔다(처분손익 합계 {ab:,} 원). "
+                                             "전기말 장부금액을 설정 기초 · 워크북 기초 시트에 넣고 다시 돌린다"))
     year_end, fx_end = closing(cfg, hold, fx_bal, fx_book, b_sec, txs, issues)
     _checks(rows, issues, cfg)
     _period_end_notes(rows, issues, cfg, year_end, fx_end)

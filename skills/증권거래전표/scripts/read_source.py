@@ -43,12 +43,19 @@ class Table:
 
 # ---------------------------------------------------------------- 사전
 
+EXTRA_ALIASES = {}      # 설정 「머리글」: {원문 머리글: 표준열}. 사전보다 먼저 쓴다(run.py 가 채운다)
+
+
 def load_dict():
     d = json.loads((REF / "머리글사전.json").read_text(encoding="utf-8"))
     index = {}
     for fld, aliases in d["fields"].items():
         for a in aliases:
             index.setdefault(norm(a), fld)
+    for raw, fld in EXTRA_ALIASES.items():
+        if fld not in d["fields"]:
+            raise SourceError(f"설정 머리글 '{raw}' 의 표준열 '{fld}' 이 머리글사전에 없다. 쓸 수 있는 열: {', '.join(d['fields'])}")
+        index[norm(raw)] = fld
     return d, index
 
 

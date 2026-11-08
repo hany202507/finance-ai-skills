@@ -61,9 +61,12 @@ class Txn:
         return x
 
 
+EXTRA_RULES = []        # 설정 「적요규칙」: [{"pattern": 정규식, "event": 이벤트, "통화": "KRW"|"외화"(선택)}]. 사전보다 먼저 맞춘다
+
+
 def load_rules():
     d = json.loads((REF / "적요사전.json").read_text(encoding="utf-8"))
-    return [(re.compile(r["pattern"]), r) for r in d["rules"]]
+    return [(re.compile(r["pattern"]), r) for r in list(EXTRA_RULES) + d["rules"]]
 
 
 def classify(raw_type: str, ccy: str, rules):

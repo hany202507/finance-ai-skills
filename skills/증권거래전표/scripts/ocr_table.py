@@ -552,6 +552,20 @@ def fix_number(t):
     return ("-" if neg else "") + out
 
 
+_CONFUSE = {"C": "0", "c": "0", "O": "0", "o": "0", "D": "0", "〇": "0", "ε": "8", "B": "8", "l": "1", "I": "1", "|": "1",
+            "S": "5", "s": "5", "Z": "2", "z": "2", "g": "9", "q": "9"}
+
+
+def _unconfuse(v: str) -> str:
+    """숫자 열 칸 안의 숫자 닮은 글자를 숫자로(2026-11-08 미래에셋 스캔본: 환율 1,480 → 1,48C, 1,328 → 1,32ε).
+    숫자가 둘 이상 있고, 바꾼 뒤 숫자 꼴이 될 때만 바꾼다."""
+    t = v.replace(" ", "")
+    if sum(ch.isdigit() for ch in t) < 2 or not any(ch in _CONFUSE for ch in t):
+        return v
+    u = "".join(_CONFUSE.get(ch, ch) for ch in t)
+    return u if NUM_RE.match(u) or _SEP_RE.match(u) else v
+
+
 def fix_columns(rows, res, page_no):
     """숫자가 대부분인 열은 그 열의 칸을 숫자로 보정한다(o→0, 쉼표·마침표). 바꾼 칸은 의심 칸으로 남긴다."""
     if not rows:
@@ -579,7 +593,7 @@ def fix_columns(rows, res, page_no):
             if v.strip() in ("o", "O", "D", "〇"):
                 nv = "0"
             elif not NUM_RE.match(v.replace(" ", "")):
-                nv = fix_number(v)
+                nv = fix_number(_unconfuse(v))
                 if nv == v and re.fullmatch(r"[.,·\-]", v.strip()):
                     nv = "0"
             else:

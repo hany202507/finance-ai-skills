@@ -205,12 +205,30 @@ def memo(tx, kind, broker, cfg):
     return s + tag
 
 
-def build(res: E.Result, rates_rows, path, broker="", opening_hint=None):
+def build(res: E.Result, rates_rows, path, broker="", opening_hint=None, diag=None):
     cfg = res.cfg
     wb = Workbook()
     ws0 = wb.active
     ws0.title = "안내"
     _guide(ws0, cfg, broker)
+
+    # ---------------- 자료진단(diagnose.py 판정. 값으로 적는다)
+    if diag:
+        dg = wb.create_sheet("자료진단")
+        dg["A1"], dg["A1"].font = "자료진단: 전표를 믿기 전에 볼 것. 위험이 있으면 검산이 OK 여도 결과를 그대로 쓰지 않는다", BOLD
+        for j, t in enumerate(["항목", "판정", "내용", "할 일"], 1):
+            dg.cell(3, j, t)
+        _style_header(dg, 3, 4)
+        for k, row in enumerate(diag, 4):
+            for j, v in enumerate(row, 1):
+                c = dg.cell(k, j, v)
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+            if row[1] == "위험":
+                dg.cell(k, 2).fill = PatternFill("solid", fgColor="F8CBAD")
+            elif row[1] == "확인":
+                dg.cell(k, 2).fill = INPUT
+        for col, w in zip("ABCD", (18, 8, 60, 70)):
+            dg.column_dimensions[col].width = w
 
     # ---------------- 설정
     st = wb.create_sheet("설정")
@@ -515,6 +533,8 @@ def build(res: E.Result, rates_rows, path, broker="", opening_hint=None):
         ("환율 없는 외화 거래 수", f"=SUMPRODUCT(--({rng('E')}<>\"KRW\"),--({rng('C')}<>\"검토\"),--(LEFT({rng('C')},4)<>\"환전정산\"),--({rng('N')}=0))", "0", "환율표에 그 날짜 이전 환율이 없다"),
         ("검토대기(전표 없음) 수", f"=COUNTIF({rng('C')},\"검토\")", "0", "입출고·기업행위: 확인사항 시트"),
         ("가계정 기표 수", f"=COUNTIF({rng('C')},\"*가계정*\")", "0", "규칙에 없는 거래: 확인사항 시트"),
+        ("장부금액 없는 기초 보유 종목 수", f"=COUNTIFS(기초!$D${BSEC_FIRST}:$D${BSEC_LAST},\">0\",기초!$E${BSEC_FIRST}:$E${BSEC_LAST},0)", "0",
+         "기초 수량은 있는데 장부금액이 0 이다(역산한 기초). 팔면 원가가 낮게 잡혀 처분이익이 부풀려진다. 기초 시트 E열에 전기말 장부금액을 넣는다"),
         ("기말 단가 미입력 종목 수", f"=COUNTIFS(기말평가!D4:D{max(4, 3+len(res.year_end))},\"<>0\",기말평가!F4:F{max(4, 3+len(res.year_end))},\"\")" if res.year_end else "=0", "0", "기말평가 시트 F열"),
     ]
     for i, (name, fml, ok, desc) in enumerate(checks):
@@ -567,6 +587,7 @@ def _guide(ws, cfg, broker):
         (f"회사: {cfg.get('회사','')}   증권사: {broker}   분류: {cfg.get('분류','단기매매')}", False),
         ("", False),
         ("시트", True),
+        ("자료진단: 받은 자료로 무엇을 검증할 수 있고 무엇이 빠졌는지(읽은 방법 · 잔액 열 · 일자 · 기초 · 계좌 주체)", False),
         ("검산: 차대·잔액 대사·엔진 대조. 모두 OK 여야 넘긴다", False),
         ("설정: 계정코드·기말일·기말환율(입력)", False),
         ("환율표: 외화 거래일의 매매기준율(입력, 출처 표시)", False),
