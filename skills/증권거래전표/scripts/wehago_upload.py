@@ -16,6 +16,7 @@
 | 연도 | 파일에 연도 열이 없어 회계연도 하나에 한 파일. 기간이 두 해에 걸치면 나눈다 | 양식에 연도 열 없음 |
 | 외화 | 일반전표 업로드에 외화 열이 없다. 원화만 올리고 외화는 워크북 거래원장이 보조원장이다 | 같은 자료조사 |
 | 재업로드 | 위하고 「자동분개 일괄검색 및 삭제 > 전표엑셀업로드」로 먼저 지운다. 변환옵션은 기본값(계정코드 · 거래처 기준) | 업로드 방법 PDF |
+| 글자 저장 꼴 | 글자 칸은 sharedStrings · UTF-8 글자 그대로. openpyxl 기본(inlineStr, 한글을 &#50900; 문자참조)은 위하고에서 한글이 깨진다 | 2026-11-08 커널스페이스 실제 업로드 |
 """
 from __future__ import annotations
 
@@ -36,6 +37,54 @@ def clean_memo(s: str, limit: int = 40) -> str:
         tag = m.group(0) if m else ""
         s = s[: limit - len(tag)].rstrip() + tag
     return s
+
+
+def to_shared_strings(path: Path):
+    """openpyxl 이 쓴 글자 칸(inlineStr, 한글은 &#50900; 같은 숫자 문자참조)을 엑셀이 저장하는 꼴(sharedStrings,
+    UTF-8 글자 그대로)로 바꾼다. 위하고 일반전표 엑셀올리기는 숫자 문자참조를 풀지 못해 계정과목명 · 거래처 · 적요의
+    한글이 깨졌다(2026-11-08 커널스페이스 시험 업로드, 엑셀로 다시 저장한 파일은 정상)."""
+    import html
+    import re as _re
+    import zipfile
+    from xml.sax.saxutils import escape
+    src = zipfile.ZipFile(path)
+    files = {n: src.read(n) for n in src.namelist()}
+    src.close()
+    sst, index = [], {}
+
+    def repl(m):
+        attrs, text = m.group(1), html.unescape(m.group(2))
+        if text not in index:
+            index[text] = len(sst)
+            sst.append(text)
+        return f'<c{attrs} t="s"><v>{index[text]}</v></c>'
+
+    cell = _re.compile(r'<c([^>]*?) t="inlineStr"><is><t[^>]*>(.*?)</t></is></c>', _re.S)
+    sheets = [n for n in files if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")]
+    empty = _re.compile(r'<c([^>]*?) t="inlineStr">(?:<is>(?:<t[^>]*/>|<t[^>]*></t>)?</is>)?</c>')
+    for n in sheets:
+        x = empty.sub(lambda m: f"<c{m.group(1)}/>", files[n].decode("utf-8"))     # 빈 글자 칸은 빈 칸으로
+        files[n] = cell.sub(repl, x).encode("utf-8")
+    if not sst:
+        return
+    body = "".join(f'<si><t xml:space="preserve">{escape(t)}</t></si>' for t in sst)
+    files["xl/sharedStrings.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="{len(sst)}" '
+        f'uniqueCount="{len(sst)}">{body}</sst>').encode("utf-8")
+    ct = files["[Content_Types].xml"].decode("utf-8")
+    if "sharedStrings" not in ct:
+        ct = ct.replace("</Types>", '<Override PartName="/xl/sharedStrings.xml" ContentType="application/'
+                        'vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>')
+        files["[Content_Types].xml"] = ct.encode("utf-8")
+    rels = files["xl/_rels/workbook.xml.rels"].decode("utf-8")
+    if "sharedStrings" not in rels:
+        rels = rels.replace("</Relationships>", '<Relationship Type="http://schemas.openxmlformats.org/officeDocument/'
+                            '2006/relationships/sharedStrings" Target="sharedStrings.xml" Id="rIdSst"/></Relationships>')
+        files["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, b in files.items():
+            z.writestr(n, b)
 
 
 def _cp949(ch: str) -> bool:
@@ -88,6 +137,7 @@ def write(lines, out_dir: Path, company: str, cfg) -> list:
             ws.cell(r, 6).number_format = "@"          # 거래처코드 앞자리 0
         p = out_dir / (f"위하고_일반전표_{company}_{fy}.xlsx" if multi else f"위하고_일반전표_{company}.xlsx")
         wb.save(p)
+        to_shared_strings(p)       # 위하고가 읽는 글자 저장 꼴로(2026-11-08 실제 업로드에서 한글이 깨졌다)
         out.append((p, len(rows), verify(rows, cfg)))
     return out
 
