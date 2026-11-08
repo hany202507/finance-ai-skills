@@ -258,6 +258,9 @@ def run(txs, cfg, rates: RateBook):
             r.AG, r.AH = h[0], h[1]
             r.AS = lent.get(tx.key, Z)
             r.T = krw
+            if tx.ccy != "KRW":
+                # 외화잔액은 그대로다. 0 으로 두면 증권사 외화잔액 대사에서 틀린 차이가 난다(2026-11-09)
+                r.P, r.R = fx_bal.get(tx.ccy, Z), fx_book.get(tx.ccy, Z)
             if not out and r.Y == 0:
                 issues.append(("확인", tx, f"{tx.name} '{tx.raw_type}' {tx.qty}주를 장부금액 없이 수량만 늘렸다(평균 단가가 내려간다). "
                                            "무상주 · 주식배당이면 세무상 의제배당 여부를 확인한다"))

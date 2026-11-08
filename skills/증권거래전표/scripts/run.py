@@ -242,8 +242,11 @@ def main(argv=None):
     if any(verdict == "반려" for _, _, verdict, _ in vchecks):
         upload_note = "업로드 파일에 반려 사유가 있다(위하고 올리기 전 검사). 고치기 전에는 올리지 않는다. " + upload_note
     wbp = out / f"증권전표_검증_{company}.xlsx"
-    BW.build(wbp, res, lines, cks, broker=broker, status=status, upload_note=upload_note, upload_checks=vchecks,
-             diag=diag, opening_hint=hint)
+    status, fcheck, fbad = BW.build(wbp, res, lines, cks, broker=broker, status=status, upload_note=upload_note,
+                                    upload_checks=vchecks, diag=diag, opening_hint=hint)
+    cks = cks + [fcheck]
+    for s, coord, f, got, exp in fbad[:20]:
+        res.issues.append(("확인", None, f"검증 파일 {s}!{coord} 수식 {f} 를 다시 계산하면 {got}, 엔진 값은 {exp} (스킬 결함)"))
 
     report = [f"# 증권 거래 전표 실행 보고 ({dt.datetime.now():%Y-%m-%d %H:%M})", "",
               f"- 회사: {company} · 증권사: {broker or '판별 못함'} · 분류: {cfg.get('분류','단기매매')}",
