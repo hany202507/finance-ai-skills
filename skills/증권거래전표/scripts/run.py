@@ -1,11 +1,13 @@
 """증권 거래내역 → 전표 한 번에.
 
 python run.py <거래내역 파일 ...> --out <산출 폴더> [--config 설정.json] [--rates 환율표.csv]
-              [--broker 삼성증권] [--standard] [--no-recalc]
+              [--broker 삼성증권] [--standard]
 
 --standard  입력이 templates/표준거래표_양식.csv 꼴(스캔 PDF 를 AI 가 옮겨 적은 것)일 때.
-산출: 증권전표_<회사>.xlsx(수식) · 위하고_일반전표_<회사>.xlsx(업로드용 값) · 표준거래표.csv · 실행보고.md
-종료코드: 0 검산 통과, 2 확인필요 남음, 3 중단 사유 있음.
+산출(--out 폴더): 위하고_일반전표_<회사>.xlsx(업로드) · 증권전표_검증_<회사>.xlsx(요약 · 전표 · 거래원장 · 기초·기말).
+작업 파일(_작업 폴더): 실행보고.md · 표준거래표.csv · PDF 추출 마크다운.
+두 파일 모두 엔진 값을 그대로 쓴다. 엑셀 · LibreOffice 가 없어도 된다.
+종료코드: 0 검산 통과, 2 확인필요 남음, 3 중단(이때는 위하고 업로드 파일을 만들지 않는다).
 """
 from __future__ import annotations
 
@@ -13,8 +15,6 @@ import argparse
 import csv
 import datetime as dt
 import json
-import shutil
-import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -88,7 +88,7 @@ def fill_opening(cfg, txs, rates_rows):
                      "대여중": str(ln),
                      "출처": "추정 수량(증권사 잔고수량 − 기간 중 매매 + 대여 중). 장부금액 미입력"})
         hint.append(f"{name} 기초 수량 {q} 추정" + (f"(그중 대여 중 {ln})" if ln else "")
-                    + ", 장부금액 미입력 → 기초 시트에 전기말 장부금액을 넣어야 처분손익이 맞는다")
+                    + ", 장부금액 미입력 → 설정 「기초」 에 전기말 장부금액을 넣어야 처분손익이 맞는다")
     return hint
 
 
@@ -136,59 +136,6 @@ def pick_pdf_reader(p, password, cfg, rates_rows):
     return best[2], best[3], f"PDF 읽기: {best[1]} 선택 (시도: {' / '.join(tried)})"
 
 
-def recalc(path: Path):
-    ps = HERE / "recalc.ps1"
-    try:
-        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps), str(path.resolve())],
-                           capture_output=True, text=True, timeout=600)
-        if "recalc ok" in r.stdout:
-            return "Excel"
-    except Exception:
-        pass
-    soffice = shutil.which("soffice") or shutil.which("soffice.exe")
-    if soffice:
-        out = path.parent / "_recalc"
-        out.mkdir(exist_ok=True)
-        subprocess.run([soffice, "--headless", "--calc", "--convert-to", "xlsx", "--outdir", str(out), str(path)],
-                       capture_output=True, timeout=600)
-        p2 = out / path.name
-        if p2.exists():
-            shutil.move(str(p2), str(path))
-            shutil.rmtree(out, ignore_errors=True)
-            return "LibreOffice"
-    return ""
-
-
-def read_back(path: Path):
-    import openpyxl
-    wb = openpyxl.load_workbook(path, data_only=True)
-    errs = []
-    for ws in wb.worksheets:
-        for row in ws.iter_rows():
-            for c in row:
-                if isinstance(c.value, str) and c.value.startswith("#") and c.value.rstrip("!?0/").upper() in (
-                        "#REF", "#DIV", "#VALUE", "#NAME", "#N/A", "#NUM", "#NULL") or (
-                        isinstance(c.value, str) and c.value in ("#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A", "#NUM!")):
-                    errs.append(f"{ws.title}!{c.coordinate} {c.value}")
-    ck = wb["검산"]
-    checks = []
-    for r in range(4, ck.max_row + 1):
-        name, val, verdict = ck.cell(r, 1).value, ck.cell(r, 2).value, ck.cell(r, 3).value
-        if name and r < 4 + 20 and ck.cell(r, 4).value:
-            if verdict not in ("OK", "확인필요"):
-                verdict = f"계산 안 됨({val})"
-            checks.append((name, val, verdict))
-    jv = wb["전표"]
-    lines = []
-    for r in range(4, jv.max_row + 1):
-        key = jv.cell(r, 1).value
-        if key in (None, ""):
-            continue
-        lines.append({k: jv.cell(r, j).value for j, k in enumerate(
-            ["key", "date", "gubun", "code", "name", "party", "memo", "dr", "cr", "seq"], 1)})
-    return checks, lines, errs
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="+")
@@ -198,11 +145,12 @@ def main(argv=None):
     ap.add_argument("--broker", default="")
     ap.add_argument("--standard", action="store_true")
     ap.add_argument("--password", help="암호 걸린 PDF 의 비밀번호(파일·보고서에 남기지 않는다)")
-    ap.add_argument("--no-recalc", action="store_true")
+    ap.add_argument("--no-recalc", action="store_true", help="옛 옵션. 지금은 엑셀 재계산을 하지 않아 아무 일도 하지 않는다")
     a = ap.parse_args(argv)
 
     out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
+    work = out / "_작업"
+    work.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8")) if a.config else {}
     paths = [Path(p) for p in a.inputs]
     # 새 양식은 코드를 고치지 않고 설정으로 더한다: 「머리글」 {원문: 표준열}, 「적요규칙」 [{pattern, event}]
@@ -228,7 +176,7 @@ def main(argv=None):
             tables += ts
             md_texts.append(md or "")
             if md is not None:
-                (out / f"{p.stem}_추출.md").write_text(md, encoding="utf-8")
+                (work / f"{p.stem}_추출.md").write_text(md, encoding="utf-8")
             for t in ts:
                 notes.append(f"{p.name} [{t.sheet}] 머리글 {t.header_row+1}행({t.header_rows}줄, {t.mode}) · 거래 {len(t.records)}행"
                              + (f" · 못 맞춘 머리글: {', '.join(t.unmapped)}" if t.unmapped else ""))
@@ -254,11 +202,15 @@ def main(argv=None):
     diag = DG.diagnose(tables, txs, cfg, res, hint, source_kinds, rates_rows)
 
     company = cfg.get("회사") or "회사"
-    wbp = out / f"증권전표_{company}.xlsx"
-    BW.build(res, rates_rows, wbp, broker=broker, opening_hint=hint, diag=diag)
+    import wehago_upload as WU
+    # 앞선 실행이 남긴 파일을 지운다. 이번에 업로드를 막았는데 옛 업로드 파일이 남아 있으면 그것을 올리게 된다
+    for old in [*out.glob(f"위하고_일반전표_{company}.xlsx"), *out.glob(f"위하고_일반전표_{company}_*.xlsx"),
+                out / f"증권전표_{company}.xlsx", out / "표준거래표.csv", out / "실행보고.md"]:
+        if old.is_file():
+            old.unlink()
 
     # 표준거래표(감사 추적용)
-    with open(out / "표준거래표.csv", "w", newline="", encoding="utf-8-sig") as f:
+    with open(work / "표준거래표.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["순번", "일자", "원문거래종류", "이벤트", "시장", "종목코드", "종목명", "통화", "수량", "단가",
                     "외화총액", "외화비용", "원화금액", "원화비용", "증권사원화잔액", "증권사외화잔액", "증권사잔고수량", "상대방", "원본위치", "메모"])
@@ -266,57 +218,61 @@ def main(argv=None):
             w.writerow([t.seq, t.date, t.raw_type, t.event, t.market, t.code, t.name, t.ccy, t.qty, t.price, t.G, t.H, t.I, t.J,
                         t.krw_bal, t.fx_bal, t.hold_qty, t.counterparty, t.src, " / ".join(t.notes)])
 
+    lines = BW.journal_lines(res, broker)
+    cks = BW.checks(res, lines)
+    stop = [f"{n} {v:,}" for n, v, verdict, _ in cks if verdict == "중단"]
+    status = 2 if any(v == "위험" for _, v, _, _ in diag) else 0
+    if any(verdict != "OK" for _, _, verdict, _ in cks):
+        status = 2
+    uploads = []
+    if stop:
+        status = 3
+        upload_note = ("위하고 업로드 파일을 만들지 않았다: " + "; ".join(stop)
+                       + ". 확인사항의 [중단] 을 고치고(환율표 · 기초 잔고) 다시 돌린다")
+    else:
+        uploads = WU.write(lines, out, company, cfg)
+        upload_note = " · ".join(f"{p.name} {n}줄" for p, n, _ in uploads) + (
+            ". 다시 올릴 때는 위하고 「자동분개 일괄검색 및 삭제 > 전표엑셀업로드」로 먼저 지운다. 변환옵션은 기본값(계정코드 · 거래처 기준)")
+    vchecks = [c for _, _, vc in uploads for c in vc]
+    for _, _, verdict, _ in vchecks:
+        if verdict == "반려":
+            status = 3
+        elif verdict != "OK":
+            status = max(status, 2)
+    if any(verdict == "반려" for _, _, verdict, _ in vchecks):
+        upload_note = "업로드 파일에 반려 사유가 있다(위하고 올리기 전 검사). 고치기 전에는 올리지 않는다. " + upload_note
+    wbp = out / f"증권전표_검증_{company}.xlsx"
+    BW.build(wbp, res, lines, cks, broker=broker, status=status, upload_note=upload_note, upload_checks=vchecks,
+             diag=diag, opening_hint=hint)
+
     report = [f"# 증권 거래 전표 실행 보고 ({dt.datetime.now():%Y-%m-%d %H:%M})", "",
               f"- 회사: {company} · 증권사: {broker or '판별 못함'} · 분류: {cfg.get('분류','단기매매')}",
-              f"- 거래 {len(txs)}건 · 전표 대상 {sum(1 for r in res.rows if r.kind != '검토')}건 · 검토대기 {sum(1 for r in res.rows if r.kind == '검토')}건"]
+              f"- 거래 {len(txs)}건 · 전표 대상 {sum(1 for r in res.rows if r.kind in E.LINES)}건 · 검토대기 {sum(1 for r in res.rows if r.kind == '검토')}건"]
     report += [f"- {n}" for n in notes]
     kinds = {}
     for r in res.rows:
         kinds[r.kind] = kinds.get(r.kind, 0) + 1
     report.append("- 이벤트: " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())))
+    report += ["", f"## 결론: {({0: '통과', 2: '확인필요', 3: '중단'})[status]}", "",
+               f"- 산출: {' · '.join(p.name for p, _, _ in uploads) or '업로드 파일 없음'} · {wbp.name}",
+               f"- {upload_note}"]
     report += ["", "## 자료 진단", "", "전표를 믿기 전에 볼 것. 위험이 있으면 검산이 OK 여도 결과를 그대로 쓰지 않는다.", ""] + DG.as_markdown(diag)
-
-    status = 2 if any(v == "위험" for _, v, _, _ in diag) else 0
-    if not a.no_recalc:
-        how = recalc(wbp)
-        if not how:
-            report.append("- 재계산 도구(Excel·LibreOffice)가 없어 수식 검산을 못 했다")
-            status = 2
-        else:
-            checks, lines, errs = read_back(wbp)
-            report.append(f"- 재계산: {how} · 수식 오류 {len(errs)}건" + (f" ({'; '.join(errs[:5])})" if errs else ""))
-            report += ["", "## 검산", "", "| 항목 | 값 | 판정 |", "|---|---|---|"]
-            for name, val, verdict in checks:
-                report.append(f"| {name} | {val} | {verdict} |")
-                if verdict != "OK":
-                    status = max(status, 2)
-            if errs:
-                status = 3
-            import wehago_upload as WU
-            for path_u, n, vchecks in WU.write(lines, out, company, cfg):
-                report.append(f"\n### 위하고 업로드 {path_u.name}: {n}줄(0원 줄 제외, 재계산한 수식 값)\n")
-                report += ["| 올리기 전 검사 | 값 | 판정 | 예 |", "|---|---|---|---|"]
-                for name, val, verdict, ex in vchecks:
-                    report.append(f"| {name} | {val} | {verdict} | {ex} |")
-                    if verdict == "반려":
-                        status = 3
-                    elif verdict != "OK":
-                        status = max(status, 2)
-            report.append("- 다시 올릴 때는 위하고 「자동분개 일괄검색 및 삭제 > 전표엑셀업로드」로 먼저 지운다. "
-                          "변환옵션은 기본값(계정코드 · 거래처 기준)으로 둔다")
-    stops = [i for i in res.issues if i[0] == "중단"]
-    if stops:
-        status = 3
+    report += ["", "## 검산", "", "| 항목 | 값 | 판정 |", "|---|---|---|"]
+    report += [f"| {n} | {v} | {verdict} |" for n, v, verdict, _ in cks]
+    for p, n, vc in uploads:
+        report += ["", f"## 위하고 업로드 {p.name}: {n}줄(0원 줄 제외, 엔진 값)", "",
+                   "| 올리기 전 검사 | 값 | 판정 | 예 |", "|---|---|---|---|"]
+        report += [f"| {name} | {val} | {verdict} | {ex} |" for name, val, verdict, ex in vc]
     report += ["", "## 확인사항", ""]
     for kind, tx, msg in res.issues:
         where = f"#{tx.seq} {tx.date} {tx.raw_type} {tx.name}".strip() if tx is not None else ""
         report.append(f"- [{kind}] {where} {msg}".replace("  ", " "))
     for h in hint:
         report.append(f"- [기초 추정] {h}")
-    report += ["", "PASS 는 계산·대사만 본다. 원천 자료의 정확성, 계정 분류, 기초 장부금액, 기말 단가는 회계사가 확인한다."]
-    (out / "실행보고.md").write_text("\n".join(report), encoding="utf-8")
+    report += ["", BW.PASS_NOTE]
+    (work / "실행보고.md").write_text("\n".join(report), encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
-    print("\n".join(report[:60]))
+    print("\n".join(report[:70]))
     return status
 
 

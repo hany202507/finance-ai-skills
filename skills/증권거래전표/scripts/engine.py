@@ -1,7 +1,7 @@
 """표준 거래 → 원장 계산 → 전표.
 
-계산은 워크북 원장 시트의 수식과 같은 식을 Decimal 로 따로 한다. 워크북 수식 값과 이 값이
-1원도 다르지 않아야 넘긴다(verify.py).
+계산은 여기 하나뿐이다. 위하고 업로드 파일과 검증 워크북은 이 값을 그대로 쓴다(build_workbook.py).
+2026-11-08 까지는 같은 식을 엑셀 수식으로 다시 짜서 대조했는데, 엑셀 판마다 함수가 달라 업로드 값이 틀렸다.
 
 원가: 종목별 이동평균. 외화예수금: 통화별 이동평균 장부금액.
 반올림: 원 단위 ROUND(엑셀과 같은 0.5 올림).
@@ -412,7 +412,7 @@ def run(txs, cfg, rates: RateBook):
                 nm = sold[0].tx.name
                 ab = sum((r.AB for r in sold), Z)
                 issues.append(("확인", None, f"{nm} 기초 {q0}주의 장부금액이 0 이라 매도 {len(sold)}건의 원가가 낮게 잡혔다(처분손익 합계 {ab:,} 원). "
-                                             "전기말 장부금액을 설정 기초 · 워크북 기초 시트에 넣고 다시 돌린다"))
+                                             "전기말 장부금액을 설정 「기초」 에 넣고 다시 돌린다"))
     year_end, fx_end = closing(cfg, hold, fx_bal, fx_book, b_sec, txs, issues)
     _checks(rows, issues, cfg)
     _period_end_notes(rows, issues, cfg, year_end, fx_end)

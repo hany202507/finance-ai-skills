@@ -1,63 +1,38 @@
-"""원장·전표 워크북을 수식으로 만든다.
+"""위하고 전표 줄과 검증 워크북을 엔진 값으로 만든다.
 
-원천 입력(거래 행의 금액·수량·증권사 잔액, 환율표, 기초 잔고, 설정)만 값으로 두고
-나머지는 전부 그 셀을 참조하는 수식이다. 엔진 값은 '엔진대조' 시트에만 두고 차이를 수식으로 잰다.
+계산은 engine.py 하나뿐이다. 위하고 업로드 파일과 검증 워크북은 둘 다 엔진 값을 그대로 쓴다.
+2026-11-08 까지는 원장 · 전표를 엑셀 수식으로 다시 짜고, 엑셀이 재계산한 값으로 업로드 파일을 썼다.
+그 구조는 엑셀 판마다 함수가 달라(MAXIFS 는 엑셀 2016 에 없다) 해외 거래 환율이 0 이 된 업로드 파일을 냈고,
+엑셀이나 LibreOffice 가 없으면 업로드 파일이 아예 나오지 않았다.
+
+검증 워크북 시트: 요약 · 전표 · 거래원장 · 기초·기말. 수식 없이 값만 쓴다(미리보기 · 휴대폰에서도 같은 값이 보인다).
 """
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.styles import Alignment, Font, PatternFill
 
 import engine as E
+import wehago_upload as WU
 
-INPUT = PatternFill("solid", fgColor="FFF2CC")     # 노란 칸: 입력값
+INPUT = PatternFill("solid", fgColor="FFF2CC")     # 노란 칸: 회계사가 적는 칸
 HEAD = PatternFill("solid", fgColor="D9E1F2")
+BAD = PatternFill("solid", fgColor="F8CBAD")
+GOOD = PatternFill("solid", fgColor="E2EFDA")
 BOLD = Font(bold=True)
-THIN = Side(style="thin", color="BFBFBF")
 NUMF = '#,##0;[Red]-#,##0'
-FXF = '#,##0.00;[Red]-#,##0.00'
+FXF = '#,##0.00#;[Red]-#,##0.00#'
 RATEF = '#,##0.00##'
-QTYF = '#,##0.######'
+QTYF = "General"           # '#,##0.######' 은 정수 수량에 마침표가 남는다(100.)
+DATEF = "yyyy-mm-dd"
 
-FIRST = 6          # 원장 첫 데이터 행
-ACC_FIRST, ACC_LAST = 6, 60        # 설정 계정표 범위
-BFX_FIRST, BFX_LAST = 7, 16        # 기초 외화
-BSEC_FIRST, BSEC_LAST = 21, 220    # 기초 종목
-
-LEDGER_COLS = [
-    ("A", "순번"), ("B", "일자"), ("C", "이벤트"), ("D", "종목키"), ("E", "통화"), ("F", "수량"),
-    ("G", "외화총액"), ("H", "외화비용"), ("I", "원화금액"), ("J", "원화비용"),
-    ("K", "증권사 원화잔액"), ("L", "증권사 외화잔액"), ("M", "증권사 잔고수량"),
-    ("N", "적용환율"), ("O", "외화흐름"), ("P", "외화잔액"), ("Q", "외화장부 변동"), ("R", "외화장부금액"),
-    ("S", "원화흐름"), ("T", "원화잔액"), ("U", "수량변동"), ("V", "직전 보유수량"), ("W", "직전 보유원가"),
-    ("X", "취득원가"), ("Y", "원가변동"), ("Z", "매도원가"), ("AA", "처분대가"), ("AB", "처분손익"),
-    ("AC", "외환차손익"), ("AD", "지급수수료"), ("AE", "배당·이자수익"), ("AF", "원천세·현지세"),
-    ("AG", "보유수량(후)"), ("AH", "보유원가(후)"), ("AI", "원화잔액 차이"), ("AJ", "외화잔액 차이"),
-    ("AK", "수량 차이"), ("AL", "전표 차대차이"), ("AM", "직전 외화잔액"), ("AN", "직전 외화장부"),
-    ("AO", "원문 거래종류"), ("AP", "종목명"), ("AQ", "원본 위치"), ("AR", "환율 출처"),
-    ("AS", "대여 중 수량"), ("AT", "대여 변동"),
-]
-
-
-def _acc(key):
-    return f'INDEX(설정!$B${ACC_FIRST}:$B${ACC_LAST},MATCH("{key}",설정!$A${ACC_FIRST}:$A${ACC_LAST},0))'
-
-
-def _accname(key):
-    return f'INDEX(설정!$C${ACC_FIRST}:$C${ACC_LAST},MATCH("{key}",설정!$A${ACC_FIRST}:$A${ACC_LAST},0))'
-
-
-def resolve_key(cfg, key):
-    afs = cfg.get("분류", "단기매매") == "매도가능"
-    if key == "증권":
-        return "매도가능증권" if afs else "단기매매증권"
-    if afs and key in ("처분이익", "처분손실", "평가이익", "평가손실"):
-        return "매도가능" + key
-    return key
+NO_BALANCE = ("검토", "정보", "대여")              # 잔액 계산을 하지 않는 행
+TRADES = ("해외매수", "해외매도", "국내매수", "국내매도")
+FX_PL = ("환전_외화원화", "해외매수", "해외원천세")
+PASS_NOTE = "PASS 는 계산과 대사만 본다. 원천 자료가 맞는지, 계정 분류 · 기초 장부금액 · 기말 단가가 맞는지는 보지 않는다."
 
 
 def _num(v):
@@ -68,127 +43,32 @@ def _num(v):
     return v
 
 
-def _style_header(ws, row, ncol):
-    for c in range(1, ncol + 1):
-        cell = ws.cell(row, c)
-        cell.fill, cell.font = HEAD, BOLD
-        cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+def _header(ws, row, names, col=1):
+    for j, t in enumerate(names, col):
+        c = ws.cell(row, j, t)
+        c.fill, c.font = HEAD, BOLD
+        c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
 
 
-def formulas_for(kind, r, cfg):
-    """원장 한 행의 계산 수식. engine.run 의 식과 같아야 한다."""
-    afs = cfg.get("분류", "단기매매") == "매도가능"
-    p = r - 1
-    f = {}
-    fx_kinds = {"환전_원화외화", "환전_외화원화", "해외매수", "해외매도", "해외배당", "해외이자", "해외원천세",
-                "외화입금", "외화출금", "외화가계정입", "외화가계정출", "환전정산입금", "환전정산출금", "해외세금환급"}
-    if kind in fx_kinds:
-        if kind.startswith("환전정산"):
-            pass
-        elif kind.startswith("환전"):
-            f["N"] = f"=IF(G{r}=0,0,I{r}/G{r})"
-        else:
-            f["N"] = (f"=SUMIFS(환율표!$C:$C,환율표!$B:$B,E{r},환율표!$A:$A,"
-                      f"_xlfn.MAXIFS(환율표!$A:$A,환율표!$B:$B,E{r},환율표!$A:$A,\"<=\"&B{r}))")
-        f["AM"] = (f"=ROUND(SUMIFS(기초!$B${BFX_FIRST}:$B${BFX_LAST},기초!$A${BFX_FIRST}:$A${BFX_LAST},E{r})"
-                   f"+SUMIFS(O$5:O{p},E$5:E{p},E{r}),3)")
-        f["AN"] = (f"=SUMIFS(기초!$C${BFX_FIRST}:$C${BFX_LAST},기초!$A${BFX_FIRST}:$A${BFX_LAST},E{r})"
-                   f"+SUMIFS(Q$5:Q{p},E$5:E{p},E{r})")
-        f["P"] = f"=ROUND(AM{r}+O{r},3)"
-        f["R"] = f"=AN{r}+Q{r}"
+def _date(v):
+    if v in (None, ""):
+        return None
+    if isinstance(v, dt.datetime):
+        return v.date()
+    if isinstance(v, dt.date):
+        return v
+    from read_source import parse_date
+    return parse_date(v)
 
-        def out(amt):
-            return f"=IF(AM{r}<=0,0,IF(ABS({amt}-AM{r})<0.0005,-AN{r},-ROUND(AN{r}*({amt})/AM{r},0)))"
 
-        if kind == "환전_원화외화":
-            f["O"], f["Q"], f["S"] = f"=G{r}", f"=I{r}", f"=-I{r}"
-        elif kind == "환전_외화원화":
-            f["O"], f["Q"], f["S"] = f"=-G{r}", out(f"G{r}"), f"=I{r}"
-            f["AC"] = f"=I{r}+Q{r}"
-        elif kind == "해외매수":
-            f["O"] = f"=-(G{r}+H{r})"
-            f["X"] = f"=ROUND(G{r}*N{r},0)+ROUND(H{r}*N{r},0)" if afs else f"=ROUND(G{r}*N{r},0)"
-            f["AD"] = "=0" if afs else f"=ROUND(H{r}*N{r},0)"
-            f["Q"] = out(f"G{r}+H{r}")
-            f["AC"] = f"=ROUND(G{r}*N{r},0)+ROUND(H{r}*N{r},0)+Q{r}"
-        elif kind == "해외매도":
-            f["O"] = f"=G{r}-H{r}"
-            f["AA"] = f"=ROUND((G{r}-H{r})*N{r},0)"
-            f["Q"] = f"=AA{r}"
-        elif kind in ("해외배당", "해외이자"):
-            f["O"] = f"=G{r}-H{r}"
-            f["AE"], f["AF"] = f"=ROUND(G{r}*N{r},0)", f"=ROUND(H{r}*N{r},0)"
-            f["Q"] = f"=AE{r}-AF{r}"
-        elif kind == "해외원천세":
-            f["O"] = f"=-H{r}"
-            f["AF"] = f"=ROUND(H{r}*N{r},0)"
-            f["Q"] = out(f"H{r}")
-            f["AC"] = f"=AF{r}+Q{r}"
-        elif kind in ("외화입금", "외화가계정입", "해외세금환급"):
-            f["O"], f["Q"] = f"=G{r}", f"=ROUND(G{r}*N{r},0)"
-        elif kind == "환전정산입금":
-            f["S"], f["Q"] = f"=I{r}", f"=-I{r}"
-        elif kind == "환전정산출금":
-            f["S"], f["Q"] = f"=-I{r}", f"=I{r}"
-        elif kind in ("외화출금", "외화가계정출"):
-            f["O"], f["Q"] = f"=-G{r}", out(f"G{r}")
-    else:
-        if kind in ("입금", "원화가계정입"):
-            f["S"] = f"=I{r}"
-        elif kind in ("출금", "원화가계정출"):
-            f["S"] = f"=-I{r}"
-        elif kind == "국내매수":
-            f["S"] = f"=-(I{r}+J{r})"
-            f["X"] = f"=I{r}+J{r}" if afs else f"=I{r}"
-            f["AD"] = "=0" if afs else f"=J{r}"
-        elif kind == "국내매도":
-            f["S"] = f"=I{r}-J{r}"
-            f["AA"] = f"=I{r}-J{r}"
-        elif kind == "원화세금":
-            f["S"] = f"=-I{r}"
-        elif kind in ("국내배당", "원화이자", "대여수수료"):
-            f["S"] = f"=I{r}-J{r}"
-            f["AE"], f["AF"] = f"=I{r}", f"=J{r}"
-    lent_open = (f"SUMIFS(기초!$G${BSEC_FIRST}:$G${BSEC_LAST},기초!$A${BSEC_FIRST}:$A${BSEC_LAST},D{r})")
-    if kind == "대여":
-        # 대여출고 +, 대여회수입고 − (원문 거래종류로 정한다). 소유는 그대로라 전표 없음
-        f["AT"] = f'=IF(ISNUMBER(SEARCH("출고",AO{r})),F{r},-F{r})'
-        f["AS"] = f"={lent_open}+SUMIFS(AT$5:AT{r},D$5:D{r},D{r})"
-        return f
-    if kind in ("해외매수", "국내매수", "해외매도", "국내매도", "주식수변동"):
-        f["V"] = (f"=SUMIFS(기초!$D${BSEC_FIRST}:$D${BSEC_LAST},기초!$A${BSEC_FIRST}:$A${BSEC_LAST},D{r})"
-                  f"+SUMIFS(U$5:U{p},D$5:D{p},D{r})")
-        f["W"] = (f"=SUMIFS(기초!$E${BSEC_FIRST}:$E${BSEC_LAST},기초!$A${BSEC_FIRST}:$A${BSEC_LAST},D{r})"
-                  f"+SUMIFS(Y$5:Y{p},D$5:D{p},D{r})")
-        if kind == "주식수변동":
-            # 출고(원문에 출고 · 감자): 비례 장부금액을 뗀다. 입고: 같은 날 앞선 주식수변동 행이 떼어 놓은 금액을 가져간다
-            out = f'OR(ISNUMBER(SEARCH("출고",AO{r})),AND(NOT(ISNUMBER(SEARCH("입고",AO{r}))),ISNUMBER(SEARCH("감자",AO{r}))))'
-            f["U"] = f"=IF({out},-F{r},F{r})"
-            f["Z"] = f"=IF({out},IF(V{r}<=0,0,IF(F{r}>=V{r},W{r},ROUND(W{r}*F{r}/V{r},0))),0)"
-            pend = f'SUMIFS(Y$5:Y{p},B$5:B{p},B{r},C$5:C{p},"주식수변동")'
-            f["Y"] = f"=IF({out},-Z{r},-{pend})"
-        elif kind.endswith("매수"):
-            f["U"], f["Y"] = f"=F{r}", f"=X{r}"
-        else:
-            f["U"] = f"=-F{r}"
-            f["Z"] = f"=IF(V{r}<=0,0,IF(F{r}>=V{r},W{r},ROUND(W{r}*F{r}/V{r},0)))"
-            f["Y"] = f"=-Z{r}"
-            f["AB"] = f"=AA{r}-Z{r}"
-        f["AG"], f["AH"] = f"=V{r}+U{r}", f"=W{r}+Y{r}"
-        f["AS"] = f"={lent_open}+SUMIFS(AT$5:AT{p},D$5:D{p},D{r})"
-        f["AK"] = f'=IF(M{r}="","",AG{r}-AS{r}-M{r})'
-    if kind not in ("검토", "정보"):
-        f["T"] = f"=기초!$B$3+SUM(S$5:S{r})"
-        f["AI"] = f'=IF(OR(K{r}="",AND(E{r}<>"KRW",S{r}=0)),"",T{r}-K{r})'
-        f["AJ"] = f'=IF(OR(L{r}="",E{r}="KRW"),"",ROUND(P{r}-L{r},3))'
-        f["AL"] = f"=SUMIFS(전표!$H:$H,전표!$J:$J,A{r})-SUMIFS(전표!$I:$I,전표!$J:$J,A{r})"
-    return f
+def party_name(cfg, broker):
+    return (cfg.get("거래처") or {}).get("증권사", broker) or ""
 
 
 def memo(tx, kind, broker, cfg):
     head = E.MEMO.get(kind, tx.raw_type).format(ccy=tx.ccy)
     nm = tx.name or ""
-    if kind in ("해외매수", "해외매도", "국내매수", "국내매도"):
+    if kind in TRADES:
         q = tx.qty.normalize() if hasattr(tx.qty, "normalize") else tx.qty
         s = f"{head} {nm} {q:f}주"
     elif kind in ("해외배당", "국내배당"):
@@ -205,401 +85,356 @@ def memo(tx, kind, broker, cfg):
     return s + tag
 
 
-def build(res: E.Result, rates_rows, path, broker="", opening_hint=None, diag=None):
+# ---------------------------------------------------------------- 전표 줄
+def journal_lines(res, broker=""):
+    """엔진 결과 → 위하고 전표 줄(0원 줄 제외). 업로드 파일과 검증 워크북 「전표」 시트가 이 목록을 그대로 쓴다.
+
+    줄: {key, date, gubun(3 차변 · 4 대변), code, name, party, memo, dr, cr}. key 는 거래 순번, 결산 줄은 'Y'.
+    """
     cfg = res.cfg
-    wb = Workbook()
-    ws0 = wb.active
-    ws0.title = "안내"
-    _guide(ws0, cfg, broker)
+    party = party_name(cfg, broker)
+    limit = int(cfg.get("적요길이", 40))
+    out = []
 
-    # ---------------- 자료진단(diagnose.py 판정. 값으로 적는다)
-    if diag:
-        dg = wb.create_sheet("자료진단")
-        dg["A1"], dg["A1"].font = "자료진단: 전표를 믿기 전에 볼 것. 위험이 있으면 검산이 OK 여도 결과를 그대로 쓰지 않는다", BOLD
-        for j, t in enumerate(["항목", "판정", "내용", "할 일"], 1):
-            dg.cell(3, j, t)
-        _style_header(dg, 3, 4)
-        for k, row in enumerate(diag, 4):
-            for j, v in enumerate(row, 1):
-                c = dg.cell(k, j, v)
-                c.alignment = Alignment(wrap_text=True, vertical="top")
-            if row[1] == "위험":
-                dg.cell(k, 2).fill = PatternFill("solid", fgColor="F8CBAD")
-            elif row[1] == "확인":
-                dg.cell(k, 2).fill = INPUT
-        for col, w in zip("ABCD", (18, 8, 60, 70)):
-            dg.column_dimensions[col].width = w
+    def add(key, date, side, acc, amt, pty, m):
+        amt = E.R0(Decimal(amt))
+        if amt == 0:
+            return
+        code, name = acc
+        out.append({"key": key, "date": date, "gubun": 3 if side == "dr" else 4, "code": str(code), "name": name,
+                    "party": pty, "memo": WU.clean_memo(m, limit),
+                    "dr": int(amt) if side == "dr" else 0, "cr": int(amt) if side == "cr" else 0})
 
-    # ---------------- 설정
-    st = wb.create_sheet("설정")
-    st["A1"], st["A1"].font = "설정 (노란 칸만 고친다. 바꾸면 원장·전표가 다시 계산된다)", BOLD
-    st["A2"], st["B2"] = "회사", cfg.get("회사", "")
-    st["A3"], st["B3"] = "증권사", broker
-    st["A4"], st["B4"] = "분류(단기매매/매도가능)", cfg.get("분류", "단기매매")
-    for c in ("B2", "B3", "B4"):
-        st[c].fill = INPUT
-    st.append([])
-    hdr_row = ACC_FIRST - 1
-    st.cell(hdr_row, 1, "계정 키"), st.cell(hdr_row, 2, "계정코드"), st.cell(hdr_row, 3, "계정명"), st.cell(hdr_row, 4, "비고")
-    _style_header(st, hdr_row, 4)
-    accounts = dict(E.DEFAULT_ACCOUNTS)
-    accounts.update({k: tuple(v) for k, v in (cfg.get("계정") or {}).items()})
-    for i, (k, (code, name)) in enumerate(accounts.items()):
-        r = ACC_FIRST + i
-        st.cell(r, 1, k)
-        st.cell(r, 2, str(code)).fill = INPUT
-        st.cell(r, 3, name).fill = INPUT
-    st["F5"], st["F5"].font = "기말", BOLD
-    st["F6"], st["G6"] = "기말일", cfg.get("기말", {}).get("일자") or ""
-    st["G6"].fill = INPUT
-    st["F8"], st["G8"] = "통화", "기말환율"
-    _style_header(st, 8, 7)
-    st["F8"].fill = st["G8"].fill = HEAD
-    end_rates = (cfg.get("기말") or {}).get("환율") or {}
-    ccys = sorted({r.tx.ccy for r in res.rows if r.tx.ccy != "KRW"} | set(end_rates))
-    ccy_row = {}
-    for i, c in enumerate(ccys):
-        rr = 9 + i
-        st.cell(rr, 6, c)
-        v = end_rates.get(c)
-        st.cell(rr, 7, float(v) if v not in (None, "") else None).fill = INPUT
-        st.cell(rr, 7).number_format = RATEF
-        ccy_row[c] = rr
-    st["F20"], st["G20"] = "거래처명(예수금)", cfg.get("거래처", {}).get("증권사", broker)
-    st["G20"].fill = INPUT
-    for col, w in zip("ABCDEFG", (22, 10, 24, 30, 3, 18, 14)):
-        st.column_dimensions[col].width = w
-
-    # ---------------- 환율표
-    rt = wb.create_sheet("환율표")
-    rt.append(["일자", "통화", "환율", "출처"])
-    _style_header(rt, 1, 4)
-    for d, c, v, s in rates_rows:
-        rt.append([d, c, float(v), s])
-        rt.cell(rt.max_row, 1).number_format = "yyyy-mm-dd"
-        rt.cell(rt.max_row, 3).number_format = RATEF
-        for k in range(1, 5):
-            rt.cell(rt.max_row, k).fill = INPUT
-    rt.column_dimensions["A"].width = 12
-    rt.column_dimensions["D"].width = 40
-
-    # ---------------- 기초
-    bs = wb.create_sheet("기초")
-    begin = cfg.get("기초", {})
-    bs["A1"], bs["A1"].font = "기초 잔고(전기말 장부). 노란 칸이 입력값", BOLD
-    bs["A3"], bs["B3"] = "원화예수금 기초", _num(Decimal(str(begin.get("원화예수금", 0) or 0)))
-    bs["B3"].fill, bs["B3"].number_format = INPUT, NUMF
-    bs.cell(BFX_FIRST - 1, 1, "통화"), bs.cell(BFX_FIRST - 1, 2, "외화잔액"), bs.cell(BFX_FIRST - 1, 3, "장부금액(원)"), bs.cell(BFX_FIRST - 1, 4, "출처·비고")
-    _style_header(bs, BFX_FIRST - 1, 4)
-    bfx = begin.get("외화") or {}
-    for i, c in enumerate(sorted(set(bfx) | set(ccys))):
-        r = BFX_FIRST + i
-        v = bfx.get(c, {})
-        bs.cell(r, 1, c).fill = INPUT
-        bs.cell(r, 2, _num(Decimal(str(v.get("잔액", 0) or 0)))).fill = INPUT
-        bs.cell(r, 3, _num(Decimal(str(v.get("장부금액", 0) or 0)))).fill = INPUT
-        bs.cell(r, 4, v.get("출처", ""))
-        bs.cell(r, 2).number_format, bs.cell(r, 3).number_format = FXF, NUMF
-    h = BSEC_FIRST - 1
-    for j, t in enumerate(["종목키", "종목명", "통화", "수량", "장부금액(원)", "출처·비고", "대여 중 수량"], 1):
-        bs.cell(h, j, t)
-    _style_header(bs, h, 7)
-    for i, s in enumerate(begin.get("종목") or []):
-        r = BSEC_FIRST + i
-        vals = [s.get("종목코드") or s["종목"], s["종목"], s.get("통화", "KRW"),
-                _num(Decimal(str(s.get("수량", 0) or 0))), _num(Decimal(str(s.get("장부금액", 0) or 0))), s.get("출처", "")]
-        for j, v in enumerate(vals, 1):
-            c = bs.cell(r, j, v)
-            if j <= 5:
-                c.fill = INPUT
-        bs.cell(r, 5).number_format = NUMF
-        bs.cell(r, 7, _num(Decimal(str(s.get("대여중", 0) or 0)))).fill = INPUT
-    for col, w in zip("ABCDEFG", (28, 28, 8, 12, 16, 40, 12)):
-        bs.column_dimensions[col].width = w
-
-    # ---------------- 거래원장
-    lg = wb.create_sheet("거래원장")
-    lg["A1"], lg["A1"].font = "거래원장: 노란 칸(A~M, AO~AR)은 증권사 파일에서 옮긴 원천값, 나머지는 수식", BOLD
-    lg["A2"] = ("G·H 외화 체결금액·비용, I·J 원화 거래금액·비용(수수료·세금·원천세). 원가는 종목별 이동평균, "
-                "외화예수금은 통화별 이동평균 장부금액. 처분손익 = 처분대가(비용 차감) − 매도원가")
-    for c, name in LEDGER_COLS:
-        lg[f"{c}5"] = name
-    _style_header(lg, 5, len(LEDGER_COLS))
-    lg.freeze_panes = "E6"
-    for i, row in enumerate(res.rows):
-        r = FIRST + i
-        tx = row.tx
-        vals = {"A": tx.seq, "B": tx.date, "C": row.kind, "D": tx.key, "E": tx.ccy, "F": _num(tx.qty),
-                "G": _num(tx.G), "H": _num(tx.H), "I": _num(tx.I), "J": _num(tx.J),
-                "K": _num(tx.krw_bal), "L": _num(tx.fx_bal), "M": _num(tx.hold_qty),
-                "AO": tx.raw_type, "AP": tx.name, "AQ": tx.src, "AR": row.rate_src}
-        for c, v in vals.items():
-            cell = lg[f"{c}{r}"]
-            cell.value = v
-            cell.fill = INPUT
-        lg[f"B{r}"].number_format = "yyyy-mm-dd"
-        for c, fml in formulas_for(row.kind, r, cfg).items():
-            lg[f"{c}{r}"] = fml
-        for c in ("G", "H", "L", "O", "P", "AJ", "AM"):
-            lg[f"{c}{r}"].number_format = FXF
-        lg[f"N{r}"].number_format = RATEF
-        for c in ("I", "J", "K", "Q", "R", "S", "T", "W", "X", "Y", "Z", "AA", "AB", "AC", "AD", "AE", "AF", "AH", "AI", "AL", "AN"):
-            lg[f"{c}{r}"].number_format = NUMF
-        for c in ("F", "M", "U", "V", "AG", "AK"):
-            lg[f"{c}{r}"].number_format = QTYF
-    last = FIRST + len(res.rows) - 1
-    for c, _ in LEDGER_COLS:
-        lg.column_dimensions[c].width = 13
-    lg.column_dimensions["D"].width = 26
-    lg.column_dimensions["AP"].width = 26
-    lg.column_dimensions["AQ"].width = 30
-
-    # ---------------- 기말평가
-    ye = wb.create_sheet("기말평가")
-    ye["A1"], ye["A1"].font = "기말 평가: 노란 칸(기말 단가)을 넣으면 평가 전표가 생긴다. 단가 출처는 잔고증명서", BOLD
-    hdr = ["종목키", "종목명", "통화", "보유수량", "보유원가(원)", "기말단가", "기말환율", "평가액(원)", "평가손익", "단가 출처"]
-    for j, t in enumerate(hdr, 1):
-        ye.cell(3, j, t)
-    _style_header(ye, 3, len(hdr))
-    sec_rows = []
-    for i, it in enumerate(res.year_end):
-        r = 4 + i
-        sec_rows.append((r, it))
-        ye.cell(r, 1, it["key"]), ye.cell(r, 2, it["name"]), ye.cell(r, 3, it["ccy"])
-        ye.cell(r, 4, f"=SUMIFS(기초!$D${BSEC_FIRST}:$D${BSEC_LAST},기초!$A${BSEC_FIRST}:$A${BSEC_LAST},A{r})+SUMIFS(거래원장!$U:$U,거래원장!$D:$D,A{r})")
-        ye.cell(r, 5, f"=SUMIFS(기초!$E${BSEC_FIRST}:$E${BSEC_LAST},기초!$A${BSEC_FIRST}:$A${BSEC_LAST},A{r})+SUMIFS(거래원장!$Y:$Y,거래원장!$D:$D,A{r})")
-        c = ye.cell(r, 6, _num(it["price"]))
-        c.fill = INPUT
-        if it["ccy"] == "KRW":
-            ye.cell(r, 7, 1)
-        else:
-            ye.cell(r, 7, f"=IFERROR(INDEX(설정!$G$9:$G$19,MATCH(C{r},설정!$F$9:$F$19,0)),\"\")")
-        ye.cell(r, 8, f'=IF(OR(F{r}="",G{r}=""),"",ROUND(D{r}*F{r}*G{r},0))')
-        ye.cell(r, 9, f'=IF(H{r}="","",H{r}-E{r})')
-        ye.cell(r, 10, (cfg.get("기말") or {}).get("단가출처", "")).fill = INPUT
-        ye.cell(r, 4).number_format = QTYF
-        for k in (5, 8, 9):
-            ye.cell(r, k).number_format = NUMF
-        ye.cell(r, 6).number_format = RATEF
-        ye.cell(r, 7).number_format = RATEF
-    fr0 = 6 + len(res.year_end)
-    ye.cell(fr0, 1, "외화예수금 환산").font = BOLD
-    for j, t in enumerate(["통화", "외화잔액", "장부금액(원)", "기말환율", "환산액(원)", "환산손익"], 1):
-        ye.cell(fr0 + 1, j, t)
-    _style_header(ye, fr0 + 1, 6)
-    fx_rows = []
-    for i, it in enumerate(res.fx_end):
-        r = fr0 + 2 + i
-        fx_rows.append((r, it))
-        ye.cell(r, 1, it["ccy"])
-        ye.cell(r, 2, f"=ROUND(SUMIFS(기초!$B${BFX_FIRST}:$B${BFX_LAST},기초!$A${BFX_FIRST}:$A${BFX_LAST},A{r})+SUMIFS(거래원장!$O:$O,거래원장!$E:$E,A{r}),3)")
-        ye.cell(r, 3, f"=SUMIFS(기초!$C${BFX_FIRST}:$C${BFX_LAST},기초!$A${BFX_FIRST}:$A${BFX_LAST},A{r})+SUMIFS(거래원장!$Q:$Q,거래원장!$E:$E,A{r})")
-        ye.cell(r, 4, f"=IFERROR(INDEX(설정!$G$9:$G$19,MATCH(A{r},설정!$F$9:$F$19,0)),\"\")")
-        ye.cell(r, 5, f'=IF(D{r}="","",ROUND(B{r}*D{r},0))')
-        ye.cell(r, 6, f'=IF(E{r}="","",E{r}-C{r})')
-        ye.cell(r, 2).number_format = FXF
-        for k in (3, 5, 6):
-            ye.cell(r, k).number_format = NUMF
-        ye.cell(r, 4).number_format = RATEF
-    for col, w in zip("ABCDEFGHIJ", (26, 26, 8, 12, 16, 12, 12, 16, 14, 30)):
-        ye.column_dimensions[col].width = w
-
-    # ---------------- 전표
-    jv = wb.create_sheet("전표")
-    jv["A1"], jv["A1"].font = "전표: 금액은 거래원장·기말평가 셀을 참조한다. 0원 줄은 업로드 파일에서 뺀다", BOLD
-    jh = ["전표키", "일자", "구분", "계정코드", "계정명", "거래처", "적요", "차변", "대변", "원장 순번"]
-    for j, t in enumerate(jh, 1):
-        jv.cell(3, j, t)
-    _style_header(jv, 3, len(jh))
-    jr = 4
-    party = "설정!$G$20"
-    for i, row in enumerate(res.rows):
+    for row in res.rows:
         if row.kind not in E.LINES:
             continue
-        r = FIRST + i
         tx = row.tx
         m = memo(tx, row.kind, broker, cfg)
-        for side, key, val in E.LINES[row.kind]:
-            neg = val.startswith("-")
-            col = val.lstrip("-")
-            ref = f"거래원장!{col}{r}"
-            amt = f"-{ref}" if neg else ref
-            jv.cell(jr, 1, tx.seq)
-            jv.cell(jr, 2, f"=거래원장!B{r}").number_format = "yyyy-mm-dd"
-            if side == "pl":
-                gain, loss = (resolve_key(cfg, k) for k in E.PL_PAIR[key])
-                jv.cell(jr, 3, f"=IF(H{jr}>0,3,4)")
-                jv.cell(jr, 4, f"=IF({amt}<0,{_acc(loss)},{_acc(gain)})")
-                jv.cell(jr, 5, f"=IF({amt}<0,{_accname(loss)},{_accname(gain)})")
-                jv.cell(jr, 8, f"=MAX(-({amt}),0)")
-                jv.cell(jr, 9, f"=MAX({amt},0)")
-            else:
-                k = resolve_key(cfg, key)
-                jv.cell(jr, 3, 3 if side == "dr" else 4)
-                jv.cell(jr, 4, f"={_acc(k)}")
-                jv.cell(jr, 5, f"={_accname(k)}")
-                jv.cell(jr, 8 if side == "dr" else 9, f"={amt}")
-                jv.cell(jr, 9 if side == "dr" else 8, 0)
-                if k in ("원화예수금", "외화예수금"):
-                    jv.cell(jr, 6, f"={party}")
-                elif k == "이체상대":
-                    jv.cell(jr, 6, tx.counterparty or "")
-            jv.cell(jr, 7, m)
-            jv.cell(jr, 10, tx.seq)
-            jr += 1
-    end_date = (cfg.get("기말") or {}).get("일자")
-    ye_first_line = jr
-    sec_key = resolve_key(cfg, "증권")
-    gain, loss = resolve_key(cfg, "평가이익"), resolve_key(cfg, "평가손실")
-    for r, it in sec_rows:
-        pl = f"N(기말평가!I{r})"
-        memo_s = f"[결산] 평가 {it['name']}"[:36] + " #Y"
-        # 평가이익: 차변 증권 / 대변 평가이익. 평가손실: 차변 평가손실 / 대변 증권
-        jv.cell(jr, 1, "Y"), jv.cell(jr, 2, end_date), jv.cell(jr, 3, 3)
-        jv.cell(jr, 4, f"=IF({pl}<0,{_acc(loss)},{_acc(sec_key)})")
-        jv.cell(jr, 5, f"=IF({pl}<0,{_accname(loss)},{_accname(sec_key)})")
-        jv.cell(jr, 7, memo_s), jv.cell(jr, 8, f"=ABS({pl})"), jv.cell(jr, 9, 0), jv.cell(jr, 10, "기말")
-        jr += 1
-        jv.cell(jr, 1, "Y"), jv.cell(jr, 2, end_date), jv.cell(jr, 3, 4)
-        jv.cell(jr, 4, f"=IF({pl}<0,{_acc(sec_key)},{_acc(gain)})")
-        jv.cell(jr, 5, f"=IF({pl}<0,{_accname(sec_key)},{_accname(gain)})")
-        jv.cell(jr, 7, memo_s), jv.cell(jr, 8, 0), jv.cell(jr, 9, f"=ABS({pl})"), jv.cell(jr, 10, "기말")
-        jr += 1
-    for r, it in fx_rows:
-        pl = f"N(기말평가!F{r})"
-        memo_s = f"[결산] 외화환산 {it['ccy']} #Y"
-        jv.cell(jr, 1, "Y"), jv.cell(jr, 2, end_date), jv.cell(jr, 3, 3)
-        jv.cell(jr, 4, f"=IF({pl}<0,{_acc('환산손실')},{_acc('외화예수금')})")
-        jv.cell(jr, 5, f"=IF({pl}<0,{_accname('환산손실')},{_accname('외화예수금')})")
-        jv.cell(jr, 6, f"=IF({pl}<0,\"\",{party})")
-        jv.cell(jr, 7, memo_s), jv.cell(jr, 8, f"=ABS({pl})"), jv.cell(jr, 9, 0), jv.cell(jr, 10, "기말")
-        jr += 1
-        jv.cell(jr, 1, "Y"), jv.cell(jr, 2, end_date), jv.cell(jr, 3, 4)
-        jv.cell(jr, 4, f"=IF({pl}<0,{_acc('외화예수금')},{_acc('환산이익')})")
-        jv.cell(jr, 5, f"=IF({pl}<0,{_accname('외화예수금')},{_accname('환산이익')})")
-        jv.cell(jr, 6, f"=IF({pl}<0,{party},\"\")")
-        jv.cell(jr, 7, memo_s), jv.cell(jr, 8, 0), jv.cell(jr, 9, f"=ABS({pl})"), jv.cell(jr, 10, "기말")
-        jr += 1
-    jlast = jr - 1
-    for rr in range(4, jr):
-        jv.cell(rr, 2).number_format = "yyyy-mm-dd"
-        jv.cell(rr, 8).number_format = NUMF
-        jv.cell(rr, 9).number_format = NUMF
-    jv.cell(jr + 1, 7, "합계").font = BOLD
-    jv.cell(jr + 1, 8, f"=SUM(H4:H{jlast})").number_format = NUMF
-    jv.cell(jr + 1, 9, f"=SUM(I4:I{jlast})").number_format = NUMF
-    for col, w in zip("ABCDEFGHIJ", (8, 12, 6, 9, 20, 18, 44, 14, 14, 9)):
-        jv.column_dimensions[col].width = w
+        for side, acc, v, key in row.lines:
+            pty = party if key in ("원화예수금", "외화예수금") else (tx.counterparty or "") if key == "이체상대" else ""
+            add(tx.seq, tx.date, side, acc, v, pty, m)
 
-    # ---------------- 엔진대조
-    ec = wb.create_sheet("엔진대조")
-    ec["A1"], ec["A1"].font = "엔진대조: B 이후 '엔진' 열은 engine.py 가 따로 계산한 값(입력). '차이' 열이 모두 0 이어야 한다", BOLD
-    cmp_cols = ["P", "Q", "R", "T", "X", "Z", "AB", "AC", "AE", "AF", "AG", "AH"]
-    ec.cell(3, 1, "원장 행")
-    for j, c in enumerate(cmp_cols):
-        ec.cell(3, 2 + 2 * j, f"엔진 {c}")
-        ec.cell(3, 3 + 2 * j, f"차이 {c}")
-    _style_header(ec, 3, 1 + 2 * len(cmp_cols))
-    for i, row in enumerate(res.rows):
-        r = FIRST + i
-        er = 4 + i
-        ec.cell(er, 1, r)
-        for j, c in enumerate(cmp_cols):
-            v = row.get(c)
-            if row.kind in ("검토", "정보"):
-                v = None
-            ec.cell(er, 2 + 2 * j, _num(v)).fill = INPUT
-            tol = "0.0005" if c == "P" else "0.5"
-            ec.cell(er, 3 + 2 * j, f'=IF(B{er}="",0,IF(ABS(N(거래원장!{c}{r})-{get_column_letter(2+2*j)}{er})<{tol},0,N(거래원장!{c}{r})-{get_column_letter(2+2*j)}{er}))')
-    elast = 3 + len(res.rows)
-    diff_ranges = ",".join(f"엔진대조!{get_column_letter(3+2*j)}4:{get_column_letter(3+2*j)}{elast}" for j in range(len(cmp_cols)))
+    end = _date((cfg.get("기말") or {}).get("일자"))
+    if end is None:
+        return out
+    sec = E.acct(cfg, "증권")
+    for it in res.year_end:
+        pl = it["pl"]
+        if not pl:
+            continue
+        m = f"[결산] 평가 {it['name']}"[:36] + " #Y"
+        if pl > 0:
+            add("Y", end, "dr", sec, pl, "", m)
+            add("Y", end, "cr", E.acct(cfg, "평가이익"), pl, "", m)
+        else:
+            add("Y", end, "dr", E.acct(cfg, "평가손실"), -pl, "", m)
+            add("Y", end, "cr", sec, -pl, "", m)
+    for it in res.fx_end:
+        pl = it["pl"]
+        if not pl:
+            continue
+        m = f"[결산] 외화환산 {it['ccy']} #Y"
+        if pl > 0:
+            add("Y", end, "dr", E.acct(cfg, "외화예수금"), pl, party, m)
+            add("Y", end, "cr", E.acct(cfg, "환산이익"), pl, "", m)
+        else:
+            add("Y", end, "dr", E.acct(cfg, "환산손실"), -pl, "", m)
+            add("Y", end, "cr", E.acct(cfg, "외화예수금"), -pl, party, m)
+    return out
 
-    # ---------------- 검산
-    ck = wb.create_sheet("검산", 1)
-    ck["A1"], ck["A1"].font = "검산: 차이는 0, 판정은 OK 여야 넘긴다", BOLD
-    for j, t in enumerate(["항목", "값", "판정", "설명"], 1):
-        ck.cell(3, j, t)
-    _style_header(ck, 3, 4)
-    L = f"{FIRST}:{last}"
-    rng = lambda c: f"거래원장!{c}{FIRST}:{c}{last}"
-    checks = [
-        ("전표 차변 − 대변", f"=SUM(전표!H4:H{jlast})-SUM(전표!I4:I{jlast})", "0", "전체 차대 일치"),
-        ("차대가 안 맞는 거래 수", f"=COUNTIF({rng('AL')},\">0.5\")+COUNTIF({rng('AL')},\"<-0.5\")", "0", "거래별 전표 차대(거래원장 AL)"),
-        ("원화잔액 불일치 수", f"=COUNTIF({rng('AI')},\">0.5\")+COUNTIF({rng('AI')},\"<-0.5\")", "0", "계산 원화예수금 잔액 vs 증권사 현금잔액(거래원장 AI)"),
-        ("외화잔액 불일치 수", f"=COUNTIF({rng('AJ')},\">0.0005\")+COUNTIF({rng('AJ')},\"<-0.0005\")", "0", "계산 외화예수금 잔액 vs 증권사 외화예수금(거래원장 AJ)"),
-        ("보유수량 불일치 수", f"=COUNTIF({rng('AK')},\">0.0000001\")+COUNTIF({rng('AK')},\"<-0.0000001\")", "0", "계산 보유수량 vs 증권사 잔고수량(거래원장 AK)"),
-        ("엔진 대조 차이 수", "=" + "+".join(f"COUNTIF({x},\"<>0\")" for x in diff_ranges.split(",")), "0",
-         "engine.py 값과 수식 값(엔진대조 시트)"),
-        ("환율 없는 외화 거래 수", f"=SUMPRODUCT(--({rng('E')}<>\"KRW\"),--({rng('C')}<>\"검토\"),--(LEFT({rng('C')},4)<>\"환전정산\"),--({rng('N')}=0))", "0", "환율표에 그 날짜 이전 환율이 없다"),
-        ("검토대기(전표 없음) 수", f"=COUNTIF({rng('C')},\"검토\")", "0", "입출고·기업행위: 확인사항 시트"),
-        ("가계정 기표 수", f"=COUNTIF({rng('C')},\"*가계정*\")", "0", "규칙에 없는 거래: 확인사항 시트"),
-        ("장부금액 없는 기초 보유 종목 수", f"=COUNTIFS(기초!$D${BSEC_FIRST}:$D${BSEC_LAST},\">0\",기초!$E${BSEC_FIRST}:$E${BSEC_LAST},0)", "0",
-         "기초 수량은 있는데 장부금액이 0 이다(역산한 기초). 팔면 원가가 낮게 잡혀 처분이익이 부풀려진다. 기초 시트 E열에 전기말 장부금액을 넣는다"),
-        ("기말 단가 미입력 종목 수", f"=COUNTIFS(기말평가!D4:D{max(4, 3+len(res.year_end))},\"<>0\",기말평가!F4:F{max(4, 3+len(res.year_end))},\"\")" if res.year_end else "=0", "0", "기말평가 시트 F열"),
+
+# ---------------------------------------------------------------- 대사 · 검산
+def recon(r):
+    """한 행의 증권사 잔액 대사. (비교한 항목 수, [다른 항목 설명])."""
+    t, n, bad = r.tx, 0, []
+    if r.kind in NO_BALANCE:
+        return 0, []
+    if t.krw_bal is not None and (t.ccy == "KRW" or r.S != 0):
+        n += 1
+        if r.T != t.krw_bal:
+            bad.append(f"원화 증권사 {t.krw_bal:,} 차이 {r.T - t.krw_bal:+,}")
+    if t.fx_bal is not None and t.ccy != "KRW":
+        n += 1
+        if r.P != t.fx_bal:
+            bad.append(f"{t.ccy} 증권사 {t.fx_bal:,} 차이 {r.P - t.fx_bal:+,}")
+    if t.hold_qty is not None and r.kind in TRADES + ("주식수변동",):
+        n += 1
+        if r.AG - r.AS != t.hold_qty:
+            lent = f"(대여 중 {r.AS} 제외)" if r.AS else ""
+            bad.append(f"수량 증권사 {t.hold_qty} 차이 {r.AG - r.AS - t.hold_qty:+}{lent}")
+    return n, bad
+
+
+def checks(res, lines):
+    """[(항목, 값, 판정, 설명)]. 판정은 OK · 확인필요 · 중단. 중단이 하나라도 있으면 위하고 업로드 파일을 쓰지 않는다."""
+    rows, cfg = res.rows, res.cfg
+    by = {}
+    for ln in lines:
+        by[ln["key"]] = by.get(ln["key"], 0) + ln["dr"] - ln["cr"]
+    mis = {"원화": 0, "외화": 0, "수량": 0}
+    for r in rows:
+        for b in recon(r)[1]:
+            mis["수량" if b.startswith("수량") else "원화" if b.startswith("원화") else "외화"] += 1
+    no_rate = sum(1 for r in rows if r.kind in E.LINES and r.tx.ccy != "KRW" and not r.kind.startswith("환전") and r.N == 0)
+    stops = [i for i in res.issues if i[0] == "중단"]
+    b_sec = (cfg.get("기초") or {}).get("종목") or []
+    no_book = sum(1 for s in b_sec if Decimal(str(s.get("수량", 0) or 0)) > 0 and Decimal(str(s.get("장부금액", 0) or 0)) == 0)
+    no_price = sum(1 for it in res.year_end if it["qty"] != 0 and it["price"] is None)
+    no_end = 0 if _date((cfg.get("기말") or {}).get("일자")) else sum(
+        1 for it in list(res.year_end) + list(res.fx_end) if it["pl"])
+    total = sum(ln["dr"] - ln["cr"] for ln in lines)
+    out = [
+        ("전표 차변 − 대변", total, "중단", "전체 차대 일치"),
+        ("차대가 안 맞는 거래 수", sum(1 for v in by.values() if v), "중단", "거래(순번)마다 차변 합 = 대변 합"),
+        ("중단 사유 수", len(stops), "중단", "환율 없음 · 보유보다 많은 매도 · 외화 잔액보다 많은 출금. 확인사항 [중단]"),
+        ("환율 없는 외화 거래 수", no_rate, "중단", "환율표에 그 날짜 이전 환율이 없다"),
+        ("원화잔액 불일치 수", mis["원화"], "확인필요", "계산 원화예수금 잔액 vs 증권사 현금잔액(거래원장 대사 열)"),
+        ("외화잔액 불일치 수", mis["외화"], "확인필요", "계산 외화예수금 잔액 vs 증권사 외화예수금(거래원장 대사 열)"),
+        ("보유수량 불일치 수", mis["수량"], "확인필요", "계산 보유수량(대여 중 제외) vs 증권사 잔고수량(거래원장 대사 열)"),
+        ("검토대기(전표 없음) 수", sum(1 for r in rows if r.kind == "검토"), "확인필요", "입출고 · 기업행위: 확인사항 [검토대기]"),
+        ("가계정 기표 수", sum(1 for r in rows if "가계정" in r.kind), "확인필요", "규칙에 없는 거래: 확인사항 [미분류]"),
+        ("장부금액 없는 기초 보유 종목 수", no_book, "확인필요",
+         "기초 수량은 있는데 장부금액이 0 이다(역산한 기초). 팔면 원가가 낮게 잡혀 처분이익이 부풀려진다. 설정 「기초」 에 전기말 장부금액을 넣고 다시 돌린다"),
+        ("기말 단가 미입력 종목 수", no_price, "확인필요", "설정 「기말」 의 단가 · 환율(기초·기말 시트)"),
+        ("기말일이 없어 빠진 결산 전표 수", no_end, "확인필요", "설정 「기말」 의 일자"),
     ]
-    for i, (name, fml, ok, desc) in enumerate(checks):
-        r = 4 + i
-        ck.cell(r, 1, name)
-        ck.cell(r, 2, fml)
-        ck.cell(r, 3, f'=IF(ABS(N(B{r}))<0.5,"OK","확인필요")')
-        ck.cell(r, 4, desc)
-        ck.cell(r, 2).number_format = NUMF
-    r = 4 + len(checks) + 1
-    ck.cell(r, 1, "보유원가 합계(원장)"), ck.cell(r, 2, f"=SUM(기말평가!E4:E{max(4, 3+len(res.year_end))})")
-    ck.cell(r + 1, 1, "처분손익 합계"), ck.cell(r + 1, 2, f"=SUM({rng('AB')})")
-    ck.cell(r + 2, 1, "외환차손익 합계"), ck.cell(r + 2, 2, f"=SUM({rng('AC')})")
-    ck.cell(r + 3, 1, "배당·이자수익 합계"), ck.cell(r + 3, 2, f"=SUM({rng('AE')})")
-    ck.cell(r + 4, 1, "원천세·현지세 합계"), ck.cell(r + 4, 2, f"=SUM({rng('AF')})")
-    ck.cell(r + 5, 1, "지급수수료 합계"), ck.cell(r + 5, 2, f"=SUM({rng('AD')})")
-    for k in range(r, r + 6):
-        ck.cell(k, 2).number_format = NUMF
-    ck.cell(r + 7, 1, "PASS 는 계산과 대사만 본다. 원천 자료가 맞는지, 계정 분류·기초 장부금액·기말 단가가 맞는지는 보지 않는다.")
-    for col, w in zip("ABCD", (30, 16, 10, 60)):
-        ck.column_dimensions[col].width = w
+    return [(n, v, "OK" if not v else bad, d) for n, v, bad, d in out]
 
-    # ---------------- 확인사항
-    iq = wb.create_sheet("확인사항")
-    for j, t in enumerate(["구분", "순번", "일자", "거래", "내용", "회계사 결론"], 1):
-        iq.cell(1, j, t)
-    _style_header(iq, 1, 6)
-    for k, (kind, tx, msg) in enumerate(res.issues, 2):
-        iq.cell(k, 1, kind)
-        if tx is not None:
-            iq.cell(k, 2, tx.seq), iq.cell(k, 3, str(tx.date)), iq.cell(k, 4, f"{tx.raw_type} {tx.name}".strip())
-        iq.cell(k, 5, msg)
-        iq.cell(k, 6).fill = INPUT
-    if opening_hint:
-        k = iq.max_row + 2
-        iq.cell(k, 1, "기초 추정").font = BOLD
-        for line in opening_hint:
-            k += 1
-            iq.cell(k, 1, "기초 추정"), iq.cell(k, 5, line)
-    for col, w in zip("ABCDEF", (10, 6, 12, 30, 90, 30)):
-        iq.column_dimensions[col].width = w
 
+def totals(res, lines):
+    rs = res.rows
+    s = lambda f: sum((getattr(r, f) for r in rs), Decimal(0))
+    return [
+        ("처분손익", s("AB")), ("외환차손익", s("AC")), ("배당 · 이자수익(세전)", s("AE")), ("원천세 · 현지세", s("AF")),
+        ("지급수수료(매수 수수료)", s("AD")),
+        ("기말 평가손익", sum((it["pl"] for it in res.year_end if it["pl"] is not None), Decimal(0))),
+        ("외화예수금 환산손익", sum((it["pl"] for it in res.fx_end if it["pl"] is not None), Decimal(0))),
+        ("기말 보유원가", sum((it["cost"] for it in res.year_end), Decimal(0))),
+        ("전표 차변 합계", sum(ln["dr"] for ln in lines)), ("전표 대변 합계", sum(ln["cr"] for ln in lines)),
+    ]
+
+
+# ---------------------------------------------------------------- 검증 워크북
+def build(path, res, lines, cks, broker="", status=0, upload_note="", upload_checks=(), diag=None, opening_hint=None):
+    cfg = res.cfg
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "요약"
+    _summary(ws, res, lines, cks, broker, status, upload_note, upload_checks, diag or [], opening_hint or [])
+    _journal(wb.create_sheet("전표"), lines)
+    _ledger(wb.create_sheet("거래원장"), res)
+    _balances(wb.create_sheet("기초·기말"), res, cfg)
     wb.save(path)
-    return {"ledger_last": last, "journal_last": jlast, "checks": len(checks)}
+    return path
 
 
-def _guide(ws, cfg, broker):
-    lines = [
-        ("증권 거래 전표 워크북", True),
-        (f"회사: {cfg.get('회사','')}   증권사: {broker}   분류: {cfg.get('분류','단기매매')}", False),
-        ("", False),
-        ("시트", True),
-        ("자료진단: 받은 자료로 무엇을 검증할 수 있고 무엇이 빠졌는지(읽은 방법 · 잔액 열 · 일자 · 기초 · 계좌 주체)", False),
-        ("검산: 차대·잔액 대사·엔진 대조. 모두 OK 여야 넘긴다", False),
-        ("설정: 계정코드·기말일·기말환율(입력)", False),
-        ("환율표: 외화 거래일의 매매기준율(입력, 출처 표시)", False),
-        ("기초: 전기말 원화·외화예수금, 종목별 수량·장부금액(입력)", False),
-        ("거래원장: 증권사 파일 원천값(노란 칸) + 수식 계산(원가·잔액·손익)", False),
-        ("기말평가: 기말 단가를 넣으면 평가손익·외화환산 계산", False),
-        ("전표: 거래원장·기말평가 셀을 참조하는 분개", False),
-        ("엔진대조: Python 엔진 값과 수식 값의 차이", False),
-        ("확인사항: 회계사가 정할 것(계정, 기초, 검토대기, 원천세)", False),
-        ("", False),
-        ("수식으로 만들 수 없는 값(증권사 원천값·환율·기초 장부·기말 단가)은 노란 칸이고 출처를 옆에 적는다.", False),
-    ]
-    for i, (t, b) in enumerate(lines, 1):
-        ws.cell(i, 1, t).font = Font(bold=b, size=13 if i == 1 else 11)
-    ws.column_dimensions["A"].width = 100
+def _summary(ws, res, lines, cks, broker, status, upload_note, upload_checks, diag, hint):
+    cfg = res.cfg
+    dates = [r.tx.date for r in res.rows if r.tx.date]
+    period = f"{min(dates)} ~ {max(dates)}" if dates else ""
+    ws["A1"], ws["A1"].font = "증권 거래 전표 검증", Font(bold=True, size=14)
+    ws["A2"] = (f"회사 {cfg.get('회사', '')} · 증권사 {broker or '판별 못함'} · 거래 {period} · 분류 {cfg.get('분류', '단기매매')} · "
+                f"만든 때 {dt.datetime.now():%Y-%m-%d %H:%M}")
+    verdict = {0: "통과", 2: "확인필요", 3: "중단"}.get(status, str(status))
+    ws["A4"], ws["A4"].font = "결론", BOLD
+    ws["B4"], ws["B4"].font = verdict, BOLD
+    ws["B4"].fill = GOOD if status == 0 else BAD if status == 3 else INPUT
+    ws["D4"] = upload_note
+    ws["D4"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws["A5"] = PASS_NOTE
+    r = 7
+
+    def section(title, names, cols):
+        nonlocal r
+        ws.cell(r, 1, title).font = Font(bold=True, size=12)
+        r += 1
+        for name, col in zip(names, cols):
+            _header(ws, r, [name], col)
+        r += 1
+
+    def mark(cell, v):
+        cell.fill = GOOD if v == "OK" else BAD if v in ("중단", "반려", "위험") else INPUT if v in ("확인필요", "확인") else PatternFill()
+
+    section("검산", ["항목", "값", "판정", "설명"], [1, 2, 3, 4])
+    for name, val, verdict_, desc in cks:
+        ws.cell(r, 1, name)
+        ws.cell(r, 2, _num(val)).number_format = NUMF
+        c = ws.cell(r, 3, verdict_)
+        mark(c, verdict_)
+        ws.cell(r, 4, desc)
+        r += 1
+    r += 1
+    section("위하고 올리기 전 검사", ["항목", "값", "판정", "예"], [1, 2, 3, 4])
+    if not upload_checks:
+        ws.cell(r, 1, "업로드 파일을 만들지 않아 검사하지 않았다")
+        r += 1
+    for name, val, verdict_, ex in upload_checks:
+        ws.cell(r, 1, name), ws.cell(r, 2, _num(val))
+        mark(ws.cell(r, 3, verdict_), verdict_)
+        ws.cell(r, 4, ex)
+        r += 1
+    r += 1
+    section("합계", ["항목", "금액(원)"], [1, 2])
+    for name, v in totals(res, lines):
+        ws.cell(r, 1, name)
+        ws.cell(r, 2, _num(v)).number_format = NUMF
+        r += 1
+    r += 1
+    if diag:
+        section("자료 진단", ["항목", "", "판정", "내용", "할 일"], [1, 2, 3, 4, 5])
+        for name, verdict_, body, todo in diag:
+            ws.cell(r, 1, name)
+            mark(ws.cell(r, 3, verdict_), verdict_)
+            ws.cell(r, 4, body), ws.cell(r, 5, todo)
+            r += 1
+        r += 1
+    section("확인사항", ["구분", "순번", "일자", "내용", "회계사 결론"], [1, 2, 3, 4, 5])
+    for kind, tx, msg in res.issues:
+        ws.cell(r, 1, kind)
+        if tx is not None:
+            ws.cell(r, 2, tx.seq)
+            ws.cell(r, 3, tx.date).number_format = DATEF
+            msg = f"{tx.raw_type} {tx.name}".strip() + ": " + msg
+        ws.cell(r, 4, msg)
+        mark(ws.cell(r, 1), "중단" if kind == "중단" else "확인" if kind in ("확인", "대사", "미분류", "검토대기") else "")
+        ws.cell(r, 5).fill = INPUT
+        r += 1
+    for h in hint:
+        ws.cell(r, 1, "기초 추정"), ws.cell(r, 4, h)
+        ws.cell(r, 5).fill = INPUT
+        r += 1
+    for row in ws.iter_rows(min_row=4):
+        for c in row:
+            if c.row != 5 and not (c.fill and c.fill.fgColor.rgb == HEAD.fgColor.rgb):
+                c.alignment = Alignment(wrap_text=c.column in (1, 4, 5), vertical="top")
+    for col, w in zip("ABCDE", (44, 12, 10, 80, 36)):
+        ws.column_dimensions[col].width = w
+
+
+def _journal(ws, lines):
+    ws["A1"], ws["A1"].font = "전표: 위하고 업로드 파일과 같은 줄(0원 줄 제외). 거래번호로 거래원장 순번과 잇는다. Y 는 기말 결산", BOLD
+    head = ["거래번호", "일자", "구분", "계정코드", "계정과목명", "거래처명", "적요", "차변", "대변"]
+    _header(ws, 2, head)
+    r = 3
+    for ln in lines:
+        vals = [ln["key"], ln["date"], ln["gubun"], ln["code"], ln["name"], ln["party"], ln["memo"], ln["dr"], ln["cr"]]
+        for j, v in enumerate(vals, 1):
+            ws.cell(r, j, v)
+        ws.cell(r, 2).number_format = DATEF
+        ws.cell(r, 8).number_format = ws.cell(r, 9).number_format = NUMF
+        r += 1
+    ws.cell(r, 7, "합계").font = BOLD
+    ws.cell(r, 8, sum(ln["dr"] for ln in lines)).number_format = NUMF
+    ws.cell(r, 9, sum(ln["cr"] for ln in lines)).number_format = NUMF
+    ws.cell(r, 8).font = ws.cell(r, 9).font = BOLD
+    ws.freeze_panes = "A3"
+    ws.auto_filter.ref = f"A2:I{max(2, r - 1)}"
+    for col, w in zip("ABCDEFGHI", (9, 11, 5, 8, 18, 14, 44, 13, 13)):
+        ws.column_dimensions[col].width = w
+
+
+LEDGER = [("순번", 6), ("일자", 11), ("거래", 16), ("처리", 12), ("종목", 22), ("통화", 5), ("수량", 9),
+          ("외화금액", 11), ("외화비용", 9), ("원화금액", 13), ("원화비용", 10), ("적용환율", 10),
+          ("원가", 13), ("처분손익", 12), ("외환차손익", 11), ("원화잔액", 13), ("외화잔액", 11), ("보유수량", 9),
+          ("대사", 22), ("환율 근거", 22)]
+
+
+def _ledger(ws, res):
+    ws["A1"], ws["A1"].font = ("거래원장: 증권사 파일 값(외화 · 원화 금액, 비용)과 엔진 계산(환율 · 원가 · 손익 · 잔액). "
+                               "대사 열이 빨간 줄은 계산 잔액이 증권사 잔액과 다르다"), BOLD
+    _header(ws, 2, [n for n, _ in LEDGER])
+    for i, r in enumerate(res.rows, 3):
+        t, k = r.tx, r.kind
+        fx = t.ccy != "KRW"
+        cost = r.X if k.endswith("매수") else r.Z_ if (k.endswith("매도") or k == "주식수변동") else None
+        n, bad = recon(r)
+        vals = [t.seq, t.date, t.raw_type, k, t.name, t.ccy, t.qty or None,
+                t.G or None, t.H or None, t.I or None, t.J or None, r.N if (fx and r.N) else None,
+                cost or None, r.AB if k.endswith("매도") else None, r.AC if k in FX_PL else None,
+                None if k in NO_BALANCE else r.T, r.P if (fx and k not in NO_BALANCE) else None,
+                r.AG if k in TRADES + ("주식수변동",) else None,
+                " · ".join(bad) if bad else ("일치" if n else ""), r.rate_src]
+        for j, v in enumerate(vals, 1):
+            ws.cell(i, j, _num(v))
+        ws.cell(i, 2).number_format = DATEF
+        for j in (7, 18):
+            ws.cell(i, j).number_format = QTYF
+        for j in (8, 9, 17):
+            ws.cell(i, j).number_format = FXF
+        for j in (10, 11, 13, 14, 15, 16):
+            ws.cell(i, j).number_format = NUMF
+        ws.cell(i, 12).number_format = RATEF
+        if bad:
+            ws.cell(i, 19).fill = BAD
+    ws.freeze_panes = "C3"
+    ws.auto_filter.ref = f"A2:{chr(64 + len(LEDGER))}{max(2, 2 + len(res.rows))}"
+    for j, (_, w) in enumerate(LEDGER, 1):
+        ws.column_dimensions[chr(64 + j)].width = w
+
+
+def _balances(ws, res, cfg):
+    begin = cfg.get("기초") or {}
+    ws["A1"], ws["A1"].font = "기초 · 기말: 기초는 설정 「기초」(비었으면 거래내역에서 추정), 기말 평가는 설정 「기말」 의 단가 · 환율", BOLD
+    r = 3
+    ws.cell(r, 1, "기초 잔고").font = Font(bold=True, size=12)
+    r += 1
+    _header(ws, r, ["구분", "이름", "통화", "수량 · 외화잔액", "장부금액(원)", "출처 · 비고"])
+    r += 1
+    rows = [("원화예수금", "", "KRW", None, Decimal(str(begin.get("원화예수금", 0) or 0)), "")]
+    for c, v in sorted((begin.get("외화") or {}).items()):
+        rows.append(("외화예수금", c, c, Decimal(str(v.get("잔액", 0) or 0)), Decimal(str(v.get("장부금액", 0) or 0)), v.get("출처", "")))
+    for s in begin.get("종목") or []:
+        note = s.get("출처", "")
+        if Decimal(str(s.get("대여중", 0) or 0)):
+            note = f"대여 중 {s['대여중']} · {note}"
+        rows.append(("종목", s["종목"], s.get("통화", "KRW"), Decimal(str(s.get("수량", 0) or 0)),
+                     Decimal(str(s.get("장부금액", 0) or 0)), note))
+    for row in rows:
+        for j, v in enumerate(row, 1):
+            ws.cell(r, j, _num(v))
+        ws.cell(r, 4).number_format, ws.cell(r, 5).number_format = QTYF, NUMF
+        if "추정" in str(row[5]):
+            ws.cell(r, 6).fill = INPUT
+        r += 1
+    r += 1
+    end = cfg.get("기말") or {}
+    krw_end = Decimal(str(begin.get("원화예수금", 0) or 0)) + sum((x.S for x in res.rows), Decimal(0))
+    ws.cell(r, 1, "기말").font = Font(bold=True, size=12)
+    ws.cell(r, 3, f"기말일 {end.get('일자') or '없음'} · 단가 출처 {end.get('단가출처') or '없음'}")
+    r += 1
+    ws.cell(r, 1, "원화예수금 기말 잔액(계산)")
+    ws.cell(r, 5, _num(krw_end)).number_format = NUMF
+    r += 2
+    _header(ws, r, ["종목", "통화", "보유수량", "보유원가(원)", "기말단가", "기말환율", "평가액(원)", "평가손익"])
+    r += 1
+    for it in res.year_end:
+        vals = [it["name"], it["ccy"], it["qty"], it["cost"], it["price"], it["rate"], it["fv"], it["pl"]]
+        for j, v in enumerate(vals, 1):
+            ws.cell(r, j, _num(v))
+        ws.cell(r, 3).number_format = QTYF
+        for j in (4, 7, 8):
+            ws.cell(r, j).number_format = NUMF
+        ws.cell(r, 5).number_format = ws.cell(r, 6).number_format = RATEF
+        if it["qty"] != 0 and it["price"] is None:
+            ws.cell(r, 5).fill = BAD
+        r += 1
+    r += 1
+    _header(ws, r, ["외화예수금", "", "외화잔액", "장부금액(원)", "", "기말환율", "환산액(원)", "환산손익"])
+    r += 1
+    for it in res.fx_end:
+        vals = [it["ccy"], None, it["bal"], it["book"], None, it["rate"], it["krw"], it["pl"]]
+        for j, v in enumerate(vals, 1):
+            ws.cell(r, j, _num(v))
+        ws.cell(r, 3).number_format = FXF
+        for j in (4, 7, 8):
+            ws.cell(r, j).number_format = NUMF
+        ws.cell(r, 6).number_format = RATEF
+        if it["rate"] is None:
+            ws.cell(r, 6).fill = BAD
+        r += 1
+    for row in ws.iter_rows(min_row=3):
+        for c in row:
+            if c.column == 6 and c.value:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+    for col, w in zip("ABCDEFGH", (26, 22, 14, 16, 16, 50, 16, 14)):
+        ws.column_dimensions[col].width = w
