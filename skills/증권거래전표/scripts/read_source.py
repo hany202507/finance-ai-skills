@@ -559,6 +559,23 @@ def build_table(source, sheet, rows, index):
     return t
 
 
+def _needs_password(path: Path) -> bool:
+    """pikepdf 가 없을 때 pdfplumber 와 함께 깔리는 pdfminer 로 열기 암호가 있는지만 본다."""
+    try:
+        from pdfminer.pdfdocument import PDFDocument, PDFPasswordIncorrect
+        from pdfminer.pdfparser import PDFParser
+    except ImportError:
+        return False
+    with open(path, "rb") as f:
+        try:
+            PDFDocument(PDFParser(f))
+        except PDFPasswordIncorrect:
+            return True
+        except Exception:
+            return False
+    return False
+
+
 def decrypt_pdf(path: Path, password: str | None) -> Path:
     """암호 걸린 PDF(키움: 사업자번호, 미래에셋 거래내역증명서: 생년월일 등)를 임시 사본으로 푼다.
     비밀번호는 파일·로그에 남기지 않는다. 암호가 없으면 원본 경로를 그대로 돌려준다."""
@@ -567,8 +584,10 @@ def decrypt_pdf(path: Path, password: str | None) -> Path:
     try:
         import pikepdf
     except ImportError:
-        if password:
-            raise SourceError("암호 PDF 를 열려면 pikepdf 가 필요하다(pip install pikepdf)")
+        # pikepdf 없이 암호 PDF 를 넘기면 pdfplumber 가 원인을 알 수 없는 오류로 멈춘다(2026-11-09 실물)
+        if password or _needs_password(path):
+            raise SourceError(f"{path.name}: 비밀번호가 걸린 PDF 를 열려면 pikepdf 가 필요하다. "
+                              "스킬 폴더에서 pip install pikepdf 로 설치한 뒤, 다시 실행할 때 --password 로 비밀번호를 넘긴다")
         return path
     try:
         with pikepdf.open(str(path)) as pdf:

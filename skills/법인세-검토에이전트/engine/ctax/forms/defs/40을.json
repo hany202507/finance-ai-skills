@@ -1,0 +1,97 @@
+{
+ "code": "40을",
+ "title": "외화자산등평가차손익조정명세서(을)",
+ "aliases": {
+  "pdf": "외화자산등평가차손익조정명세서(을)"
+ },
+ "note": "법인세법 시행규칙 별지 제40호서식(을)(2012. 2. 28. 개정). 란 번호는 전기 신고서 PDF 글자로 확인했다. ⑩ 평가손익은 자산이면 ⑨-⑥, 부채면 ⑥-⑨ 라 채울 때 값을 넣는다. 「비고」 는 계정 · 거래처(서식에 없는 열)",
+ "items": [
+  {
+   "code": "1",
+   "label": "①구분(외화자산 · 외화부채 · 통화선도 등)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②외화종류",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③외화금액",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "④장부가액 ⑤적용환율",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "④장부가액 ⑥원화금액",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑦평가금액 ⑧적용환율",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑦평가금액 ⑨원화금액",
+   "rows": true
+  },
+  {
+   "code": "10",
+   "label": "⑩평가손익(자산 ⑨-⑥, 부채 ⑥-⑨)",
+   "rows": true
+  },
+  {
+   "code": "비고",
+   "label": "비고(계정 · 거래처)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "자산_6",
+   "label": "외화자산 합계 ⑥원화금액",
+   "total": true
+  },
+  {
+   "code": "자산_9",
+   "label": "외화자산 합계 ⑨원화금액",
+   "total": true
+  },
+  {
+   "code": "자산_10",
+   "label": "외화자산 합계 ⑩평가손익",
+   "total": true
+  },
+  {
+   "code": "부채_6",
+   "label": "외화부채 합계 ⑥원화금액",
+   "total": true
+  },
+  {
+   "code": "부채_9",
+   "label": "외화부채 합계 ⑨원화금액",
+   "total": true
+  },
+  {
+   "code": "부채_10",
+   "label": "외화부채 합계 ⑩평가손익",
+   "total": true
+  },
+  {
+   "code": "총계_10",
+   "label": "총계 ⑩평가손익",
+   "formula": "c('자산_10')+c('부채_10')",
+   "total": true
+  }
+ ]
+}

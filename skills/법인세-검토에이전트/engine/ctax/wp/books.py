@@ -157,6 +157,8 @@ class Books:
     info: dict
     rates: dict
     overrides: dict = field(default_factory=dict)   # (조서 id, key) → 회계사 값(조서입력.json)
+    context: dict = field(default_factory=dict)     # (조서 id, key) → 작년 답(회사 맥락, ctax.context.apply)
+    answers: dict = field(default_factory=dict)     # (조서 id, key) → 누가 · 언제 · 메모(조서입력.json, inputs.answers)
     prior_rates: dict = field(default_factory=dict)  # 직전 사업연도 세율 표(결손금 소급공제). 비면 rates 를 쓴다
     by_code: dict = field(init=False)
 
@@ -189,13 +191,48 @@ class Books:
 
     @property
     def months(self) -> int:
+        """사업연도 개월 수. 역(曆)에 따라 세고 1개월 미만의 일수는 1개월(법인세법 제25조 제4항 제1호 B, TaxDoctor 2025-12-31 판).
+        3/15 ~ 12/14 는 꼭 9개월이라 9, 3/15 ~ 12/15 는 9개월 1일이라 10 이다. 11-08 전에는 `e.day >= s.day - 1` 이라
+        3/15 ~ 12/14 를 10 으로 한 달 더 셌다(제품 `papers/entertainment.py:_months` 와 대조해 고침)."""
         try:
             s = date.fromisoformat(self.info["fy_start"])
             e = date.fromisoformat(self.info["fy_end"])
         except (KeyError, ValueError):
             return 12
-        m = (e.year - s.year) * 12 + e.month - s.month + (1 if e.day >= s.day - 1 else 0)
+        m = (e.year - s.year) * 12 + e.month - s.month + (1 if e.day >= s.day else 0)
         return max(1, min(12, m))
+
+    @property
+    def reserves_unknown(self) -> str:
+        """전기 50호(을)(유보 잔액)을 모르는 까닭. 알면(또는 신설 첫 해라 0 이 맞으면) 빈 글.
+
+        AR 엔진(`ar/engine.py` Builder.first_year)과 같은 기준으로 가른다. 전기.json `no_prior`(전기 신고서 없음)이고 장부에 전기
+        금액이 하나도 없으면 신설 첫 해라 유보 기초 0 이 맞다. 여기에 더해 계정 기초 잔액이 있어도 첫 해가 아니다(신설 법인은
+        기초 잔액이 없다). 전기 신고서를 읽었는데 50호(을) 쪽이 없고 유보 줄도 0 이면 읽지 못한 것이다. 다만 전기 총괄표에
+        50호(을)이 있고 첨부가 「X」 이면 낸 유보가 없는 것이라 안다. 서식 목록이 빈 전기.json(옛 판 · 시험 자료)은 판정하지 않는다."""
+        pr = self.prior or {}
+        if pr.get("no_prior"):
+            accts = self.ledger.get("accounts", []) or []
+            fs_prior = [ln for part in ("is", "bs") for ln in ((self.ledger.get("fs") or {}).get(part) or [])]
+            if not any(_int(a.get("prior_amount")) or _int(a.get("opening")) for a in accts) and \
+                    not any(_int(ln.get("prior")) for ln in fs_prior if isinstance(ln, dict)):
+                return ""
+            return "전기 신고서가 없습니다(첫 수임, 전기.json no_prior)"
+        forms = pr.get("forms") or []
+        if not forms:
+            return ""
+        known = {str(f.get("code")) for f in forms if f.get("known", True) is not False}
+        if "50을" in known or pr.get("reserves"):
+            return ""
+        listed = {str(x.get("code")): x for x in pr.get("listed") or []}
+        if "50을" in listed and not listed["50을"].get("attached"):
+            return ""
+        return "전기 신고서에서 50호(을)을 읽지 못했습니다"
+
+    def reserves_unknown_text(self, what: str, key: str) -> str:
+        """전기 50호(을)을 몰라 유보 기초를 0 으로 둔 칸의 확인 줄."""
+        return (f"{self.reserves_unknown}. 전기 50호(을)을 몰라 {what}을 0 으로 두었습니다(확인 전). 전기말 유보 잔액을 노란 칸 "
+                f"「{key}」 에 넣으세요(없으면 0)")
 
     @property
     def sme(self) -> bool:
@@ -213,6 +250,10 @@ class Books:
         """회계사 값. 없으면 model.MISSING."""
         from .model import MISSING
         return self.overrides.get((paper, key), MISSING)
+
+    def suggest(self, paper: str, key: str) -> dict | None:
+        """회사 맥락의 작년 답 {"value", "fy", "by", "at", "confirmed", ...}. 없으면 None. 회계사 값이 아니다."""
+        return self.context.get((paper, key))
 
     @property
     def sme_known(self) -> bool:
@@ -255,6 +296,10 @@ class Books:
 
     def prior_cell(self, form: str, code: str, default=None):
         return ((self.prior or {}).get("cells") or {}).get(form, {}).get(code, default)
+
+    def prior_cell_form(self, form: str) -> dict:
+        """전기.json 한 서식의 칸 {코드: 값}. 읽지 못했으면 빈 dict."""
+        return ((self.prior or {}).get("cells") or {}).get(form) or {}
 
 
 # 적요 · 거래처 분류에 쓰는 말

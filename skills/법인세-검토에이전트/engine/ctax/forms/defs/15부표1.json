@@ -1,0 +1,44 @@
+{
+ "code": "15부표1",
+ "title": "과목별소득금액조정명세서(1)",
+ "aliases": {
+  "efile": "D103800",
+  "pdf": "과목별소득금액조정명세서(1)"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "익금산입 및 손금불산입 ①과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "익금산입 및 손금불산입 ②금액",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "익금산입 및 손금불산입 ③영업손익조정금액",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "익금산입 및 손금불산입 ④처분",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "5",
+   "label": "익금산입 및 손금불산입 ⑤조정내용",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "합계_2",
+   "label": "합계 ②금액",
+   "formula": "F.sum('15부표1','2')",
+   "total": true
+  }
+ ]
+}

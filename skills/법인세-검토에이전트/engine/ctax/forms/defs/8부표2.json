@@ -1,0 +1,74 @@
+{
+ "code": "8부표2",
+ "title": "공제감면세액계산서(2)",
+ "aliases": {
+  "pdf": "공제감면세액계산서(2)"
+ },
+ "source": "법인세법 시행규칙 별지 제8호서식 부표2(2021.3.16 개정). 란 번호 · 이름은 전기 신고서 PDF 글자",
+ "items": [
+  {
+   "code": "1",
+   "label": "①구분",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②근거법 조항",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③계산명세",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④감면대상세액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤최저한세 적용 감면배제금액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥감면세액(④-⑤)",
+   "dtype": "won",
+   "rows": true,
+   "formula": "c('4')-c('5')"
+  },
+  {
+   "code": "7",
+   "label": "적용사유발생일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "합계_4",
+   "label": "합계 ④감면대상세액",
+   "dtype": "won",
+   "formula": "F.sum('8부표2','4')",
+   "total": true
+  },
+  {
+   "code": "합계_5",
+   "label": "합계 ⑤최저한세 적용 감면배제금액",
+   "dtype": "won",
+   "formula": "F.sum('8부표2','5')",
+   "total": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 ⑥감면세액",
+   "dtype": "won",
+   "formula": "F.sum('8부표2','6')",
+   "total": true
+  }
+ ]
+}

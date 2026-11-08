@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from .journal import Journal, Line, mark
 from .partners import PartnerFile, digest
-from .xlsxread import compact, date_text, n0, num, text
+from .xlsxread import Cells, compact, date_text, n0, num, text
 
 HEAD = ("승인일", "승인번호", "차변금액", "차변계정과목", "대변계정과목", "대변금액")
 ACC = re.compile(r"^\[(\d{5,8})\]\s*(.*)$")
@@ -36,7 +36,9 @@ def is_journal_head(head: list[str]) -> bool:
 
 # ---------------------------------------------------------------- 분개장
 
-def parse_journal(rows: list[list]) -> Journal:
+def parse_journal(rows: list[list], ctx: Cells | None = None) -> Journal:
+    """rows[0] 이 머리줄. ctx 는 journal.parse 와 같다(엑셀 행 번호 · 금액으로 읽지 못한 칸, 11-08)."""
+    ctx = ctx or Cells()
     head = [compact(x) for x in rows[0]]
     ix = {k: head.index(k) for k in head if k}
 
@@ -44,21 +46,24 @@ def parse_journal(rows: list[list]) -> Journal:
         i = ix.get(key)
         return r[i] if i is not None and i < len(r) else None
 
+    def amt(r, key, row_no):
+        return ctx.n0(get(r, key), row_no, ix.get(key))
+
     lines: list[Line] = []
     total = None
-    for r in rows[1:]:
+    for row_no, r in enumerate(rows[1:], start=2 + ctx.off):
         r = list(r)
         d = date_text(get(r, "승인일"))
         if d is None:
             first = text(r[0] if r else None)
             if compact(first).startswith("합계"):
-                total = {"debit": n0(get(r, "차변금액")), "credit": n0(get(r, "대변금액")), "count": None}
+                total = {"debit": amt(r, "차변금액", row_no), "credit": amt(r, "대변금액", row_no), "count": None}
             continue
         dr_acc, cr_acc = text(get(r, "차변계정과목")), text(get(r, "대변계정과목"))
         if dr_acc:
-            m, debit, credit, side = ACC.match(dr_acc), n0(get(r, "차변금액")), 0, "차변"
+            m, debit, credit, side = ACC.match(dr_acc), amt(r, "차변금액", row_no), 0, "차변"
         elif cr_acc:
-            m, debit, credit, side = ACC.match(cr_acc), 0, n0(get(r, "대변금액")), "대변"
+            m, debit, credit, side = ACC.match(cr_acc), 0, amt(r, "대변금액", row_no), "대변"
         else:
             continue
         if not m:
@@ -66,7 +71,8 @@ def parse_journal(rows: list[list]) -> Journal:
         code, name = m.group(1), m.group(2).strip()
         lines.append(Line(date=d, no=text(get(r, "승인번호")), kind=side, account=family(code), account_name=name,
                           debit=debit, credit=credit, partner_code=text(get(r, "거래처코드")),
-                          partner=text(get(r, "거래처명")), memo_code="", memo=text(get(r, "적요")), sub_account=code))
+                          partner=text(get(r, "거래처명")), memo_code="", memo=text(get(r, "적요")), sub_account=code,
+                          src_row=row_no))
     j = Journal(lines=lines, total_row=total, five=False, pl_code=PL_CODE, source="douzone_erp")
     mark(j)
     return j

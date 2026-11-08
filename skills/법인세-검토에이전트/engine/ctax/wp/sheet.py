@@ -95,7 +95,9 @@ def head(bk: Book, p: Paper) -> Sheet:
     X.note(ws, 2, f"{bk.b.company} · {bk.b.fy} 사업연도 · AR 이슈 {issues} · 이어지는 서식 {forms} · 상태 {p.status}")
     for i, label in enumerate(["작성", "작성일", "검토", "검토일"]):
         s.put(3, 1 + i * 2, label)
-        s.put(3, 2 + i * 2, None, kind="input")
+        # 누가 · 언제 작성 · 검토했는지. key 를 붙여 다시 써도 남고, 그 조서 회계사 답의 「답한 사람」 이 된다(inputs.read_workbook)
+        got = bk.b.override(p.id, label)
+        s.inp(3, 2 + i * 2, None if got is MISSING else got, pid=p.id, key=label, default=None)
     return s
 
 

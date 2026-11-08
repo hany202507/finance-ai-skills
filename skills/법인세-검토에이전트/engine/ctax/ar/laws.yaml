@@ -121,6 +121,24 @@ laws:
   sme_small:
     - {ref: '조세특례제한법 제7조 제1항 제2호(소기업 · 중기업 감면 비율)', grade: ★★☆, url: 'https://www.law.go.kr/법령/조세특례제한법/제7조'}
     - {ref: '조세특례제한법 시행령 제6조 제4항(소기업: 매출액이 업종별로 중소기업기본법 시행령 별표 3 규모 기준 이내)', grade: ★★☆, url: 'https://www.law.go.kr/법령/조세특례제한법%20시행령/제6조'}
+  sme_affiliate:
+    - {ref: '조세특례제한법 시행령 제2조 제1항 제3호(실질적 독립성은 중소기업기본법 시행령 제3조 제1항 제2호, 다목은 매출액 기준으로 봄) · 제2항(다목 사유는 유예기간 적용)', grade: ★★★, url: 'https://www.law.go.kr/법령/조세특례제한법%20시행령/제2조'}
+    - {ref: '중소기업기본법 시행령 제3조 제1항 제2호 다목(관계기업은 제7조의4 로 산정한 평균매출액등으로 판정)', grade: ★★★, url: 'https://www.law.go.kr/법령/중소기업기본법%20시행령/제3조'}
+  farm_tax:
+    - {ref: '농어촌특별세법 제4조 · 시행령 제4조 제7항(비과세 목록에 조세특례제한법 제24조 통합투자세액공제가 없어 감면세액에 농어촌특별세가 붙는다)', grade: ★★★, url: 'https://www.law.go.kr/법령/농어촌특별세법/제4조'}
+  construction_interest:
+    - {ref: '법인세법 시행령 제52조 제1항 · 제2항(특정차입금 이자는 준공일까지 자본적 지출로 원본에 가산)', grade: ★★★, url: 'https://www.law.go.kr/법령/법인세법%20시행령/제52조'}
+  prior_form_52:
+    - {ref: '법인세법 시행령 제90조 제1항(특수관계인과 거래가 있는 법인은 특수관계인간 거래명세서 제출)', grade: ★★☆, url: 'https://taxdoctorai.com/law/%EB%B2%95%EC%9D%B8%EC%84%B8%EB%B2%95-%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C90%EC%A1%B0'}
+  # 인정이자 이슈의 55호(11-08 B2). TaxDoctor 2025-12-31 시행판 원문만 봐서 ★★☆
+  income_disposition:
+    - {ref: '법인세법 시행령 제106조 제1항 제1호(사외유출 익금산입액은 귀속자에 따라 배당 · 상여 · 기타사외유출 · 기타소득, 귀속 불분명은 대표자)', grade: ★★☆, url: 'https://taxdoctorai.com/law/%EB%B2%95%EC%9D%B8%EC%84%B8%EB%B2%95-%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C106%EC%A1%B0'}
+  prior_form_39:
+    - {ref: '법인세법 시행령 제74조 제7항(재고자산을 평가한 법인은 재고자산평가조정명세서 제출)', grade: ★★☆, url: 'https://taxdoctorai.com/law/%EB%B2%95%EC%9D%B8%EC%84%B8%EB%B2%95-%EC%8B%9C%ED%96%89%EB%A0%B9/%EC%A0%9C74%EC%A1%B0'}
+  prior_form_16:
+    - {ref: '국제조세조정에 관한 법률 제16조 제2항 제1호(국외특수관계인과 국제거래를 하는 납세의무자는 국제거래명세서 제출)', grade: ★★☆, url: 'https://taxdoctorai.com/law/%EA%B5%AD%EC%A0%9C%EC%A1%B0%EC%84%B8%EC%A1%B0%EC%A0%95%EC%97%90-%EA%B4%80%ED%95%9C-%EB%B2%95%EB%A5%A0/%EC%A0%9C16%EC%A1%B0'}
+  prior_form_18:
+    - {ref: '조세특례제한법 제138조 제1항(차입금 과다 부동산임대업 주업 법인의 임대보증금 등 간주익금)', grade: ★★☆, url: 'https://taxdoctorai.com/law/%EC%A1%B0%EC%84%B8%ED%8A%B9%EB%A1%80%EC%A0%9C%ED%95%9C%EB%B2%95/%EC%A0%9C138%EC%A1%B0'}
   sme_reduction:
     - {ref: '조세특례제한법 제7조 제1항(중소기업 감면 업종, 감면 비율과 한도) · 제4항', grade: ★★★, url: 'https://www.law.go.kr/법령/조세특례제한법/제7조'}
   employment_credit:

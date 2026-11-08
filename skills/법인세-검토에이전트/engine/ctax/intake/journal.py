@@ -12,7 +12,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .xlsxread import compact, date_text, n0, text
+from .xlsxread import Cells, compact, date_text, text
 
 
 @dataclass
@@ -31,6 +31,9 @@ class Line:
     closing: bool = False
     transfer: bool = False
     sub_account: str = ""          # 더존 ERP: 원래 7자 코드(account 는 계정 단위 코드)
+    src_file: str = ""             # 원본 파일(신고 건 기준 경로). 읽기가 붙인다(11-01, PBC 대조)
+    src_row: int = 0               # 원본 엑셀 행 번호(1부터, 머리줄 위 제목 줄까지 센다)
+    src_sheet: str = ""            # 원본 시트 이름. 시트가 여럿인 파일에서만 적는다(11-08)
 
 
 @dataclass
@@ -77,19 +80,22 @@ def _get(r, i):
     return r[i]
 
 
-def parse(rows: list[list]) -> Journal:
+def parse(rows: list[list], ctx: Cells | None = None) -> Journal:
+    """rows[0] 이 머리줄. ctx 가 있으면 src_row 를 엑셀 행 번호(건너뛴 제목 줄 포함)로 적고, 금액으로 읽지 못한 칸을 남긴다."""
+    ctx = ctx or Cells()
     head, body = rows[0], rows[1:]
     ix = _cols(head)
     lines: list[Line] = []
     total = None
-    for r in body:
+    for row_no, r in enumerate(body, start=2 + ctx.off):
         d = date_text(_get(r, ix["전표일자"]))
         no = text(_get(r, ix["전표번호"]))
         if d is None or not no:
             first = text(_get(r, 0))
             if first.startswith("합계"):
                 m = re.search(r"([\d,]+)", first)
-                total = {"debit": n0(_get(r, ix["차변"])), "credit": n0(_get(r, ix["대변"])),
+                total = {"debit": ctx.n0(_get(r, ix["차변"]), row_no, ix["차변"]),
+                         "credit": ctx.n0(_get(r, ix["대변"]), row_no, ix["대변"]),
                          "count": int(m.group(1).replace(",", "")) if m else None}
             continue
         code = text(_get(r, ix["acc_code"]))
@@ -98,9 +104,10 @@ def parse(rows: list[list]) -> Journal:
         pc = text(_get(r, ix["partner_code"]))
         lines.append(Line(date=d, no=no, kind=text(_get(r, ix["구분"])), account=code,
                           account_name=text(_get(r, ix["계정과목"])),
-                          debit=n0(_get(r, ix["차변"])), credit=n0(_get(r, ix["대변"])),
+                          debit=ctx.n0(_get(r, ix["차변"]), row_no, ix["차변"]),
+                          credit=ctx.n0(_get(r, ix["대변"]), row_no, ix["대변"]),
                           partner_code=pc, partner=text(_get(r, ix["거래처"])),
-                          memo_code=text(_get(r, ix["memo_code"])), memo=text(_get(r, ix["적요"]))))
+                          memo_code=text(_get(r, ix["memo_code"])), memo=text(_get(r, ix["적요"])), src_row=row_no))
     lens = [len(x.account) for x in lines if x.account]
     five = bool(lens) and max(set(lens), key=lens.count) == 5
     j = Journal(lines=lines, total_row=total, five=five, pl_code="40000" if five else "400")
@@ -130,3 +137,25 @@ def mark(j: Journal) -> None:
 
 
 _mark = mark
+
+PRODUCTION_STOCK = ("재공품", "제품", "미성공사", "미완성")       # forms/fill_more.py 와 같다
+
+
+def returned_to_stock(lines: list[Line]) -> dict[str, int]:
+    """원가 계정(500~799) 대변 가운데 같은 전표 차변이 생산 재고(재공품 · 제품 · 반제품 · 미성공사)도 매출원가(451~470)도 아닌
+    재고 계정(146~175, 저장품 · 원재료 등)인 줄의 합 {계정코드: 금액}. 결산 때 남은 소모품 · 원재료를 되돌린 전표다.
+    mark 는 이 줄도 원가 대체로 보므로 원가 합계를 낼 때 따로 뺀다(forms/fill_more.cost_returned_to_stock 과 같은 규칙, 11-01)."""
+    vouchers: dict[tuple, list[Line]] = defaultdict(list)
+    for ln in lines:
+        vouchers[(ln.date, ln.no)].append(ln)
+    out: dict[str, int] = defaultdict(int)
+    for v in vouchers.values():
+        stock = [ln for ln in v if ln.debit and 146 <= c3(ln.account) <= 175]
+        if not stock or any(ln.debit and 451 <= c3(ln.account) <= 470 for ln in v):
+            continue
+        if any(any(w in (ln.account_name or "") for w in PRODUCTION_STOCK) for ln in stock):
+            continue
+        for ln in v:
+            if 500 <= c3(ln.account) <= 799 and ln.credit:
+                out[ln.account] += ln.credit
+    return dict(out)

@@ -9,6 +9,8 @@
                             벌과금이 아니다(법인세법 기본통칙 21-0…3, ★★☆)
   O  가산세 · 과태료        적요 · 거래처에 가산세 · 과태료 · 벌과금 · 범칙금 · 통행료 같은 낱말(books.PENALTY), 계정이 벌과금 · 가산세
   O  제재 공과금            적요에 초과배출부과금 · 초과부과금(SANCTION, 법인세법 제21조 제5호)
+  O  전기 귀속 손실         적요에 전기분 · 전기 오류 · 전기 귀속 · 전년도분(10-29 밤, RN 정답표). 손금 귀속 사업연도가 당기가
+                            아니다(법인세법 제40조 제1항, 2025-12-31 판 TaxDoctor · korean-law ★★★). 「과대계상분」 만 있는 줄은 확인 필요
   X  단수 차이              적요에 「단수」 · 「절사」
   X  단수 차이              관청 줄 중 10원 미만(국고금 관리법 제47조 제1항 끝수, 4회차에 100원에서 낮춤)
   X  세금 본세 차액         관청 줄인데 적요의 회사 분류가 세금과공과(「세금과공과」 · 「공과금」)인 줄(4회차). 회사가 본세로 분류한
@@ -35,6 +37,14 @@
 손금불산입이다. 사유는 장부로 알 수 없어 기본 X(조정 없음)와 확인 줄(넣으면 얼마)만 둔다. 기업업무추진비 관련분은 기업업무추진비
 한도 계산에 더해야 한다. 10-21: 전기 세금공과금명세서에서 같은 적요를 손금불산입했으면(전기 15호 불공제 가산 줄만 있으면 모든 불공제
 줄) 전기 처리를 따라 기본 O 이고 확인 줄을 낸다(`prior_nondeduct`).
+10-29(RN 기준): 전기 처리를 따라 부인하지 않는다(RN 이 전기 손금불산입을 신고 오류로 봤다). 적요로 성격을 나눈다(`nondeduct_kind`).
+  O  손금불산입  세금계산서 미수취 · 미발급 · 부실기재 · 사실과 다른 · 합계표 미제출 · 사업무관(업무무관) · 등록 전
+  X  손금        면세(사업 · 안분) · 비영업용 소형승용차(차량) · 기업업무추진비(접대) · 영수증
+  X  확인 필요   어디에도 맞지 않는 줄. 조정하지 않고 사유를 묻는다(전기에 손금불산입했으면 그 사실도 적는다)
+  근거: 법인세법 제21조 제1호(매입세액 손금불산입, 면세 등 제외) · 시행령 제22조 제1항 제1호 · 제2호(부가가치세법 제39조 제1항
+  제5호 · 제6호), 2025-12-31 판 TaxDoctor · korean-law 원문 확인 ★★★
+법인세 · 법인지방소득세(10-29, RN). 세금과공과 줄 적요에 법인세 · 법인(지방)소득세가 있으면 손금불산입 후보(O)로 잡는다
+(법인세법 제21조 제1호, ★★★). 수수료 · 환급 낱말 줄은 뺀다.
 """
 from __future__ import annotations
 
@@ -53,6 +63,8 @@ ROUNDING = re.compile(r"단수|절사")
 FEE = re.compile(r"수수료|용역|대행|자문|컨설팅")
 LATE_FEE = re.compile(r"연체료|연체이자|연체가산금|연체금")
 TAX_CATEGORY = re.compile(r"세금과공과|공과금")
+PRIOR_PERIOD = re.compile(r"전기분|전기\s*오류|전기\s*귀속|전년도분")
+PRIOR_PERIOD_LABEL = "전기 귀속 손실"
 # 법령의 금지 · 제한 위반을 이유로 부과되는 공과금(법인세법 제21조 제5호). 대기환경보전법 초과부과금(배출허용기준 초과)만 둔다.
 # 기본부과금 · 환경개선부담금 · 폐기물처분부담금은 위반 제재가 아니라 넣지 않았다
 SANCTION = re.compile(r"초과배출부과금|초과부과금")
@@ -63,6 +75,11 @@ LEASE_CAR = re.compile(r"캐피탈|파이낸셜|파이낸스|리스료|리스사
 # 불공제 매입세액 대체 줄(세금과공과 · 잡손실). 사유별 손금 여부는 회계 판단이라 기본 X
 NONDEDUCT = re.compile(r"불공제|매입세액")
 NONDEDUCT_LABEL = "불공제 매입세액"
+NONDEDUCT_NO = re.compile(r"미수취|미발급|부실|사실과\s*다른|미제출|사업\s*무관|업무\s*무관|등록\s*전")       # 손금불산입
+NONDEDUCT_YES = re.compile(r"면세|안분|비영업용|소형\s*승용|승용차|차량|접대|기업업무추진|영수증")                # 손금
+CORP_TAX = re.compile(r"법인\s*(지방)?\s*소득세|법인세")
+CORP_TAX_SKIP = re.compile(r"수수료|환급|대행|자문")
+CORP_TAX_LABEL = "법인세 · 법인지방소득세"
 NONDEDUCT_WHY = ("불공제 매입세액. 면세사업 · 비영업용 소형승용차 · 기업업무추진비 관련분은 손금, 세금계산서 미수취 · 부실기재 · "
                  "사업무관분은 손금불산입이라 사유를 보고 정하십시오(법인세법 제21조 제1호, 시행령 제22조 제1항)")
 # 차량 과태료 한 건은 수만 원에서 십여만 원이다. 여러 건을 묶어 청구한 줄을 생각해 한 줄 30만원까지만 과태료로 추정한다(회계사와 맞춰 볼 값)
@@ -102,7 +119,11 @@ def classify_misc(amt: int, account_name: str, memo: str, partner: str, cash_in:
         return "제재 공과금", "O", f"「{hit.group(0)}」. 배출허용기준을 넘겨 부과되는 공과금(법인세법 제21조 제5호)"
     hit = NONDEDUCT.search(memo)
     if hit:
-        return NONDEDUCT_LABEL, "X", NONDEDUCT_WHY
+        return (NONDEDUCT_LABEL, *nondeduct_kind(memo))
+    hit = PRIOR_PERIOD.search(memo)
+    if hit:
+        return (PRIOR_PERIOD_LABEL, "O", f"적요에 「{hit.group(0)}」. 전기에 귀속하는 손실이라 당기 손금이 아닙니다(법인세법 제40조 제1항). "
+                "전기 경정청구 대상인지 확인하고, 당기에 확정된 손실이면 X")
     hit = ROUNDING.search(memo)
     if hit:
         return "단수 차이", "X", f"적요에 「{hit.group(0)}」"
@@ -159,7 +180,11 @@ def compute(p: Paper, b: Books) -> None:
             if amt > 0 and PENALTY.search(text):
                 p.lines.append(LineRow(ln, "벌과금 · 가산세 등", "O", why=f"적요 · 거래처에 「{PENALTY.search(text).group(0)}」"))
             elif amt > 0 and NONDEDUCT.search(ln.memo):
-                p.lines.append(LineRow(ln, NONDEDUCT_LABEL, "X", why=NONDEDUCT_WHY))
+                pick, why = nondeduct_kind(ln.memo)
+                p.lines.append(LineRow(ln, NONDEDUCT_LABEL, pick, why=why))
+            elif amt > 0 and CORP_TAX.search(ln.memo) and not CORP_TAX_SKIP.search(ln.memo):
+                p.lines.append(LineRow(ln, CORP_TAX_LABEL, "O", why=f"적요 「{CORP_TAX.search(ln.memo).group(0)}」. 법인세 · "
+                                       "법인지방소득세는 손금불산입(법인세법 제21조 제1호). 다른 세금이면 X"))
             else:
                 p.lines.append(LineRow(ln, "세금 · 공과금", "X"))
             continue
@@ -171,9 +196,9 @@ def compute(p: Paper, b: Books) -> None:
         p.lines.append(LineRow(ln, label, pick, why=why))
     prior_memos, prior_any = prior_nondeduct(b)
     if prior_memos or prior_any:
+        # 10-29: 전기 처리를 따라 부인하지 않는다. 성격을 모르는 줄에 전기 처리만 알린다
         for r in p.lines:
-            if r.label == NONDEDUCT_LABEL and r.pick == "X" and (prior_any or _core(r.line.memo) in prior_memos):
-                r.pick = "O"
+            if r.label == NONDEDUCT_LABEL and r.why == NONDEDUCT_ASK and (prior_any or _core(r.line.memo) in prior_memos):
                 r.why = PRIOR_WHY
     p.take_lines(b, PICK)
     tax_total = sum(r.line.amount for r in p.lines if r.line.account in tax_codes)
@@ -198,6 +223,10 @@ def compute(p: Paper, b: Books) -> None:
     if guessed:
         p.confirm.append(f"잡손실 {len(guessed)}줄 {sum(r.line.amount for r in guessed):,}원은 납부처 · 차량 표기로 가산세 · 과태료를 "
                          "추정해 부인했습니다. 부인 여부를 확인하세요")
+    prior_loss = [r for r in p.lines if r.label == PRIOR_PERIOD_LABEL and f"{PICK}/{r.key}" not in p.overridden and r.pick == "O"]
+    if prior_loss:
+        p.confirm.append(f"잡손실 {len(prior_loss)}줄 {sum(r.line.amount for r in prior_loss):,}원은 적요에 전기분 · 전기 오류가 있어 전기 귀속 "
+                         "손실로 보고 부인했습니다(법인세법 제40조 제1항). 당기에 확정된 손실이면 부인 여부를 X 로 고치세요")
     unknown = [r for r in p.lines if r.label == UNKNOWN and f"{PICK}/{r.key}" not in p.overridden and r.pick == "X"]
     if unknown:
         p.confirm.append(f"잡손실 {len(unknown)}줄 {sum(r.line.amount for r in unknown):,}원은 성격을 적요로 알 수 없어 부인하지 "
@@ -206,12 +235,22 @@ def compute(p: Paper, b: Books) -> None:
     if gap:
         p.confirm.append(f"잡손실 {len(gap)}줄 {sum(r.line.amount for r in gap):,}원은 관청 줄이지만 환급받을 때 덜 들어온 차액 · "
                          "회사가 세금과공과로 분류한 본세 차액이라 부인하지 않았습니다(확인 필요). 가산세면 부인 여부를 O 로 고치세요")
-    followed = [r for r in nondeduct if r.why == PRIOR_WHY and f"{PICK}/{r.key}" not in p.overridden and r.pick == "O"]
+    corp = [r for r in p.lines if r.label == CORP_TAX_LABEL and f"{PICK}/{r.key}" not in p.overridden and r.pick == "O"]
+    if corp:
+        p.confirm.append(f"세금과공과 {len(corp)}줄 {sum(r.line.amount for r in corp):,}원은 적요에 법인세 · 법인(지방)소득세가 있어 "
+                         "손금불산입(15호 가산 · 기타사외유출)으로 두었습니다(법인세법 제21조 제1호). 어떤 세금인지 확인하고 다른 세금이면 "
+                         "부인 여부를 X 로 고치세요")
+    sure_no = [r for r in nondeduct if f"{PICK}/{r.key}" not in p.overridden and r.pick == "O"]
+    if sure_no:
+        p.notes.append(f"불공제 매입세액 {len(sure_no)}줄 {sum(r.line.amount for r in sure_no):,}원은 적요의 불공제 사유(세금계산서 미수취 · "
+                       "부실기재 · 사업무관 등)가 손금불산입이라 부인했습니다(법인세법 제21조 제1호)")
+    followed = [r for r in nondeduct if r.why == PRIOR_WHY and f"{PICK}/{r.key}" not in p.overridden and r.pick == "X"]
     if followed:
-        p.confirm.append(f"불공제 매입세액 {len(followed)}줄 {sum(r.line.amount for r in followed):,}원은 전기 신고서에서 같은 적요를 "
-                         "손금불산입해 부인 여부 기본값을 O 로 두었습니다(15호 가산 · 기타사외유출). 당기 불공제 사유가 면세사업 관련 · "
-                         "비영업용 소형승용차 · 기업업무추진비 관련이면 손금이라 그 줄을 X 로 바꾸십시오(법인세법 시행령 제22조 제1항)")
-    left = [r for r in nondeduct if f"{PICK}/{r.key}" not in p.overridden and r.pick == "X"]
+        p.confirm.append(f"불공제 매입세액 {len(followed)}줄 {sum(r.line.amount for r in followed):,}원은 전기 신고서가 같은 적요를 "
+                         "손금불산입했지만 적요로 불공제 사유를 알 수 없어 부인하지 않았습니다(전기 처리를 따르지 않음, 10-29). 불공제 사유가 "
+                         "세금계산서 미수취 · 부실기재 · 합계표 미제출 · 사업무관 · 등록 전이면 손금불산입이라 그 줄을 O 로 고치십시오. 그때는 "
+                         "같은 거래의 가산세 · 업무무관 조정도 함께 보십시오(법인세법 제21조 제1호, 시행령 제22조 제1항)")
+    left = [r for r in nondeduct if f"{PICK}/{r.key}" not in p.overridden and r.pick == "X" and r.why == NONDEDUCT_ASK]
     if left:
         amt_left = sum(r.line.amount for r in left)
         p.confirm.append(f"불공제 매입세액 {len(left)}줄 {amt_left:,}원을 세금과공과 · 잡손실로 처리했습니다. 불공제 사유별 손금 여부는 회계 판단이라 "
@@ -223,7 +262,22 @@ def compute(p: Paper, b: Books) -> None:
     p.settle(bool(tax_total or misc_total or exp_o))
 
 
-PRIOR_WHY = "전기 신고서에서 같은 적요의 불공제 매입세액을 손금불산입했습니다(전기 처리를 따름). 사유가 바뀌었으면 X"
+PRIOR_WHY = ("불공제 사유를 적요로 알 수 없습니다. 전기 신고서는 같은 적요를 손금불산입했지만 따르지 않았습니다(10-29). "
+             "미수취 · 부실기재 · 사업무관 등이면 O")
+NONDEDUCT_ASK = NONDEDUCT_WHY
+
+
+def nondeduct_kind(memo: str) -> tuple[str, str]:
+    """불공제 매입세액 줄 적요 → (부인 여부 기본값, 근거). 손금불산입 사유를 먼저 본다."""
+    hit = NONDEDUCT_NO.search(memo or "")
+    if hit:
+        return "O", (f"적요 「{hit.group(0)}」. 세금계산서 미수취 · 부실기재 · 사업무관 등 불공제 매입세액은 손금불산입"
+                     "(법인세법 제21조 제1호)")
+    hit = NONDEDUCT_YES.search(memo or "")
+    if hit:
+        return "X", (f"적요 「{hit.group(0)}」. 면세사업 · 비영업용 소형승용차 · 기업업무추진비 관련 불공제 매입세액은 손금"
+                     "(법인세법 제21조 제1호, 시행령 제22조 제1항). 기업업무추진비 관련분은 한도 계산에 더함")
+    return "X", NONDEDUCT_ASK
 
 
 def _core(memo: str) -> str:

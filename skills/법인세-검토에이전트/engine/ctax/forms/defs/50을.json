@@ -1,0 +1,67 @@
+{
+ "code": "50을",
+ "title": "자본금과적립금조정명세서(을)",
+ "aliases": {
+  "efile": "D108700",
+  "pdf": "자본금과적립금조정명세서(을)"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "①과목 또는 사항",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②기초잔액",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③감소",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④증가",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤기말잔액(익기초현재)",
+   "rows": true,
+   "formula": "c('2')-c('3')+c('4')"
+  },
+  {
+   "code": "비고",
+   "label": "비고",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "합계_2",
+   "label": "합계 ②기초잔액",
+   "formula": "F.sum('50을','2')",
+   "total": true
+  },
+  {
+   "code": "합계_3",
+   "label": "합계 ③감소",
+   "formula": "F.sum('50을','3')",
+   "total": true
+  },
+  {
+   "code": "합계_4",
+   "label": "합계 ④증가",
+   "formula": "F.sum('50을','4')",
+   "total": true
+  },
+  {
+   "code": "합계_5",
+   "label": "합계 ⑤기말잔액",
+   "formula": "F.sum('50을','5')",
+   "total": true
+  }
+ ]
+}

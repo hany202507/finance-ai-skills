@@ -14,7 +14,8 @@ from pathlib import Path
 
 import yaml
 
-from ctax.ar.guide import form_name, load_guide
+from ctax.ar import capex
+from ctax.ar.guide import form_group, form_name, form_tier, load_guide
 from ctax.ar.topics import Topic, build_topics, clean, code3, describe, won
 
 KINDS = ("신고 점검", "전기 연속", "조정 후보", "공제감면", "서식 필요")
@@ -26,6 +27,28 @@ GRADES = ("★★★", "★★☆", "★☆☆", "☆")
 # 기본 서식(설계 9-22 회의 · 대표 지시). 총괄표 맨 앞에 이 순서로 둔다.
 BASIC_FORMS = ["1", "3", "std_bs", "std_is", "std_re", "15", "15부표1", "15부표2", "16", "17", "47갑", "47을",
                "50갑", "50을", "50병", "51", "54", "지방43", "지방43의2", "세금공과금명세서", "23갑", "23을"]
+
+# 통합투자세액공제에 딸린 서식(10-29 RN). 신청서(조특8의9) · 투자자산명세서(조특1부표1) · 8호(갑) · 세액공제조정명세서(3) ·
+# 최저한세(조특법 제132조) · 농어촌특별세 2 · 12 · 13호(조특법 제24조는 농어촌특별세법 제4조 · 시행령 제4조 비과세 목록에 없다)
+INVEST_FORMS = ["조특8의9", "조특1부표1", "8갑", "8부표3", "4", "2", "12", "13"]
+
+# 전기에 냈고 당기에도 그 계정 근거가 있으면 이어 내는 서식(10-29 RN 서식 목록). 서식 → (rule, 제목, 질문)
+PRIOR_FORMS = {
+    "52갑": ("prior_form_52", "특수관계인간 거래명세서(52호 갑)를 당기에도 냅니다",
+             "올해 특수관계인(주주 · 임원 · 관계회사)과의 거래 목록을 보내 주십시오"),
+    "39": ("prior_form_39", "재고자산평가조정명세서(39호)를 당기에도 냅니다",
+           "신고한 재고자산 평가방법과 기말 재고 평가 명세를 보내 주십시오"),
+    "16갑": ("prior_form_16", "국제거래명세서(16호 갑)를 당기에도 냅니다",
+             "올해 국외특수관계인과의 거래(수출입 · 용역 · 자금)가 있었는지와 거래 명세를 보내 주십시오"),
+    "18": ("prior_form_18", "임대보증금 등 간주익금 조정명세서(18호)를 당기에도 냅니다",
+           "임대보증금 적수와 건설비 상당액 명세, 차입금 과다 법인 요건을 확인해 주십시오"),
+}
+RX_FOREIGN = re.compile(r"외화|수출|해외|외환")
+RX_RENT_DEPOSIT = re.compile(r"임대보증금|전세보증금")
+
+# 기본 서식이지만 회계사 확인 전에는 「확인」 으로 두는 서식(10-29 대표). 54호는 주주 변동이 「있음 · 없음」 을 회계사가 정할 때까지
+# 낸다로 확정하지 않는다. 자본금 · 주식발행초과금이 바뀐 해(share_change 확실)만 「해당」 이 된다. 고르는 곳은 `ctax set … form 54`
+CONFIRM_BASIC = {"54"}
 
 # 목업에서 ctax 가 채우는 서식(CONTRACT.md 8 · 9절). ctax/forms/defs 가 있으면 그 목록을 쓴다(engine_forms).
 ENGINE_FORMS_FALLBACK = {"1", "3", "std_bs", "std_is", "15", "15부표1", "15부표2", "50갑", "50을", "50병",
@@ -40,6 +63,16 @@ EXPENSE_EVIDENCE_REVENUE = 3_000_000_000                     # 법인령 158조 
 FOLD_LIMIT = 3_000_000
 # 전기 신고서가 없는 신고 건(전기.json no_prior)의 가이드 1절 사실 글
 NO_PRIOR_FACT = "전기 신고서가 없어 견주지 못했습니다(신설 첫 해 또는 첫 수임)"
+NO_PRIOR_ASK = "전기 금액이 있어 첫 수임으로 봅니다. 직전 사업연도 세무조정계산서를 받아 확인합니다"
+
+# 인정이자 이슈(loan · advance)에 함께 올리는 서식(11-08 B2, 제품 ar_triggers related_party_transactions · income_disposition).
+# 11-09 평가세트 9곳 대조로 비웠다. 52갑 · 52을 · 55 를 「확인」 으로 올린 17건 중 정답 신고서 · RN 에 있는 것이 0건이라 회계사 확인 줄만
+# 늘었다(55 는 9곳 모두 안 냄, 52을 은 빈 서식 · 안 냄, 52갑 은 전기 제출 근거 prior_form_52 가 이미 잡는다). 52 · 55 를 낼 수 있다는
+# 설명은 이슈 근거 글과 law_extra(prior_form_52 · income_disposition)로 남긴다. 다시 올리려면 이 목록에 넣는다(add check_forms)
+RELATED_FORMS: list[str] = []
+# 전기 고용 공제 서식(조특 10호의9 · 10호의10 · 고용증대 10호의8 · 사회보험료 11호의5)
+EMPLOY_FORMS = ("조특10의9", "조특10의10", "조특10의8", "조특11의5")
+RX_EMPLOY_CREDIT = re.compile(r"고용|사회보험료")
 # 전기 신고서가 없으면 회사 종류(중소기업 여부 · 업종)는 신고건.json 「회사정보」 에서 온 값이다(prior/cli.py no_prior)
 INFO_SME = "신고건.json 회사정보"
 # 첫 사업연도(전기 신고서가 없고 재무제표 전기 금액이 모두 0)의 이슈 제목 머리와, 근거 · 가이드 사실 글에서 빼는 전기 대비 글
@@ -65,6 +98,24 @@ RX_ENT_CARD = re.compile(r"신용카드|법인카드|카드")
 RX_FORGIVE = re.compile(r"면제|포기|탕감")
 # 현금 · 예금 계정(이름). 대여금 「면제」 적요 줄도 상대가 예금 입금이면 회수다(5회차)
 RX_CASH_NAME = re.compile(r"현금|예금|적금")
+# 대손충당금 설정대상 채권(10-29 대표: 매출채권 · 미수금 등 채권, 선급금 제외). 조서와 같은 판정을 쓰고 없으면 같은 기준 이름 규칙
+RX_CLAIM = re.compile(r"외상매출금|받을어음|매출채권|공사미수금|분양미수금|미수금|미수수익|대여금|주\.?\s?임\.?\s?종|가지급금|"
+                      r"대출채권|양수채권|NPL|할부")
+RX_NOT_CLAIM = re.compile(r"대손충당금|현재가치|선급|국고|부가세|선납")
+
+
+def is_claim(acct: dict) -> bool:
+    try:
+        from ctax.wp.papers.bad_debt import is_target
+    except ImportError:
+        name = clean(acct.get("name"))
+        return acct.get("class") == "자산" and bool(RX_CLAIM.search(name)) and not RX_NOT_CLAIM.search(name)
+    return is_target(acct)
+
+
+# 관계기업 투자 계정(중소기업 규모기준 관계기업 매출 합산 확인, 10-29 RN)
+RX_AFFILIATE = re.compile(r"지분법적용투자주식|지분법투자주식|관계기업투자|관계회사투자|관계기업주식|관계회사주식|종속기업투자|종속회사투자")
+
 # 배당금수익 줄의 펀드 · 금융상품 분배금 표기. 투자신탁이익은 원천징수 대상이고(법인세법 제73조 제1항 제2호) 내국법인 배당이 아니다
 RX_FUND = re.compile(r"펀드|MMF|신탁|분배금|재투자|만기|환매|해지|ETF|수익증권|리츠|REITs|채권형|주식형|혼합형")
 RX_FIN_PRODUCT = re.compile(r"금융상품|신탁|수익증권|펀드")
@@ -413,6 +464,11 @@ class Builder:
             return code in self.prior_listed
         return not nonblank or not f.get("blank")
 
+    def prior_employment(self) -> tuple[list[dict], list[str]]:
+        """전기 고용 공제: (공제 줄, 낸 고용 공제 서식). 공제 줄은 8호(갑) · 8호 부표3 판독(credits)에서 이름으로 고른다."""
+        credits = [c for c in self.prior_credits if RX_EMPLOY_CREDIT.search(str(c.get("name") or ""))]
+        return credits, [c for c in EMPLOY_FORMS if self.prior_filed(c)]
+
     def listed_only(self, *codes: str) -> list[str]:
         """총괄표에만 있고 받은 PDF 에 쪽이 없는 서식."""
         return [c for c in codes if c in self.prior_listed]
@@ -570,9 +626,23 @@ class Builder:
         codes = set(map(str, codes))
         return [r for r in self.J if r["account"] in codes]
 
+    def capex_rows(self) -> list[dict]:
+        """유형자산 계정별 기초 · 기말 · 당기 취득 전표 합계(ar/capex.py, 조서 공제감면과 같은 값)."""
+        if not hasattr(self, "_capex"):
+            self._capex = capex.rows(self.accounts, self.J)
+        return self._capex
+
+    def capex_other_lines(self, shown: list[dict]) -> list[str]:
+        """판단 계정 밖 유형자산(차량운반구 · 비품 등)의 당기 취득. 공제 대상이 될 수도 있어 근거로만 보인다."""
+        codes = {r["code"] for r in shown}
+        rest = [r for r in self.capex_rows() if r["code"] not in codes and not r["candidate"] and r["acquired"] > 0]
+        return ([f"그 밖 유형자산 당기 취득: " + " · ".join(f"{r['name']} {won(r['acquired'])}원" for r in rest)] if rest else [])
+
     def add(self, key: str, kind: str, certainty: str, title: str, *, guide=(), topics=(), accounts=(), amounts=None,
-            basis=(), papers=None, forms=(), questions=(), prior_treatment=None, todo=()) -> dict:
-        """amounts 는 dict 이거나 Topic(그 topic 의 amounts_of). 없으면 topics 를 합친 topic."""
+            basis=(), papers=None, forms=(), questions=(), prior_treatment=None, todo=(), check_forms=()) -> dict:
+        """amounts 는 dict 이거나 Topic(그 topic 의 amounts_of). 없으면 topics 를 합친 topic.
+        check_forms: forms 에 더하되 이 이슈로는 총괄표 「확인」 까지만 올리는 서식(이슈가 확실이어도 「해당」 으로 두지 않는다, 11-08 B2)."""
+        forms = [*forms, *check_forms]
         t = self.agg(*topics) if topics else None
         codes = list(dict.fromkeys([*(t.codes if t else []), *(str(a) for a in accounts if a)]))
         amt_topic = amounts if isinstance(amounts, Topic) else (t if amounts is None else None)
@@ -585,6 +655,8 @@ class Builder:
             for f, vals in (("guide", guide), ("accounts", codes), ("basis", basis), ("forms", forms), ("questions", questions),
                             ("papers", papers_for(key, papers)), ("todo", todo)):
                 iss[f] += [v for v in vals if v not in iss[f]]
+            iss.setdefault("_check_forms", [])
+            iss["_check_forms"] += [c for c in check_forms if c not in iss["_check_forms"]]
             return iss
         iss = {"key": key, "kind": kind, "certainty": certainty, "guide": list(dict.fromkeys(guide)), "accounts": codes,
                "title": title, "amounts": amounts if amounts is not None else (self.amounts_of(t) if t else {}),
@@ -592,6 +664,8 @@ class Builder:
                "papers": papers_for(key, papers),
                "forms": list(dict.fromkeys(forms)), "questions": list(questions), "todo": list(todo), "memo": None,
                "conclusion": None}
+        if check_forms:
+            iss["_check_forms"] = list(dict.fromkeys(check_forms))
         self.issues[key] = iss
         return iss
 
@@ -715,6 +789,40 @@ class Builder:
             self.add(issue["id"], "신고 점검", "가능", issue["title"], guide=["1-3"], amounts={"prior": issue["amount"]},
                      basis=issue["basis"], papers=issue["papers"], forms=issue["forms"], questions=issue["questions"],
                      todo=issue["todo"])
+
+    def sme_rental_timing(self) -> str:
+        """부동산임대업 주업 법인을 중소기업에서 빼는 조특령 제2조 제1항 개정은 2025-02-28 이후 개시 과세연도부터다
+        (부칙 <제35347호, 2025-02-28> 제2조 제1항, 10-29 RN). 사업연도 시작일로 어느 규정을 쓰는지 적는다."""
+        from datetime import date
+        span = self.fy_dates()
+        if not span:
+            return ""
+        if span[0] < date(2025, 2, 28):
+            return ("부동산임대업 주업 법인을 중소기업에서 빼는 조특령 제2조 제1항 개정은 2025-02-28 이후 개시 사업연도부터 적용합니다"
+                    f"(부칙 <제35347호> 제2조 제1항). 이 사업연도({span[0].isoformat()} 개시)는 종전 규정으로 보고, 2026 사업연도부터 "
+                    "개정 규정을 봅니다")
+        return ("부동산임대업 주업 법인을 중소기업에서 빼는 조특령 제2조 제1항 개정 규정(2025-02-28 이후 개시 사업연도부터, 부칙 "
+                "<제35347호> 제2조 제1항)을 이 사업연도에 적용합니다")
+
+    def sme_affiliate(self) -> list[str]:
+        """지분법적용투자주식 · 관계기업투자 계정이 있으면 중소기업 규모기준에 관계기업 매출 합산을 확인하는 이슈(sme_affiliate,
+        10-29 RN). 관계기업 판정과 합산 매출은 엔진이 정하지 않는다(중소기업기본법 시행령 제3조 제1항 제2호 다목 · 제7조의4,
+        조특령 제2조 제1항 제3호). 회사 종류를 모르거나 중소기업이 아니면 띄우지 않는다."""
+        accts = [a for a in self.accounts if a.get("class") == "자산" and RX_AFFILIATE.search(clean(a.get("name")))
+                 and (_int(a.get("amount")) or _int(a.get("prior_amount")))]
+        if not accts or self.sme is not True:
+            return []
+        shown = " · ".join(f"{clean(a.get('name'))} {won(_int(a.get('amount')))}원(전기 {won(_int(a.get('prior_amount')))}원)"
+                           for a in accts[:4])
+        self.add("sme_affiliate", "신고 점검", "자료 필요",
+                 "관계기업 투자 계정이 있습니다. 중소기업 규모기준에 관계기업 매출 합산을 확인합니다", guide=["2-2"],
+                 accounts=[str(a.get("code")) for a in accts if a.get("code")], amounts={},
+                 basis=[shown, "관계기업에 속하면 관계기업 매출을 지분율로 합친 금액으로 중소기업 규모기준을 봅니다. 관계기업인지와 합산 "
+                               "매출액은 엔진이 정하지 않습니다"],
+                 papers=[], forms=["51"],
+                 questions=["투자한 회사(관계기업 · 지분법 적용 회사)의 당기 재무제표(매출액)를 보내 주십시오",
+                            "투자한 회사별 지분율(직접 · 간접)과 그 회사가 우리 회사 주식을 가지고 있는지 알려 주십시오"])
+        return [f"관계기업 투자 계정 {shown}. 관계기업 매출 합산을 확인합니다"]
 
     def sme_scale(self, revenue: int) -> list[str]:
         """전기 51호 규모 기준 칸(억원, cells["51"])과 당기 손익계산서 매출액을 견준 사실. 당기 매출액이 소기업 기준(15) ·
@@ -908,6 +1016,15 @@ class Builder:
             basis.append(f"거래처원장 기말 잔액이 있는 상대 {len(partners)}곳")
         ii = self.T["interest_income"]
         basis.append(f"이자수익 {won(ii.current)}원")
+        # 이자수익 overall test(10-29 RN). 기중 잔액을 걸을 수 있으면 일별 잔액 평균, 없으면 기초 · 기말 평균
+        if path and path.get("average", 0) > 0:
+            avg, how = path["average"], "일별 잔액 평균"
+        else:
+            avg, how = (max(loan.prior, 0) + max(loan.current, 0)) // 2, "기초 · 기말 평균 잔액"
+        if ii.current > 0 and avg > 0:
+            basis.append(f"이자수익 overall test: 이자수익 {won(ii.current)}원 ÷ 대여금 · 가지급금 {how} {won(avg)}원 "
+                         f"= 연 {ii.current / avg:.2%}. 약정 이자율 · 당좌대출이자율과 견줘 받지 않은 이자가 있는지 봅니다"
+                         "(이자수익에 예금 이자가 섞여 있으면 그만큼 높게 나옵니다)")
         forgive, repaid = self.forgiven(loan.codes)
         if forgive:
             basis.append(forgive.text("면제 · 포기"))
@@ -925,14 +1042,26 @@ class Builder:
             basis.append(f"전기 총괄표에 {' · '.join(form_name(c) for c in listed19)} 첨부 O 표시가 있습니다. 받은 PDF 에는 그 쪽이 없어 "
                          "전기 인정이자 금액은 보지 못했습니다")
             q.append("전기 세무조정계산서의 가지급금등의인정이자조정명세서(19호 갑 · 을) 쪽을 보내 주십시오")
-        if prior_hit or prior19:
+        if prior_hit:
             self.add("loan", "조정 후보", "확실", "가지급금 · 대여금 인정이자 계산이 필요합니다", guide=["2-3-3-1", "2-3-3-2"],
-                     topics=["loan"], basis=basis + ["전기에 인정이자 조정 또는 19호가 있습니다"], papers=[],
-                     forms=["19갑", "19을"], questions=q)
+                     topics=["loan"], basis=basis + ["전기 15호에 인정이자 조정이 있습니다"], papers=[],
+                     forms=["19갑", "19을"], questions=q, check_forms=RELATED_FORMS)
+        elif prior19:
+            # 19호를 냈어도 15호에 인정이자 조정이 없으면 특수관계인이 아닌 상대의 대여금일 수 있다(10-29 RN · 10-22 신고오류 검토).
+            # 특수관계인인지는 회계사가 정한다
+            self.add("loan", "조정 후보", "가능", "대여 상대방이 특수관계인인지 확인합니다. 특수관계인이면 인정이자를 계산합니다",
+                     guide=["2-3-3-1", "2-3-3-2"], topics=["loan"],
+                     basis=basis + ["전기에 19호를 냈지만 전기 15호에 인정이자 조정이 없습니다. 특수관계인이 아닌 상대의 대여금이면 "
+                                    "인정이자 조정이 없습니다"],
+                     papers=[], forms=["19갑", "19을"], questions=q, check_forms=RELATED_FORMS)
         else:
             self.add("loan", "신고 점검", "가능", f"{has} 전기에 인정이자 조정과 19호가 없습니다",
                      guide=["2-3-3-1", "2-3-3-2"], topics=["loan"], papers=[], forms=["19갑", "19을"],
-                     basis=basis + ["전기 15호에 인정이자 줄이 없고 19호(갑)(을)을 내지 않았습니다"], questions=q)
+                     basis=basis + ["전기 15호에 인정이자 줄이 없고 19호(갑)(을)을 내지 않았습니다"], questions=q, check_forms=RELATED_FORMS)
+        li = self.issues["loan"]
+        li["basis"].append("특수관계인 대여이면 특수관계자간 거래명세서(52호 갑 · 을)를 내고, 인정이자를 귀속자에게 상여 · 배당 · "
+                           "기타소득으로 처분하면 소득자료명세서(55호)를 냅니다(법인세법 시행령 제90조 제1항 · 제106조 제1항 제1호)")
+        li.setdefault("law_extra", []).extend(x for x in ("prior_form_52", "income_disposition") if x not in li.get("law_extra", []))
         ie = self.T["interest_expense"]
         if (loan.has_current or during) and ie.current > 0:
             lb = [describe(ie), f"대여금 · 가지급금 기말 {won(loan.current)}원"]
@@ -1030,8 +1159,8 @@ class Builder:
         if card:
             basis.append(card.text("카드"))
         if self.rent_share() >= 0.5:
-            basis.append(f"임대 · 이자 · 배당 수입이 매출액의 {self.rent_share():.0%}입니다. 지배주주등 지분 50% 초과 · 상시근로자 5명 미만이면 "
-                         "한도가 일반 법인의 50%입니다(법인세법 제25조 제5항)")
+            basis.append(f"임대 · 이자 · 배당 수입이 매출액의 {self.rent_share():.0%}입니다. 부동산임대업 주업 여부는 17호 "
+                         "업종코드로 봅니다. 주업이고 지배주주등 지분 50% 초과 · 상시근로자 5명 미만이면 한도가 일반 법인의 50%입니다(법인세법 제25조 제5항)")
         self.add("entertainment", "조정 후보", "확실", "기업업무추진비 한도 계산이 필요합니다", guide=["2-3-16-1"],
                  topics=["entertainment"], basis=basis, forms=["23갑", "23을"],
                  questions=["경조사비 중 한 번에 20만원을 넘는 지출이 있으면 명세를 보내 주십시오",
@@ -1313,15 +1442,29 @@ class Builder:
         if not al.exists or al.current >= 0:
             return None
         rc = self.T["receivable"]
-        narrow = max(rc.current, 0)
-        others = self.other_claims(al, set(rc.codes))
-        loan_codes = set(self.T["loan"].codes)
-        related = [a for a in others if str(a.get("code")) in loan_codes]
-        plain = [a for a in others if str(a.get("code")) not in loan_codes]
-        related_total = sum(_int(a.get("amount")) for a in related)
-        plain_total = sum(_int(a.get("amount")) for a in plain)
-        base = narrow + plain_total
-        wide = base + related_total
+        paper = self.paper_claims()
+        if paper is not None:                 # 조서 34호와 같은 채권잔액(설정대상 장부가액 - 설정제외 기본값, 10-29)
+            base, related_total = paper["base"], paper["excluded"]
+            wide = base + related_total
+            related_names = paper["excluded_names"] or "대여금 · 가지급금"
+            base_text = f"설정대상 채권잔액({paper['names']}, 조서 34호와 같은 값) {won(base)}원"
+            asked = paper["asked"]
+        else:
+            narrow = max(rc.current, 0)
+            others = self.other_claims(al, set(rc.codes))
+            loan_codes = set(self.T["loan"].codes)
+            related = [a for a in others if str(a.get("code")) in loan_codes]
+            plain = [a for a in others if str(a.get("code")) not in loan_codes]
+            related_total = sum(_int(a.get("amount")) for a in related)
+            plain_total = sum(_int(a.get("amount")) for a in plain)
+            base = narrow + plain_total
+            wide = base + related_total
+            plain_names = " · ".join(dict.fromkeys(clean(a.get("name")) for a in plain[:4])) or "그 밖 채권"
+            related_names = " · ".join(dict.fromkeys(clean(a.get("name")) for a in related[:4])) or "대여금 · 가지급금"
+            base_text = f"매출채권 · 미수금 {won(narrow)}원"
+            asked = False
+            if plain_total:
+                base_text = f"채권잔액({base_text} + {plain_names} {won(plain_total)}원) {won(base)}원"
         if wide <= 0:
             return None
         bad = split["written_off"] + split["direct"] + split["other"]     # 그 밖 차변도 대손일 수 있어 넣는다(한도를 넓게)
@@ -1332,13 +1475,10 @@ class Builder:
         balance = -al.current
         lim_base, lim_wide = int(base * rate), int(wide * rate)
         how = "1%" if rate == 0.01 else f"대손실적률 {rate:.2%}"
-        plain_names = " · ".join(dict.fromkeys(clean(a.get("name")) for a in plain[:4])) or "그 밖 채권"
-        related_names = " · ".join(dict.fromkeys(clean(a.get("name")) for a in related[:4])) or "대여금 · 가지급금"
-        base_text = f"매출채권 · 미수금 {won(narrow)}원"
-        if plain_total:
-            base_text = f"채권잔액({base_text} + {plain_names} {won(plain_total)}원) {won(base)}원"
-        excl = (f"{related_names} {won(related_total)}원은 특수관계인 대여로 보아 설정 대상에서 뺐습니다(법인세법 제34조 제2항, 조서 "
-                "설정제외 기본값과 같음. 업무와 관련된 대여면 설정 대상입니다)") if related_total else ""
+        excl = ((f"{related_names} {won(related_total)}원은 설정 대상에서 뺐습니다(특수관계인 대여는 법인세법 제34조 제2항, "
+                 "미수수익 · 대여금은 회계사 답 전이라 뺌. 조서 노란 칸 「설정대상」 에서 넣을 수 있습니다)") if asked else
+                (f"{related_names} {won(related_total)}원은 특수관계인 대여로 보아 설정 대상에서 뺐습니다(법인세법 제34조 제2항, 조서 "
+                 "설정제외 기본값과 같음. 업무와 관련된 대여면 설정 대상입니다)")) if related_total else ""
         if balance > lim_wide:
             line = f"대손충당금 기말 {won(balance)}원이 {base_text}의 {how} {won(lim_base)}원보다 커 한도초과가 생깁니다"
             if related_total:
@@ -1351,22 +1491,39 @@ class Builder:
             return None
         return {"over": balance > lim_wide, "basis": [line], "excluded": related_total > 0}
 
+    def paper_claims(self) -> dict | None:
+        """조서 대손충당금의 설정대상 채권 표(wp/papers/bad_debt.target_receivables)로 센 채권잔액. base 는 설정대상에 넣은 계정의
+        sum(기말 장부가액 - 설정제외 기본값)으로 34호 채권잔액과 같다(전기 부인누계는 넣지 않는다). excluded 는 설정제외 기본값
+        (특수관계인 대여)과 회계사 답 전이라 뺀 미수수익 · 대여금 잔액의 합이다. 조서 함수를 읽지 못하면 None 이고 그때는 이름 규칙
+        (other_claims)으로 센다."""
+        try:
+            from ctax.wp.papers.bad_debt import target_receivables
+            try:
+                rows = target_receivables(self.books(), all_rows=True)
+            except TypeError:                # 뺀 줄을 돌려주지 않던 판
+                rows = target_receivables(self.books())
+        except Exception:                    # noqa: BLE001  조서 쪽 실패가 AR 전체를 멈추지 않게 한다
+            return None
+        rows = [r for r in rows if _int(r.get("book")) > 0]
+        inc = [r for r in rows if r.get("include", True)]
+        out_ = [r for r in rows if not r.get("include", True)]
+        if not rows:
+            return None
+        names = " · ".join(dict.fromkeys(clean(r.get("name")) for r in inc[:5])) + (" 등" if len(inc) > 5 else "")
+        ex = [r for r in inc if _int(r.get("exclude"))] + out_
+        return {"base": sum(_int(r["book"]) - _int(r.get("exclude")) for r in inc),
+                "excluded": sum(_int(r.get("exclude")) for r in inc) + sum(_int(r["book"]) for r in out_),
+                "names": names or "설정대상 채권 없음", "asked": bool(out_),
+                "excluded_names": " · ".join(dict.fromkeys(clean(r.get("name")) for r in ex[:4]))}
+
     def other_claims(self, al: Topic, skip: set) -> list[dict]:
-        """매출채권 · 미수금 밖의 설정 대상일 수 있는 채권(잔액이 양수인 자산 계정). 이름에 채권 · 미수 · 어음 · 대여 · 대출 ·
-        선급금이 있는 계정, 대여금 · 가지급금, 대손충당금 계정 바로 앞 자산 계정(충당금이 붙은 채권). 한도를 넓게 잡으려고 넓게 모은다."""
+        """매출채권 · 미수금 밖의 설정대상 채권(잔액이 양수인 자산 계정). 설정대상 판정은 조서 대손충당금과 같은 함수
+        (wp/papers/bad_debt.is_target: 매출채권 · 미수금 · 미수수익 · 대여금 등 채권, 선급금 제외, 10-29 대표)를 쓴다.
+        그 함수를 읽지 못하면 같은 기준의 이름 규칙으로 고른다. 전에는 대손충당금 바로 앞 계정과 선급금도 넣어 범위가 달랐다."""
         allowance = set(al.codes)
         accounts = [a for a in self.L.get("accounts") or [] if a.get("code")]
-        picked: dict[str, dict] = {}
-        for i, a in enumerate(accounts):
-            code = str(a.get("code"))
-            if code in allowance:
-                prev = next((b for b in reversed(accounts[:i]) if b.get("class") == "자산" and str(b.get("code")) not in allowance), None)
-                if prev is not None:
-                    picked.setdefault(str(prev.get("code")), prev)
-            elif a.get("class") == "자산" and (code in set(self.T["loan"].codes)
-                                              or re.search(r"채권|미수|어음|대여|대출|선급금", clean(a.get("name")))):
-                picked.setdefault(code, a)
-        return [a for c, a in picked.items() if c not in skip and c not in allowance and _int(a.get("amount")) > 0]
+        return [a for a in accounts if is_claim(a) and str(a.get("code")) not in skip
+                and str(a.get("code")) not in allowance and _int(a.get("amount")) > 0]
 
     def rule_accrued(self) -> None:
         ai, ae, pv = self.T["accrued_income"], self.T["accrued_expense"], self.T["provision"]
@@ -1570,7 +1727,7 @@ class Builder:
                             "인정이자 조서에 이 계정의 가지급 · 가불 적요 거래처를 「확인 필요」 로 넣었습니다. 특수관계인 「예」 를 "
                             "고르면 인정이자를 계산합니다"],
                      papers=["loan_interest"], forms=["19갑", "19을"],
-                     questions=[f"{name} 잔액의 상대방(임원 · 직원 · 거래처)과 업무 관련 여부, 약정 이자를 알려 주십시오"])
+                     questions=[f"{name} 잔액의 상대방(임원 · 직원 · 거래처)과 업무 관련 여부, 약정 이자를 알려 주십시오"], check_forms=RELATED_FORMS)
 
     def rule_loan_moved(self) -> None:
         """가지급금 · 대여금 계정 대변 줄인데 같은 전표에 현금 · 예금이 없고 다른 채권 · 자산 계정 차변이 있는 전표(돈 없이 옮긴
@@ -1935,6 +2092,20 @@ class Builder:
                  questions=["기말 현재 진행 중인 공사의 계약금액 · 총공사예정원가 · 누적 발생원가 · 누적 청구액과 계약기간을 알려 주십시오"],
                  todo=["진행 중 공사가 있으면 작업진행률로 계산한 수익 · 원가와 장부의 차이를 조서 「소득금액조정」 직접 조정 줄(유보)에 넣습니다"])
 
+    def grant_reserve_lines(self, t: Topic) -> list[str]:
+        """장부 국고보조금(자산 차감) 기말 잔액과 전기 50호(을) 국고보조금 유보 기말을 견준다(10-29 RN). 세법은 자산을 보조금 차감 전
+        금액으로 보므로 장부 차감 잔액과 유보 잔액이 맞물려야 한다. 다르면 대사할 줄을 낸다(금액을 고치지 않는다)."""
+        book = -sum(_int(a.get("amount")) for a in t.accounts if a.get("class") == "자산")
+        res = [r for r in self.P.get("reserves") or [] if re.search(r"국고보조금", str(r.get("subject") or ""))
+               and not re.search(r"일시상각", str(r.get("subject") or ""))]
+        if not book or not res:
+            return []
+        prior = sum(_int(r.get("closing")) for r in res)
+        if book == prior:
+            return [f"장부 국고보조금 기말 {won(book)}원과 전기 50호(을) 국고보조금 유보 기말 {won(prior)}원이 같습니다"]
+        return [f"장부 국고보조금(자산 차감) 기말 {won(book)}원과 전기 50호(을) 국고보조금 유보 기말 {won(prior)}원이 다릅니다"
+                f"(차이 {won(book - prior)}원). 당기 증감을 더한 유보 잔액이 장부 잔액과 맞는지 대사합니다"]
+
     def rule_misc_accounts(self) -> None:
         simple = [
             ("prior_error", "전기오류수정손익의 세무조정을 확인합니다", ["2-3-18-1"], ["15", "50을"],
@@ -1953,6 +2124,8 @@ class Builder:
             if t.exists:
                 amounts = self.period_amounts(t)
                 basis = [describe(t), state(t)]
+                if key == "grant":
+                    basis += self.grant_reserve_lines(t)
                 if not isinstance(amounts, Topic):
                     basis.append(f"기말 잔액이 0원이라 기중 금액 {won(amounts['current'])}원을 이슈 금액으로 씁니다")
                 self.add(key, "조정 후보", "가능", title, guide=guide, topics=[key], amounts=amounts, basis=basis, papers=[],
@@ -2004,14 +2177,21 @@ class Builder:
                          amounts={"prior": amt}, basis=[base], papers=[], forms=["조특10의9", "조특10의10", "조특1", "8갑", "8부표3"],
                          questions=["올해와 작년 월별 상시근로자 수(4대보험 가입자 명부)를 보내 주십시오"])
             elif re.search(r"투자", name):
-                self.add(key, "공제감면", "자료 필요", f"전기 {name}의 당기 해당 여부를 확인합니다", guide=["1-4"], amounts={"prior": amt},
-                         basis=[base], papers=[], forms=["조특8의9", "조특1부표", "조특1", "8갑"], questions=[])
+                cur = [r for r in self.capex_rows() if r["candidate"]]
+                now = ([capex.line(r, not self.first_year) for r in cur if r["invest"] or r["change"]]
+                       or ["당기 기계장치 · 건설중인자산 · 건물 · 건설기계 계정에 투자 전표가 없습니다"])
+                if any(r["invest"] for r in cur):
+                    now.append(f"당기 투자 합계 {won(capex.total(cur))}원(통합투자세액공제 이슈의 계정별 줄과 같은 값)")
+                self.add(key, "공제감면", "자료 필요", f"전기 {name}의 당기 해당 여부를 당기 취득 전표로 확인합니다", guide=["1-4"],
+                         amounts={"prior": amt}, basis=[base, *now], papers=[], forms=INVEST_FORMS,
+                         questions=["당기에 취득한 사업용 자산이 공제 대상인지 계정마다 알려 주십시오"])
             elif amt:
                 self.add(key, "공제감면", "자료 필요", f"전기 {name}의 당기 해당 여부를 확인합니다", guide=["1-4"], amounts={"prior": amt},
                          basis=[base], papers=[], forms=["8갑"], questions=[])
         if self.sme is True and profit and not has_reduction:
             extra = ([f"임대 · 이자 · 배당 수입이 매출액의 {self.rent_share():.0%}입니다. 부동산임대업은 감면 업종 목록에 없고, "
-                      "시행령 제42조 제2항 요건을 모두 갖춘 법인은 중소기업에서 빠질 수 있습니다"]
+                      "시행령 제42조 제2항 요건을 모두 갖춘 법인은 중소기업에서 빠질 수 있습니다. 주업 여부는 17호 업종코드로 봅니다",
+                      self.sme_rental_timing()]
                      if self.rent_share() >= 0.5 else [])
             self.add("sme_reduction", "공제감면", "가능", "중소기업 특별세액감면 대상 업종 · 지역인지 확인합니다", guide=["1-1"],
                      amounts={"current": self.ibt},
@@ -2028,21 +2208,99 @@ class Builder:
                      forms=["조특10의9", "조특10의10", "조특1", "8갑", "8부표3"],
                      questions=["올해 월별 상시근로자 수(4대보험 가입자 명부)를 보내 주십시오" if self.first_year
                                 else "올해와 작년 월별 상시근로자 수(4대보험 가입자 명부)를 보내 주십시오"])
-        cap = self.T["capex"]
-        if cap.exists and cap.change > 0:
-            self.add("investment_credit", "공제감면", "자료 필요",
-                     (FIRST_YEAR if self.first_year else "사업용 유형자산이 늘었습니다. ") + "통합투자세액공제 대상인지 확인합니다",
-                     guide=["2-3-6-1"], topics=["capex"], basis=[describe(cap)], papers=[], forms=["조특8의9", "조특1부표", "조특1", "8갑"],
-                     questions=["올해 취득한 기계장치 · 시설 · 건설기계의 취득일 · 금액 · 용도를 알려 주십시오"])
+        # 통합투자세액공제는 전기 신고서 · 계정 합계 증감이 아니라 계정마다 당기 취득 전표로 본다(10-29 대표 · RN). 건물 · 기계장치를
+        # 합친 순증으로 띄우지 않는다. 공제 대상 자산인지는 회계사가 정한다(ar/capex.py)
+        bought = [r for r in self.capex_rows() if r["candidate"] and r["invest"] > 0]
+        if bought:
+            names = " · ".join(r["name"] for r in bought)
+            prior_inv = [c for c in self.prior_credits if re.search(r"투자", str(c.get("name") or "")) and _int(c.get("amount"))]
+            sure = bool(prior_inv)
+            basis = [capex.line(r, not self.first_year) for r in bought] + self.capex_other_lines(bought)
+            basis.append(f"판단 계정 당기 투자 합계 {won(capex.total(bought))}원. 취득 전표 합계에서 계정 사이 대체 · 처분 · 이월을 빼고, "
+                         "건설중인자산은 본계정으로 넘긴 금액을 한 번만 셉니다. 공제 대상(사업용 유형자산, 토지 · 건축물 등 제외)인지는 회계사가 정합니다")
+            if sure:
+                basis.append(f"전기에 {prior_inv[0].get('name')} {won(_int(prior_inv[0].get('amount')))}원을 받았고 당기에도 투자 전표가 있어 "
+                             "공제 서식(신청서 · 투자자산명세서 · 8호 갑 · 8호 부표3 · 최저한세 · 농어촌특별세)을 낼 것으로 둡니다")
+            iss = self.add("investment_credit", "공제감면", "확실" if sure else "자료 필요",
+                           (FIRST_YEAR if self.first_year else f"{names} 취득 전표가 있습니다. ") + "통합투자세액공제 대상 자산인지 계정마다 확인합니다",
+                           guide=["2-3-6-1"] + (["1-4"] if sure else []), accounts=[r["code"] for r in bought],
+                           amounts={"current": capex.total(bought)}, basis=basis, papers=[], forms=INVEST_FORMS,
+                           questions=[f"{r['name']} 당기 투자 {won(r['invest'])}원: 공제 대상 사업용 자산인지, 취득일 · 용도 · 중고 여부를 "
+                                      "알려 주십시오" for r in bought])
+            iss.setdefault("law_extra", []).append("farm_tax")
         rnd = self.T["rnd"]
         if rnd.exists:
             prior_rnd = [c for c in self.prior_credits if re.search(r"연구|인력개발", str(c.get("name") or ""))]
             basis = [describe(rnd)] + [f"전기에 {c.get('name')} {won(_int(c.get('amount')))}원을 받았습니다" for c in prior_rnd]
-            self.add("rnd_credit", "공제감면", "가능" if (prior_rnd and rnd.has_current) else "자료 필요",
+            if prior_rnd and rnd.has_current:
+                basis.append("전기에 같은 공제를 받았고 당기에도 연구 · 인력개발비가 있어 공제 서식을 낼 것으로 둡니다. 대상 비용은 회계사가 확인합니다")
+            self.add("rnd_credit", "공제감면", "확실" if (prior_rnd and rnd.has_current) else "자료 필요",
                      "연구 · 인력개발비 세액공제 대상인지 확인합니다",
                      guide=["2-3-14-1", "2-3-14-2"] + (["1-4"] if prior_rnd else []), topics=["rnd"], basis=basis, papers=[],
                      forms=["조특3_1", "조특3부표_1", "조특1", "8갑", "8부표3"],
                      questions=["기업부설연구소 · 연구개발전담부서 인정서가 있으면 보내 주십시오"])
+
+    def rule_construction_interest(self) -> None:
+        """건설중인자산이 있고 이자비용이 있으면 건설자금이자(특정차입금 이자 자본화, 법인세법 시행령 제52조)를 확인한다(10-29 RN).
+        특정차입금인지 · 준공일은 장부로 알 수 없어 금액을 정하지 않는다."""
+        cip = [r for r in self.capex_rows() if r.get("cip") and (r["closing"] > 0 or r["debit"] > 0)]
+        ie = self.T["interest_expense"]
+        # 이자비용이 없어도 건설중인자산이 늘었고 차입금이 있으면 이자를 이미 자산에 넣었거나 원가에 적었을 수 있어 25호를 본다
+        # (11-08 B2, 제품 when.yaml 「25」: 건설중인자산이 있거나 움직이면 「건설 자산에 쓴 차입금이 있습니까」 를 묻는다)
+        grew = [r for r in cip if r["change"] > 0]
+        if not cip or (ie.current <= 0 and not (grew and self.T["borrowing"].exists)):
+            return
+        if ie.current <= 0:
+            cip = grew
+        basis = [capex.line(r, not self.first_year) for r in cip] + [describe(ie) if ie.exists else "이자비용 계정이 없습니다"]
+        if self.T["borrowing"].exists:
+            basis.append(describe(self.T["borrowing"]))
+        basis.append("건설 · 제작에 쓴 특정차입금의 이자는 준공일까지 자산 원가에 더합니다(회사가 비용으로 적었으면 손금불산입 · 유보)")
+        basis.append("건설자금이자가 있으면 건설자금이자조정명세서(25호)를 냅니다(특정차입금이 있는지는 회사에 묻습니다)")
+        title = ("건설중인자산이 있고 이자비용이 있습니다. 건설자금이자 자본화 대상인지 확인합니다" if ie.current > 0 else
+                 "건설중인자산이 늘었고 차입금이 있습니다. 건설자금이자 자본화 대상인지 확인합니다")
+        self.add("construction_interest", "조정 후보", "가능", title,
+                 guide=["2-3-6-1"], accounts=[r["code"] for r in cip], amounts={"current": sum(r["closing"] for r in cip)},
+                 basis=basis, papers=[], forms=["15", "50을", "25"],
+                 questions=["건설중인자산의 건설 · 제작에 쓴 차입금(특정차입금)이 있는지, 있으면 차입일 · 금액 · 이자와 준공(사용 시작)일을 "
+                            "알려 주십시오"])
+
+    def prior_form_signals(self) -> dict[str, list[str]]:
+        """PRIOR_FORMS 서식마다 당기 근거 계정 이름. 52갑 대여금 · 가지급금 · 관계기업 투자, 39 재고자산, 16갑 외화 · 수출, 18 임대보증금."""
+        names = [(a, clean(a.get("name"))) for a in self.accounts if _int(a.get("amount")) or _int(a.get("prior_amount"))]
+
+        def found(rx) -> list[str]:
+            return list(dict.fromkeys(n for a, n in names if rx.search(n)))
+
+        signals = {
+            "52갑": [*self.T["loan"].names, *found(RX_AFFILIATE)],
+            "39": self.T["inventory"].names if self.T["inventory"].has_current else [],
+            "16갑": found(RX_FOREIGN),
+            "18": found(RX_RENT_DEPOSIT),
+        }
+        return {k: list(dict.fromkeys(v)) for k, v in signals.items()}
+
+    def rule_prior_forms(self) -> None:
+        """전기에 냈고 당기에도 그 계정 근거가 있는 서식(52갑 · 39 · 16갑 · 18)은 당기에도 낸다로 둔다(10-29 RN 서식 목록).
+        전기 제출만으로는 올리지 않는다. 근거: 52갑 특수관계인 거래 근거 계정(대여금 · 가지급금 · 관계기업 투자), 39 재고자산,
+        16갑 외화 · 수출 계정, 18 임대보증금."""
+        signals = self.prior_form_signals()
+        for code, (rule, title, question) in PRIOR_FORMS.items():
+            got = list(dict.fromkeys(signals[code]))
+            if not self.prior_filed(code) or not got:
+                continue
+            self.add(rule, "서식 필요", "확실", title, guide=["2-1"], amounts={},
+                     basis=[f"전기에 {form_name(code)}({code})를 냈습니다", f"당기 근거 계정: {' · '.join(got[:5])}",
+                            "거래가 없어졌으면 총괄표에서 안 낸다로 고릅니다"],
+                     papers=[], forms=[code], questions=[question])
+
+    def cap_fx(self) -> None:
+        """외화환산 조정은 신고한 평가방법에 따라 생기지 않을 수도 있다. 전기에 40호(갑)을 내지 않았으면 「확실」 로 두지 않는다
+        (전기 15호 외화 줄로 「확실」 이 됐어도, 10-29 RN 서식 목록)."""
+        fx = self.issues.get("fx")
+        if fx and fx["certainty"] == "확실" and not self.prior_filed("40갑"):
+            fx["certainty"] = "가능"
+            fx["basis"].append("전기에 40호(갑)을 내지 않았습니다. 신고한 평가방법을 확인한 뒤 40호를 낼지 정합니다")
 
     # ------------------------------------------------------------ 서식 필요(조서 없음)
 
@@ -2112,9 +2370,20 @@ class Builder:
                      guide=["1-2", "2-3-11-1"], topics=["capital", "share_premium"], basis=[describe(cap), describe(sp)], papers=[],
                      forms=["54"], questions=["법인 등기부등본과 주주명부를 보내 주십시오" if self.first_year
                                               else "증자 · 감자 등기부등본과 주주명부를 보내 주십시오"])
-        self.add("share_transfer", "서식 필요", "자료 필요", "주주 사이 주식 양도가 있었는지 확인합니다", guide=["2-3-11-2"],
-                 amounts={}, basis=[describe(cap)], papers=[], forms=["54", "54부표"],
-                 questions=["올해 주주 사이 주식 양도 · 증여가 있었으면 주주명부와 양도 계약서를 보내 주십시오"])
+        # 주주 변동은 장부 · 전기 신고서로 닫지 않는다(10-29 대표). 회계사가 「변동 있음 · 없음」 을 이슈 결론과 54호 낸다 · 안 낸다로
+        # 고를 때까지 완결 점검에 열린 항목으로 남는다
+        filed54 = self.prior_filed("54")
+        self.add("share_transfer", "서식 필요", "자료 필요",
+                 "주주 변동(양도 · 증여 · 증자 · 감자)이 있었는지 회계사가 확인합니다. 확인 전에는 54호를 낼지 정하지 않습니다",
+                 guide=["1-2", "2-3-11-2"], amounts={},
+                 basis=[describe(cap) + (" · 변동 없음" if cap.change == 0 else f" · 증감 {won(cap.change)}원"),
+                        ("전기에 54호를 냈습니다. 전기 신고서로는 당기 주주 변동을 알 수 없습니다" if filed54
+                         else "전기 54호가 보이지 않습니다. 당기 주주 변동은 회사에 묻습니다"),
+                        "결론 칸에 「변동 있음」 · 「변동 없음」 을 적고, 총괄표에서 54호를 낸다(변동 있음) · 안 낸다(변동 없음)로 고릅니다",
+                        "1호 주식변동 여부 칸과 54호 주식변동 기재가 서로 맞는지 함께 봅니다(1호 「부」 인데 54호에 변동을 적으면 안 됩니다)"],
+                 papers=[], forms=["54", "54부표"],
+                 questions=["사업연도 말 주주명부를 보내 주십시오",
+                            "올해 주주 사이 주식 양도 · 증여 · 증자 · 감자가 있었는지 알려 주십시오. 있었으면 양도 계약서 · 등기부등본을 보내 주십시오"])
         rev_prior = _int(self.prior_totals.get("revenue")) or self.T["revenue"].prior
         if rev_prior >= EXPENSE_EVIDENCE_REVENUE:
             self.add("expense_evidence", "서식 필요", "확실", "직전 수입금액이 30억 원 이상입니다. 지출증명서류 합계표(77호)를 작성 · 보관합니다",
@@ -2270,8 +2539,11 @@ class Builder:
                 facts.append(f"업태 {c.get('biz_type') or ''} · 업종코드 {c.get('industry_code') or ''}".strip())
             self.judge("1-1", none if c.get("sme") is not None else "자료 필요", facts, ["sme_reduction", "carryback"])
             # 1-3
-            if self.P.get("no_prior"):          # 전기 신고서가 없는 신고 건(신설 첫 해 · 첫 수임)
-                self.judge("1-3", none, [NO_PRIOR_FACT])
+            # 전기 신고서가 없는 신고 건. 신설 첫 해는 견줄 전기가 없어 해당 없음, 첫 수임은 전기 신고서가 있었을 것이라 자료 필요(11-08 B1)
+            unknown_prior = none if self.first_year else "자료 필요"
+            unknown_facts = [NO_PRIOR_FACT] + ([] if self.first_year else [NO_PRIOR_ASK])
+            if self.P.get("no_prior"):
+                self.judge("1-3", unknown_prior, unknown_facts)
             elif self.adj_fate:
                 facts = []
                 for a, fate, _k in self.adj_fate[:5]:
@@ -2285,7 +2557,7 @@ class Builder:
                 self.judge("1-3", none, ["전기 15호 조정 · 50호(을) 유보가 없습니다"])
             # 1-4
             if self.P.get("no_prior"):
-                self.judge("1-4", none, [NO_PRIOR_FACT])
+                self.judge("1-4", unknown_prior, unknown_facts)
             elif self.prior_credits:
                 facts = [f"{c.get('name')} {won(_int(c.get('amount')))}원" + (f"(이월 {won(_int(c.get('carryforward')))}원)"
                          if _int(c.get("carryforward")) else "") for c in self.prior_credits[:4]]
@@ -2296,8 +2568,14 @@ class Builder:
             elif not self.prior_filed("8갑"):
                 self.judge("1-4", "자료 필요", ["전기 신고서에 8호(갑)이 보이지 않아 공제감면 이력을 확인하지 못했습니다"
                                                  "(신고서에 없거나 엔진이 찾지 못함)"])
+            elif self.prior_filed("8갑", nonblank=True):
+                # 8호(갑) 쪽에 금액이 있는데(또는 총괄표에만 있어 쪽을 못 봄) 공제 줄을 하나도 못 읽었다: 없는 것이 아니라 모르는 것(11-08 B1)
+                self.judge("1-4", "자료 필요", ["전기 8호(갑) 공제 줄을 읽지 못했습니다"
+                                                 + ("(전기 총괄표에 첨부 표시만 있고 받은 PDF 에 쪽이 없습니다)" if self.listed_only("8갑") else
+                                                    "(쪽에 금액은 있는데 공제 · 감면 줄을 찾지 못했습니다)")
+                                                 + ". 전기 8호(갑) · 8호 부표3 으로 공제감면과 이월액을 확인합니다"])
             else:
-                self.judge("1-4", none, ["전기 8호(갑) 공제감면이 없습니다"])
+                self.judge("1-4", none, ["전기 8호(갑)에 금액이 적힌 줄이 없습니다(공제감면 없음)"])
         cap = T["capital"]
         rev = T["revenue"]
         rental = self.rental_test()
@@ -2305,13 +2583,27 @@ class Builder:
         facts += self.rental_facts()
         if rental["share"] >= 0.5:
             holder = self.top_holder_fact()
+            code = str((self.company or {}).get("industry_code") or "")
             self.add("rental_main", "신고 점검", "가능",
-                     "임대 · 이자 · 배당 수입이 매출액의 50% 이상입니다. 부동산임대업 주업 등 법인 요건(시행령 제42조 제2항)을 확인합니다",
+                     "임대 · 이자 · 배당 수입이 매출액의 50% 이상입니다. 부동산임대업 주업 여부는 조정후수입금액명세서(17호) 업종코드로 판단합니다",
                      guide=["1-2"], topics=[x["topic"] for x in rental["parts"] if x["amount"]],
-                     basis=facts + ([holder] if holder else []), papers=[], forms=["51", "3"],
-                     questions=["사업연도 종료일 현재 지배주주등(특수관계인 포함) 지분율 합계가 50%를 넘는지 알려 주십시오",
+                     basis=facts + ([holder] if holder else [])
+                     + [f"{'신고건 회사정보' if self.P.get('no_prior') else '전기 신고서'} 주업종코드 {code}" if code else "주업종코드를 읽지 못했습니다",
+                        "주업 여부는 당기 17호 업종코드(수입금액이 가장 큰 업종)로 봅니다(10-29 대표 기준). 업무용승용차 한도 축소(시행령 제42조 "
+                        "제2항)는 조서 업무용승용차가 그 업종코드로 계산하고, 지배주주등 지분 · 상시근로자 요건은 함께 확인합니다",
+                        self.sme_rental_timing() if self.sme is True else ""],
+                     papers=[], forms=["17", "51", "3"],
+                     questions=["당기 조정후수입금액명세서(17호) 업종코드별 수입금액이 맞는지 확인해 주십시오",
+                                "사업연도 종료일 현재 지배주주등(특수관계인 포함) 지분율 합계가 50%를 넘는지 알려 주십시오",
                                 "상시근로자 수가 5명 미만인지 알려 주십시오(최대주주와 그 친족, 근로계약 1년 미만, 단시간근로자는 빼고 셉니다)",
                                 "간주임대료 익금가산액(조세특례제한법 제138조)이 있으면 알려 주십시오"])
+            # 18호(11-08 B2): 차입금이 기준을 넘는 부동산임대업 주업 법인은 임대보증금 등 간주익금을 익금에 더한다(조특법 제138조 제1항).
+            # 주업 · 차입금 기준은 장부로 정하지 못해 「확인」 이다(이슈 확실도 가능)
+            iss = self.issues["rental_main"]
+            iss["forms"].append("18")
+            iss["basis"].append("부동산임대업 주업이고 차입금이 자기자본에 견준 기준을 넘으면 임대보증금 등 간주익금을 익금에 더하고 "
+                                "18호(임대보증금등의 간주익금조정명세서)를 냅니다(조세특례제한법 제138조 제1항)")
+            iss.setdefault("law_extra", []).append("prior_form_18")
         self.judge("1-2", none, facts, ["share_change"])
 
         # 2절 머리
@@ -2330,9 +2622,10 @@ class Builder:
             self.sme, "전기 회사 종류를 모릅니다") if self.sme is not True or assets < SME_ASSET_LIMIT else "전기 중소기업")
         facts.append(sme_fact.replace("전기", INFO_SME, 1) if self.P.get("no_prior") else sme_fact)
         facts += self.sme_scale(rev.current)
+        facts += self.sme_affiliate()
         # 당기 중소기업 · 소기업 여부는 당기 업종별 매출액과 유예기간으로 사람이 정한다. 전기 결과만으로 「해당 없음」 으로 두지 않는다
         self.judge("2-2", "자료 필요", facts + ["업종별 매출 기준과 유예기간은 사람이 정합니다"],
-                   [k for k in ("sme_size", "sme_small") if k in self.issues])
+                   [k for k in ("sme_size", "sme_small", "sme_affiliate") if k in self.issues])
 
         # 2-3 계정별
         s, spl = T["securities"], T["securities_pl"]
@@ -2373,7 +2666,17 @@ class Builder:
                                          describe(T["borrowing"]) if T["borrowing"].exists else "차입금이 없습니다"])
         else:
             self.judge("2-3-3-2", none, ["대여금 계정이 없습니다"])
-            self.judge("2-3-3-3", none, ["대여금 계정이 없어 지급이자 손금불산입 대상이 아닙니다"])
+            # 26호는 업무무관부동산등(토지 · 서화 · 골동품 등)도 본다(법인세법 시행령 제49조 제1항). 대여금이 없어도 그 후보 계정이
+            # 있으면 업무에 쓰는지 몰라 정하지 못한다(11-08 B1)
+            nb = T["nonbusiness"]
+            ie = T["interest_expense"]
+            if nb.exists:
+                self.judge("2-3-3-3", "자료 필요",
+                           [describe(nb), describe(ie) if ie.exists else "이자비용이 없습니다",
+                            "대여금 · 가지급금은 없지만 토지 · 업무무관 동산 후보 계정이 있습니다. 업무에 직접 쓰지 않는 자산이면 "
+                            "업무무관부동산등 관련 지급이자 손금불산입(26호)을 계산합니다"])
+            else:
+                self.judge("2-3-3-3", none, ["대여금 · 가지급금이 없고 토지 · 업무무관 동산 후보 계정도 없습니다"])
 
         ii, pt = T["interest_income"], T["prepaid_tax"]
         self.judge("2-3-4-1", none, [describe(ii) if ii.exists else "이자수익이 없습니다",
@@ -2398,7 +2701,11 @@ class Builder:
                 self.judge(gid, none, ["유형자산 · 감가상각비 계정이 없습니다"])
 
         cp = T["capex"]
-        self.judge("2-3-6-1", none, [describe(cp) + f" · 증감 {won(cp.change)}원" if cp.exists else "기계장치 · 시설장치 · 건설중인자산 · 건물 · 건설기계 계정이 없습니다"])
+        cand = [r for r in self.capex_rows() if r["candidate"]]
+        self.judge("2-3-6-1", "자료 필요" if capex.total(cand) > 0 else none,
+                   [capex.line(r, not self.first_year) for r in cand] if cand else
+                   ["기계장치 · 건설중인자산 · 건물 · 건설기계 계정이 없습니다"] if not cp.exists else [describe(cp)],
+                   ["investment_credit"])
         present("2-3-7-1", T["grant"], "국고보조금 계정이 없습니다")
         itg = self.agg("intangible", "amortization")
         present("2-3-8-1", itg, "무형자산 · 무형자산상각비 계정이 없습니다")
@@ -2407,12 +2714,25 @@ class Builder:
         present("2-3-10-1", T["convertible"], "전환사채 · 신주인수권부사채 계정이 없습니다")
         sp = T["share_premium"]
         self.judge("2-3-11-1", none, [describe(cap) + f" · 증감 {won(cap.change)}원"] + ([describe(sp)] if sp.exists else []))
-        self.judge("2-3-11-2", "자료 필요", ["주주 변동은 장부로 알 수 없어 회사에 묻습니다"])
+        self.judge("2-3-11-2", "자료 필요", ["주주 변동은 장부 · 전기 신고서로 알 수 없어 회계사가 확인합니다"], ["share_transfer"])
         eo = T["equity_other"]
         self.judge("2-3-12-1", none, [describe(eo) + f" · 증감 {won(eo.change)}원" if eo.exists else "자기주식 · 감자차손익 · 자본조정 계정이 없습니다"])
         pay = T["payroll"]
         self.judge("2-3-13-1", none, [describe(pay) + f" · 증감 {won(pay.change)}원" if pay.exists else "급여 계정이 없습니다",
                                       describe(T["welfare"]) if T["welfare"].exists else "복리후생비 계정이 없습니다"])
+        # 급여가 줄었다고 단정하지 않는다: 전기 고용 공제가 있으면 상시근로자 감소 사후관리(추가납부)를 본다(11-08 B1, 제품 f10895c
+        # 「늘었거나 전기 고용 공제가 있을 때만」 과 같은 기준). 급여가 늘었으면 employment_credit 이슈가 이 줄을 잇는다
+        if "employment_credit" not in self.issues:
+            credits, filed = self.prior_employment()
+            if credits:
+                self.judge("2-3-13-1", "자료 필요",
+                           [f"전기에 받은 고용 공제: {' · '.join(str(c.get('name')) for c in credits)}. 상시근로자가 줄었으면 사후관리로 "
+                            "공제받은 세액을 추가납부하므로 올해 상시근로자 수를 확인합니다"],
+                           [f"credit:{c.get('name') or c.get('code')}" for c in credits])
+            elif filed:
+                self.judge("2-3-13-1", "자료 필요",
+                           [f"전기에 {' · '.join(form_name(c) for c in filed)}를 냈는데 공제 줄을 읽지 못했습니다. 상시근로자 감소 "
+                            "사후관리(추가납부)를 확인하려면 전기 공제액과 올해 상시근로자 수가 필요합니다"])
         rnd = T["rnd"]
         present("2-3-14-1", rnd, "경상연구개발비 · 개발비 계정이 없습니다")
         present("2-3-14-2", rnd, "경상연구개발비 · 개발비 계정이 없습니다")
@@ -2453,6 +2773,7 @@ class Builder:
                 and cls.size(iss) < FOLD_LIMIT)
 
     def finalize(self) -> dict:
+        self.check_only: dict[int, set] = {}      # 이슈 번호 → 그 이슈로는 「확인」 까지만 올리는 서식(add check_forms)
         keys = list(self.issues)
         folded = {k: self.foldable(self.issues[k]) for k in keys}
         order = sorted(keys, key=lambda k: (self.bucket(self.issues[k]), folded[k], -self.size(self.issues[k]), keys.index(k)))
@@ -2465,6 +2786,7 @@ class Builder:
                 self.judge(gid, "이슈", keys=[k])
             extra = iss.pop("law_extra", [])
             links = iss.pop("_links", [])
+            self.check_only[numbers[k]] = set(iss.pop("_check_forms", []))
             if links:
                 iss["basis"] = iss["basis"] + [f"함께 볼 이슈 {numbers[x]}" for x in dict.fromkeys(links) if x in numbers]
             iss["law"] = law_for(rule, iss["title"]) + [dict(x) for k in extra for x in load_laws().get(k, [])]
@@ -2486,33 +2808,61 @@ class Builder:
         return {"guide": guide, "issues": issues, "forms": self.forms_list(issues)}
 
     def forms_list(self, issues: list[dict]) -> list[dict]:
+        """서식 총괄표 줄. 기본 서식 · 이슈가 가리킨 서식 · 9호(신고건 가산세) · 전기에 낸 서식(쪽이 있든 총괄표 첨부 O 만 있든).
+        줄마다 group(분류) · tier(티어) · tier_confirmed(회계사 확인 전이면 False)는 forms.yaml 정본에서 온다(11-01, 설계안 7.1절).
+        「해당 없음」 줄은 내지 않는다. 총괄표 전체(forms.yaml names 전체)는 chief 가 이 줄 위에 채운다(7.0절 3)."""
         eng = engine_forms()
         rows: dict[str, dict] = {}
 
         def row(code: str) -> dict:
             if code not in rows:
-                rows[code] = {"code": code, "name": form_name(code), "prior_filed": self.prior_filed(code), "status": None,
+                tier, confirmed = form_tier(code)
+                rows[code] = {"code": code, "name": form_name(code), "group": form_group(code), "tier": tier,
+                              "tier_confirmed": confirmed, "prior_filed": self.prior_filed(code), "status": None,
                               "why": [], "by": "엔진" if code in eng else "사람"}
             return rows[code]
 
         for code in BASIC_FORMS:
-            row(code)["status"] = "해당"
+            row(code)["status"] = "확인" if code in CONFIRM_BASIC else "해당"
         for iss in issues:
             for code in iss["forms"]:
                 r = row(code)
                 if iss["no"] not in r["why"]:
                     r["why"].append(iss["no"])
                 if r["status"] != "해당":
-                    r["status"] = "해당" if iss["certainty"] == "확실" and iss["kind"] != "전기 연속" else "확인"
+                    sure = iss["certainty"] == "확실" and iss["kind"] != "전기 연속" and code not in getattr(self, "check_only", {}).get(iss["no"], ())
+                    r["status"] = "해당" if sure else "확인"
         if (self.info or {}).get("가산세"):            # 신고건.json 에 사람이 넣은 가산세가 있으면 9호를 만든다
             r = row("9")
             r["status"] = "해당"
             if "신고건 가산세" not in r["why"]:
                 r["why"].append("신고건 가산세")
-        for code, f in self.prior_forms.items():
+        # 전기에 낸 서식은 이슈 · 기본 서식이 아니어도 줄을 둔다(20_2 처럼 당기 계정 조건에 안 걸려도 전기에 냈으면 회계사가 본다).
+        # PDF 에 쪽이 있는 서식(prior_forms)과 전기 총괄표에 첨부 O 만 찍힌 서식(prior_listed) 둘 다.
+        for code in [*self.prior_forms, *sorted(self.prior_listed)]:
             if code not in rows:
-                row(code)["status"] = "확인"
+                r = row(code)
+                r["status"] = "확인"
+                r["why"].append("전기 제출")
+        # 첫 수임(전기 신고서가 없는데 전기 금액이 있음): 전기에 냈는지로 정하던 서식은 당기 근거 계정이 있으면 「확인」 으로 둔다.
+        # 전기 줄이 없다고 「해당 없음」(총괄표에서 빠짐)이 되지 않게 한다(11-08 B1, 제품 forms/when.py 「아직 모름」). 새 판정 값을 만들지
+        # 않고 「확인」 과 까닭 글로 가린다(총괄표 · 화면 · 스킬이 판정 글자를 그대로 견준다). 신설 첫 해는 전기 신고서가 없으니 넣지 않는다
+        if self.P.get("no_prior") and not self.first_year:
+            for code, why in self.no_prior_forms():
+                r = row(code)
+                if r["status"] is None:
+                    r["status"] = "확인"
+                if why not in r["why"]:
+                    r["why"].append(why)
         return list(rows.values())
+
+    def no_prior_forms(self) -> list[tuple[str, str]]:
+        """첫 수임 건에서 전기 제출로 정하던 서식과 까닭. 8호(갑)(이월 공제 · 감면 기간)과 PRIOR_FORMS 가운데 당기 근거 계정이 있는 것."""
+        out = [("8갑", "전기 신고서 없음(첫 수임): 전기 공제 · 감면과 이월액을 몰라 정하지 못했습니다")]
+        for code, got in self.prior_form_signals().items():
+            if got:
+                out.append((code, f"전기 신고서 없음(첫 수임): 전기 제출 여부를 몰라 정하지 못했습니다(당기 근거 계정 {' · '.join(got[:3])})"))
+        return out
 
     def first_year_text(self) -> None:
         """첫 사업연도면 이슈 근거와 가이드 사실 글에서 전기 대비 글(「(전기 0원)」 · 「증감 …원」 · 「신규」)을 뺀다. 전기 금액이
@@ -2562,9 +2912,12 @@ class Builder:
         self.rule_misc_accounts()
         self.rule_credits()
         self.rule_forms_needed()
+        self.rule_construction_interest()
+        self.rule_prior_forms()
         self.rule_prior_pairs()
         self.rule_prior_donation_other()
         self.rule_prior()
+        self.cap_fx()
         self.link_prior_fixes()
         self.guide_lines()
         self.first_year_text()

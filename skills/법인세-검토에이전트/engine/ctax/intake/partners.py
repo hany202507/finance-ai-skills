@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-from .xlsxread import compact, n0, num, text
+from .xlsxread import Cells, compact, text
 
 
 @dataclass
@@ -46,19 +46,21 @@ def digest(rows) -> str:
     return h.hexdigest()
 
 
-def parse_a(path: str, rows: list[list], hint: str | None) -> PartnerFile:
+def parse_a(path: str, rows: list[list], hint: str | None, ctx: Cells | None = None) -> PartnerFile:
+    ctx = ctx or Cells()
     pf = PartnerFile(path=path, form="A", hint=hint)
     body = []
-    for r in rows[1:]:
+    for row_no, r in enumerate(rows[1:], start=2 + ctx.off):
+        n0 = lambda c: ctx.n0(r[c], row_no, c)       # noqa: E731
         r = list(r) + [None] * 6
         first = text(r[0])
         if first == "" and all(x in (None, "") for x in r[1:6]):
             continue
         if compact(first).startswith("합계"):
-            pf.total = {"op": n0(r[2]), "dr": n0(r[3]), "cr": n0(r[4]), "bal": num(r[5])}
+            pf.total = {"op": n0(2), "dr": n0(3), "cr": n0(4), "bal": ctx.num(r[5], row_no, 5)}
             continue
-        body.append({"code": first, "name": text(r[1]), "op": n0(r[2]), "dr": n0(r[3]), "cr": n0(r[4]),
-                     "bal": n0(r[5])})
+        body.append({"code": first, "name": text(r[1]), "op": n0(2), "dr": n0(3), "cr": n0(4),
+                     "bal": n0(5), "row": row_no})
     pf.rows = body
     pf.digest = digest([(x["code"], x["name"], x["op"], x["dr"], x["cr"], x["bal"]) for x in body])
     deb = all(x["bal"] == x["op"] + x["dr"] - x["cr"] for x in body)
@@ -73,18 +75,19 @@ def parse_a(path: str, rows: list[list], hint: str | None) -> PartnerFile:
     return pf
 
 
-def parse_b(path: str, rows: list[list]) -> list[PartnerFile]:
+def parse_b(path: str, rows: list[list], ctx: Cells | None = None) -> list[PartnerFile]:
     """B 꼴 한 파일 → 계정마다 PartnerFile. 계정코드가 빈 줄은 바로 앞 계정에 붙인다."""
+    ctx = ctx or Cells()
     body = []
     last = ""
-    for r in rows[1:]:
+    for row_no, r in enumerate(rows[1:], start=2 + ctx.off):
         r = list(r) + [None] * 7
         if all(x in (None, "") for x in r[:7]):
             continue
         acc = text(r[0]) or last
         last = acc
         body.append({"account": acc, "account_name": text(r[1]), "code": text(r[3]), "name": text(r[4]),
-                     "amount": n0(r[5])})
+                     "amount": ctx.n0(r[5], row_no, 5), "row": row_no})
     accs = list(dict.fromkeys(x["account"] for x in body if x["account"]))
     out = []
     if not accs:

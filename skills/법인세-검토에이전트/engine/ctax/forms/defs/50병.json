@@ -1,0 +1,73 @@
+{
+ "code": "50병",
+ "title": "자본금과적립금조정명세서(병)",
+ "aliases": {
+  "efile": "D121400",
+  "pdf": "자본금과적립금조정명세서(병)"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "①해외현지기업 고유번호",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②법인명",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③기초잔액",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④감소",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤증가",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥기말잔액(익기초현재)",
+   "rows": true,
+   "formula": "c('3')-c('4')+c('5')"
+  },
+  {
+   "code": "7",
+   "label": "⑦증감사유",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "합계_3",
+   "label": "합계 ③기초잔액",
+   "formula": "F.sum('50병','3')",
+   "total": true
+  },
+  {
+   "code": "합계_4",
+   "label": "합계 ④감소",
+   "formula": "F.sum('50병','4')",
+   "total": true
+  },
+  {
+   "code": "합계_5",
+   "label": "합계 ⑤증가",
+   "formula": "F.sum('50병','5')",
+   "total": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 ⑥기말잔액",
+   "formula": "F.sum('50병','6')",
+   "total": true
+  }
+ ]
+}

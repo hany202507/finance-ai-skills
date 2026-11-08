@@ -19,7 +19,7 @@ description: "법인 증권계좌의 국내주식·미국주식 거래내역(증
 
 ## 설치와 시험해 보기
 
-설치 스크립트로 받으면 `requirements.txt`(openpyxl · xlrd · pdfplumber)까지 깔린다. 스캔 PDF · 화면 캡처를 읽으려면 스킬 폴더에서 `pip install -r requirements-ocr.txt` 를 한 번 더 실행한다(수백 MB, 엑셀 · 글자 있는 PDF 만 쓰면 필요 없다).
+설치 스크립트로 받으면 `requirements.txt`(openpyxl · xlrd · pdfplumber · pikepdf)까지 깔린다. pikepdf 는 암호 걸린 PDF(미래에셋 거래내역증명서 · 키움 PDF)를 연다. 스캔 PDF · 화면 캡처를 읽으려면 스킬 폴더에서 `pip install -r requirements-ocr.txt` 를 한 번 더 실행한다(수백 MB, 엑셀 · 글자 있는 PDF 만 쓰면 필요 없다).
 
 1. 설치 확인: `python scripts/check_env.py`. 파이썬 패키지, Node.js(kordoc), OCR 패키지가 있는지 표로 나온다. 엑셀이나 LibreOffice 는 필요 없다. 거래 자료는 읽지 않는다.
 2. 시험해 보기: 회사 증권계좌 거래내역 한 달치(엑셀이나 PDF)로 시작한다. Claude 에게 이렇게 요청한다.
@@ -228,3 +228,4 @@ PASS 는 계산과 대사만 본다. 원천 자료가 맞는지, 계정 분류·
 | 2026-11-08 | OCR 이 환율 1,480 을 1,48C 로 읽음 | 숫자 열 안 숫자 닮은 글자를 숫자로(_unconfuse) |
 | 2026-11-08 | 새 양식마다 사전 파일을 고쳐야 했음 | 설정 `머리글` · `적요규칙` 으로 더한다 |
 | 2026-11-08 | 위하고 실제 업로드에서 한글(계정과목명 · 거래처 · 적요)이 깨짐. openpyxl 이 숫자 문자참조 inlineStr 로 씀 | 쓴 직후 sharedStrings · UTF-8 로 바꾼다. 엑셀로 다시 저장한 파일과 같은 꼴 |
+| 2026-11-09 | 공개 0.19.3 설치 목록(`requirements.txt`)에 pikepdf 가 없었다. 새로 설치한 PC 에서 미래에셋 거래내역증명서(암호 걸린 PDF)를 비밀번호 없이 넣으면 pdfplumber 가 원인을 알 수 없는 오류로 멈췄다 | `requirements.txt` · `check_env.py` 에 pikepdf 를 넣었다. 암호 걸린 PDF 를 넣었는데 pikepdf 가 없으면 설치 명령과 `--password` 안내를 내고 멈춘다 |

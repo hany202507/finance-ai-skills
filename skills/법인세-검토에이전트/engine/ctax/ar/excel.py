@@ -8,7 +8,7 @@ from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
 from ctax import xlsx as X
-from ctax.ar.guide import load_guide
+from ctax.ar.guide import form_group, form_tier, load_guide
 
 # 집계 시트 이름(조서 등록부에 없고 wp/summary.py 가 만든다)
 AGG_NAMES = {"summary_15": "소득금액조정", "tax_3": "과세표준 · 세액", "reserve_50": "유보 · 자본금", "loss": "결손금"}
@@ -30,6 +30,16 @@ def paper_names() -> dict[str, str]:
             continue
         out[pid] = f"{no} {name}"
     return out
+
+
+# 서식 목록(총괄표) 시트 열. 분류 · 티어는 forms.yaml 정본(11-01, 설계안 7.1절)
+FORM_COLS = ["서식", "서식 이름", "분류", "티어", "전기 제출", "당기 판정", "까닭 이슈", "채움", "회계사 확인"]
+
+
+def tier_text(f: dict) -> str:
+    """티어 글. 회계사 확인 전이면 「1 (확인 전)」. AR.json 줄에 tier 가 없으면(옛 AR.json) forms.yaml 에서 읽는다."""
+    tier, confirmed = (f["tier"], bool(f.get("tier_confirmed"))) if f.get("tier") else form_tier(f.get("code"))
+    return tier if confirmed else f"{tier} (확인 전)"
 
 
 COLS = ["번호", "종류", "확실도", "가이드", "계정", "제목", "전기", "당기", "증감", "근거", "전기 처리", "조서", "서식",
@@ -177,19 +187,22 @@ def write(ar: dict, path: Path, ledger: dict | None = None, info: dict | None = 
     # 서식 목록
     ws = wb.create_sheet("서식 목록")
     r = X.title(ws, "서식 목록(총괄표)",
-                f"{head} · 기본 서식, 이슈가 가리키는 서식, 전기에 냈던 서식. 채움이 엔진이면 ctax 가 채우고 사람이면 회계사가 넣습니다")
-    X.header(ws, r, ["서식", "서식 이름", "전기 제출", "당기 판정", "까닭 이슈", "채움", "회계사 확인"])
+                f"{head} · 기본 서식, 이슈가 가리키는 서식, 전기에 냈던 서식. 분류 · 티어는 ar/forms.yaml 정본이고 티어 「(확인 전)」 은 "
+                "회계사가 아직 확인하지 않은 값입니다. 채움이 엔진이면 ctax 가 채우고 사람이면 회계사가 넣습니다")
+    X.header(ws, r, FORM_COLS)
     for i, f in enumerate(ar.get("forms", [])):
         row = r + 1 + i
         X.cell(ws, row, 1, f["code"])
         X.cell(ws, row, 2, f["name"])
-        X.cell(ws, row, 3, "제출" if f.get("prior_filed") else "")
-        X.cell(ws, row, 4, f["status"])
-        X.cell(ws, row, 5, ", ".join(str(n) for n in f.get("why", [])))
-        X.cell(ws, row, 6, f["by"])
-        X.cell(ws, row, 7, None, kind="input")
+        X.cell(ws, row, 3, f.get("group") or form_group(f["code"]))
+        X.cell(ws, row, 4, tier_text(f))
+        X.cell(ws, row, 5, "제출" if f.get("prior_filed") else "")
+        X.cell(ws, row, 6, f["status"])
+        X.cell(ws, row, 7, ", ".join(str(n) for n in f.get("why", [])))
+        X.cell(ws, row, 8, f["by"])
+        X.cell(ws, row, 9, None, kind="input")
     ws.freeze_panes = ws.cell(row=r + 1, column=3)
-    X.widths(ws, [14, 40, 10, 10, 16, 8, 30])
+    X.widths(ws, [14, 40, 22, 12, 10, 10, 16, 8, 30])
 
     # 가이드 대조
     ws = wb.create_sheet("가이드 대조")

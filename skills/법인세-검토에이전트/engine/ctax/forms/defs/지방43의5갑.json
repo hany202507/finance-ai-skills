@@ -1,0 +1,86 @@
+{
+ "code": "지방43의5갑",
+ "title": "법인지방소득세특별징수세액명세서(갑)",
+ "aliases": {
+  "pdf": "법인지방소득세특별징수세액명세서(갑)"
+ },
+ "source": "지방세법 시행규칙 별지 제43호의5서식(갑)(2016.12.30 개정). 란 번호 · 이름은 전기 신고서 PDF 글자. 10호(갑) 줄과 짝이다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①적요",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2_1",
+   "label": "②원천(특별)징수의무자 사업자(주민등록)번호",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②원천(특별)징수의무자 상호(성명)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③원천징수일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④이자금액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤세율",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥법인세",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "⑦특별징수세액(⑥×10%, 10원 미만 버림)",
+   "dtype": "won",
+   "formula": "rounddown(c('6')*param('지방특별징수율'), -1)",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧특별징수지",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "합계_4",
+   "label": "합계 ④이자금액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5갑','4')",
+   "total": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 ⑥법인세",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5갑','6')",
+   "total": true
+  },
+  {
+   "code": "합계_7",
+   "label": "합계 ⑦특별징수세액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5갑','7')",
+   "total": true
+  }
+ ]
+}

@@ -16,7 +16,7 @@ from types import ModuleType
 
 from . import papers as registry
 from . import prior_compare
-from .books import Books, frac, rate, rd
+from .books import Books, frac, prior_start, rate, rd
 from .model import DISPOSITION_CODE, DISPOSITIONS, Adj, Paper
 
 DIRECT_ROWS = 5          # 15호 「직접 조정」 노란 줄 수
@@ -39,6 +39,45 @@ def penalty_from_info(b: Books) -> int:
         return 0
     t = penalty.totals(vals, penalty._fy_days(inp), registry.load(penalty.CODE), str(b.info.get("fy_start") or "2025-01-01"))
     return int(t.get("21") or 0)
+
+SMALL_RENTAL = "제55조 제1항 제2호 세율(부동산임대업 주업 등 소규모 법인)"
+SMALL_RENTAL_FROM = "2025-01-01"   # 제55조 제1항 제2호는 이 날 이후 개시하는 사업연도부터(부칙 법률 제20613호 제5조)
+
+
+def prior_small_rental(b: Books, small: bool) -> bool:
+    """결손금 소급공제(직전 사업연도 세율)에 제2호 표를 쓰는지. 당기가 제2호이고 직전 사업연도 개시일도 SMALL_RENTAL_FROM 이후일
+    때만이다. 2025 사업연도의 직전(2024)은 제2호가 없던 사업연도라 제1호 표를 쓴다. 엑셀 결손금 시트 수식도 이 기준을 따른다."""
+    return small and prior_start(b.info.get("fy_start")) >= SMALL_RENTAL_FROM
+
+
+def _small_rental(b: Books, papers: list, t3: Paper) -> bool:
+    """법인세법 제55조 제1항 제2호(200억원 이하 단일 세율, 2025 19% · 2026 20%) 대상인지. 노란 칸 SMALL_RENTAL 의 값(여 · 부).
+
+    대상은 제60조의2 제1항 제1호 법인, 곧 시행령 제97조의4 제2항 · 제42조 제2항 요건을 모두 갖춘 법인이다(지배주주등 지분 50% 초과,
+    부동산임대업 주업 또는 임대 · 이자 · 배당 수입 50% 이상, 상시근로자 5명 미만). 2025-01-01 이후 개시 사업연도부터(부칙 제5조).
+    기본값은 업무용승용차 조서 「부동산임대업 주업」 과 같은 판정(17호 업종코드, 같은 시행령 제42조 제2항 법인)이다. 다른 두 요건은
+    장부로 알 수 없어 확인 줄에 적는다."""
+    if str(b.info.get("fy_start") or SMALL_RENTAL_FROM) < SMALL_RENTAL_FROM:
+        return False
+    car = next((p for p in papers if p.id == "business_car"), None)
+    info = (car.extra.get("estate") if car is not None else None) or {}
+    if "value" in info:
+        default = info["value"]
+    else:
+        from .papers import business_car
+
+        scratch = Paper("business_car", "4", "업무용승용차")
+        default = "여" if business_car.estate_main(scratch, b) else "부"
+        info = scratch.extra.get("estate") or {}
+    value = t3.take(b, SMALL_RENTAL, default)
+    law = "법인세법 제55조 제1항 제2호 · 제60조의2 제1항 제1호 · 시행령 제97조의4 제2항 · 제42조 제2항"
+    if value == "여":
+        first = rate(b.rates, "corporate_tax", "brackets_small_rental")[0][1]
+        t3.confirm.append(f"산출세액을 200억원 이하 {round(first * 100)}% 단일 세율로 계산했습니다({law}). 판정 근거: {info.get('basis') or '회계사 값'}. "
+                          "사업연도 종료일 지배주주등 지분 50% 초과와 상시근로자 5명 미만도 갖춰야 합니다. 갖추지 않았으면 노란 칸 "
+                          f"「{SMALL_RENTAL}」 을 「부」 로 바꾸십시오")
+    return value == "여"
+
 
 def progressive_tax(base: int, brackets, months: int = 12) -> int:
     """법인세법 제55조 누진세율. 1년 미만이면 연환산 뒤 월수로 나눈다."""
@@ -244,6 +283,9 @@ def run(b: Books) -> Result:
     deduction = t3.take(b, "09", 0, "int")
     base = income - loss_used - nontax - deduction
     brackets = rate(b.rates, "corporate_tax", "brackets")
+    small = _small_rental(b, papers, t3)
+    if small:
+        brackets = rate(b.rates, "corporate_tax", "brackets_small_rental")
     computed = progressive_tax(base, brackets, b.months)
     # 공제감면 · 최저한세(CONTRACT.md 15절). 산출세액이 나온 뒤 조서의 after_tax(조서 20 credits)가 3호 17 · 19 기본값을 정한다
     # income(각사업연도소득)은 감면 소득을 이월결손금 등 공제액만큼 비례해 줄일 때 쓴다(법인세법 시행령 제96조 제2호)
@@ -300,6 +342,7 @@ def run(b: Books) -> Result:
                  "12": computed, "17": credits_min, "18": computed - credits_min, "19": credits_ex, "20": penalty,
                  "21": computed - credits_min - credits_ex + penalty, "22": interim, "24": withholding,
                  "28": prepaid, "29": extra_tax, "30": payable, "지방소득세 특별징수": local_wh, "기납부세액 명세": pre["rows"]}
+    t3.values["소규모 법인 세율"] = "여" if small else "부"     # 1호 (36) 부동산임대업 주업법인 · 3호 세율(forms 가 읽는다)
     prior_credits = (b.prior or {}).get("credits") or []
     if prior_credits:
         names = ", ".join(f"{c.get('name')} {int(c.get('amount') or 0):,}원" for c in prior_credits)
@@ -316,7 +359,11 @@ def run(b: Books) -> Result:
     t3.status = "작성"
 
     # 결손금. 소급공제는 직전 사업연도 세율이다(법인세법 제72조 제1항 제2호, 2026 사업연도면 2025 표)
-    back = carryback(b, ls, income, rate(b.prior_rates or b.rates, "corporate_tax", "brackets"))
+    back = carryback(b, ls, income, rate(b.prior_rates or b.rates, "corporate_tax",
+                                         "brackets_small_rental" if prior_small_rental(b, small) else "brackets"))
+    if prior_small_rental(b, small) and back["소급공제 최대 환급세액"]:
+        ls.confirm.append(f"결손금 소급공제 환급세액을 직전 사업연도 제2호 세율로 계산했습니다(노란 칸 「{SMALL_RENTAL}」 이 여). "
+                          "직전 사업연도에 제2호 요건(제60조의2 제1항 제1호)을 갖추지 않았으면 제1호 세율로 다시 계산해야 합니다")
     losses = [{"year": r["year"], "incurred": r["incurred"], "used": r["used"], "remaining": r["closing"]} for r in lrows]
     if income < 0:
         row = {"year": b.fy, "incurred": -income, "used": 0, "remaining": -income - back["소급공제 결손금"]}

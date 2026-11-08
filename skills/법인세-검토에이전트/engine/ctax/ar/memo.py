@@ -12,7 +12,10 @@ AI(법인세-AR 스킬)가 쓴 메모 JSON
   3. 글 속 금액(쉼표 있는 숫자, 쉼표 없이 다섯 자리 이상인 숫자)은 AR.json(조정.json 이 있으면 그것도)에 있는 값이다(△ · 음수는 절대값으로 본다).
      법정 금액은 조문 글 꼴(3만원, 1천200만원)로 쓰면 검사하지 않는다. 법령 공포번호(법률 제20613호) · MST · 여덟 자리
      날짜(20241231)는 금액이 아니다
-  4. law 는 한 줄 이상, 줄마다 ref 와 grade(★★★ · ★★☆ · ★☆☆ · ☆). ★★★ 는 url 이 있어야 하고 url 은 law.go.kr 주소다
+  4. law 는 한 줄 이상, 줄마다 ref 와 grade(★★★ · ★★☆ · ★☆☆ · ☆). ★★★ 는 url 이 있어야 한다. url 은 도구가 준 주소만
+     받는다: korean-law 의 law.go.kr 주소, 또는 TaxDoctor get_article 의 3단보기 링크(taxdoctorai.com/law/<인코딩한 법령명>/<인코딩한
+     조>, 10-29). TaxDoctor 링크는 풀어 읽은 법령명과 조가 그 줄 ref 에 있어야 한다. 한글을 그대로 넣었거나 다른 경로인 주소는 손으로
+     조립한 주소로 보고 막는다
   5. 줄표(—) · 물음표 금지, 질문은 「…주십시오」 로 끝난다
 
 넣을 때 엔진이 by「AI」 · confirmed false · at 을 붙인다. 회계사 결론은 AR_이슈.xlsx 노란 칸을 다음 실행이 읽는다.
@@ -25,6 +28,34 @@ from datetime import datetime
 JUDGMENTS = ("조정 필요", "조정 없음", "판단 필요")
 GRADES = ("★★★", "★★☆", "★☆☆", "☆")
 URL_RE = re.compile(r"^https?://(www\.)?law\.go\.kr/")
+# TaxDoctor get_article 이 주는 3단보기 링크. 경로 두 마디(법령명 · 조)가 퍼센트 인코딩된 꼴만 받는다(10-29)
+TAXDOCTOR_RE = re.compile(r"^https://taxdoctorai\.com/law/((?:%[0-9A-F]{2}|[A-Za-z0-9._~-])+)/((?:%[0-9A-F]{2}|[A-Za-z0-9._~-])+)$")
+LAW_ALIAS = (("조특법", "조세특례제한법"), ("조특령", "조세특례제한법시행령"), ("국조법", "국제조세조정에관한법률"),
+             ("국기법", "국세기본법"), ("법인령", "법인세법시행령"))
+
+
+def _squash(text: str) -> str:
+    t = re.sub(r"[\s·ㆍ-]", "", str(text or ""))
+    for short, full in LAW_ALIAS:
+        t = t.replace(short, full)
+    return t
+
+
+def url_problem(url: str, ref: str) -> str:
+    """근거 url 이 도구가 준 주소인지. 문제 글(없으면 빈 글)."""
+    if URL_RE.match(url):
+        return ""
+    m = TAXDOCTOR_RE.match(url)
+    if not m:
+        if "taxdoctorai.com" in url:
+            return f"TaxDoctor 주소는 get_article 이 준 3단보기 링크(법령명 · 조를 인코딩한 꼴) 그대로 씁니다. 손으로 조립하지 않습니다: {url}"
+        return f"url 은 korean-law 도구가 준 law.go.kr 주소나 TaxDoctor get_article 의 3단보기 링크 그대로 씁니다: {url}"
+    from urllib.parse import unquote
+    law, art = (unquote(g) for g in m.groups())
+    flat = _squash(ref)
+    if _squash(law) not in flat or _squash(art) not in flat:
+        return f"TaxDoctor 링크의 법령 · 조({law.replace('-', ' ')} {art})가 ref 와 다릅니다. 그 조문을 연 링크를 씁니다: {url}"
+    return ""
 COMMA_RE = re.compile(r"(?<![\d.,])\d{1,3}(?:,\d{3})+(?![\d,])")
 PLAIN_RE = re.compile(r"(?<![\d.,])\d{5,}(?![\d,])")
 # 금액이 아닌 번호. 법령 공포번호(법률 제20613호 · 대통령령 제35347호, 부칙 <제20613호, 20241231>), 법령일련번호(MST 279739),
@@ -98,8 +129,9 @@ def check_item(item: dict, nums: set) -> list[str]:
         url = str(x.get("url") or "")
         if x.get("grade") == "★★★" and not url:
             probs.append(f"{w} 근거 {j}: ★★★ 는 원문을 확인한 도구의 url 이 있어야 합니다")
-        if url and not URL_RE.match(url):
-            probs.append(f"{w} 근거 {j}: url 은 korean-law 도구가 준 law.go.kr 주소 그대로 씁니다: {url}")
+        bad = url_problem(url, str(x.get("ref") or "")) if url else ""
+        if bad:
+            probs.append(f"{w} 근거 {j}: {bad}")
     for where, text in _texts({**item, "questions": qs, "law": law}):
         if "—" in text:
             probs.append(f"{w} {where}: 줄표(—)를 쓰지 않습니다")

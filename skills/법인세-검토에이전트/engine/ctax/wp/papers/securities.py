@@ -10,7 +10,13 @@
   50호(을)에 종목별 유보(「단기매매증권(가상전자)」 꼴)가 있으면 그 종목을 판 해에 그 유보를 먼저 추인하고 나머지만 비율로 나눈다.
   적요로 종목을 가르지 못하면 전처럼 총평균법(시행령 제75조 제2항 · 제74조 제4항 준용, 무신고 평가방법) 비율
   「처분 장부가 ÷ (기초 장부가 + 당기 취득)」 을 쓴다. 어느 쪽이든 노란 칸이고 확인 줄을 낸다(종목별 유보 명세로 정한다).
+- 10-29(대표 기준): 비율로 어림한 추인액(기초 보유분 · 종목별 · 총평균)은 장부만으로 어느 쪽이 맞는지 알 수 없다. 그래서 엔진은
+  금액을 정하지 않고(노란 칸 기본값 0, 15호에 넣지 않음) 처분 내역 · 취득가액 명세를 요청하는 확인 줄에 어림값을 참고로 적는다.
+  장부로 금액이 맞는 경우(적요 「전기 평가」 처분손익, 기초 보유분 전부 처분, 처분 없음)는 전처럼 계산해 넣는다
 - 기타포괄손익(매도가능증권평가손익)의 증감은 익금산입(기타)과 익금불산입(유보)의 짝, 줄면 반대 짝(신고본 관례)
+  10-29 밤(RN 정답표): 증감은 자산 쪽 평가 전표로 센다. 기타포괄손익 계정 줄 가운데 같은 전표에 유가증권 자산 줄이 있고 처분손익 ·
+  현금 · 금융상품 줄이 없는 전표(평가 전표)의 금액만 넣는다. 법인세 효과 전표(자산 줄 없음)와 처분 · 재분류 전표는 빼고 확인 줄에
+  남긴다. 평가 전표가 하나도 없으면 전처럼 계정 잔액 증감을 쓴다
 - 지분법이익은 익금불산입(△유보), 지분법손실은 손금불산입(유보), 지분법 주식에서 받은 배당은 익금산입(유보)
 - 매도가능증권 종목 유보(손상 · 처분손실 등)는 그대로 둔다. 10-21: 과목 이름과 같은 자산 계정의 기초 보유분을 모두 처분했으면 전액
   추인이 기본값이고, 일부만 처분했으면 총평균법 비율 추정액을 확인 줄에만 적는다(과목에 「처분」 이 든 유보는 계정을 잇지 않아 전처럼 0)
@@ -347,45 +353,77 @@ def _trading(p: Paper, b: Books, vs, it: dict, adjs: list) -> None:
     else:
         calc = rd(abs(R) * ratio)
     key = f"전기 유보 추인/{s}"
-    rev = p.take(b, key, calc, "int") if R else 0
+    # 장부로 금액이 맞는 경우만 엔진이 넣는다(10-29 대표 기준). 비율 어림은 추가 자료 확인 전이라 0
+    sure = R == 0 or bool(memo) or calc == abs(R) or calc == 0
+    rev = p.take(b, key, calc if sure else 0, "int") if R else 0
     gain = sum(max(0, gain_of(a)) for a in it["valuation"])
     loss = sum(max(0, -gain_of(a)) for a in it["valuation"])
     closing = (R + rev if R < 0 else R - rev) - gain + loss
     open_sell = sum(v for _, v in sold)
     it.update({"기초장부가": o, "취득": buy, "처분": sell, "기초보유처분": open_sell, "비율": float(ratio), "추인방법": how or "총평균",
-               "적요추인": memo, "추정추인": calc, "추인": rev, "평가이익": gain, "평가손실": loss, "기말유보": closing})
+               "적요추인": memo, "추정추인": calc, "추인": rev, "평가이익": gain, "평가손실": loss, "기말유보": closing,
+               "추인확인": not sure})
     if R:
         _signed_reversal(adjs, it, key, rev, "평가이익" if R < 0 else "평가손실")
     adjs.append(Adj("차감", s, gain, "유보", f"{s} 평가이익", "당기 평가이익 익금불산입", f"{i}.평가이익", s, "증가", -1))
     adjs.append(Adj("가산", s, loss, "유보", f"{s} 평가손실", "당기 평가손실 손금불산입", f"{i}.평가손실", s, "증가", 1))
     if R and key not in p.overridden:
         mixed = [k for k, st in stocks.items() if k and st["open_sell"] and st["mixed"]]
+        ask = (f"{s}: 추가 자료 필요(처분 내역 · 취득가액 명세). 전기 유보 {R:,}원 중 당기 처분분 추인액은 장부만으로 정할 수 없어 "
+               f"넣지 않았습니다(15호 확인 전, 노란 칸 0). 참고로 장부로 어림하면 {calc:,}원입니다. ")
         if memo:
             p.notes.append(f"{s}: 적요에 「전기 평가」 가 든 처분손익 {memo:,}원으로 전기 유보 {R:,}원 중 {calc:,}원을 추인했습니다")
-        elif how in ("종목별", "기초 보유분"):
+        elif how in ("종목별", "기초 보유분") and not sure:
             names = ", ".join(f"{k} {v:,}원" for k, v in sold) or "없음"
-            text = (f"{s}: 전기 유보 {R:,}원은 기초에 가진 종목의 평가액이라 기초 보유분 처분 비율(처분 장부가 {open_sell:,} ÷ 기초 "
-                    f"장부가 {o:,} = {float(ratio):.2%})로 {calc:,}원 추인했습니다(법인세법 제42조 제1항). 종목마다 그해에 산 것보다 더 판 "
+            text = ask + (f"전기 유보 {R:,}원은 기초에 가진 종목의 평가액이라 기초 보유분 처분 비율(처분 장부가 {open_sell:,} ÷ 기초 "
+                    f"장부가 {o:,} = {float(ratio):.2%})로 {calc:,}원입니다(법인세법 제42조 제1항). 종목마다 그해에 산 것보다 더 판 "
                     f"금액을 기초 보유분 처분으로 보았습니다: {names}")
             if how == "종목별":
                 text += f". 전기 50호(을) 종목별 유보({', '.join(it['종목유보'])})는 그 종목을 판 것으로 보아 먼저 추인했습니다"
             if mixed:
                 text += (f". {', '.join(mixed)} 은 그해에 사기도 해서 기초 보유분 처분이 이보다 클 수 있습니다(산 것보다 더 판 금액만 넣음)")
-            p.confirm.append(text + ". 종목별 유보 명세로 확인하고 노란 칸을 고치세요")
-        elif how == "초과":
-            p.confirm.append(f"{s}: 적요 종목으로 센 기초 보유분 처분 {open_sell:,}원이 기초 장부가 {o:,}원보다 커서(같은 종목을 다른 이름으로 "
+            p.confirm.append(text + ". 종목별 처분 내역 · 취득가액 명세로 추인액을 노란 칸에 넣으세요")
+        elif how == "초과" and not sure:
+            p.confirm.append(ask + f"적요 종목으로 센 기초 보유분 처분 {open_sell:,}원이 기초 장부가 {o:,}원보다 커서(같은 종목을 다른 이름으로 "
                              f"적은 줄이 있는 듯합니다) 총평균법 비율(처분 장부가 {sell:,} ÷ (기초 {o:,} + 취득 {buy:,}) = {float(ratio):.2%})로 "
-                             f"{calc:,}원 추인했습니다. 당기 매수분이 섞인 어림이라 종목별 유보 명세로 노란 칸을 고치세요")
-        elif how == "부호":
-            p.confirm.append(f"{s}: 종목별 유보로 나눈 추인액의 부호가 전기 유보 {R:,}원과 달라 총평균법 비율 {calc:,}원을 넣었습니다. "
-                             "종목별 유보 명세로 노란 칸을 고치세요")
+                             f"어림했습니다. 당기 매수분이 섞인 어림이라 종목별 처분 내역 · 취득가액 명세로 노란 칸에 넣으세요")
+        elif how == "부호" and not sure:
+            p.confirm.append(ask + f"종목별 유보로 나눈 추인액의 부호가 전기 유보 {R:,}원과 달라 총평균법 비율로 어림했습니다. "
+                             "종목별 처분 내역 · 취득가액 명세로 노란 칸에 넣으세요")
         elif calc and calc != abs(R):
-            p.confirm.append(f"{s}: 전기 유보 {R:,}원 중 처분분을 총평균법 비율(처분 장부가 {sell:,} ÷ (기초 {o:,} + 취득 {buy:,}) "
-                             f"= {float(ratio):.2%})로 {calc:,}원 추인했습니다. 종목별 유보 명세로 확인하고 노란 칸을 고치세요")
+            p.confirm.append(ask + f"총평균법 비율(처분 장부가 {sell:,} ÷ (기초 {o:,} + 취득 {buy:,}) = {float(ratio):.2%})로 "
+                             "어림했습니다. 종목별 처분 내역 · 취득가액 명세로 노란 칸에 넣으세요")
         elif calc:
             p.notes.append(f"{s}: 기초 보유분을 모두 처분해 전기 유보 {R:,}원을 전액 추인했습니다")
         elif not it["assets"]:
             p.confirm.append(f"{s}: 전기 유보 {R:,}원에 맞는 장부 계정을 찾지 못해 추인하지 않았습니다. 처분했으면 노란 칸에 넣으세요")
+
+
+RECLASS = re.compile(r"재분류|계정\s*대체|처분|매각|만기")
+
+
+def oci_valuation(b: Books, vs, accts: list[dict]) -> tuple[int, int, int] | None:
+    """기타포괄손익 계정의 (평가 전표 대변 증감, 법인세 효과 전표 증감, 처분 · 재분류 전표 증감). 평가 전표가 없으면 None.
+    평가 전표: 같은 전표에 유가증권 자산 줄이 있고 처분손익 · 현금 줄, 손익 계정 줄, 재분류 · 처분 적요가 없다."""
+    codes = {a["code"] for a in accts}
+    val = tax = other = 0
+    found = False
+    for ln in b.lines_of(accts):
+        amt = ln.credit - ln.debit
+        others = [o for o in vs.get((ln.date, ln.no), []) if o.account not in codes]
+        names = [((b.by_code.get(o.account) or {}).get("name") or o.account_name or "") for o in others]
+        asset = any((b.by_code.get(o.account) or {}).get("class") == "자산" and SEC.search(n) and not NOT_SEC.search(n)
+                    for o, n in zip(others, names))
+        if not asset:
+            tax += amt
+        elif (any("처분" in n or (CASH.search(n) and not SEC.search(n)) for n in names)
+              or any((b.by_code.get(o.account) or {}).get("class") in ("수익", "비용") for o in others)
+              or RECLASS.search(ln.memo or "")):
+            other += amt
+        else:
+            val += amt
+            found = True
+    return (val, tax, other) if found else None
 
 
 def _oci(p: Paper, b: Books, vs, it: dict, adjs: list) -> None:
@@ -393,7 +431,9 @@ def _oci(p: Paper, b: Books, vs, it: dict, adjs: list) -> None:
     accts = it["oci"]
     opening = sum(int(a.get("opening") or 0) for a in accts)
     closing_book = sum(int(a.get("closing") or 0) for a in accts)
-    credit = opening - closing_book            # 대변(자본 증가) 쪽 증감
+    book_change = opening - closing_book       # 대변(자본 증가) 쪽 장부 증감
+    got = oci_valuation(b, vs, accts) if accts else None
+    credit = got[0] if got else book_change    # 10-29: 자산 쪽 평가 전표 기준
     up, down = max(0, credit), max(0, -credit)
     name = accts[0]["name"] if accts else s
     it.update({"기초잔액": opening, "기말잔액": closing_book, "증감": credit, "기타포괄증가": up, "기타포괄감소": down,
@@ -404,6 +444,12 @@ def _oci(p: Paper, b: Books, vs, it: dict, adjs: list) -> None:
     adjs.append(Adj("가산", s, down, "유보", f"{name} 감소 유보", "평가로 줄어든 장부가액 익금산입", f"{i}.기타포괄감소", s))
     if not accts and R:
         p.notes.append(f"{s}: 기타포괄손익 계정이 장부에 없거나 변동이 없어 전기 유보 {R:,}원을 그대로 둡니다")
+    elif accts and got:
+        p.notes.append(f"{name}: 자산 쪽 평가 전표의 기타포괄손익 증감 {credit:,}원을 익금산입(기타) · 익금불산입(유보) 짝으로 넣었습니다"
+                       f"(장부 잔액 증감은 {book_change:,}원)")
+        if got[1] or got[2]:
+            p.confirm.append(f"{name}: 자산 줄이 없는 전표(법인세 효과 등) {got[1]:,}원과 처분 · 재분류 전표 {got[2]:,}원은 평가 증감에서 "
+                             "뺐습니다. 처분한 증권의 기타포괄손익을 지운 것이면 그 증권 유보를 추인하는지 확인하세요")
     elif accts:
         p.notes.append(f"{name}: 기타포괄손익 증감 {credit:,}원을 익금산입(기타) · 익금불산입(유보) 짝으로 넣었습니다. "
                        "법인세 효과를 뺀 금액으로 적었으면 자산 쪽 평가액과 다를 수 있습니다")

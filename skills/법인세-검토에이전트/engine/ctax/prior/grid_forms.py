@@ -631,11 +631,27 @@ def _p32(r: Reader) -> None:
         two = g.head(r"^2\.총급여액")
         start = one if one is not None else two
         if start is None:
+            if any(re.match(r"^퇴직급여추계액명세", norm(t)) for t in g.boxes.values()):
+                r.skip(g)                  # 회사가 붙인 사원별 퇴직급여추계액 명세(32호 서식 아님, 당기로 넘기지 않는다)
             continue
         r.region[g.page_no] = start.top
         _labelled(r, g, _32, start.bottom)
+        _p32_nine(r, g, start.bottom)
         if two is not None:
             _p32_rows(r, g, two)
+
+
+def _p32_nine(r: Reader, g: Grid, top: float) -> None:
+    """⑨ 차감액이 음수면 서식은 '(△102,394,566)0' 처럼 괄호 안 음수와 0 을 한 칸에 찍는다. ⑨ 는 0 으로 넣는다. 괄호 값은
+    ④ - ⑤ - ⑥ - ⑦ - ⑧ 로 다시 셀 수 있고 서식 정의에 란이 없어 넣지 않는다."""
+    for b, t in g.boxes.items():
+        m = re.fullmatch(r"\(△([\d,]+)\)0", norm(t))
+        if b.top < top or m is None:
+            continue
+        head = _above(g, b)
+        if head is not None and re.match(r"^⑨차감액", norm(g.text(head))):
+            r.mark(g, head, b)
+            r.cells.append(Cell(r.fc, "9", 0, 0, None, g.bbox(b), g.page_no))
 
 
 def _p32_rows(r: Reader, g: Grid, two: Box) -> None:

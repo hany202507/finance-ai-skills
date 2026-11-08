@@ -24,12 +24,6 @@ pip install openpyxl pyyaml pymupdf
 
 Node 는 필요 없다. 세법 조문 확인은 korean-law MCP 를 쓰고, 세법 MCP 가 있으면 함께 쓴다.
 
-## 시험
-
-```bash
-python -m pytest tests -q
-```
-
 ## 엔진
 
 `engine/ctax/` 는 academy-product `법인세/ctax` 에서 옮긴 것이다(원본 커밋 `engine/VENDORED.json`). 직접 고치지 않는다.

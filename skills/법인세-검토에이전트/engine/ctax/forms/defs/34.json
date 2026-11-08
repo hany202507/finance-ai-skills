@@ -1,0 +1,633 @@
+{
+ "code": "34",
+ "title": "대손충당금및대손금조정명세서",
+ "aliases": {
+  "efile": "D106300",
+  "pdf": "대손충당금및대손금조정명세서"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "① 채권잔액 ((21)란의 금액)",
+   "formula": "c('계_21')"
+  },
+  {
+   "code": "2",
+   "label": "② 설 정 률",
+   "dtype": "rate",
+   "formula": "max(c('2_1'), c('2_2'), c('2_3'))",
+   "override": "(ㄱ) · (ㄴ) · (ㄷ) 중 큰 율. (ㄱ) 은 조서 bad_debt 최저설정률(시행령 제61조 제2항 100분의 1, 서식 (ㄱ) 「1/100」)"
+  },
+  {
+   "code": "3",
+   "label": "③ 한도액 (①×②)",
+   "formula": "rounddown(c('1') * c('2'))",
+   "override": "② 를 곱한다"
+  },
+  {
+   "code": "7",
+   "label": "⑦ 한도초과액 (⑥－③)",
+   "formula": "max(c('6')-c('3'),0)"
+  },
+  {
+   "code": "4",
+   "label": "④ 당기계상액"
+  },
+  {
+   "code": "5",
+   "label": "⑤ 보충액"
+  },
+  {
+   "code": "6",
+   "label": "⑥ 계",
+   "formula": "c('4')+c('5')",
+   "total": true
+  },
+  {
+   "code": "8",
+   "label": "⑧장부상 충당금 기초잔액"
+  },
+  {
+   "code": "9",
+   "label": "⑨기중 충당금 환입액"
+  },
+  {
+   "code": "10",
+   "label": "⑩충당금 부인 누계액"
+  },
+  {
+   "code": "11",
+   "label": "⑪당기대손금 상계액 {(27)의 금액}",
+   "formula": "c('계_27')"
+  },
+  {
+   "code": "12",
+   "label": "⑫당기설정 충당금 보충액",
+   "formula": "c('5')",
+   "override": "⑫ 당기설정충당금 보충액은 ⑤ 보충액이다"
+  },
+  {
+   "code": "13",
+   "label": "⑬환입할금액(⑧－⑨－⑩－⑪－⑫)",
+   "formula": "c('8')-c('9')-c('10')-c('11')-c('12')"
+  },
+  {
+   "code": "14",
+   "label": "⑭회사 환입액"
+  },
+  {
+   "code": "15",
+   "label": "⑮과소환입· 과다환입(△) (⑬－⑭)",
+   "formula": "c('13')-c('14')"
+  },
+  {
+   "code": "2_1",
+   "label": "②설정률 (ㄱ) 1/100",
+   "dtype": "rate"
+  },
+  {
+   "code": "2_2",
+   "label": "②설정률 (ㄴ)대손실적률",
+   "dtype": "rate"
+  },
+  {
+   "code": "2_3",
+   "label": "②설정률 (ㄷ)대손충당금 적립기준",
+   "dtype": "rate"
+  },
+  {
+   "code": "16",
+   "label": "(16)계정과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "17",
+   "label": "(17)채권잔액의 장부가액",
+   "rows": true
+  },
+  {
+   "code": "18",
+   "label": "(18)기말현재 대손금부인누계",
+   "rows": true
+  },
+  {
+   "code": "19",
+   "label": "(19)합계((17)+(18))",
+   "rows": true,
+   "formula": "c('17')+c('18')",
+   "total": true
+  },
+  {
+   "code": "20",
+   "label": "(20)충당금설정제외채권",
+   "rows": true
+  },
+  {
+   "code": "21",
+   "label": "(21)채권잔액((19)-(20))",
+   "rows": true,
+   "formula": "c('19')-c('20')"
+  },
+  {
+   "code": "비고_1",
+   "label": "채권잔액 비고",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "계_17",
+   "label": "계 (17)채권잔액의 장부가액",
+   "formula": "F.sum('34','17')",
+   "total": true
+  },
+  {
+   "code": "계_18",
+   "label": "계 (18)기말현재 대손금부인누계",
+   "formula": "F.sum('34','18')",
+   "total": true
+  },
+  {
+   "code": "계_19",
+   "label": "계 (19)합계",
+   "formula": "F.sum('34','19')",
+   "total": true
+  },
+  {
+   "code": "계_20",
+   "label": "계 (20)충당금설정제외채권",
+   "formula": "F.sum('34','20')",
+   "total": true
+  },
+  {
+   "code": "계_21",
+   "label": "계 (21)채권잔액",
+   "formula": "F.sum('34','21')",
+   "total": true
+  },
+  {
+   "code": "22",
+   "label": "(22)일자",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "23",
+   "label": "(23)계정과목",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "24",
+   "label": "(24)채권내역",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "25",
+   "label": "(25)대손사유",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "26",
+   "label": "(26)금액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "27",
+   "label": "대손충당금상계액 (27)계",
+   "rows": true,
+   "formula": "c('26')-c('30')",
+   "table": "2"
+  },
+  {
+   "code": "28",
+   "label": "대손충당금상계액 (28)시인액",
+   "rows": true,
+   "formula": "c('27')-c('29')",
+   "table": "2"
+  },
+  {
+   "code": "29",
+   "label": "대손충당금상계액 (29)부인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "30",
+   "label": "당기손비계상액 (30)계",
+   "rows": true,
+   "formula": "c('31')+c('32')",
+   "table": "2"
+  },
+  {
+   "code": "31",
+   "label": "당기손비계상액 (31)시인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "32",
+   "label": "당기손비계상액 (32)부인액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "비고_2",
+   "label": "대손금조정 비고(부인사유)",
+   "dtype": "text",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "계_26",
+   "label": "계 (26)금액",
+   "formula": "F.sum('34','26')",
+   "total": true
+  },
+  {
+   "code": "계_27",
+   "label": "계 (27)계",
+   "formula": "F.sum('34','27')",
+   "total": true
+  },
+  {
+   "code": "계_28",
+   "label": "계 (28)시인액",
+   "formula": "F.sum('34','28')",
+   "total": true
+  },
+  {
+   "code": "계_29",
+   "label": "계 (29)부인액",
+   "formula": "F.sum('34','29')",
+   "total": true
+  },
+  {
+   "code": "계_30",
+   "label": "계 (30)계",
+   "formula": "F.sum('34','30')",
+   "total": true
+  },
+  {
+   "code": "계_31",
+   "label": "계 (31)시인액",
+   "formula": "F.sum('34','31')",
+   "total": true
+  },
+  {
+   "code": "계_32",
+   "label": "계 (32)부인액",
+   "formula": "F.sum('34','32')",
+   "total": true
+  },
+  {
+   "code": "33",
+   "label": "3. (33) 대손충당금 환입액의 익금불산입 금액",
+   "table": "3"
+  },
+  {
+   "code": "34",
+   "label": "(34) 「법인세법」 제34조제1항에 따라 손금에 산입해야 할 금액 Min(③,⑥)",
+   "formula": "min(c('3'), c('6')) if c('33') else 0",
+   "table": "3",
+   "override": "「조세특례제한법」 제104조의23 신청 법인만 적는다((33) 이 있을 때만 계산). 국제회계기준을 2014년 12월 31일이 속하는 사업연도 이전에 처음 적용한 법인의 익금불산입액이고 남은 금액은 2015년 1월 1일 이후 처음 개시하는 사업연도에 익금산입하므로 2025 사업연도에는 금액이 없다"
+  },
+  {
+   "code": "35",
+   "label": "(35) 「법인세법」 제34조제3항에 따라 익금에 산입해야 할 금액 Max[0,(⑧-⑩-⑪)]",
+   "formula": "max(0, c('8') - c('10') - c('11')) if c('33') else 0",
+   "table": "3",
+   "override": "「조세특례제한법」 제104조의23 신청 법인만 적는다((33) 이 있을 때만 계산). 국제회계기준을 2014년 12월 31일이 속하는 사업연도 이전에 처음 적용한 법인의 익금불산입액이고 남은 금액은 2015년 1월 1일 이후 처음 개시하는 사업연도에 익금산입하므로 2025 사업연도에는 금액이 없다"
+  },
+  {
+   "code": "36",
+   "label": "(36) 차액 Min[(33),Max(0,(34)-(35))]",
+   "formula": "min(c('33'), max(0, c('34') - c('35')))",
+   "table": "3"
+  },
+  {
+   "code": "37",
+   "label": "(37) 상계 후 대손충당금 환입액의 익금불산입 금액((33)-(36))",
+   "formula": "c('33') - c('36')",
+   "table": "3"
+  },
+  {
+   "code": "비고_3",
+   "label": "3. 비고",
+   "dtype": "text",
+   "table": "3"
+  },
+  {
+   "code": "38",
+   "label": "4. (38) 채권 잔액((59)란의 금액)",
+   "formula": "c('계_59')",
+   "table": "4"
+  },
+  {
+   "code": "39",
+   "label": "(39) 순자산 장부가액(차입금 등 제외, 0보다 작으면 0)",
+   "table": "4"
+  },
+  {
+   "code": "40",
+   "label": "(40) 손금산입률",
+   "dtype": "rate",
+   "table": "4",
+   "override": "「조세특례제한법」 제104조의33제3항: 2024년 1월 1일이 속하는 사업연도 100분의 10, 이후 매년 100분의 10씩 더함(100분의 100 한도). 대여금 요건은 회계사가 확인해 넣는다"
+  },
+  {
+   "code": "41",
+   "label": "(41) 한도액[((38)-(39))×(40)]",
+   "formula": "rounddown(max(c('38') - max(c('39'), 0), 0) * c('40'))",
+   "table": "4",
+   "override": "「조세특례제한법」 제104조의33제2항. 순자산 장부가액이 0보다 작으면 0 으로 본다"
+  },
+  {
+   "code": "42",
+   "label": "(42) 당기계상액",
+   "table": "4"
+  },
+  {
+   "code": "43",
+   "label": "(43) 보충액",
+   "table": "4"
+  },
+  {
+   "code": "44",
+   "label": "(44) 계",
+   "formula": "c('42')+c('43')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "45",
+   "label": "(45) 한도초과액((44)-(41))",
+   "formula": "max(c('44')-c('41'),0)",
+   "table": "4"
+  },
+  {
+   "code": "46",
+   "label": "(46) 장부상 충당금 기초잔액",
+   "table": "4"
+  },
+  {
+   "code": "47",
+   "label": "(47) 기중 충당금 환입액",
+   "table": "4"
+  },
+  {
+   "code": "48",
+   "label": "(48) 충당금 부인 누계액",
+   "table": "4"
+  },
+  {
+   "code": "49",
+   "label": "(49) 당기대손금 상계액((65)란의 금액)",
+   "formula": "c('계_65')",
+   "table": "4"
+  },
+  {
+   "code": "50",
+   "label": "(50) 당기설정충당금 보충액",
+   "formula": "c('43')",
+   "table": "4",
+   "override": "1절 ⑫ 과 같이 (43) 보충액이다"
+  },
+  {
+   "code": "51",
+   "label": "(51) 환입할 금액((46)-(47)-(48)-(49)-(50))",
+   "formula": "c('46')-c('47')-c('48')-c('49')-c('50')",
+   "table": "4"
+  },
+  {
+   "code": "52",
+   "label": "(52) 회사 환입액",
+   "table": "4"
+  },
+  {
+   "code": "53",
+   "label": "(53) 과소환입 · 과다환입(△)((51)-(52))",
+   "formula": "c('51')-c('52')",
+   "table": "4"
+  },
+  {
+   "code": "54",
+   "label": "(54) 계정과목",
+   "dtype": "text",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "55",
+   "label": "(55) 채권잔액의 장부가액",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "56",
+   "label": "(56) 기말 현재 대손금부인누계",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "57",
+   "label": "(57) 합계((55)+(56))",
+   "formula": "c('55')+c('56')",
+   "rows": true,
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "58",
+   "label": "(58) 충당금설정제외 채권",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "59",
+   "label": "(59) 채권잔액((57)-(58))",
+   "formula": "c('57')-c('58')",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "비고_4",
+   "label": "관련 채권잔액 비고",
+   "dtype": "text",
+   "rows": true,
+   "table": "4"
+  },
+  {
+   "code": "계_55",
+   "label": "4. 계 (55)채권잔액의 장부가액",
+   "formula": "F.sum('34','55')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "계_56",
+   "label": "4. 계 (56)기말 현재 대손금부인누계",
+   "formula": "F.sum('34','56')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "계_57",
+   "label": "4. 계 (57)합계",
+   "formula": "F.sum('34','57')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "계_58",
+   "label": "4. 계 (58)충당금설정제외 채권",
+   "formula": "F.sum('34','58')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "계_59",
+   "label": "4. 계 (59)채권잔액",
+   "formula": "F.sum('34','59')",
+   "table": "4",
+   "total": true
+  },
+  {
+   "code": "60",
+   "label": "(60) 일자",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "61",
+   "label": "(61) 계정과목",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "62",
+   "label": "(62) 채권명세",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "63",
+   "label": "(63) 대손사유",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "64",
+   "label": "(64) 금액",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "65",
+   "label": "대손충당금상계액 (65) 계",
+   "formula": "c('64')-c('68')",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "66",
+   "label": "대손충당금상계액 (66) 시인액",
+   "formula": "c('65')-c('67')",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "67",
+   "label": "대손충당금상계액 (67) 부인액",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "68",
+   "label": "당기 손비계상액 (68) 계",
+   "formula": "c('69')+c('70')",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "69",
+   "label": "당기 손비계상액 (69) 시인액",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "70",
+   "label": "당기 손비계상액 (70) 부인액",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "비고_5",
+   "label": "5. 대손금 비고",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "계_64",
+   "label": "5. 계 (64)금액",
+   "formula": "F.sum('34','64')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_65",
+   "label": "5. 계 (65)계",
+   "formula": "F.sum('34','65')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_66",
+   "label": "5. 계 (66)시인액",
+   "formula": "F.sum('34','66')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_67",
+   "label": "5. 계 (67)부인액",
+   "formula": "F.sum('34','67')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_68",
+   "label": "5. 계 (68)계",
+   "formula": "F.sum('34','68')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_69",
+   "label": "5. 계 (69)시인액",
+   "formula": "F.sum('34','69')",
+   "table": "5",
+   "total": true
+  },
+  {
+   "code": "계_70",
+   "label": "5. 계 (70)부인액",
+   "formula": "F.sum('34','70')",
+   "table": "5",
+   "total": true
+  }
+ ],
+ "source": "corptax-impl engine/forms/defs/34.json 을 옮김. ② · ③ 수식은 params 대신 (ㄱ) 란을 읽는다(3회차 R3-2). 10-10 법제처 별지 제34호서식(2026. 1. 2. 개정)에 맞춰 3절 (33)~(37), 4 · 5절 (38)~(70) 해외건설자회사 대여금, 비고 열을 더했다"
+}

@@ -12,8 +12,9 @@ from openpyxl.styles import Alignment
 from .. import xlsx as X
 from . import prior_compare
 from .books import Books
+from .inputs import ANSWER_SHEET, HEAD_KEYS, MEMO_PREFIX
 from .sheet import INPUT_SHEET, Book, Sheet, local, notes
-from .summary import CARRYBACK, DIRECT_FIELDS, DIRECT_ROWS, LOSS_MANUAL_ROWS, Result
+from .summary import CARRYBACK, DIRECT_FIELDS, DIRECT_ROWS, LOSS_MANUAL_ROWS, SMALL_RENTAL, Result, prior_small_rental
 
 
 def write(result: Result, books: Books, path: Path) -> dict:
@@ -34,7 +35,7 @@ def write(result: Result, books: Books, path: Path) -> dict:
     t3.put(result.tax3.extra.pop("row05"), 3, f"={don}" if don else 0, kind="link" if don else "body", money=True)
     _reserve50(bk, result)
     _overview(bk, overview, result)
-    _inputs_sheet(bk)
+    _inputs_sheet(bk, result)
     path.parent.mkdir(parents=True, exist_ok=True)
     bk.wb.save(path)
     result.input_cells = [dict(c) for c in bk.input_cells]
@@ -69,19 +70,35 @@ def _basis(bk: Book, res: Result) -> None:
     s.put(r, 3, "전기 신고서(51호) 판정. 바뀌었으면 고치세요(여 · 부)")
     bk.ref["중소기업 여부"] = s.addr(r, 2)
     r += 1
+    # 제55조 제1항 제2호(소규모 법인) 판정. 2025-01-01 이후 개시 사업연도에만 칸이 있다(summary._small_rental)
+    small = SMALL_RENTAL in t3.inputs
+    if small:
+        s.put(r, 1, SMALL_RENTAL)
+        s.inp(r, 2, t3.inputs[SMALL_RENTAL], pid="tax_3", key=SMALL_RENTAL, default=t3.defaults[SMALL_RENTAL])
+        s.put(r, 3, "제60조의2 제1항 제1호 법인(1호 (36) 부동산임대업 주업법인). 「여」 면 3호 산출세액 · 세율과 결손금 소급공제를 "
+                    "제2호 세율 구간으로 계산합니다(여 · 부)")
+        bk.ref[SMALL_RENTAL] = s.addr(r, 2)
+        r += 1
     row("사업연도 월수", bk.b.months, "신고건.json 사업연도", "", fmt="0")
-    br = rates["corporate_tax"]["brackets"]
-    for i, (cap, rt) in enumerate(br["value"], start=1):
-        if cap is not None:
-            row(f"세율 구간{i} 상한", cap, br["basis"], br["grade"])
-        row(f"세율 구간{i}", rt, br["basis"], br["grade"], fmt="0%")
-    # 결손금 소급공제는 직전 사업연도 세율(법인세법 제72조 제1항 제2호). 당기와 다를 때만 줄을 더한다(2026 사업연도부터)
-    pb = (bk.b.prior_rates or rates)["corporate_tax"]["brackets"]
-    if pb["value"] != br["value"]:
-        for i, (cap, rt) in enumerate(pb["value"], start=1):
+
+    def brackets(prefix: str, item: dict) -> None:
+        for i, (cap, rt) in enumerate(item["value"], start=1):
             if cap is not None:
-                row(f"직전 사업연도 세율 구간{i} 상한", cap, pb["basis"], pb["grade"])
-            row(f"직전 사업연도 세율 구간{i}", rt, pb["basis"], pb["grade"], fmt="0%")
+                row(f"{prefix}세율 구간{i} 상한", cap, item["basis"], item["grade"])
+            row(f"{prefix}세율 구간{i}", rt, item["basis"], item["grade"], fmt="0%")
+
+    ct = rates["corporate_tax"]
+    brackets("", ct["brackets"])
+    sb = ct.get("brackets_small_rental") if small else None
+    if sb:
+        brackets("제2호 ", sb)
+    # 결손금 소급공제는 직전 사업연도 세율(법인세법 제72조 제1항 제2호). 당기와 다를 때만 줄을 더한다(2026 사업연도부터)
+    prior = (bk.b.prior_rates or rates)["corporate_tax"]
+    if prior["brackets"]["value"] != ct["brackets"]["value"]:
+        brackets("직전 사업연도 ", prior["brackets"])
+    psb = prior.get("brackets_small_rental") if sb and prior_small_rental(bk.b, True) else None
+    if psb and psb["value"] != sb["value"]:
+        brackets("직전 사업연도 제2호 ", psb)
     for p in res.papers:
         fn = getattr(res.mods[p.id], "basis", None)
         if fn:   # 조서가 이 사업연도에 맞춰 고친 표(p.extra["rates"], 예: 기업업무추진비 온누리상품권)가 있으면 그 값을 쓴다
@@ -153,6 +170,36 @@ def _summary15(bk: Book, res: Result) -> None:
     prior_compare.write(bk, s, row + 1, res)
 
 
+def bracket_refs(R: dict, prefix: str) -> list[tuple[str | None, str]]:
+    """기준 시트의 세율 구간 줄 「<prefix>세율 구간<n>(상한)」 → [(상한 칸, 세율 칸), ...]. 마지막 구간의 상한은 None."""
+    out, i = [], 1
+    while f"{prefix}세율 구간{i}" in R:
+        out.append((R.get(f"{prefix}세율 구간{i} 상한"), R[f"{prefix}세율 구간{i}"]))
+        i += 1
+    return out
+
+
+def progressive(x: str, refs: list[tuple[str | None, str]]) -> str:
+    """누진세율 세액 식(summary.progressive_tax 의 구간 계산, 반올림 · 월수 환산 없음). x 는 과세표준 식."""
+    out = None
+    for i in range(len(refs) - 1, -1, -1):
+        terms, prev = [], None
+        for cap, r in refs[:i]:
+            terms.append(f"{cap}*{r}" if prev is None else f"({cap}-{prev})*{r}")
+            prev = cap
+        here = "+".join(terms + [f"{x}*{refs[i][1]}" if prev is None else f"({x}-{prev})*{refs[i][1]}"])
+        out = here if out is None else f"IF({x}<={refs[i][0]},{here},{out})"
+    return out
+
+
+def top_rate(x: str, refs: list[tuple[str | None, str]]) -> str:
+    """과세표준 x 가 속한 구간의 세율 식."""
+    out = refs[-1][1]
+    for cap, r in reversed(refs[:-1]):
+        out = f"IF({x}<={cap},{r},{out})"
+    return out
+
+
 TAX3_ROWS = [("01", "결산서상 당기순손익"), ("02", "익금산입"), ("03", "손금산입"), ("04", "차가감소득금액(01 + 02 - 03)"),
              ("05", "기부금한도초과액"), ("54", "기부금한도초과이월액 손금산입"), ("06", "각사업연도소득금액(04 + 05 - 54)"),
              ("07", "이월결손금"), ("08", "비과세소득"), ("09", "소득공제"), ("10", "과세표준(06 - 07 - 08 - 09)"),
@@ -178,12 +225,15 @@ def _tax3(bk: Book, res: Result) -> None:
 
     m = R["사업연도 월수"]
     x = f"MAX(0,{G('10')})*12/{m}"
-    c1, c2, c3 = R["세율 구간1 상한"], R["세율 구간2 상한"], R["세율 구간3 상한"]
-    r1, r2, r3, r4 = R["세율 구간1"], R["세율 구간2"], R["세율 구간3"], R["세율 구간4"]
-    tax = (f"=ROUNDDOWN(IF({G('10')}<=0,0,IF({x}<={c1},{x}*{r1},IF({x}<={c2},{c1}*{r1}+({x}-{c1})*{r2},"
-           f"IF({x}<={c3},{c1}*{r1}+({c2}-{c1})*{r2}+({x}-{c2})*{r3},"
-           f"{c1}*{r1}+({c2}-{c1})*{r2}+({c3}-{c2})*{r3}+({x}-{c3})*{r4})))*{m}/12),0)")
-    rate_f = (f"=IF({G('10')}<=0,0,IF({x}<={c1},{r1},IF({x}<={c2},{r2},IF({x}<={c3},{r3},{r4}))))*100")
+    general = bracket_refs(R, "")
+    prog, top = progressive(x, general), top_rate(x, general)
+    if "제2호 세율 구간1" in R:      # 노란 칸 「제55조 제1항 제2호 세율」 이 여 이면 제2호 표(summary 와 같은 기준)
+        flag = f'{R[SMALL_RENTAL]}="여"'
+        small = bracket_refs(R, "제2호 ")
+        prog = f"IF({flag},{progressive(x, small)},{prog})"
+        top = f"IF({flag},{top_rate(x, small)},{top})"
+    tax = f"=ROUNDDOWN(IF({G('10')}<=0,0,{prog}*{m}/12),0)"
+    rate_f = f"=IF({G('10')}<=0,0,{top})*100"
     spec = {
         "01": (p.values["01"], "body", "장부.json 당기순이익"),
         "02": (f"={c15['익금산입 손금불산입']}", "link", "15호 합계"),
@@ -197,7 +247,8 @@ def _tax3(bk: Book, res: Result) -> None:
         "09": (None, "input", ""),
         "10": (f"={G('06')}-{G('07')}-{G('08')}-{G('09')}", "body", ""),
         "11": (rate_f, "body", "과세표준 구간의 최고 세율"),
-        "12": (tax, "body", f"법인세법 제55조 누진세율(기준 {bk.b.rates_fy} 시트)"),
+        "12": (tax, "body", f"법인세법 제55조 제1항 누진세율(기준 {bk.b.rates_fy} 시트"
+                            + (f". 「{SMALL_RENTAL}」 이 여 이면 제2호)" if "제2호 세율 구간1" in R else ")")),
         "17": (None, "input", _credits_src(bk, res, "최저한세 적용대상", "8호(갑) 150")),
         "18": (f"={G('12')}-{G('17')}", "body", ""),
         "19": (None, "input", _credits_src(bk, res, "최저한세 적용제외", "8호(갑) 110")),
@@ -227,10 +278,45 @@ def _tax3(bk: Book, res: Result) -> None:
           default=p.defaults["지방소득세 특별징수"], kind="int", money=True)
     s.put(r, 4, "적요 지방소득세 · 특별징수 또는 거래처가 지자체인 줄. 법인지방소득세 신고의 기납부세액")
     bk.reg(p.id, "지방소득세 특별징수", s.addr(r, 3))
+    r = _prepaid_table(bk, s, p, r + 2)
     p.extra["sheet"] = s
     p.extra["row07"] = at["07"]
     p.extra["row05"] = at["05"]
     notes(s, r + 2, p)
+
+
+def prepaid_row_name(r: dict) -> str:
+    """기납부세액 명세 한 줄의 이름. 서식 10호(갑) 줄 출처 글(forms/fill_more._fill_10_from_wp)과 같은 꼴이다(10-31)."""
+    return f"기납부세액 명세 {r.get('date')} {r.get('no') or ''} {r.get('account') or ''}".strip()
+
+
+def _prepaid_table(bk: Book, s: Sheet, p, row: int) -> int:
+    """values 「기납부세액 명세」 줄 표. 10호(갑) · 지방43의5(갑) 줄이 이 칸을 가리킨다(칸 지도 「<줄 이름>/법인세」 꼴, 10-31)."""
+    rows = p.values.get("기납부세액 명세") or []
+    if not rows:
+        return row
+    s.put(row, 1, "기납부세액 명세(선납세금 차변 줄을 엔진이 나눈 것)")
+    row += 1
+    X.header(s.ws, row, ["일자", "전표 · 계정", "구분", "이자", "법인세", "지방소득세", "거래처 · 적요"], col=2)
+    row += 1
+    # 같은 전표에 선납세금 줄이 둘 이상이면 이름이 겹친다. 겹치는 이름은 칸 지도에 올리지 않는다(10-31 검토)
+    seen: dict = {}
+    for r in rows:
+        seen[prepaid_row_name(r)] = seen.get(prepaid_row_name(r), 0) + 1
+    for r in rows:
+        s.put(row, 2, r.get("date"))
+        s.put(row, 3, f"{r.get('no') or ''} {r.get('account') or ''}".strip())
+        s.put(row, 4, r.get("kind"))
+        s.put(row, 5, int(r.get("interest") or 0), money=True)
+        s.put(row, 6, int(r.get("법인세") or 0), money=True)
+        s.put(row, 7, int(r.get("지방소득세") or 0), money=True)
+        s.put(row, 8, " · ".join(x for x in (r.get("partner"), r.get("memo")) if x))
+        name = prepaid_row_name(r)
+        if seen[name] == 1:
+            for col, field in ((5, "이자"), (6, "법인세"), (7, "지방소득세")):
+                bk.reg(p.id, f"{name}/{field}", s.addr(row, col))
+        row += 1
+    return row
 
 
 def _credits_src(bk: Book, res: Result, key: str, form: str) -> str:
@@ -269,6 +355,10 @@ def _loss(bk: Book, res: Result) -> None:
     filled = {r.get("manual") for r in p.extra["rows"] if r.get("manual")}
     blanks = [{"manual": n, "year": "", "incurred": 0, "used_before": 0, "source": "회계사 입력(비어 있음)"}
               for n in range(1, LOSS_MANUAL_ROWS + 1) if n not in filled]
+    years: dict = {}
+    for e in p.extra["rows"]:
+        if e.get("year"):
+            years[str(e["year"])] = years.get(str(e["year"]), 0) + 1
     for e in blanks + p.extra["rows"]:
         n = e.get("manual")
         if n:
@@ -282,6 +372,9 @@ def _loss(bk: Book, res: Result) -> None:
             s.put(row, 4, e["incurred"], money=True)
             s.put(row, 7, e["opening"], money=True)
         s.put(row, 2, e["source"])
+        if not n and e.get("year") and years.get(str(e["year"])) == 1:     # 50호(갑) 결손금 줄이 가리키는 칸(10-31, 같은 연도가 둘이면 올리지 않음)
+            for col, field in ((4, "발생액"), (7, "기초 잔액"), (8, "당기 공제"), (9, "기말 잔액")):
+                bk.reg(p.id, f"결손금 {e['year']}/{field}", s.addr(row, col))
         if row == first:
             s.put(row, 8, f"=MAX(0,MIN(G{row},$G${cap_at}))", money=True)
         else:
@@ -342,14 +435,17 @@ def _carryback_rows(bk: Book, s: Sheet, p, row: int, at: dict) -> int:
     bk.reg(p.id, "소급공제 최대 결손금", s.addr(row, 7))
     most = f"G{row}"
     row += 1
-    pre = "직전 사업연도 " if "직전 사업연도 세율 구간1" in R else ""
-    c1, c2, c3 = R[f"{pre}세율 구간1 상한"], R[f"{pre}세율 구간2 상한"], R[f"{pre}세율 구간3 상한"]
-    r1, r2, r3, r4 = R[f"{pre}세율 구간1"], R[f"{pre}세율 구간2"], R[f"{pre}세율 구간3"], R[f"{pre}세율 구간4"]
+    general = bracket_refs(R, "직전 사업연도 " if "직전 사업연도 세율 구간1" in R else "")
+    # 제2호 표는 summary.prior_small_rental 과 같은 기준(당기가 제2호이고 직전 사업연도도 2025-01-01 이후 개시)일 때만 고른다
+    small = None
+    if "제2호 세율 구간1" in R and prior_small_rental(bk.b, True):
+        small = bracket_refs(R, "직전 사업연도 제2호 " if "직전 사업연도 제2호 세율 구간1" in R else "제2호 ")
 
     def tax(x):
-        return (f"ROUNDDOWN(IF({x}<=0,0,IF({x}<={c1},{x}*{r1},IF({x}<={c2},{c1}*{r1}+({x}-{c1})*{r2},"
-                f"IF({x}<={c3},{c1}*{r1}+({c2}-{c1})*{r2}+({x}-{c2})*{r3},"
-                f"{c1}*{r1}+({c2}-{c1})*{r2}+({c3}-{c2})*{r3}+({x}-{c3})*{r4})))),0)")
+        prog = progressive(x, general)
+        if small:
+            prog = f'IF({R[SMALL_RENTAL]}="여",{progressive(x, small)},{prog})'
+        return f"ROUNDDOWN(IF({x}<=0,0,{prog}),0)"
 
     for key, label, loss in (("소급공제 환급세액", "환급세액(노란 칸 결손금으로)", f"G{at[CARRYBACK]}"),
                              ("소급공제 최대 환급세액", "최대 환급세액(소급공제할 수 있는 결손금 전부)", most)):
@@ -393,6 +489,8 @@ def _reserve50(bk: Book, res: Result) -> None:
             s.put(row, col, f, kind="link" if parts else "body", money=True)
         s.put(row, 6, f"=C{row}-D{row}+E{row}", money=True)
         s.put(row, 7, "전기 50호(을)" if r["opening"] else "당기 조정")
+        for col, field in ((3, "기초"), (4, "감소"), (5, "증가"), (6, "기말")):      # 50호(을) 줄이 가리키는 칸(10-31)
+            bk.reg(p.id, f"유보 {subj}/{field}", s.addr(row, col))
         row += 1
     if not p.extra["rows"]:
         s.put(row, 2, "유보 없음")
@@ -468,11 +566,74 @@ def _overview(bk: Book, s: Sheet, res: Result) -> None:
         c.alignment = Alignment(horizontal="center")
 
 
-def _inputs_sheet(bk: Book) -> None:
-    """숨은 시트 `_입력`: 노란 칸마다 조서 · key · 시트 · 칸 · 엔진 기본값 · 종류. 다음 실행이 이 표로 회계사 값을 읽는다."""
-    ws = bk.wb.create_sheet(INPUT_SHEET)
-    ws.append(["paper", "key", "sheet", "cell", "default", "kind"])
-    for c in bk.input_cells:
-        ws.append([c["paper"], c["key"], c["sheet"], c["cell"], c["default"], c["kind"]])
-    ws.sheet_state = "hidden"
+def _who(a: dict) -> str:
+    return " · ".join(x for x in (str(a.get("by") or "") or "기록 없음", str(a.get("at") or "").replace("T", " ")[:16]) if x)
 
+
+def _comment_text(a: dict | None, ctx: dict | None) -> str:
+    """노란 칸 엑셀 메모. 첫 줄들은 엔진이 붙이고(다음에 읽을 때 뺀다), 「메모:」 뒤가 회계사 메모다."""
+    lines = []
+    if a and "value" in a:
+        lines.append(f"회계사 답: {_who(a)}")
+    if ctx:
+        src = ", ".join(x for x in (f"{ctx.get('fy')} 사업연도" if ctx.get("fy") else "", str(ctx.get("by") or ""),
+                                    str(ctx.get("at") or "")[:10]) if x)
+        lines.append(f"작년 답: {ctx.get('value')}({src}) · {ctx.get('state')}")
+    if a and a.get("memo"):
+        lines.append(f"{MEMO_PREFIX} {a['memo']}")
+    return "\n".join(lines)
+
+
+def _answers_sheet(bk: Book, res: Result) -> dict[tuple, str]:
+    """보이는 시트 「회계사 답」: 노란 칸마다 지금 값 · 엔진 기본값 · 답한 사람 · 때 · 출처 · 메모(노란 칸).
+    줄 단위 칸(원장 검토 줄)은 답 · 메모 · 작년 답이 있는 것만 싣는다. {(paper, key): 메모 칸 주소}."""
+    from openpyxl.comments import Comment
+
+    ctx = {(p.id, k): c for p in res.all_papers for k, c in (p.context_used or {}).items()}
+    answers = bk.b.answers or {}
+    s = bk.sheet(ANSWER_SHEET, [20, 8, 34, 16, 16, 12, 17, 14, 40, 32])
+    r = X.title(s.ws, "회계사 답", "노란 칸마다 누가 · 언제 답했는지와 메모입니다. 메모 칸(노란 칸)이나 조서 노란 칸의 엑셀 메모에 적으면 "
+                                  "다음 ctax wp 가 읽어 _색인/조서입력.json 에 남깁니다. 답한 사람은 조서 머리 「작성」 칸입니다. "
+                                  "회사 자료에서 옮긴 금액은 근거 칸에 원본 파일 이름과 쪽을 적습니다(없으면 리뷰 항목)")
+    X.header(s.ws, r, ["조서", "칸", "항목", "지금 값", "엔진 기본값", "답한 사람", "때", "출처", "메모", "근거(파일 · 쪽)"])
+    r += 1
+    s.ws.freeze_panes = f"A{r}"
+    out = {}
+    for c in bk.input_cells:
+        k = (c["paper"], c["key"])
+        a, cx = answers.get(k), ctx.get(k)
+        text = _comment_text(a, cx)
+        if text:
+            cell = bk.wb[c["sheet"]][c["cell"]]
+            cell.comment = Comment(text, "ctax", width=320, height=90)
+        if c["key"] in HEAD_KEYS or ("|" in c["key"] and not (a or cx)):
+            continue
+        who = a if a and "value" in a else (cx or a or {})
+        src = ("작년 답 · " + str(cx.get("state"))) if cx and not (a and "value" in a) else str((a or {}).get("from") or "")
+        s.put(r, 1, c["sheet"])
+        s.ws.cell(row=r, column=1).hyperlink = f"#'{c['sheet']}'!{c['cell']}"
+        s.put(r, 2, c["cell"])
+        s.put(r, 3, c["key"])
+        s.put(r, 4, c.get("value"))
+        s.put(r, 5, c["default"])
+        s.put(r, 6, (str(who.get("by") or "") or "기록 없음") if (a or cx) else "")
+        s.put(r, 7, str(who.get("at") or "").replace("T", " ")[:16] if (a or cx) else "")
+        s.put(r, 8, src)
+        s.put(r, 9, (a or {}).get("memo") or None, kind="input")
+        s.put(r, 10, (a or {}).get("basis") or None, kind="input")
+        out[k] = (f"I{r}", f"J{r}")
+        r += 1
+    bk.wb.move_sheet(s.ws, offset=-(len(bk.wb.sheetnames) - 2))   # 총괄 바로 뒤
+    return out
+
+
+def _inputs_sheet(bk: Book, res: Result) -> None:
+    """숨은 시트 `_입력`: 노란 칸마다 조서 · key · 시트 · 칸 · 엔진 기본값 · 종류 · 메모 칸(「회계사 답」 시트 주소).
+    다음 실행이 이 표로 회계사 값과 메모를 읽는다."""
+    memo = _answers_sheet(bk, res)
+    ws = bk.wb.create_sheet(INPUT_SHEET)
+    ws.append(["paper", "key", "sheet", "cell", "default", "kind", "memo_cell", "basis_cell"])
+    for c in bk.input_cells:
+        m, b = memo.get((c["paper"], c["key"])) or (None, None)
+        ws.append([c["paper"], c["key"], c["sheet"], c["cell"], c["default"], c["kind"], m, b])
+    ws.sheet_state = "hidden"

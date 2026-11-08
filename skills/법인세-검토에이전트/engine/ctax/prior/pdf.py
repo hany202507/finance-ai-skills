@@ -297,6 +297,15 @@ def _num(s: str):
     return int(t)
 
 
+def _drop_biz_no(words):
+    """머리의 「사업자등록번호」 와 같은 줄에서 그 오른쪽 낱말을 뺀다. 번호가 「265」 「-」 「51」 「-」 「44613」 처럼 낱말로 찍혀
+    std_re 51 란 = 44,613 으로 읽혔다(평가세트 회사 2024 신고본 50쪽, 10-27 검산이 다른 회사 std_re 16 란에서 같은 꼴을 찾았다)."""
+    heads = [w for w in words if "사업자등록번호" in w[4] or "사업자번호" in w[4]]
+    if not heads:
+        return words
+    return [w for w in words if not any(abs(_yc(w) - _yc(h)) <= NEAR and w[0] > h[0] for h in heads)]
+
+
 def _has_repeat_mark(words, y: float) -> bool:
     """y 근처(NEAR 안)에 되풀이 표시 `(=)` 가 있으면 참. 라벨과 값이 줄마다 다른 기준선에 찍혀도(FY2024
     3호처럼) 잡도록 NEAR 만큼 넓게 본다."""
@@ -310,6 +319,7 @@ def _parse_numeric(words, form_code: str, carry: dict | None = None) -> tuple[li
     code_re = spec["code"]
     carry = carry or {}
     words = [w for w in words if w[4].strip()]
+    words = _drop_biz_no(words)
     cols, clustered = _code_columns(words, code_re)
     if not cols and carry.get("cols"):
         cols, clustered = carry["cols"], carry["clustered"]

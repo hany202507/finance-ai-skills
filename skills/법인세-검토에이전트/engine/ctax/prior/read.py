@@ -729,4 +729,11 @@ def read_prior(pdf_path) -> dict:
     finally:
         doc.close()
     m = re.match(r"(\d{4})", str(getattr(pdf_path, "name", pdf_path)).split("\\")[-1].split("/")[-1])
-    return build(pages, cells, problems, cover, sme, m.group(1) if m else "", sector)
+    body = build(pages, cells, problems, cover, sme, m.group(1) if m else "", sector)
+    from ctax.prior.verify import run as verify_run      # 정의 계산식 검산 · 쪽 글자 대조(값은 그대로, problems 만 더함)
+    try:
+        verify_run(body, pages, cells)
+    except Exception as e:                                  # 검사가 멈춰도 읽은 값은 낸다
+        body["problems"].append({"title": "전기 읽기 검사(정의 검산 · 글자 대조)를 다 하지 못했다", "why": repr(e),
+                                 "kind": "verify_error", "ref": "verify.error"})
+    return body

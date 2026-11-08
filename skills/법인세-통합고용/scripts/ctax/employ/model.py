@@ -40,12 +40,16 @@ STAFF_COLS = [
     ("기타 제외", "other", "yn", False, "그 밖의 까닭으로 상시근로자가 아니면 Y(일용근로자, 근로계약이 아닌 위임 · 도급 등). 까닭은 비고에"),
     ("입대일", "mil_from", "date", False, "병역 이행 기간(6년 한도)만큼 청년 나이에서 뺀다"),
     ("전역일", "mil_to", "date", False, ""),
+    ("병역 개월 수", "mil_months", "num", False, "입대일 · 전역일을 모를 때 병역 이행 개월 수(정수). 그만큼 청년 나이를 개월 단위로 늦춘다(6년 = 72개월 한도). "
+                                            "입대일 · 전역일이 있으면 그것을 쓴다"),
     ("장애인 등", "disabled", "yn", False, "장애인 · 상이자 · 5 · 18 부상자 · 고엽제후유의증(장애등급)"),
     ("경력단절", "career", "yn", False, "조세특례제한법 제29조의8 제2항의 경력단절 근로자"),
     ("북한이탈주민", "defector", "yn", False, ""),
     ("수도권 근무지", "capital", "yn", False, "근무지가 서울 · 인천 · 경기면 Y. 비우면 회사 값"),
     ("정규직 전환자", "converted", "yn", False, "명세서 표시용"),
-    ("육아휴직 복귀자", "returned", "yn", False, "제29조의8 제5항 요건을 채운 복귀자면 Y"),
+    ("육아휴직 복귀자", "returned", "yn", False, "육아휴직에서 복직한 사람이면 Y. 「육아휴직 복직일」 이 없으면 세지 않는다"),
+    ("육아휴직 시작일", "leave_from", "date", False, "연속한 육아휴직의 첫날. 휴직 기간 6개월 이상 · 휴직 전 근무 1년 이상(제29조의8 제5항 제1호 · 제2호)을 본다"),
+    ("육아휴직 복직일", "returned_on", "date", False, "복직한 날. 이 날이 해당 과세연도 안이면 추가공제 인원에 넣는다(제29조의8 제5항 「복직한 날이 속하는 과세연도」)"),
     ("비고", "memo", "text", False, ""),
 ]
 PAY_COLS = [
@@ -76,7 +80,14 @@ COMPANY_ROWS = [
     ("전기 신고 직전 청년등 수", "filed_prev_youth", "num", ""),
     ("전기 신고 직전전 상시근로자 수", "filed_prev2_total", "num", ""),
     ("전기 신고 직전전 청년등 수", "filed_prev2_youth", "num", ""),
-    ("육아휴직 복귀자 수", "returned", "num", "비우면 사원명부 「육아휴직 복귀자」 Y 인원"),
+    ("육아휴직 복귀자 수", "returned", "num", "비우면 사원명부에서 「육아휴직 복직일」 이 해당 과세연도 안이고 요건을 채운 인원"),
+    ("인원 직접 입력 해당 상시근로자 수", "direct_cur_total", "num", "사원명부가 없을 때만 쓴다. 사원명부가 비어 있으면 이 인원으로 공제액을 잠정 계산하고, "
+                                                      "명부가 있으면 명부로 센 인원과 대조만 한다"),
+    ("인원 직접 입력 해당 청년등 수", "direct_cur_youth", "num", ""),
+    ("인원 직접 입력 직전 상시근로자 수", "direct_prev_total", "num", "비우면 「전기 신고 직전 상시근로자 수」"),
+    ("인원 직접 입력 직전 청년등 수", "direct_prev_youth", "num", ""),
+    ("인원 직접 입력 직전전 상시근로자 수", "direct_prev2_total", "num", "3차 연도 · 2027 과세연도 전전 대비 신규공제에만 필요하다. 비우면 「전기 신고 직전전 상시근로자 수」"),
+    ("인원 직접 입력 직전전 청년등 수", "direct_prev2_youth", "num", ""),
 ]
 
 
@@ -103,12 +114,15 @@ class Person:
     other: str = "N"
     mil_from: date | None = None
     mil_to: date | None = None
+    mil_months: float | None = None         # 병역 개월 수(입대일 · 전역일이 없을 때)
     disabled: str = "N"
     career: str = "N"
     defector: str = "N"
     capital: str = ""
     converted: str = "N"
     returned: str = "N"
+    leave_from: date | None = None          # 육아휴직 시작일
+    returned_on: date | None = None         # 육아휴직 복직일
     memo: str = ""
 
 
@@ -144,6 +158,16 @@ class Company:
     filed_prev2_total: float | None = None
     filed_prev2_youth: float | None = None
     returned: float | None = None
+    direct_cur_total: float | None = None   # 인원 직접 입력(사원명부가 없을 때 잠정 계산, 있으면 대조)
+    direct_cur_youth: float | None = None
+    direct_prev_total: float | None = None
+    direct_prev_youth: float | None = None
+    direct_prev2_total: float | None = None
+    direct_prev2_youth: float | None = None
+
+    @property
+    def direct_given(self) -> bool:
+        return self.direct_cur_total is not None
 
 
 @dataclass
@@ -341,11 +365,16 @@ def read_inputs(path: Path, fy_start: str = "", fy_end: str = "", company: str =
             raise InputError(f"「사원명부」 {r}행 {d['name']}: 퇴사일이 입사일보다 앞섭니다")
         if bool(d.get("mil_from")) != bool(d.get("mil_to")):
             raise InputError(f"「사원명부」 {r}행 {d['name']}: 입대일과 전역일은 함께 적습니다")
+        if d.get("mil_months") is not None and (d["mil_months"] < 0 or float(d["mil_months"]) != int(d["mil_months"])):
+            raise InputError(f"「사원명부」 {r}행 {d['name']}: 병역 개월 수는 0 이상의 정수로 적습니다({d['mil_months']})")
+        if d.get("leave_from") and d.get("returned_on") and d["leave_from"] > d["returned_on"]:
+            raise InputError(f"「사원명부」 {r}행 {d['name']}: 육아휴직 시작일이 복직일보다 늦습니다")
         d = {k: v for k, v in d.items() if v not in (None, "")}
         d.setdefault("resident", "Y")
         staff.append(Person(**d))
-    if not staff:
-        raise InputError("「사원명부」 에 사람이 없습니다")
+    if not staff and not co.direct_given:
+        raise InputError("「사원명부」 에 사람이 없습니다. 사원명부 없이 인원 숫자로 잠정 계산하려면 회사 시트 "
+                         "「인원 직접 입력 해당 상시근로자 수」 · 「인원 직접 입력 직전 상시근로자 수」 를 채웁니다")
 
     pays = []
     for r, d in _rows(wb["급여대장"], PAY_COLS):

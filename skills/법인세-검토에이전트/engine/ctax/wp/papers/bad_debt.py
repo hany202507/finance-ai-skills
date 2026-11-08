@@ -42,7 +42,11 @@ from ..model import Adj, LineRow, Paper, line_keys
 from ..sheet import Book, Rows, adj_table, forms_table, head, notes
 from .loan_interest import LOAN, NOT_LOAN, TIED, excluded_for_bad_debt, partner_name, related_of
 
+ID = "bad_debt"
 NAME = "대손충당금"
+SCOPE = "설정대상"                 # 미수수익 · 대여금을 설정대상에 넣을지(노란 칸, 넣음 · 뺌)
+INCLUDE, LEAVE = "넣음", "뺌"
+ASK = re.compile(r"미수수익|대여금")   # 가지급금 · 주임종은 특수관계인 설정제외(법인세법 제34조 제2항)로 따로 본다
 FORMS = ["34", "15", "50을"]
 LEDGER_CHECK = False
 PICK = "부인 여부"
@@ -64,8 +68,109 @@ def basis(rates: dict) -> list[tuple]:
     return [("대손충당금 최저 설정률", bd["min_rate"]["value"], bd["min_rate"]["basis"], bd["min_rate"]["grade"], "0%")]
 
 
+def is_target(acct: dict) -> bool:
+    """대손충당금 설정대상 채권 계정인가(2026-10-29 대표 확정: 매출채권 · 미수금 등 채권을 넣고 선급금은 뺀다).
+    대손충당금 짝 계정이 있는지는 보지 않는다. 조서 · 계정별 서식 34호 · AR 이슈 글이 이 판정을 같이 쓴다."""
+    name = acct.get("name", "")
+    return acct.get("class") == "자산" and bool(RECV.search(name)) and not NOT_RECV.search(name)
+
+
 def receivable_accounts(b: Books) -> list[dict]:
-    return [a for a in b.accounts(cls="자산") if RECV.search(a.get("name", "")) and not NOT_RECV.search(a.get("name", ""))]
+    return [a for a in b.accounts(cls="자산") if is_target(a)]
+
+
+def is_ask(acct: dict) -> bool:
+    """설정대상에 넣을지 회계사가 정하는 채권인가(미수수익 · 대여금 · 가지급금 · 주임종 등, 10-29 기준 「새로 생긴 회계사 확인」)."""
+    return is_target(acct) and bool(ASK.search(acct.get("name", "")))
+
+
+def norm_scope(v) -> str:
+    """노란 칸 「설정대상」 값을 넣음 · 뺌 · ""(답 없음)으로."""
+    t = re.sub(r"\s", "", str(v if v is not None else "")).upper()
+    if t in ("넣음", "Y", "O", "예", "여", "포함", "TRUE", "1"):
+        return INCLUDE
+    if t in ("뺌", "N", "X", "아니오", "부", "제외", "FALSE", "0"):
+        return LEAVE
+    return ""
+
+
+def _prior_denied(b: Books, name: str) -> int:
+    return sum(int(r.get("closing") or 0) for r in _prior_reserve(b, lambda s, n=name: _norm(s) == _norm(n))
+               if int(r.get("closing") or 0) > 0)
+
+
+def prior_scope(b: Books, rows: list[dict]) -> set | None:
+    """전기 신고서가 설정대상에 넣은 계정. 전기 34호 ① 과 계정 기초 잔액(+ 전기 대손금 부인누계)의 합이 정확히 맞는 계정 묶음이
+    하나뿐일 때 그 코드 집합, 전기 34호가 없거나 맞는 묶음이 없거나 여럿이면 None."""
+    try:
+        prior1 = int(b.prior_cell("34", "1", 0) or 0)
+    except (TypeError, ValueError):
+        prior1 = 0
+    cand = [(r["code"], r["opening"] + _prior_denied(b, r["name"])) for r in rows]
+    cand = [(c, v) for c, v in cand if v]
+    if not prior1 or not cand or len(cand) > 16:
+        return None
+    hits = []
+    for mask in range(1, 1 << len(cand)):
+        if sum(v for i, (_, v) in enumerate(cand) if mask >> i & 1) == prior1:
+            hits.append({c for i, (c, _) in enumerate(cand) if mask >> i & 1})
+            if len(hits) > 1:
+                return None
+    return hits[0] if hits else None
+
+
+def target_receivables(b: Books, all_rows: bool = False) -> list[dict]:
+    """대손충당금 설정대상 채권 계정과 설정제외 기본값. 조서 34호 채권 표 · 계정별 서식 34호 · AR 이슈 글이 같이 쓴다.
+
+    줄마다 {code, name, book(기말 장부가액), opening(기초), exclude(설정제외 기본값, 기말), exclude_open(기초),
+    moved(exclude 가운데 특수관계인 대여 계정에서 현금 없이 옮겨 온 기말 잔액), include(설정대상에 넣는지), ask(회계사 확인 줄을
+    낼 계정인지), answer(노란 칸 「설정대상」 답), why(include 를 정한 까닭)}. 잔액이 0 인 계정도 낸다.
+    기본은 include 인 줄만 돌려주고, all_rows 면 뺀 줄도 돌려준다.
+
+    설정대상(10-29 기준): 매출채권 · 미수금 등은 늘 넣고 선급금은 뺀다. 미수수익 · 대여금(is_ask)은 회계사가 정한다. 노란 칸
+    「설정대상/<계정코드>」(넣음 · 뺌) 답이 있으면 그대로, 없으면 전기 신고서와 같은 범위(prior_scope), 그것도 모르면 뺀다.
+    설정제외 기본값은 특수관계인 대여(인정이자 조서 특수관계인 「예」, 가지급금 · 주임종은 「확인 필요」 도)와
+    loan_transfers 의 기말 잔액이다(법인세법 제34조 제2항). 회계사가 노란 칸에서 고친 설정제외 값은 여기 반영하지 않는다."""
+    from ..model import MISSING
+    recv = receivable_accounts(b)
+    moved: dict[str, int] = {}
+    for m in loan_transfers(b, _vouchers(b), {a["code"]: a for a in recv}):
+        if m["excluded"]:
+            moved[m["to"]] = moved.get(m["to"], 0) + m["remaining"]
+    out = []
+    for a in recv:
+        book = int(a.get("closing") or 0)
+        ex_close, ex_open = excluded_for_bad_debt(b, a)
+        ex_moved = min(moved.get(a["code"], 0), max(0, book - ex_close))
+        out.append({"code": a["code"], "name": a["name"], "book": book, "opening": int(a.get("opening") or 0),
+                    "exclude": ex_close + ex_moved, "exclude_open": ex_open, "moved": ex_moved,
+                    "include": True, "ask": False, "answer": "", "why": "매출채권 · 미수금 등(10-29 기준)"})
+    scope = prior_scope(b, out)
+    for r, a in zip(out, recv):
+        if not is_ask(a):
+            continue
+        got = b.override(ID, f"{SCOPE}/{r['code']}")
+        r["answer"] = "" if got is MISSING else norm_scope(got)
+        if r["answer"]:
+            r["include"] = r["answer"] == INCLUDE
+            r["why"] = f"노란 칸 「{SCOPE}」 답 {r['answer']}"
+            continue
+        r["ask"] = bool(r["book"] or r["opening"])
+        if scope is not None:
+            r["include"] = r["code"] in scope
+            r["why"] = "전기 34호 ① 과 같은 범위(전기 신고서가 " + ("넣음)" if r["include"] else "뺌)")
+        else:
+            r["include"] = False
+            r["why"] = "전기 신고서 범위를 몰라 뺌(답 전에는 넣지 않음)"
+    return out if all_rows else [r for r in out if r["include"]]
+
+
+def scope_question(r: dict) -> str:
+    """미수수익 · 대여금 설정대상 확인 줄(조서 · 계정별 서식이 같은 글을 낸다)."""
+    state = "넣었습니다" if r["include"] else "뺐습니다"
+    return (f"「{r['name']}」 {r['book']:,}원을 대손충당금 설정대상 채권잔액에 넣을지 확인하십시오(미수수익 · 대여금은 회계사 판단, "
+            f"10-29 기준). 지금은 {r['why']}로 {state}. 조서 대손충당금 노란 칸 「{SCOPE}」 에 {INCLUDE} · {LEAVE} 을 고르면 "
+            "조서 · 계정별 서식 34호 · AR 이 같이 바뀝니다")
 
 
 def allowance_accounts(b: Books) -> list[dict]:
@@ -248,26 +353,25 @@ def compute(p: Paper, b: Books) -> None:
     denied_total = sum(denied.values())
     allowed_bd = total_bd - denied_total
 
-    # 특수관계인 대여금을 매출채권으로 옮긴 전표: 기말에 남은 대체액을 그 매출채권 설정제외 기본값에 더한다
+    # 특수관계인 대여금을 매출채권으로 옮긴 전표: 기말에 남은 대체액을 그 매출채권 설정제외 기본값에 더한다(target_receivables)
     moved_rows = loan_transfers(b, vouchers, recv_codes)
-    moved: dict[str, int] = {}
-    for m in moved_rows:
-        if m["excluded"]:
-            moved[m["to"]] = moved.get(m["to"], 0) + m["remaining"]
 
-    # 채권 표(34호 (16) ~ (21))
+    # 채권 표(34호 (16) ~ (21)). 설정대상 채권과 설정제외 기본값은 target_receivables 가 정한다
     table = []
-    for a in recv:
-        code, name = a["code"], a["name"]
+    scope_rows = target_receivables(b, all_rows=True)
+    for t in scope_rows:
+        if t["ask"]:
+            p.take(b, f"{SCOPE}/{t['code']}", "", "text")
+            p.confirm.append(scope_question(t))
+        if not t["include"] and not denied.get(t["code"]):
+            continue
+        code, name = t["code"], t["name"]
         prior = sum(int(r.get("closing") or 0) for r in _prior_reserve(b, lambda s, n=name: _norm(s) == _norm(n))
                     if int(r.get("closing") or 0) > 0)
-        book = int(a.get("closing") or 0)
-        opening = int(a.get("opening") or 0)
+        book, opening = t["book"], t["opening"]
         if not (book or opening or prior or denied.get(code)):
             continue
-        ex_close, ex_open = excluded_for_bad_debt(b, a)
-        ex_moved = min(moved.get(code, 0), max(0, book - ex_close))
-        ex_close += ex_moved
+        ex_close, ex_open, ex_moved = t["exclude"], t["exclude_open"], t["moved"]
         prior = p.take(b, f"전기 부인누계/{code}", prior, "int")
         reversal = p.take(b, f"대손금 부인 추인/{code}", 0, "int") if prior else 0
         exclude = p.take(b, f"설정제외/{code}", ex_close, "int")
@@ -286,7 +390,27 @@ def compute(p: Paper, b: Books) -> None:
                                "특수관계인 칸, 가지급금 · 주임종 계정은 「확인 필요」 도 넣음). 업무와 관련된 대여면 0 으로 고치세요")
     unknown_denied = denied.get("", 0)
     receivable = sum(t["21"] for t in table)
-    prev = p.take(b, "직전채권잔액", sum(t["기초"] + t["전기부인누계"] - t["기초제외"] for t in table), "int")
+    # 직전 사업연도말 채권가액: 전기 34호 ① 채권잔액((21) 계)이 있으면 그 값(11-08, 제품 papers/bad_debt.py:128-143).
+    # 없으면 당기 기초 잔액 + 전기 부인누계 - 기초 설정제외로 어림하고, 대손금이 있어 실적률에 쓰이면 확인 줄을 낸다
+    c34 = ((b.prior or {}).get("cells") or {}).get("34") or {}
+    prev34 = 0
+    for k in ("1", "계_21"):
+        try:
+            prev34 = int(round(float(str(c34.get(k) or 0).replace(",", ""))))
+        except ValueError:
+            prev34 = 0
+        if prev34 > 0:
+            break
+    prev_est = sum(t["기초"] + t["전기부인누계"] - t["기초제외"] for t in table)
+    prev = p.take(b, "직전채권잔액", prev34 if prev34 > 0 else prev_est, "int")
+    if "직전채권잔액" not in p.overridden:
+        if prev34 > 0:
+            p.notes.append(f"직전 사업연도말 채권가액 기본값 {prev34:,}원은 전기 34호 ① 채권잔액((21) 계)입니다(시행령 제61조 제3항"
+                           f", 당기 기초 잔액으로 센 값은 {prev_est:,}원)")
+        elif allowed_bd > 0:
+            p.confirm.append(f"직전 사업연도말 채권가액을 전기 34호 ① 에서 읽지 못해 당기 기초 채권 잔액 + 전기 부인누계 - 기초 설정제외로 "
+                             f"{prev_est:,}원을 어림했습니다(대손실적률의 분모, 시행령 제61조 제3항). 전기 34호 ① 채권잔액으로 노란 칸 "
+                             "「직전채권잔액」 을 고치세요")
     loss_ratio = Fraction(allowed_bd, prev) if prev > 0 else Fraction(0)
     min_rate = frac(rate(b.rates, "bad_debt", "min_rate"))
     set_rate = max(min_rate, loss_ratio)
@@ -301,6 +425,8 @@ def compute(p: Paper, b: Books) -> None:
     prior_allow = sum(int(r.get("closing") or 0) for r in prior_rows)
     subj = prior_rows[0]["subject"] if prior_rows else (allow[0]["name"] if allow else "대손충당금")
     denied_prior = p.take(b, "전기부인누계", max(0, min(prior_allow, opening)), "int")
+    if b.reserves_unknown and allow and opening > 0 and "전기부인누계" not in p.overridden:
+        p.confirm.append(b.reserves_unknown_text("대손충당금 전기 한도초과(유보)", "전기부인누계"))
     # 전기 유보 처리. 전기 신고서가 유보를 그대로 두었으면 기본값이 「그대로」, 아니면 「추인」
     static = prior_static(b)
     # 10-21 보충법: 기초 충당금을 환입하지 않고 두고(회사 환입 < 기초 - 대손 상계) 당기에 차액만 설정했으면, 전기 신고서가 유보를
@@ -333,6 +459,8 @@ def compute(p: Paper, b: Books) -> None:
                              "memo": r.line.memo, "amount": r.line.amount, "kind": r.label, "receivable": r.pick2,
                              "denied": r.pick == "O"} for r in p.lines],
                 "환입전표": neg_reversal, "대여금대체": moved_rows,
+                "설정대상 확인": [{k: t[k] for k in ("code", "name", "book", "include", "answer", "why")}
+                             for t in scope_rows if t["ask"] or t["answer"]],
                 MODE: mode, "전기유보증감없음": static, "보충법": supplemental,
                 "다른처리": {"처리": REVERSE if keep else KEEP, "한도초과": other_excess, "추인": other_reversal}}
     p.extra["table"] = table
@@ -540,6 +668,20 @@ def write(bk: Book, p: Paper) -> None:
         X.cell(s.ws, row, col, f"=SUM({letter}{t0}:{letter}{t1})", money=True, kind="total")
     recv_total = f"J{row}"
     row += 2
+    asks = p.values.get("설정대상 확인") or []
+    if asks:
+        row = s.section(row, f"3-1. 설정대상 확인(미수수익 · 대여금, 노란 칸 「{SCOPE}」 {INCLUDE} · {LEAVE}, 고친 뒤 다시 돌리면 위 표에 반영)")
+        X.header(s.ws, row, ["코드", "계정", "기말 장부가액", SCOPE, "지금 처리", "까닭"])
+        row += 1
+        for t in asks:
+            s.put(row, 1, t["code"])
+            s.put(row, 2, t["name"])
+            s.put(row, 3, t["book"], money=True)
+            s.inp(row, 4, t["answer"] or None, pid=p.id, key=f"{SCOPE}/{t['code']}", default=None, kind="text")
+            s.put(row, 5, INCLUDE if t["include"] else LEAVE)
+            s.put(row, 6, t["why"])
+            row += 1
+        row += 1
 
     # 4. 한도 시부인
     row = s.section(row, "4. 대손충당금 한도(34호 1. 대손충당금조정)")

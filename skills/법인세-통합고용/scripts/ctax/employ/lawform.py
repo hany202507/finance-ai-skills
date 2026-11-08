@@ -194,6 +194,7 @@ def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
     co, period, cnt = inp.company, res["periods"][per], _counts(res, per)
     exact = res["sum_floor"]
     by_id = {r.person.id: r for r in cnt.rows}
+    counted = {x["id"] for x in res.get("returnees", []) if x["counted"]}
     out = []
     for p in inp.staff:
         if not (p.hired <= period.end and (p.left or FAR) >= period.start):
@@ -216,7 +217,8 @@ def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
             yn(p.resident), yn(p.capital or co.capital), ymd(p.hired), span, num(r.m_work), per_head(r.n_work, exact), num(m_y),
             per_head(n_y, exact),
             yn(young), yn(deem and deemed_until(p, co.size, rules) is not None), ymd(cut),
-            yn(p.disabled), yn(is_senior(p, rules)), yn(p.career), yn(p.defector), yn(p.converted), yn(p.returned),
+            yn(p.disabled), yn(is_senior(p, rules)), yn(p.career), yn(p.defector), yn(p.converted),
+            yn(p.id in counted) if per == "해당" else yn(bool(p.returned_on and period.start <= p.returned_on <= period.end)),
         ])
     return out
 
@@ -225,6 +227,8 @@ def roster(inp: Inputs, res: dict, rules: dict, company: str) -> tuple[dict, dic
     """별지 제10호의10서식. (칸 값, 사람별 줄)."""
     v = _head(inp.company, company)
     rows = {}
+    if res.get("direct"):            # 사원명부 없이 인원 숫자로 계산했으면 명세서는 비운다(잠정, rules.yaml count.direct_input)
+        return v, rows
     for per in ("해당", "직전"):
         period, cnt = res["periods"][per], _counts(res, per)
         if per == "직전" and not period.has_payroll:

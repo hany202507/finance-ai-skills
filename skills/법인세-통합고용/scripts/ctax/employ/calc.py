@@ -93,10 +93,13 @@ class Count:
 # ---------------------------------------------------------------- 사람
 
 def adjusted_birth(p: Person, rules: dict) -> date:
-    """병역 기간(6년 한도)을 뺀 나이를 재려고 생년월일을 그만큼 늦춘다."""
+    """병역 기간(6년 한도)을 뺀 나이를 재려고 생년월일을 그만큼 늦춘다. 입대일 · 전역일이 있으면 날 수로, 없고 「병역 개월 수」 만
+    있으면 개월 단위로 늦춘다(엑셀 EDATE 와 같다, rules.yaml youth.military_months)."""
     if p.mil_from and p.mil_to:
         days = min((p.mil_to - p.mil_from).days + 1, int(rule(rules, "youth", "military_cap_days")))
         return p.birth + timedelta(days=max(0, days))
+    if p.mil_months:
+        return add_months(p.birth, min(int(p.mil_months), int(rule(rules, "youth", "military_cap_months"))))
     return p.birth
 
 
@@ -350,6 +353,35 @@ def new_credit(size: str, capital: str, cur: tuple, priors: list, rates: dict) -
     return out
 
 
+def returnees(inp: Inputs, per: Period, rules: dict, rates: dict) -> list[dict]:
+    """사원명부에서 해당 과세연도 육아휴직 복귀자를 가린다(조세특례제한법 제29조의8 제5항, rules.yaml extra.return_rule).
+    「육아휴직 복직일」 이 있거나 「육아휴직 복귀자」 가 Y 인 사람마다 {id, name, counted, why, no_leave_from} 를 돌려준다."""
+    until = date.fromisoformat(rates["employment_integrated_extra"]["return_until"]["value"])
+    out = []
+    for p in inp.staff:
+        if not (p.returned_on or p.returned == "Y"):
+            continue
+        why = ""
+        r = p.returned_on
+        if r is None:
+            why = "육아휴직 복직일이 없습니다"
+        elif not (per.start <= r <= per.end):
+            why = f"복직일 {r} 이 해당 과세연도가 아닙니다"
+        elif r > until:
+            why = f"복직일 {r} 이 기한({until})을 지났습니다"
+        elif p.owner == "Y":
+            why = "최대주주 · 최대출자자나 그 친족입니다(제5항 제3호)"
+        elif p.left and p.left < r:
+            why = f"퇴사일 {p.left} 이 복직일보다 앞섭니다"
+        elif p.leave_from and r < add_months(p.leave_from, 6):
+            why = "육아휴직 기간이 연속 6개월이 되지 않습니다(제5항 제2호)"
+        elif p.leave_from and p.leave_from < add_months(p.hired, 12):
+            why = "육아휴직 전 근무 기간이 1년이 되지 않습니다(제5항 제1호)"
+        out.append({"id": p.id, "name": p.name, "counted": not why, "why": why, "no_leave_from": not why and p.leave_from is None,
+                    "in_year": bool(r and per.start <= r <= per.end)})
+    return out
+
+
 def regime_of(co: Company, rates: dict) -> str:
     """"2025이전": 2025년 12월 31일이 속하는 과세연도까지(제29조의8 종전 규정, 서식(1)). "2026": 그 뒤 과세연도(새 규정, 서식(2))."""
     return "2026" if co.fy_start >= date.fromisoformat(rates["employment_integrated_new"]["applies_from"]["value"]) else "2025이전"
@@ -384,6 +416,16 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         unsupported = (f"{last_year + 1}년 12월 31일이 속하는 과세연도부터는 신규공제 C(전전전 과세연도 대비)에 {last_year - 2} 과세연도 인원이 "
                        "필요한데 이 워크북은 직전전 과세연도까지만 셉니다. 공제액을 계산하지 않았습니다")
     in_time = co.fy_start <= date(2025, 12, 31)                # 종전 규정의 1차 연도 공제는 2025년 12월 31일이 속하는 과세연도까지
+    # 사원명부가 비어 있고 회사 시트에 인원을 직접 넣었으면 그 숫자로 잠정 계산한다(rules.yaml count.direct_input)
+    direct = not inp.staff and co.direct_given
+    direct_of = {"해당": (co.direct_cur_total, co.direct_cur_youth), "직전": (co.direct_prev_total, co.direct_prev_youth),
+                 "직전전": (co.direct_prev2_total, co.direct_prev2_youth)}
+
+    def direct_val(name: str):
+        t, y = direct_of[name]
+        if not direct or t is None:
+            return None
+        return floor2(Fraction(str(t))), floor2(Fraction(str(y or 0)))
 
     def filed(name: str):
         t = co.filed_prev_total if name == "직전" else co.filed_prev2_total
@@ -398,7 +440,11 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
     for name in PERIODS:
         c = counts[name]
         f = filed(name) if name != "해당" else None
-        if name == "해당" or c.period.has_payroll:
+        dv = direct_val(name)
+        if dv:
+            used[name] = legacy[name] = dv
+            source[name] = "직접 입력"
+        elif name == "해당" or c.period.has_payroll:
             if method == "근로자별" and (name != "직전전" or pers[name].start >= deemed_from):
                 y = c.youth_deem if pers[name].deemed else c.youth_age
                 used[name] = (c.total, y)
@@ -501,8 +547,9 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         new = new_credit(co.size, co.capital, used_new["해당"], priors, rates)
     new_total = new["credit"] if new else 0
 
-    returned = co.returned if co.returned is not None else sum(
-        1 for p in inp.staff if p.returned == "Y" and p.hired <= cur.end and (p.left or FAR) >= cur.start)
+    backs = returnees(inp, cur, rules, rates)
+    returned_roster = sum(1 for x in backs if x["counted"])
+    returned = co.returned if co.returned is not None else returned_roster
     amt_sizes = {"중소기업": int(rule(rules, "extra", "return_sme")), "중견기업": int(rule(rules, "extra", "return_mid"))}
     amt = amt_sizes.get(co.size, 0)
     return_in_time = co.fy_start <= date.fromisoformat(rates["employment_integrated_extra"]["return_until"]["value"])
@@ -519,4 +566,5 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
             "a_y": a_y, "a_o": a_o, "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second,
             "second_cut": second_cut, "second_alt": second_alt, "second_pw": pw2, "third": third, "third_cut": third_cut,
             "third_alt": third_alt, "third_pw": pw3, "new": new, "new_total": new_total, "returned": float(returned),
+            "returned_roster": returned_roster, "returnees": backs, "direct": direct,
             "extra": extra, "total": first_y + first_o + second + third + new_total + extra}

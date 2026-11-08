@@ -27,6 +27,10 @@ FORMS = ["21", "22"]
 LEDGER_CHECK = True
 PICK = "분류"
 KINDS = ("특례", "일반", "비지정")
+# 기부금 계정에 있지만 기부금이 아닌 줄(11-08). 회사 계정은 그대로 두고 이 조서의 기부금 해당액 · 한도 계산에서만 뺀다
+# (다른 성격이면 그 조서나 15호 직접 조정에서 본다). 분류 노란 칸에 고를 수 있는 값은 KINDS + NOT_DONATION
+NOT_DONATION = "기부금 아님"
+PICKS = (*KINDS, NOT_DONATION)
 CARRY_ROWS = 6          # 이월 기부금 노란 줄 수(21호 5절, 사업연도 · 종류마다 한 줄)
 CARRY_KINDS = ("특례", "일반")
 CARRY_YEARS = 10        # 법인세법 제24조 제5항: 다음 사업연도 개시일부터 10년 이내에 끝나는 사업연도
@@ -235,12 +239,18 @@ def compute(p: Paper, b: Books) -> None:
                 "사회적기업": 1 if social == "여" else 0}
     p.adjustments = [Adj("가산", subject_of(accts, "기부금"), nd, "기타사외유출", "비지정기부금 손금불산입",
                          "비지정기부금 손금불산입", "비지정기부금")]
-    odd = [r for r in p.lines if r.pick not in KINDS]
+    odd = [r for r in p.lines if r.pick not in PICKS]
     if odd:
-        p.confirm.append(f"분류 칸이 특례 · 일반 · 비지정이 아닌 줄 {len(odd)}개는 어느 합계에도 넣지 않았습니다")
+        p.confirm.append(f"분류 칸이 {' · '.join(PICKS)} 이 아닌 줄 {len(odd)}개는 어느 합계에도 넣지 않았습니다")
+    out = [r for r in p.lines if r.pick == NOT_DONATION]
+    p.values["기부금 아님"] = sum(r.line.amount for r in out)
+    if out:
+        p.notes.append(f"분류 「{NOT_DONATION}」 으로 고른 줄 {len(out)}개 {p.values['기부금 아님']:,}원은 기부금 해당액 · 한도 계산에서 "
+                       "뺐습니다(회사 계정은 그대로, 이 조서에서는 세무조정하지 않음)")
     unconfirmed = [r for r in p.lines if f"{PICK}/{r.key}" not in p.overridden]
     if unconfirmed:
-        p.confirm.append("기부금 분류(특례 · 일반 · 비지정)는 받는 곳 이름으로 추정했습니다. 영수증의 단체 종류로 확인하세요")
+        p.confirm.append(f"기부금 분류(특례 · 일반 · 비지정)는 받는 곳 이름으로 추정했습니다. 영수증의 단체 종류로 확인하세요"
+                         f"(기부금이 아니면 「{NOT_DONATION}」)")
     if social not in ("여", "부"):
         p.confirm.append(f"노란 칸 「사회적기업 여부」 값 「{social}」 을 읽지 못해 사회적기업이 아닌 것으로 보았습니다(여 · 부)")
     prior_confirm(p, b, accts, sp + gen + nd, nd)
@@ -319,7 +329,12 @@ def write(bk: Book, p: Paper) -> None:
     row = verify(bk, s, row, p, first, last)
     row, first, last = ledger(bk, s, row, p, PICK, kind="text")
     row = s.section(row, "3. 분류 집계")
-    row = calc_row(bk, s, row, p, "기부금합계", "기부금 합계", f"=SUM(G{first}:G{last})")
+    X.note(s.ws, row, f"분류 노란 칸에 넣는 값: {' · '.join(PICKS)}(「{NOT_DONATION}」 은 회사 계정은 그대로 두고 이 조서에서 뺌)", col=1)
+    row += 1
+    row = calc_row(bk, s, row, p, "기부금 아님", f"분류 「{NOT_DONATION}」 (기부금 해당액에서 뺌)",
+                   f'=SUMIF(I{first}:I{last},"{NOT_DONATION}",G{first}:G{last})')
+    row = calc_row(bk, s, row, p, "기부금합계", f"기부금 합계(분류 {' · '.join(KINDS)})",
+                   "=" + "+".join(f'SUMIF(I{first}:I{last},"{k}",G{first}:G{last})' for k in KINDS))
     for key in ("특례기부금", "일반기부금", "비지정기부금"):
         row = calc_row(bk, s, row, p, key, key, f'=SUMIF(I{first}:I{last},"{key[:-3]}",G{first}:G{last})')
     row += 1

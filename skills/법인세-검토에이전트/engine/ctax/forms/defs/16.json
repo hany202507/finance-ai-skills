@@ -1,0 +1,297 @@
+{
+ "code": "16",
+ "title": "수입금액조정명세서",
+ "aliases": {
+  "efile": "D104000",
+  "pdf": "수입금액조정명세서"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "1.수입금액 조정계산 계정과목 ①항목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "계정과목 ②과목",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③결산서상 수입금액",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "조정 ④가산",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "조정 ⑤차감",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥조정후수입금액(③+④-⑤)",
+   "rows": true,
+   "formula": "c('3')+c('4')-c('5')"
+  },
+  {
+   "code": "비고",
+   "label": "비고",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "7",
+   "label": "2.가. ⑦공사명",
+   "dtype": "text",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "8",
+   "label": "2.가. ⑧도급자",
+   "dtype": "text",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "9",
+   "label": "2.가. ⑨도급금액",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "10",
+   "label": "2.가. 작업진행률계산 ⑩해당사업연도말 총공사비누적액(작업시간 등)",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "11",
+   "label": "2.가. 작업진행률계산 ⑪총공사예정비(작업시간 등)",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "12",
+   "label": "2.가. 작업진행률계산 ⑫진행률(⑩/⑪)",
+   "dtype": "rate",
+   "formula": "c('10') / c('11') if c('11') else 0",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "13",
+   "label": "2.가. ⑬누적익금산입액(⑨×⑫)",
+   "formula": "c('9') * c('12')",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "14",
+   "label": "2.가. ⑭전기말누적수입계상액",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "15",
+   "label": "2.가. ⑮당기회사수입계상액",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "16",
+   "label": "2.가. ⑯조정액(⑬-⑭-⑮)",
+   "formula": "c('13')-c('14')-c('15')",
+   "rows": true,
+   "table": "가"
+  },
+  {
+   "code": "17",
+   "label": "2.나. 계정과목 ⑰항목",
+   "dtype": "text",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "18",
+   "label": "2.나. 계정과목 ⑱과목",
+   "dtype": "text",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "19",
+   "label": "2.나. ⑲세법상 당기 수입금액",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "20",
+   "label": "2.나. ⑳당기 회사수입금액 계상액",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "21",
+   "label": "2.나. ㉑조정액(⑲-⑳)",
+   "formula": "c('19')-c('20')",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "22",
+   "label": "2.나. ㉒근거법령",
+   "dtype": "text",
+   "rows": true,
+   "table": "나"
+  },
+  {
+   "code": "23",
+   "label": "2.다. ㉓구분",
+   "dtype": "text",
+   "rows": true,
+   "table": "다"
+  },
+  {
+   "code": "24",
+   "label": "2.다. ㉔근거법령",
+   "dtype": "text",
+   "rows": true,
+   "table": "다"
+  },
+  {
+   "code": "25",
+   "label": "2.다. ㉕수입금액",
+   "rows": true,
+   "table": "다"
+  },
+  {
+   "code": "26",
+   "label": "2.다. ㉖대응원가",
+   "rows": true,
+   "table": "다"
+  },
+  {
+   "code": "다_비고",
+   "label": "2.다. 비고",
+   "dtype": "text",
+   "rows": true,
+   "table": "다"
+  },
+  {
+   "code": "계_3",
+   "label": "계 ③결산서상 수입금액",
+   "formula": "F.sum('16','3')",
+   "total": true
+  },
+  {
+   "code": "계_4",
+   "label": "계 ④가산",
+   "formula": "F.sum('16','4')",
+   "total": true
+  },
+  {
+   "code": "계_5",
+   "label": "계 ⑤차감",
+   "formula": "F.sum('16','5')",
+   "total": true
+  },
+  {
+   "code": "계_6",
+   "label": "계 ⑥조정후수입금액",
+   "formula": "F.sum('16','6')",
+   "total": true
+  },
+  {
+   "code": "계_9",
+   "label": "2.가. 계 ⑨도급금액",
+   "formula": "F.sum('16','9')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_10",
+   "label": "2.가. 계 ⑩총공사비누적액",
+   "formula": "F.sum('16','10')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_11",
+   "label": "2.가. 계 ⑪총공사예정비",
+   "formula": "F.sum('16','11')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_13",
+   "label": "2.가. 계 ⑬누적익금산입액",
+   "formula": "F.sum('16','13')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_14",
+   "label": "2.가. 계 ⑭전기말누적수입계상액",
+   "formula": "F.sum('16','14')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_15",
+   "label": "2.가. 계 ⑮당기회사수입계상액",
+   "formula": "F.sum('16','15')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_16",
+   "label": "2.가. 계 ⑯조정액",
+   "formula": "F.sum('16','16')",
+   "total": true,
+   "table": "가"
+  },
+  {
+   "code": "계_19",
+   "label": "2.나. 계 ⑲세법상 당기 수입금액",
+   "formula": "F.sum('16','19')",
+   "total": true,
+   "table": "나"
+  },
+  {
+   "code": "계_20",
+   "label": "2.나. 계 ⑳당기 회사수입금액 계상액",
+   "formula": "F.sum('16','20')",
+   "total": true,
+   "table": "나"
+  },
+  {
+   "code": "계_21",
+   "label": "2.나. 계 ㉑조정액",
+   "formula": "F.sum('16','21')",
+   "total": true,
+   "table": "나"
+  },
+  {
+   "code": "계_25",
+   "label": "2.다. 계 ㉕수입금액",
+   "formula": "F.sum('16','25')",
+   "total": true,
+   "table": "다"
+  },
+  {
+   "code": "계_26",
+   "label": "2.다. 계 ㉖대응원가",
+   "formula": "F.sum('16','26')",
+   "total": true,
+   "table": "다"
+  }
+ ],
+ "source": "10-10 법제처 별지 제16호서식(2011. 2. 28. 개정)에 맞춤: 2. 수입금액 조정명세 가(작업진행률) · 나(중소기업 등 인식기준 특례) · 다(기타) 표와 계 줄을 더함"
+}

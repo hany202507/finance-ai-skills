@@ -7,7 +7,12 @@
 8회차: 세금과공과 · 보험료 같은 다른 비용 계정의 자동차세 · 보험료 · 유류비 등은 적요로 차량 비용임이 드러날 때만 읽는다
 (`cost_evidence`). 재고자산 · 건설중인자산 계정에 적힌 임차료는 그 거래처 차량의 금액과 같고 그 차량에 그 달 줄이 없을 때만
 읽는다(`asset_rent_lines`). 리스 차량의 감가상각비 상당액은 리스료에서 보험료 · 자동차세 · 수선유지비 노란 칸을 빼고, 수선유지비
-7% 는 회계사가 고를 때만 적용한다(법인세법 시행규칙 제27조의2 제6항 제1호).
+7% 는 노란 칸이 비면 적용한다(법인세법 시행규칙 제27조의2 제6항 제1호).
+
+10-29(대표 결정): 리스 · 렌트는 임대 거래처의 업종코드(시설대여업 · 자동차대여업)로 가른다. 장부에 그 값이 없어 엔진은 번호판
+글자 · 거래처 이름 · 적요로 정하지 않고, 임차 차량마다 「임차 구분」 을 묻는다(기본값 「확인 필요」, 답 전에는 감가상각비 상당액
+한도초과 · 이월액 추인을 넣지 않고 두 경우 금액을 확인 줄에 적는다). 부동산임대업 주업은 조정후수입금액명세서(17호)의 업종코드로
+판단한다(`estate_main`).
 """
 from __future__ import annotations
 
@@ -57,10 +62,13 @@ NONCAR_WORD = re.compile(r"굴삭기|굴착기|포크레인|지게차|덤프|크
 REGION_PLATE = re.compile(r"(서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)\s?\d{2}\s?[가-힣]\s?\d{4}")
 PLATE_TAIL = re.compile(r"\s?(년|원)|월|일|개|회|건|명|층|동|번지|\d|[.,/-]\d")
 INVENTORY = ("원재료", "부재료", "원부재료", "재공품", "반제품", "제품", "상품", "저장품", "미착품")
-FINANCE = re.compile(r"캐피탈|파이낸셜|파이낸스|리스")
 RENT_WORD = re.compile(r"렌트|렌터카|렌탈")
 LEASE_WORD = re.compile(r"리스(?!트)")
 RENTAL_LETTERS = ("하", "허", "호")   # 자동차대여사업용 번호판의 용도기호(자동차 등록번호판 등의 기준에 관한 고시, ★★☆ 원문 미확인)
+# 10-29: RENTAL_LETTERS · LESSOR 는 리스 · 렌트를 정하는 데 쓰지 않는다(임차 구분은 회계사 답). 임차료 줄을 알아보는 데만 쓴다.
+PENDING = "확인 필요"     # 임차 구분 답이 없는 임차 차량
+KINDS = ("리스", "렌트", "자가")
+ESTATE = "부동산임대업 주업"
 
 
 def basis(rates: dict) -> list[tuple]:
@@ -70,6 +78,12 @@ def basis(rates: dict) -> list[tuple]:
             ("렌트 감가상각비 상당액 비율", car["rent_ratio"]["value"], car["rent_ratio"]["basis"], car["rent_ratio"]["grade"], "0%"),
             ("리스 수선유지비 비율", lease["repair_ratio"]["value"], lease["repair_ratio"]["basis"], lease["repair_ratio"]["grade"], "0%"),
             ("처분손실 한도", car["disposal_limit"]["value"], car["disposal_limit"]["basis"], car["disposal_limit"]["grade"], None),
+            ("부동산임대업 주업 감가상각비 한도", car["real_estate_depreciation_limit"]["value"],
+             car["real_estate_depreciation_limit"]["basis"], car["real_estate_depreciation_limit"]["grade"], None),
+            ("부동산임대업 주업 운행기록 미작성 한도", car["real_estate_no_log_limit"]["value"],
+             car["real_estate_no_log_limit"]["basis"], car["real_estate_no_log_limit"]["grade"], None),
+            ("부동산임대업 주업 처분손실 한도", car["real_estate_disposal_limit"]["value"],
+             car["real_estate_disposal_limit"]["basis"], car["real_estate_disposal_limit"]["grade"], None),
             ("저가양도 기준금액", low["low_price_amount"]["value"], low["low_price_amount"]["basis"], low["low_price_amount"]["grade"], None),
             ("저가양도 기준비율", low["low_price_ratio"]["value"], low["low_price_ratio"]["basis"], low["low_price_ratio"]["grade"], "0%")]
 
@@ -554,8 +568,9 @@ def compute(p: Paper, b: Books) -> None:
                 c["lease"] = True
             if RENT_WORD.search(r.line.memo):
                 c["rent_word"] = True
-    lim_dep = rate(b.rates, "business_car", "depreciation_limit")
-    lim_log = rate(b.rates, "business_car", "no_log_limit")
+    estate = estate_main(p, b)
+    lim_dep = rate(b.rates, "business_car", "real_estate_depreciation_limit" if estate else "depreciation_limit")
+    lim_log = rate(b.rates, "business_car", "real_estate_no_log_limit" if estate else "no_log_limit")
     rent_ratio = frac(rate(b.rates, "business_car", "rent_ratio"))
     repair_ratio = frac(rate(b.rates, "business_car_lease", "repair_ratio"))
     args = (lim_dep, lim_log, rent_ratio, b.months, repair_ratio)
@@ -582,7 +597,8 @@ def compute(p: Paper, b: Books) -> None:
         target = "부" if k in (NOT_ASSIGNED, OTHER_VEHICLE, ASSET_RENT) or k in not_target else "여"
         if k in prior_only:
             target = prior_only[k]["target"]
-        kind = "리스" if c["lease"] else ("렌트" if c["rent"] or (k in prior_only and prior_only[k]["end"]) else "자가")
+        # 임차료가 있는 차량은 리스인지 렌트인지 회계사 답을 받는다(10-29 대표 결정, 적요 · 거래처 이름 · 번호판으로 정하지 않음)
+        kind = PENDING if c["rent"] else ("렌트" if k in prior_only and prior_only[k]["end"] else "자가")
         months = len(c["rent_months"]) if c["rent"] else b.months
         months = max(1, min(12, months))
         # 7회차까지의 노란 칸 「리스 제외액」(보험료 · 자동차세 · 수선비 합계) 값은 「리스 보험료」 칸으로 옮긴다.
@@ -601,16 +617,18 @@ def compute(p: Paper, b: Books) -> None:
                "lease_ins": p.take(b, f"리스 보험료/{k}", 0, "int"),
                "lease_tax": p.take(b, f"리스 자동차세/{k}", 0, "int"),
                "lease_repair": p.take(b, f"리스 수선유지비/{k}", 0, "int"),
-               "lease_7": p.take(b, f"수선유지비 7% 적용/{k}", "부"),
+               "lease_7": p.take(b, f"수선유지비 7% 적용/{k}", "여"),
                "carry": p.take(b, f"전기 이월액/{k}", carry_of.get(k, 0), "int"),
-               "basis": basis_of.get(k, ""),
-               "unclear": _unclear_lessor(c) and f"임차 구분/{k}" not in p.overridden}
+               "basis": basis_of.get(k, ""), "partners": sorted(x for x in c["partners"] if x),
+               "lease_word": c["lease"], "rent_word": c["rent_word"]}
+        if row["kind"] not in KINDS:
+            row["kind"] = PENDING
         row["ratio_in"] = row["ratio_in"] if row["ratio_in"] != 1.0 else 1
         row["costs"]["감가상각비"] += row["own_dep"]
         rows.append(car_calc(row, *args))
     p.extra["cars"] = rows
 
-    disposal = disposals(p, b)
+    disposal = disposals(p, b, estate)
     p.extra["disposal"] = disposal
 
     on = [r for r in rows if r["target"] == "여"]
@@ -620,7 +638,8 @@ def compute(p: Paper, b: Books) -> None:
     excess_own = sum(r["excess"] for r in on if r["kind"] == "자가")
     reversal = sum(r["reversal"] for r in on)
     disp_excess = sum(d["excess"] for d in disposal if d["apply"] == "여")
-    p.values = {"관련비용": total_cost, "감가상각비상당액": sum(r["dep_eq"] for r in on), "업무외사용금액": personal,
+    p.values = {ESTATE: "여" if estate else "부", "임차구분확인": [r["key"] for r in on if r["kind"] == PENDING],
+                "관련비용": total_cost, "감가상각비상당액": sum(r["dep_eq"] for r in on), "업무외사용금액": personal,
                 "한도초과(임차)": excess_rent, "한도초과(자가)": excess_own, "이월액손금추인": reversal,
                 "처분손실한도초과": disp_excess, "처분손실한도초과후보": sum(d["excess"] for d in disposal),
                 "저가양도차액": sum(d["low_price"] for d in disposal),
@@ -652,6 +671,8 @@ def compute(p: Paper, b: Books) -> None:
     _cost_messages(p, cost_ev, real)
     _asset_messages(p, asset_ev, rows, args)
     _lease_messages(p, rows, args)
+    if rows or disposal:
+        _estate_messages(p, b)
     for k in migrated:
         p.notes.append(f"「{k}」 의 옛 노란 칸 「리스 제외액」 값을 「리스료 중 보험료」 칸으로 옮겼습니다. 보험료 · 자동차세 · 수선유지비로 나눠 고치세요")
     p.notes.append("운행기록 작성 여부는 「여」, 업무사용비율은 100% 로 두었습니다. 운행기록이 없으면 「부」 로 바꾸세요(1천5백만원 기준)")
@@ -661,6 +682,12 @@ def compute(p: Paper, b: Books) -> None:
     prior_car = [a for a in (b.prior or {}).get("adjustments", [])
                  if ("차량" in a.get("subject", "") or "승용차" in a.get("subject", "")) and a.get("side") == "가산"]
     _carry_messages(p, rows, carry_of, prior_only)
+    if b.reserves_unknown:
+        open_cars = [r["key"] for r in on if f"전기 이월액/{r['key']}" not in p.overridden and r["key"] != NOT_ASSIGNED]
+        if open_cars:
+            p.confirm.append(f"{b.reserves_unknown}. 전기 50호(을) · 29호를 몰라 차량 {len(open_cars)}대({' · '.join(open_cars[:5])})의 "
+                             "감가상각비(상당액) 한도초과 이월액 · 유보를 0 으로 두었습니다(확인 전). 전기말 이월액을 차량별 노란 칸 "
+                             "「전기 이월액」 에 넣으세요(없으면 0)")
     if prior_car and not _prior_29(b):
         amt = sum(int(a.get("amount") or 0) for a in prior_car)
         p.confirm.append(f"전기 15호에 차량 관련 손금불산입 {amt:,}원이 있습니다. 감가상각비상당액 한도초과 이월액이면 차량별 「전기 이월액」 란에 넣으세요")
@@ -955,56 +982,113 @@ def _asset_messages(p: Paper, asset_ev: dict, rows: list[dict], args: tuple) -> 
                              f"{alt['months']} · 한도초과 {alt['excess']:,}원, 지금 월수 {car['months']} · 한도초과 {car['excess']:,}원)")
 
 
-def _unclear_lessor(c: dict) -> bool:
-    """거래처 이름이 캐피탈 · 리스 회사인데 임차료 줄 적요에 리스도 렌트도 없는 차량(리스인지 렌트인지 적요로 가릴 수 없다)."""
-    return bool(c["rent"] and not c["lease"] and not c["rent_word"] and any(FINANCE.search(x) for x in c["partners"]))
+def _code3(a: dict) -> int:
+    c = str(a.get("code") or "")[:3]
+    return int(c) if c.isdigit() else 0
+
+
+def estate_main(p: Paper, b: Books) -> bool:
+    """부동산임대업 주업 여부(10-29 대표 결정: 조정후수입금액명세서의 업종코드로 판단한다). 노란 칸 「부동산임대업 주업」 의 값.
+
+    17호(조정후수입금액명세서)는 ① ~ ③ 업태 · 종목 · 업종코드를 전기 신고서 업종코드로, ④ 수입금액을 장부 매출 계정(401~450)
+    합계로 채운다(`forms/fill_more.fill_17`). 이 조서는 서식 단계보다 먼저 돌아 같은 출처에서 업종코드별 수입금액을 다시 만든다.
+    부동산임대업 업종코드(규칙 `real_estate_codes`)의 수입금액이 가장 크면 부동산임대업이 주된 사업이다(시행령 제42조 제3항).
+    업종코드가 비면 판정하지 않고(기본값 「부」) 확인 줄이다. 지배주주등 지분 50% 초과 · 상시근로자 5명 미만(같은 조 제2항
+    제1호 · 제3호)은 장부로 알 수 없어 확인 줄에 적는다."""
+    info = estate_judge(b)
+    value = p.take(b, ESTATE, info["default"])
+    info.update({"value": value, "answered": b.override(p.id, ESTATE) is not MISSING})
+    p.extra["estate"] = info
+    return value == "여"
+
+
+def estate_judge(b: Books) -> dict:
+    """부동산임대업 주업 판정 근거 {rows, prefixes, judged, basis, default}. 업무용승용차 · 기업업무추진비 조서가 같이 쓴다."""
+    comp = (b.prior or {}).get("company") or {}
+    code = re.sub(r"\D", "", str(comp.get("industry_code") or ""))
+    revenue = sum(int(a.get("amount") or 0) for a in b.ledger.get("accounts", [])
+                  if a.get("class") == "수익" and 401 <= _code3(a) <= 450)
+    prefixes = tuple(str(x) for x in rate(b.rates, "business_car", "real_estate_codes"))
+    rows17 = [(code, revenue)] if code else []
+    info = {"rows": rows17, "prefixes": prefixes, "judged": bool(rows17)}
+    if rows17:
+        total = sum(v for _, v in rows17)
+        estate_amt = sum(v for c, v in rows17 if c.startswith(prefixes))
+        top = max(rows17, key=lambda x: x[1])
+        main = top[0].startswith(prefixes)
+        share = f"{estate_amt / total:.0%}" if total else "수입금액 0"
+        text = " · ".join(f"업종코드 {c} 수입금액 {v:,}원" for c, v in rows17)
+        info["basis"] = (f"17호 {text}. 부동산임대업 업종코드({' · '.join(x + '…' for x in prefixes)}) 수입금액 {estate_amt:,}원"
+                         f"(합계의 {share}) → " + ("부동산임대업이 주된 사업입니다" if main else "부동산임대업이 주된 사업이 아닙니다"))
+        default = "여" if main else "부"
+    else:
+        info["basis"] = "17호 업종코드가 비어 판정하지 않음"
+        default = "부"
+    info["default"] = default
+    return info
+
+
+def _estate_messages(p: Paper, b: Books) -> None:
+    info = p.extra.get("estate") or {}
+    lim = "감가상각비(상당액) 한도 400만원 · 운행기록 미작성 인정 한도 500만원 · 처분손실 한도 400만원"
+    law = "법인세법 제27조의2 제5항 · 시행령 제50조의2 제15항 · 제42조 제2항 · 제3항"
+    if info.get("answered"):
+        p.notes.append(f"부동산임대업 주업은 회계사 값 「{info['value']}」 로 계산했습니다(판정 근거: {info['basis']}). "
+                       + (f"{lim}을 썼습니다({law})" if info["value"] == "여" else "한도는 800만원입니다"))
+    elif not info.get("judged"):
+        p.confirm.append("조정후수입금액명세서(17호) 업종코드가 비어 부동산임대업 주업을 판정하지 않았습니다(업무용승용차 한도 800만원으로 "
+                         "계산). 전기 신고서 · 사업자등록증의 업종코드로 확인해 노란 칸 「부동산임대업 주업」 을 고치십시오(「여」 이면 "
+                         f"{lim}, {law})")
+    elif info["value"] == "여":
+        p.confirm.append(f"{info['basis']}. 부동산임대업 주업으로 보아 {lim}을 썼습니다({law}). 시행령 제42조 제2항의 다른 두 "
+                         "요건(사업연도 종료일 지배주주등 지분 50% 초과, 상시근로자 5명 미만)도 갖춰야 합니다. 갖추지 않았으면 노란 칸 "
+                         "「부동산임대업 주업」 을 「부」 로 바꾸십시오")
+    else:
+        p.notes.append(f"{info['basis']}. 업무용승용차 한도는 800만원입니다. 부동산 임대 · 이자 · 배당 수입이 매출액의 50% 이상이고 "
+                       "다른 두 요건을 갖추면 노란 칸 「부동산임대업 주업」 을 「여」 로 바꾸십시오(시행령 제42조 제2항 제2호)")
+    filed = str((b.info or {}).get("부동산임대업 주업법인") or "").strip()
+    yn = {"여": "여", "Y": "여", "부": "부", "N": "부"}.get(filed)
+    if yn and yn != info.get("value"):
+        p.confirm.append(f"신고건.json 「부동산임대업 주업법인」 은 「{filed}」 인데 이 조서는 「{info['value']}」 로 계산했습니다. 둘을 맞추십시오")
 
 
 def _lease_messages(p: Paper, rows: list[dict], args: tuple) -> None:
-    """리스 차량의 보험료 · 자동차세 · 수선유지비 확인 줄, 리스인지 렌트인지 가리지 못한 차량의 확인 줄."""
+    """임차 구분 답이 없는 차량의 질문(두 경우 금액), 리스 차량의 보험료 · 자동차세 · 수선유지비 확인 줄."""
     pct = f"{int(args[2] * 100)}%"
     on = [r for r in rows if r["target"] == "여" and r["costs"].get("임차료", 0) > 0]
-    lease = [r for r in on if r["kind"] == "리스"]
-    todo = [r for r in lease if not (r["lease_ins"] or r["lease_tax"] or r["lease_repair"]) and r["lease_7"] != "여"]
-    if todo:
-        parts = []
-        for r in todo:
-            alt = _what_if(r, args, lease_7="여")
-            parts.append(f"「{r['key']}」 감가상각비 상당액 {alt['dep_eq']:,}원 · 한도초과 {alt['excess']:,}원"
-                         f"(지금 {r['dep_eq']:,}원 · {r['excess']:,}원)")
-        p.confirm.append(f"리스 차량 {len(todo)}대의 리스료에 든 보험료 · 자동차세를 리스 계약서로 확인해 넣으십시오. 수선유지비를 따로 "
-                         "가리기 어려우면 (임차료 − 보험료 − 자동차세) × 7% 를 수선유지비로 할 수 있습니다(법인세법 시행규칙 "
-                         "제27조의2 제6항 제1호). 지금은 리스료에서 아무것도 빼지 않았습니다. 「수선유지비 7% 적용」 을 「여」 로 "
-                         f"바꾸면 {', '.join(parts)} 이 됩니다")
-    for r in lease:
-        if any(r is t for t in todo):
+    for r in on:
+        if r["kind"] != PENDING:
             continue
-        if r["lease_7"] == "여" and r["lease_repair"]:
-            p.notes.append(f"「{r['key']}」 은 수선유지비 칸에 값이 있어 7% 를 적용하지 않았습니다")
-        elif r["lease_7"] == "여":
+        rent, lease = _what_if(r, args, kind="렌트"), _what_if(r, args, kind="리스")
+        partners = " · ".join(r.get("partners") or []) or "거래처 없음"
+        memo = [w for w, on_ in (("리스", r.get("lease_word")), ("렌트", r.get("rent_word"))) if on_]
+        hint = f" 적요에 「{' · '.join(memo)}」 가 있지만 적요로 정하지 않았습니다." if memo else ""
+        net = "보험료 · 자동차세 · 수선유지비 칸 값을 뺀" if (r["lease_ins"] or r["lease_tax"] or r["lease_repair"]) else \
+            "수선유지비 7% 만 뺀(보험료 · 자동차세 칸이 비어 있음)"
+        p.confirm.append(f"「{r['key']}」(임대 거래처 {partners})이 리스(시설대여업자)인지 렌트(자동차대여사업자)인지 답이 없어 감가상각비 "
+                         f"상당액 한도초과와 이월액 추인을 넣지 않았습니다.{hint} 거래처 사업자등록증 · 홈택스의 업종코드(시설대여업 · "
+                         "자동차대여업)로 확인해 차량 표 「임차 구분」 노란 칸에 「리스」 또는 「렌트」 를 넣으십시오. 렌트이면 감가상각비 "
+                         f"상당액이 임차료의 {pct} 인 {rent['dep_eq']:,}원 · 한도초과 {rent['excess']:,}원이고, 리스이면 임차료에서 {net} "
+                         f"{lease['dep_eq']:,}원 · 한도초과 {lease['excess']:,}원입니다(법인세법 시행규칙 제27조의2 제6항)")
+    for r in on:
+        if r["kind"] != "리스":
+            continue
+        if not (r["lease_ins"] or r["lease_tax"]):
+            now = (f"수선유지비 {r['lease_repair_applied']:,}원만 뺐습니다" if r["lease_repair_applied"]
+                   else "리스료에서 아무것도 빼지 않았습니다(「수선유지비 7% 적용」 부)")
+            p.confirm.append(f"리스 차량 「{r['key']}」 의 리스료에 든 보험료 · 자동차세를 리스 계약서로 확인해 노란 칸에 넣으십시오. 지금은 "
+                             f"{now}(감가상각비 상당액 {r['dep_eq']:,}원 · 한도초과 {r['excess']:,}원). 수선유지비를 따로 가리기 "
+                             "어려우면 (임차료 − 보험료 − 자동차세) × 7% 를 수선유지비로 봅니다(법인세법 시행규칙 제27조의2 제6항 제1호)")
+        elif r["lease_7"] == "여" and not r["lease_repair"]:
             p.notes.append(f"「{r['key']}」 의 수선유지비를 (임차료 − 보험료 − 자동차세) × 7% = {r['lease_repair_applied']:,}원으로 "
                            f"계산했습니다(감가상각비 상당액 {r['dep_eq']:,}원 · 한도초과 {r['excess']:,}원)")
         elif not r["lease_repair"]:
             alt = _what_if(r, args, lease_7="여")
             p.notes.append(f"「{r['key']}」 은 수선유지비 칸이 비어 있습니다. 「수선유지비 7% 적용」 을 「여」 로 바꾸면 수선유지비 "
                            f"{alt['lease_repair_applied']:,}원을 더 빼 한도초과가 {alt['excess']:,}원이 됩니다(지금 {r['excess']:,}원)")
-    for r in on:
-        if not r.get("unclear"):
-            continue
-        rent, lease_, seven = (_what_if(r, args, kind="렌트"), _what_if(r, args, kind="리스"),
-                               _what_if(r, args, kind="리스", lease_7="여"))
-        hint = ""
-        if PLATE.fullmatch(r["key"]) and PLATE.fullmatch(r["key"]).group(2) not in RENTAL_LETTERS:
-            hint = (f"차량번호의 한글이 {' · '.join(RENTAL_LETTERS)} 가 아니어서 자동차대여사업용 번호판은 아닌 것으로 보입니다"
-                    "(리스일 수 있습니다). ")
-        p.confirm.append(f"「{r['key']}」 은 거래처 이름이 캐피탈 · 리스 회사인데 적요에 리스도 렌트도 없어 {r['kind']}로 계산했습니다. {hint}"
-                         f"렌트(자동차대여사업자)이면 감가상각비 상당액이 임차료의 {pct} 인 {rent['dep_eq']:,}원 · 한도초과 "
-                         f"{rent['excess']:,}원이고, 리스(시설대여업자)이면 임차료에서 보험료 · 자동차세 · 수선유지비를 뺀 "
-                         f"{lease_['dep_eq']:,}원 · 한도초과 {lease_['excess']:,}원입니다(수선유지비 7% 를 적용하면 "
-                         f"{seven['dep_eq']:,}원 · {seven['excess']:,}원). 계약서로 확인해 「임차 구분」 을 고치세요")
 
 
-def disposals(p: Paper, b: Books) -> list[dict]:
+def disposals(p: Paper, b: Books, estate: bool = False) -> list[dict]:
     """차량 처분 전표(차량 자산 대변과 처분손실 차변이 같은 전표). 장부가액 = 차량 대변 - 누계액 차변,
     양도가액 = 장부가액 - 처분손실 + 처분이익. 노란 칸: 처분손실 적용(업무용승용차 여부) · 매수인 특수관계인 · 시가.
 
@@ -1021,7 +1105,7 @@ def disposals(p: Paper, b: Books) -> list[dict]:
     def name(ln):
         return acct(ln).get("name") or ln.account_name
 
-    base = rate(b.rates, "business_car", "disposal_limit")
+    base = rate(b.rates, "business_car", "real_estate_disposal_limit" if estate else "disposal_limit")
     lim = rd(Fraction(base * b.months, 12)) if b.months < 12 else base
     low_amt = rate(b.rates, "business_car_disposal", "low_price_amount")
     low_ratio = frac(rate(b.rates, "business_car_disposal", "low_price_ratio"))
@@ -1106,6 +1190,8 @@ def car_calc(row: dict, lim_dep: int, lim_log: int, rent_ratio: Fraction, fy_mon
         dep_eq = net - repair
     elif row["kind"] == "렌트":
         dep_eq = rd(rent * rent_ratio)
+    elif row["kind"] == PENDING:
+        dep_eq = 0                 # 리스 · 렌트 답 전에는 상당액을 정하지 않는다(확인 줄에 두 경우 금액)
     else:
         dep_eq = costs.get("감가상각비", 0)
     row["lease_repair_applied"] = repair
@@ -1123,7 +1209,7 @@ def car_calc(row: dict, lim_dep: int, lim_log: int, rent_ratio: Fraction, fy_mon
     dep_biz = rd(dep_eq * ratio)
     limit = rd(Fraction(lim_dep * months, 12))
     excess = max(0, dep_biz - limit)
-    reversal = min(row["carry"], max(0, limit - dep_biz))
+    reversal = 0 if row["kind"] == PENDING else min(row["carry"], max(0, limit - dep_biz))
     row.update({"total": total, "dep_eq": dep_eq, "ratio": ratio, "personal": personal, "dep_biz": dep_biz,
                 "limit": limit, "excess": excess, "reversal": reversal})
     if row["target"] != "여":
@@ -1140,13 +1226,23 @@ LEASE_KEYS = ("리스 보험료", "리스 자동차세", "리스 수선유지비
 
 def write(bk: Book, p: Paper) -> None:
     s = head(bk, p)
+    d = p.defaults
     row = 5
     _, first, last = lines_dry(p, row + verify_rows(p))
     row = verify(bk, s, row, p, first, last)
     row, first, last = ledger(bk, s, row, p, "차량", "비용 구분", kind="text")
     R = bk.ref
     row = s.section(row, "3. 차량별 관련비용과 한도")
-    X.note(s.ws, row, "노란 칸: 대상(여 · 부) · 임차 구분(리스 · 렌트 · 자가) · 운행기록(여 · 부) · 업무사용비율 · 월수 · "
+    er = row
+    s.put(row, 1, f"{ESTATE}(여 · 부)")
+    s.inp(row, 2, p.inputs[ESTATE], pid=p.id, key=ESTATE, default=d.get(ESTATE, p.inputs[ESTATE]))
+    s.put(row, 3, (p.extra.get("estate") or {}).get("basis", ""))
+    row += 1
+    est = f'$B${er}="여"'
+    dep_lim = f'IF({est},{R["부동산임대업 주업 감가상각비 한도"]},{R["업무용승용차 감가상각비 한도"]})'
+    log_lim = f'IF({est},{R["부동산임대업 주업 운행기록 미작성 한도"]},{R["운행기록 미작성 인정 한도"]})'
+    disp_lim = f'IF({est},{R["부동산임대업 주업 처분손실 한도"]},{R["처분손실 한도"]})'
+    X.note(s.ws, row, "노란 칸: 대상(여 · 부) · 임차 구분(리스 · 렌트 · 자가, 임차 차량은 거래처 업종코드로 확인해 답함) · 운행기록(여 · 부) · 업무사용비율 · 월수 · "
                       "자가 감가상각비 · 리스료 중 보험료 · 자동차세 · 수선유지비 · 수선유지비 7% 적용(여 · 부) · 전기 이월액")
     row += 1
     X.note(s.ws, row, "리스 차량의 감가상각비 상당액 = 임차료 - 리스료 중 보험료 - 자동차세 - 수선유지비. 수선유지비 칸이 0 이고 "
@@ -1162,7 +1258,6 @@ def write(bk: Book, p: Paper) -> None:
     c = {name: L(i) for name, i in col.items()}
     car_first = row
     fy_m = R["사업연도 월수"]
-    d = p.defaults
     for car in p.extra["cars"]:
         r, k = row, car["key"]
         m_cap = f"MAX(0,MIN({c['월수']}{r},{fy_m}))"
@@ -1194,18 +1289,22 @@ def write(bk: Book, p: Paper) -> None:
               f'ROUNDDOWN({net}*{R["리스 수선유지비 비율"]},0),{c["리스료 중 수선유지비"]}{r}),0)', money=True)
         s.put(r, col["감가상각비 상당액"],
               f'=IF({c["임차 구분"]}{r}="리스",{net}-{c["수선유지비 적용액"]}{r},'
-              f'IF({c["임차 구분"]}{r}="렌트",ROUNDDOWN({c["임차료"]}{r}*{R["렌트 감가상각비 상당액 비율"]},0),{c["감가상각비"]}{r}))', money=True)
+              f'IF({c["임차 구분"]}{r}="렌트",ROUNDDOWN({c["임차료"]}{r}*{R["렌트 감가상각비 상당액 비율"]},0),'
+              f'IF({c["임차 구분"]}{r}="{PENDING}",0,{c["감가상각비"]}{r})))', money=True)
         s.put(r, col["적용 비율"],
               f'=IF({c["운행기록"]}{r}="여",{c["업무사용비율"]}{r},IF({c["관련비용"]}{r}<=0,1,'
-              f'MIN(1,{R["운행기록 미작성 인정 한도"]}*{m_cap}/12/MAX(1,{c["관련비용"]}{r}))))', fmt="0.00%")
+              f'MIN(1,{log_lim}*{m_cap}/12/MAX(1,{c["관련비용"]}{r}))))', fmt="0.00%")
         on = f'{c["대상"]}{r}="여"'
         s.put(r, col["업무외사용금액"], f"=IF({on},ROUNDDOWN({c['관련비용']}{r}*(1-{c['적용 비율']}{r}),0),0)", money=True)
         s.put(r, col["상당액 업무사용분"], f"=IF({on},ROUNDDOWN({c['감가상각비 상당액']}{r}*{c['적용 비율']}{r},0),0)", money=True)
-        s.put(r, col["한도"], f"=ROUNDDOWN({R['업무용승용차 감가상각비 한도']}*{m_cap}/12,0)", money=True)
+        s.put(r, col["한도"], f"=ROUNDDOWN({dep_lim}*{m_cap}/12,0)", money=True)
         s.put(r, col["한도초과"], f"=IF({on},MAX(0,{c['상당액 업무사용분']}{r}-{c['한도']}{r}),0)", money=True)
         inp("전기 이월액", "전기 이월액", car["carry"], "int", money=True)
-        s.put(r, col["손금추인"], f"=IF({on},MIN({c['전기 이월액']}{r},MAX(0,{c['한도']}{r}-{c['상당액 업무사용분']}{r})),0)", money=True)
+        live = f'AND({on},{c["임차 구분"]}{r}<>"{PENDING}")'
+        s.put(r, col["손금추인"], f"=IF({live},MIN({c['전기 이월액']}{r},MAX(0,{c['한도']}{r}-{c['상당액 업무사용분']}{r})),0)", money=True)
         s.put(r, col["나눈 근거"], car.get("basis", ""))
+        for name in ("관련비용", "감가상각비 상당액", "상당액 업무사용분", "업무외사용금액", "한도초과") + tuple(COST_TYPES):
+            bk.reg(p.id, f"차량 {k}/{name}", s.addr(r, col[name]))      # 29호 차량 줄이 가리키는 칸(10-31)
         row += 1
     if not p.extra["cars"]:
         s.put(row, 1, "차량 없음")
@@ -1247,7 +1346,7 @@ def write(bk: Book, p: Paper) -> None:
         s.inp(row, 5, dsp["related"], pid=p.id, key=key, default=d.get(key, dsp["related"]))
         s.put(row, 6, ln.memo)
         s.put(row, 7, dsp["loss"], money=True)
-        s.put(row, 8, f"=IF({R['사업연도 월수']}<12,ROUNDDOWN({R['처분손실 한도']}*{R['사업연도 월수']}/12,0),{R['처분손실 한도']})",
+        s.put(row, 8, f"=IF({R['사업연도 월수']}<12,ROUNDDOWN({disp_lim}*{R['사업연도 월수']}/12,0),{disp_lim})",
               money=True)
         key = f"처분손실 적용/{dsp['key']}"
         s.inp(row, 9, dsp["apply"], pid=p.id, key=key, default=d.get(key, dsp["apply"]))

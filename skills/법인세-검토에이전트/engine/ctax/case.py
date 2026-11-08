@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -71,9 +72,28 @@ class Case:
         return json.loads(p.read_text(encoding="utf-8"))
 
     def write_json(self, name: str, data: dict) -> Path:
+        """통째로 다시 쓴다. 임시 파일에 쓰고 바꿔 넣어 읽는 쪽(chief · 화면)이 반쯤 쓴 파일을 보지 않게 한다. 같은 건을 두 실행이
+        함께 쓰는 것은 디스패치의 건별 잠금(`runlog.lock_acquire`, 설계안 10-30 3.2절)이 막는다. 바꿔 넣지 못하면(Drive 가 잡고 있음)
+        그대로 덮어쓴다."""
         p = self.index_path(name)
-        p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        text = json.dumps(data, ensure_ascii=False, indent=1)
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, p)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            p.write_text(text, encoding="utf-8")
         return p
+
+    def running(self) -> dict | None:
+        """이 건을 지금 돌리고 있는 실행 {host, pid, caller, command, at}. 없거나 죽은 레코드면 None(실장 현황의 busy 표시용)."""
+        from . import runlog
+
+        return runlog.lock_holder(self.root)
 
     def need(self, step: str) -> dict:
         """앞 단계 산출 JSON 을 읽는다. 없으면 MissingInput."""
@@ -92,6 +112,17 @@ class Case:
         info.setdefault("steps", {})[name] = {"at": datetime.now().isoformat(timespec="seconds"), "ok": bool(ok),
                                               "note": note, "outputs": outputs or []}
         self.write_json("신고건.json", info)
+
+
+def file_sha1(p: Path) -> str:
+    """파일 내용 해시(sha1 16진). 장부.json · 전기.json 이 읽은 판을 적는다(intake/stale.py, 10-31). 꾸러미마다 들어가는 이 파일에 둔다."""
+    import hashlib
+
+    h = hashlib.sha1()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def won(n: int | float | None) -> str:

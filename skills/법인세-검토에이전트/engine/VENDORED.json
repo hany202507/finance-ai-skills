@@ -1,21 +1,24 @@
 {
   "source": "kernelspaces/academy-product 법인세/ctax",
-  "commit": "b6b328f 2026-10-25 docs(법인세): NOTES 에서 평가세트 회사 이름 빼기(배포 스킬 엔진으로 옮겨지는 파일)",
+  "commit": "7b40560 2026-11-09 fix(법인세): 정답세트 검토 반영(23호(갑) ⑧ 부동산임대업 50%, 52 · 55호 확인 연결 뺌)",
   "copied": [
     "case.py",
     "xlsx.py",
+    "runlog.py",
     "intake/",
     "prior/",
     "ar/",
     "wp/",
-    "score/match.py"
+    "context/",
+    "score/match.py",
+    "forms/calc.py",
+    "forms/registry.py",
+    "forms/fx.py",
+    "forms/params.py",
+    "forms/defs/"
   ],
   "stubs": [
     "forms/plugins",
     "forms/engine_forms.yaml"
-  ],
-  "patches": [
-    "academy-product 0fc96b3 2026-11-03 사업연도별 세율 표: wp/books.py · cli.py · summary.py · excel.py · papers/bad_debt.py · papers/loan_interest.py · rates_2026.yaml 만 옮김(그 사이 다른 변경은 옮기지 않음). rates_2026.yaml 에서 공개본 2025 표에 없는 brackets_small_rental · business_car.real_estate_* 를 뺐다",
-    "academy-product 2812782 · 1f730b7 2026-11-03 기업업무추진비 온누리상품권(비역년 사업연도): wp/papers/entertainment.py 의 onnuri_item · 12개월 미만 확인 줄과 wp/excel.py 기준 시트가 p.extra[\"rates\"] 를 쓰는 한 줄만 옮김. 같은 커밋의 소규모 법인 엑셀 수식은 공개본에 소규모 법인 판정이 없어 옮기지 않음"
   ]
 }

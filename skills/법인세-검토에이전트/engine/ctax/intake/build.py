@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 
 from .fs import FsLine, LIAB_CONTRA_ASSETS, RE_NAMES, IS_SECTIONS, find_head
@@ -85,8 +86,12 @@ def natural(cls: str, dp: int) -> int:
     return dp if cls in ("자산", "비용", "손익대체") else -dp
 
 
-def check(cid: str, ok: bool, title: str, detail: str, amounts: dict | None = None) -> dict:
-    return {"id": cid, "ok": bool(ok), "title": title, "detail": detail, "amounts": amounts or {}}
+def check(cid: str, ok: bool, title: str, detail: str, amounts: dict | None = None, warn: bool = False) -> dict:
+    """warn: 통과로 두되 사람이 볼 것이 남았다(대사 줄에 [경고] 로 찍는다)."""
+    out = {"id": cid, "ok": bool(ok), "title": title, "detail": detail, "amounts": amounts or {}}
+    if warn:
+        out["warn"] = True
+    return out
 
 
 def w(n) -> str:
@@ -243,6 +248,11 @@ def resolve_partner_files(pfs: list[PartnerFile], agg: Agg, five: bool) -> None:
 
 # ---------------------------------------------------------------- B 꼴 거래처 줄
 
+def _src(p: PartnerFile, x: dict) -> dict:
+    """거래처 줄의 원본 파일 · 엑셀 행(11-01). 행 번호를 모르는 줄(더존 계정명세서 블록)은 붙이지 않는다."""
+    return {"src_file": p.path, "src_row": x["row"]} if x.get("row") else {}
+
+
 def _b_rows(p: PartnerFile, acc: dict | None, agg: Agg, complete: bool, stats: dict) -> list[dict]:
     """B 꼴(기말만 있는 계정명세서) → 거래처 줄. 기초는 (기말 − 분개장 거래처별 순증감)으로 추정한다.
 
@@ -268,7 +278,7 @@ def _b_rows(p: PartnerFile, acc: dict | None, agg: Agg, complete: bool, stats: d
             closing = sg * x["amount"]
             out.append({"account": p.account, "partner_code": x["code"], "partner": x["name"],
                         "opening": closing - d_ + c_, "debit": d_, "credit": c_, "closing": closing,
-                        "estimated_opening": True})
+                        "estimated_opening": True, **_src(p, x)})
         return out
     seen: set[str] = set()
     for x in p.rows:
@@ -277,7 +287,8 @@ def _b_rows(p: PartnerFile, acc: dict | None, agg: Agg, complete: bool, stats: d
         seen.add(pc)
         closing = sg * x["amount"]
         row = {"account": p.account, "partner_code": x["code"], "partner": x["name"],
-               "opening": closing - jd + jc, "debit": jd, "credit": jc, "closing": closing, "estimated_opening": True}
+               "opening": closing - jd + jc, "debit": jd, "credit": jc, "closing": closing, "estimated_opening": True,
+               **_src(p, x)}
         if row["opening"] * natural_sign < 0:
             stats["negative"] += 1
         out.append(row)
@@ -566,7 +577,7 @@ def build(*, journal: Journal, bs: list[FsLine], is_: list[FsLine], pfs: list[Pa
             for x in p.rows:
                 rows_out.append({"account": p.account, "partner_code": x["code"], "partner": x["name"],
                                  "opening": sg * x["op"], "debit": x["dr"], "credit": x["cr"],
-                                 "closing": sg * x["bal"]})
+                                 "closing": sg * x["bal"], **_src(p, x)})
             check_open = True
         else:
             # B 꼴: 분개장에만 있는 거래처를 채운 파일(계정마다 첫 파일)은 추정 기초 합계 = 장부 기초도 본다
@@ -580,7 +591,7 @@ def build(*, journal: Journal, bs: list[FsLine], is_: list[FsLine], pfs: list[Pa
     # ---- 재무제표 줄
     def fs_out(ln: FsLine, bs_side: bool) -> dict:
         d = {"label": ln.label, "cur": ln.cur, "prior": ln.prior, "code": ln.code if ln.kind == "account" else None,
-             "kind": ln.kind, "section": ln.section}
+             "kind": ln.kind, "section": ln.section, "src_row": ln.src_row}
         if bs_side and ln.contra:
             d["contra"] = True
             d["net_cur"], d["net_prior"] = ln.net_cur, ln.net_prior
@@ -615,7 +626,18 @@ def build(*, journal: Journal, bs: list[FsLine], is_: list[FsLine], pfs: list[Pa
         _check_pl(is_, agg, pl_codes, used_is, code_cls, totals),
         _check_closing(journal, agg, code_cls, unposted),
         _check_partners(live_pfs, acc_map, file_sums, sum(1 for p in pfs if p.duplicate_of), unresolved, b_stats),
+        _check_partner_lines(live_pfs, agg, acc_map),
+        _check_is_footing(is_),
     ]
+    from .journal import returned_to_stock
+    back = returned_to_stock(journal.lines)
+    cost_by: dict[str, int] = defaultdict(int)
+    for k in agg.n:
+        if is_cost(k):
+            cost_by[cost_range(k)] += agg.dr_pre[k] - agg.cr_pre[k] - back.get(k, 0)
+    cost = check_cost_flow(is_, bs, dict(cost_by))
+    if cost is not None:
+        checks.append(cost)
     if tb:
         loose = [{"name": x.name, "closing": x.dp_cur} for x in bs if x.kind == "account" and not x.code and x.dp_cur]
         checks.append(_check_tb(tb, accounts, agg, loose))
@@ -759,7 +781,203 @@ def _check_closing(j: Journal, agg, code_cls, unposted: int = 0) -> dict:
                        + ("당기순손익을 빼면 " if unposted else "") + "0 입니다."
                        " 마감 전표를 만든 뒤 계정 사이 금액이 바뀐 것으로 보이며 손익계산서는 마감 전 집계와 맞으므로 통과로 봅니다"
                        "(계정별 손익대체 금액 확인 필요)")
+    if residual and left and residual + sum(left.values()) == 0:
+        # 손익 400 에 남은 금액이 마감 전표에 없는 손익 계정 잔액과 꼭 같다: 재무제표는 분개장과 맞고
+        # 마감 전표의 꼴만 안 맞는 경우다(10-29 대표 기준). 통과 + 경고
+        detail += (f" · 마감 전표에 없는 손익 계정 {len(left)}개를 마감 전 집계대로 손익에 넣었다(경고)."
+                   f" 손익 400 잔액 {w(residual)} 이 그 계정 잔액 합계와 같아 재무제표 숫자는 분개장과 맞습니다"
+                   "(계정별 손익대체 금액 확인)")
+        return check("closing_residual", True, "손익(400) 계정 잔액 0", detail, amounts, warn=True)
     return check("closing_residual", residual == 0, "손익(400) 계정 잔액 0", detail, amounts)
+
+
+def _code_key(code) -> str:
+    s = str(code or "").strip()
+    return s.lstrip("0") or s
+
+
+def _check_partner_lines(live_pfs, agg: Agg, acc_map: dict) -> dict:
+    """거래처원장(A 꼴) 줄마다 (1) 잔액 = 이월 ± 차변 · 대변, (2) 차변 · 대변 = 분개장 그 거래처(코드) 합계(11-01 PBC 대조).
+    파일 합계만 보는 partner_match 는 거래처끼리 잔액을 옮겨도 통과한다. 코드 없는 거래처는 분개장과 같이 000000 으로 본다.
+    분개장에 거래처 없는 줄이 있는데 파일에 000000(미등록거래처) 줄이 없으면 코드 있는 줄만 견주고 그 금액을 적는다. 분개장에
+    움직임이 없는 계정은 줄마다 0 과 견준다. 분개장 줄에 거래처가 하나도 없거나 파일 코드가 분개장 거래처 코드와 하나도 맞지
+    않는 계정만 (2) 를 하지 않고 그 사실을 적는다. B 꼴(기말만)은 줄 산식이 없어 보지 않는다(11-01 평가세트 사본 실행에서 고침)."""
+    title = "거래처원장 줄마다 잔액 산식 · 분개장 거래처별 차변 · 대변"
+    a_files = [p for p in live_pfs if p.form == "A" and c3(p.account) != CASH and p.rows]
+    if not a_files:
+        return check("partner_lines", True, title, "A 꼴 거래처원장이 없습니다(B 꼴 계정명세서는 기말만 있어 줄 대사를 하지 않습니다)")
+    msgs, diffs, skipped, noted, n = [], {}, [], [], 0
+    for p in a_files:
+        acc = acc_map.get(p.account) or {}
+        cls = acc.get("class") or code_class(p.account)[0]
+        nat = p.nature or ("debit" if cls == "자산" else "credit")
+        name = acc.get("name") or ""
+        for x in p.rows:
+            n += 1
+            want = x["op"] + (x["dr"] - x["cr"] if nat == "debit" else x["cr"] - x["dr"])
+            if x["bal"] != want:
+                diffs[f"{p.account} {x['name']} 잔액"] = x["bal"] - want
+                msgs.append(f"{p.account} {name} {x['name']}: 잔액 {w(x['bal'])} ≠ 이월 {w(x['op'])} "
+                            f"{'+ 차변 - 대변' if nat == 'debit' else '+ 대변 - 차변'} {w(want)}({p.path} {x.get('row') or '?'}행)")
+        jp: dict[str, list[int]] = {}
+        for (a, pc), v in agg.partner.items():          # 분기 파일끼리 코드 꼴(00101 · 101)이 달라도 한 거래처로 더한다
+            if a == p.account:
+                s_ = jp.setdefault(_code_key(pc), [0, 0])
+                s_[0] += v[0]
+                s_[1] += v[1]
+        none_key = _code_key("000000")
+        no_partner = jp.get(none_key, [0, 0])
+        file_codes = {_code_key(x["code"] or "000000") for x in p.rows}
+        if (no_partner[0] or no_partner[1]) and none_key not in file_codes:
+            jp.pop(none_key)
+            if not jp:                                  # 분개장 줄에 거래처가 하나도 없다(내보내기에서 거래처가 빠진 꼴)
+                skipped.append(f"{p.account} {name}(분개장 줄에 거래처가 없음)")
+                continue
+            noted.append(f"{p.account} {name}(분개장에 거래처 없는 줄 차변 {w(no_partner[0])} · 대변 {w(no_partner[1])}, "
+                         "원장에 미등록거래처 줄이 없어 코드 있는 거래처만 견줌)")
+        if jp and not (file_codes & set(jp)):
+            skipped.append(f"{p.account} {name}(파일 거래처 코드가 분개장 코드와 맞지 않음)")
+            continue
+        for x in p.rows:
+            jd, jc = jp.get(_code_key(x["code"] or "000000"), [0, 0])
+            if (x["dr"], x["cr"]) != (jd, jc):
+                diffs[f"{p.account} {x['name']} 분개장"] = (x["dr"] - jd) - (x["cr"] - jc)
+                msgs.append(f"{p.account} {name} {x['name']}: 원장 차변 {w(x['dr'])} · 대변 {w(x['cr'])} ≠ 분개장 차변 {w(jd)} · "
+                            f"대변 {w(jc)}({p.path} {x.get('row') or '?'}행)")
+        for code, (jd, jc) in jp.items():
+            if code not in file_codes and (jd or jc):
+                diffs[f"{p.account} {code} 원장에 없음"] = jd - jc
+                msgs.append(f"{p.account} {name}: 분개장 거래처 {code} 차변 {w(jd)} · 대변 {w(jc)} 가 원장 파일에 없습니다")
+    detail = f"A 꼴 파일 {len(a_files)}개 · 거래처 줄 {n}개"
+    if skipped:
+        detail += " · 분개장 거래처별 대사를 하지 않은 계정: " + ", ".join(skipped[:6])
+    if noted:
+        detail += " · " + ", ".join(noted[:6]) + (f" 외 {len(noted) - 6}개" if len(noted) > 6 else "")
+    if msgs:
+        detail += " · " + " / ".join(msgs[:8]) + (f" 외 {len(msgs) - 8}건" if len(msgs) > 8 else "")
+    return check("partner_lines", not diffs, title, detail, diffs)
+
+
+IS_HEADS = {"rev": r"^(매출액|매출|영업수익)$", "cogs": r"^매출원가$", "gp": r"^매출총(이익|손실)$",
+            "sga": r"^판매(비(와|및일반|와일반))?관리비$", "opex": r"^영업비용$", "op": r"^영업(이익|손실)$",
+            "noi": r"^영업외수익$", "noe": r"^영업외비용$", "ebt": r"차감전(순)?(이익|손실|손익)$",
+            "tax": r"^법인세(등|비용)$", "ni": r"당기순(이익|손실|손익)$"}
+
+
+def _check_is_footing(is_: list[FsLine]) -> dict:
+    """손익계산서 당기 · 전기 열의 머리 줄 산식(11-01 PBC 대조). 구역 머리 줄 = 그 구역 계정 줄 합계(계산 줄이 있는 매출원가는 뺌),
+    매출총이익 = 매출액 - 매출원가, 영업이익 = 매출총이익 - 판매비와관리비(또는 매출액 - 영업비용), 법인세차감전이익 = 영업이익 +
+    영업외수익 - 영업외비용, 당기순이익 = 법인세차감전이익 - 법인세등. 전기 열은 분개장과 견주는 대사가 없어 이 산식이 유일한 검사다."""
+    title = "손익계산서 당기 · 전기 머리 줄 산식"
+    msgs, diffs = [], {}
+    for col, label in (("cur", "당기"), ("prior", "전기")):
+        val = (lambda ln: ln.cur) if col == "cur" else (lambda ln: ln.prior)
+        if col == "prior" and not any(val(ln) for ln in is_):
+            continue                                       # 첫 사업연도 · 전기 열 없음
+        for h in is_:
+            if h.kind != "subtotal" or h.section not in IS_SECTIONS or val(h) is None:
+                continue
+            acc = [ln for ln in is_ if ln.kind == "account" and ln.section == h.section]
+            memo = [ln for ln in is_ if ln.kind == "memo" and ln.section == h.section]
+            if not acc or memo:
+                continue
+            s = sum(val(a) or 0 for a in acc)
+            if s != val(h):
+                diffs[f"{label} {h.section}"] = val(h) - s
+                msgs.append(f"{label} {h.section}: 머리 줄 {w(val(h))} ≠ 계정 줄 합계 {w(s)}")
+        hv = {k: find_head(is_, pat, col == "prior") for k, pat in IS_HEADS.items()}
+
+        def eq(name, left, right):
+            if left is None or right is None:
+                return
+            if left != right:
+                diffs[f"{label} {name}"] = left - right
+                msgs.append(f"{label} {name}: {w(left)} ≠ {w(right)}")
+        if hv["gp"] is not None and hv["rev"] is not None:
+            eq("매출총이익 = 매출액 - 매출원가", hv["gp"], hv["rev"] - (hv["cogs"] or 0))
+        if hv["op"] is not None:
+            if hv["gp"] is not None and hv["sga"] is not None:
+                eq("영업이익 = 매출총이익 - 판매비와관리비", hv["op"], hv["gp"] - hv["sga"])
+            elif hv["rev"] is not None and hv["opex"] is not None:
+                eq("영업이익 = 영업수익 - 영업비용", hv["op"], hv["rev"] - hv["opex"])
+        if hv["ebt"] is not None and hv["op"] is not None:
+            eq("법인세차감전이익 = 영업이익 + 영업외수익 - 영업외비용", hv["ebt"], hv["op"] + (hv["noi"] or 0) - (hv["noe"] or 0))
+        if hv["ni"] is not None and hv["ebt"] is not None:
+            eq("당기순이익 = 법인세차감전이익 - 법인세등", hv["ni"], hv["ebt"] - (hv["tax"] or 0))
+    detail = "당기 · 전기 열 머리 줄 산식 " + ("모두 맞음" if not msgs else " / ".join(msgs[:8]) + (f" 외 {len(msgs) - 8}건" if len(msgs) > 8 else ""))
+    return check("is_footing", not diffs, title, detail, diffs)
+
+
+COST_LINE = re.compile(r"^당기(총)?(제품)?(제조|공사)(원가|비용)$")
+CONSTRUCTION_COGS = re.compile(r"공사(매출)?원가$")
+# 원가 명세서 범위(forms/stdmap.COST_RANGES 와 같다). 제조 · 공사만 손익계산서 계산 줄과 견준다
+COST_RANGES = [(500, 600, "제조"), (601, 650, "공사"), (651, 799, "기타")]
+WIP_NAMES = {"제조": ("재공품",), "공사": ("미성공사", "미완성")}
+
+
+def cost_range(code: str) -> str:
+    n = c3(code)
+    return next((name for lo, hi, name in COST_RANGES if lo <= n <= hi), "기타")
+
+
+def check_cost_flow(is_: list[FsLine], bs: list[FsLine], cost) -> dict | None:
+    """원가 계정(500~799) 합계 대사(11-01 PBC 대조). 손익계산서 매출원가 구역의 「당기제품제조원가 · 당기공사원가」 계산 줄 =
+    분개장 원가 계정 합계(마감 · 원가 대체 줄 빼고, 결산 때 저장품 · 원재료로 되돌린 금액도 뺌) + 기초 - 기말 재공품(공사는 미성공사).
+    「당기총제조비용 · 당기총공사비용」 줄이면 원가 계정 합계와 바로 견준다. cost 는 {제조 · 공사 · 기타: 합계} 또는 합계 하나.
+    제조 · 공사 줄이 둘 다 있으면 줄마다 그 범위(501~600 · 601~650)와 견준다. 줄이 하나인데 원가 계정이 여러 범위에 걸쳐 맞지 않으면
+    실패가 아니라 경고다(손익계산서에 다른 원가 줄이 없을 수 있다). 원가 계정 · 계산 줄이 없으면 대사하지 않는다(None).
+    계정 사이 배분은 제조원가명세서가 있어야 보므로 보지 않는다."""
+    by = cost if isinstance(cost, dict) else {"제조": int(cost or 0)}
+    total = sum(by.values())
+    if not total:
+        return None
+    lines = [ln for ln in is_ if ln.kind == "memo" and ln.section == "매출원가" and ln.cur is not None and COST_LINE.search(ln.name)]
+    if not lines:
+        lines = _construction_cogs(is_, by)
+    if not lines:
+        return None
+
+    def wip(kinds):
+        names = [n for k in kinds for n in WIP_NAMES.get(k, ())]
+        got = [ln for ln in bs if ln.kind == "account" and any(n in ln.name for n in names)]
+        return sum(ln.prior or 0 for ln in got), sum(ln.cur or 0 for ln in got), bool(got)
+
+    kinds_of = {id(ln): ("공사" if "공사" in ln.name else "제조") for ln in lines}
+    split = len({kinds_of[id(ln)] for ln in lines}) > 1
+    msgs, diffs = [], {}
+    for ln in lines:
+        kind = kinds_of[id(ln)]
+        scope = [kind] if split else [k for k in ("제조", "공사") if by.get(k)] or [kind]
+        base = by.get(kind, 0) if split else total
+        o, c, has = wip(scope)
+        want = base if "총" in ln.name else base + o - c
+        part = f"{ln.label} {w(ln.cur)} · 원가 계정 {'(' + kind + ') ' if split else ''}합계 {w(base)}"
+        if "총" not in ln.name and has:
+            part += f" + 기초 {w(o)} - 기말 {w(c)} {'·'.join(n for k in scope for n in WIP_NAMES.get(k, ()))} = {w(want)}"
+        if ln.cur != want:
+            diffs[ln.label] = ln.cur - want
+            part += f" · 차이 {w(ln.cur - want)}"
+        msgs.append(part)
+    detail = "손익계산서 " + " / ".join(msgs)
+    multi = sum(1 for k in ("제조", "공사", "기타") if by.get(k)) > 1
+    if diffs and not split and multi:
+        detail += (" · 원가 계정이 여러 원가 명세서 범위(제조 · 공사 · 기타)에 걸치는데 손익계산서 계산 줄은 하나라 맞추지 못했습니다(경고, "
+                   "원가 명세서로 확인합니다)")
+        return check("cost_flow", True, "원가 계정 합계 = 손익계산서 당기 제조 · 공사원가", detail, diffs, warn=True)
+    if diffs:
+        detail += " · 타계정대체가 있으면 제조원가명세서로 확인합니다"
+    return check("cost_flow", not diffs, "원가 계정 합계 = 손익계산서 당기 제조 · 공사원가", detail, diffs)
+
+
+def _construction_cogs(is_: list[FsLine], by: dict) -> list[FsLine]:
+    """「당기공사원가」 계산 줄 없이 매출원가 구역에 「도급공사매출원가」 같은 계정 줄만 있는 공사 회사(11-01 평가세트 사본 실행).
+    원가 계정이 공사 범위(601~650)뿐이고 그런 계정 줄이 하나일 때만 그 줄을 당기공사원가로 본다. 공사는 제품 재고 단계 없이
+    미성공사만 거치므로 공사원가 합계 + 기초 - 기말 미성공사 = 공사매출원가다. 제조는 제품 재고를 한 번 더 거쳐 여기서 보지 않는다."""
+    if not by.get("공사") or any(v for k, v in by.items() if k != "공사"):
+        return []
+    got = [ln for ln in is_ if ln.kind == "account" and ln.section == "매출원가" and ln.cur is not None
+           and CONSTRUCTION_COGS.search(ln.name)]
+    return got if len(got) == 1 else []
 
 
 def _check_partners(live_pfs, acc_map, file_sums, n_dup: int = 0, unresolved=(), b_stats=None) -> dict:

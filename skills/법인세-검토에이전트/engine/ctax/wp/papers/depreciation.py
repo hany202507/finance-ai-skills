@@ -293,6 +293,10 @@ def compute(p: Paper, b: Books) -> None:
         p.adjustments.append(Adj("차감", f"감가상각비({gname})", Y, "유보", f"{gname} 상각부인 추인",
                                  f"{gname} 전기 상각부인액 중 시인부족액만큼 손금산입", f"g{i}.reversal", subj, "감소", 1))
     p.extra["rows"] = rows
+    if b.reserves_unknown:
+        for r in rows:
+            if r["acquisition_begin"] and f"기초 부인누계/{r['group']}" not in p.overridden:
+                p.confirm.append(b.reserves_unknown_text(f"{r['group']} 기초 부인누계(상각부인 유보)", f"기초 부인누계/{r['group']}"))
     _values(p, rows)
     grants = grant_reversals(p, b, groups, disp_v)
     _messages(p, b, rows, exp_accts)
@@ -551,7 +555,7 @@ def write(bk: Book, p: Paper) -> None:
     row = adj_table(bk, s, row, p, "4. 세무조정 · 소득처분")
     items = []
     for gr in rows:
-        form = "20_1" if gr["method"] == "정액" else "20_2"
+        form = "20_2" if gr["method"] == "정액" else "20_1"        # 20호(1) 정률법 · 20호(2) 정액법(forms/defs 이름, 10-31)
         items += [(form, f"{gr['group']} 상각범위액", f"g{gr['i']}.limit"), (form, f"{gr['group']} 회사계상액", f"g{gr['i']}.dep_company")]
     items += [("20_4", "(105) 회사손비계상액 합계", "totals.dep_company"), ("20_4", "(106) 상각부인액 합계", "totals.excess"),
               ("20_4", "(108) 기왕부인액 중 당기손금추인액 합계", "totals.reversal")]

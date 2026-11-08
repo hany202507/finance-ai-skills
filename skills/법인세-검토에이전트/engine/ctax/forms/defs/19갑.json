@@ -1,0 +1,217 @@
+{
+ "code": "19갑",
+ "title": "가지급금등의인정이자조정명세서(갑)",
+ "aliases": {
+  "pdf": "가지급금등의인정이자조정명세서(갑)"
+ },
+ "source": "법인세법 시행규칙 별지 제19호서식(갑) 란 이름은 전기 신고본 PDF 글자로 확인(3회차 R3-2). corptax-impl 에 정의 없음",
+ "items": [
+  {
+   "code": "선택",
+   "label": "1. 적용이자율 선택(원칙: 가중평균차입이자율 · 제89조 제3항 제1호 · 제1호의2 · 제2호 당좌대출이자율)",
+   "dtype": "text"
+  },
+  {
+   "code": "1",
+   "label": "①성명",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "2",
+   "label": "②가지급금적수",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "3",
+   "label": "③가수금적수",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "4",
+   "label": "④차감적수(②-③)",
+   "rows": true,
+   "formula": "c('2')-c('3')",
+   "table": "2"
+  },
+  {
+   "code": "5",
+   "label": "⑤인정이자",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "6",
+   "label": "⑥회사계상액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "7",
+   "label": "⑦차액(⑤-⑥)",
+   "rows": true,
+   "formula": "c('5')-c('6')",
+   "table": "2"
+  },
+  {
+   "code": "8",
+   "label": "⑧비율(%)((⑦/⑤)×100)",
+   "rows": true,
+   "dtype": "rate",
+   "table": "2"
+  },
+  {
+   "code": "9",
+   "label": "⑨조정액(=⑦, ⑦≥3억이거나 ⑧≥5%인 경우)",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "10",
+   "label": "⑩성명",
+   "rows": true,
+   "dtype": "text",
+   "table": "3"
+  },
+  {
+   "code": "11",
+   "label": "⑪적용이자율 선택방법",
+   "rows": true,
+   "dtype": "text",
+   "table": "3"
+  },
+  {
+   "code": "12",
+   "label": "⑫가지급금적수",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "13",
+   "label": "⑬가수금적수",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "14",
+   "label": "⑭차감적수(⑫-⑬)",
+   "rows": true,
+   "formula": "c('12')-c('13')",
+   "table": "3"
+  },
+  {
+   "code": "15",
+   "label": "⑮이자율",
+   "rows": true,
+   "dtype": "rate",
+   "table": "3"
+  },
+  {
+   "code": "16",
+   "label": "(16)인정이자(⑭×⑮)",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "17",
+   "label": "(17)회사계상액",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "18",
+   "label": "(18)차액((16)-(17))",
+   "rows": true,
+   "formula": "c('16')-c('17')",
+   "table": "3"
+  },
+  {
+   "code": "19",
+   "label": "(19)비율(%)(((18)/(16))×100)",
+   "rows": true,
+   "dtype": "rate",
+   "table": "3"
+  },
+  {
+   "code": "20",
+   "label": "(20)조정액(=(18), (18)≥3억이거나 (19)≥5%인 경우)",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "계_2",
+   "label": "계 ②가지급금적수",
+   "formula": "F.sum('19갑','2')",
+   "total": true
+  },
+  {
+   "code": "계_3",
+   "label": "계 ③가수금적수",
+   "formula": "F.sum('19갑','3')",
+   "total": true
+  },
+  {
+   "code": "계_4",
+   "label": "계 ④차감적수",
+   "formula": "F.sum('19갑','4')",
+   "total": true
+  },
+  {
+   "code": "계_5",
+   "label": "계 ⑤인정이자",
+   "formula": "F.sum('19갑','5')",
+   "total": true
+  },
+  {
+   "code": "계_6",
+   "label": "계 ⑥회사계상액",
+   "formula": "F.sum('19갑','6')",
+   "total": true
+  },
+  {
+   "code": "계_9",
+   "label": "계 ⑨조정액",
+   "formula": "F.sum('19갑','9')",
+   "total": true
+  },
+  {
+   "code": "계_12",
+   "label": "계 ⑫가지급금적수",
+   "formula": "F.sum('19갑','12')",
+   "total": true
+  },
+  {
+   "code": "계_13",
+   "label": "계 ⑬가수금적수",
+   "formula": "F.sum('19갑','13')",
+   "total": true
+  },
+  {
+   "code": "계_14",
+   "label": "계 ⑭차감적수",
+   "formula": "F.sum('19갑','14')",
+   "total": true
+  },
+  {
+   "code": "계_16",
+   "label": "계 (16)인정이자",
+   "formula": "F.sum('19갑','16')",
+   "total": true
+  },
+  {
+   "code": "계_17",
+   "label": "계 (17)회사계상액",
+   "formula": "F.sum('19갑','17')",
+   "total": true
+  },
+  {
+   "code": "계_20",
+   "label": "계 (20)조정액",
+   "formula": "F.sum('19갑','20')",
+   "total": true
+  }
+ ]
+}

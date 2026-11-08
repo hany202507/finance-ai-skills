@@ -113,6 +113,7 @@ from fractions import Fraction
 from openpyxl.utils import get_column_letter
 
 from ... import xlsx as X
+from ...ar import capex
 from ..books import Books, frac, rate, rd
 from ..model import Paper
 from ..sheet import Book, Rows, calc_row, forms_table, head, local, notes
@@ -998,6 +999,13 @@ def compute(p: Paper, b: Books) -> None:
                        " 나누십시오(이월 기간 10년, 먼저 생긴 것부터 공제)")
     if any(c.get("by_year") for c in carry):
         p.notes.append("전기 이월액 발생 연도는 전기 8호 부표3 의 연도별 줄에서 옮겼습니다(먼저 생긴 것부터 공제)")
+    # 통합투자세액공제 판단 근거: 유형자산 계정별 당기 취득 전표(AR 이슈 investment_credit 과 같은 값, ar/capex.py, 10-29 대표 · RN).
+    # 계정을 합친 순증으로 보지 않는다. 공제 대상 자산인지 · 금액은 회계사가 노란 칸에 넣는다
+    p.extra["capex"] = capex.rows(b.accounts(), b.all_lines())
+    bought = [r for r in p.extra["capex"] if r["acquired"] > 0]
+    if bought:
+        p.notes.append("통합투자세액공제 판단 근거(유형자산 계정별 당기 취득 전표, 계정 대체 · 처분 · 이월 제외): "
+                       + " / ".join(capex.line(r) for r in bought) + ". 공제 대상 자산인지는 회계사가 정해 노란 칸에 넣습니다")
     extra_labels = {label for label, _a, _b, _c in CURRENT_EXTRA}
     need = [c for c in current if not c["amount"] and c["label"] not in extra_labels]
     if need:
@@ -1921,6 +1929,7 @@ def write(bk: Book, p: Paper) -> None:
         s.put(row, 3, c["code"])
         s.put(row, 5, f"적용{c['class']}")
         row = calc_row(bk, s, row, p, c["key"], c["label"], c["amount"], kind="input", input_kind="int", note=c["need"])
+    row = _write_capex(s, p, row + 1)
     row = _write_employment(bk, s, p, row + 1)
     row = _write_rnd(bk, s, p, row + 1)
     row = _write_additional(bk, s, p, row + 1)
@@ -1985,6 +1994,28 @@ def _write_split(bk: Book, s, p: Paper, row: int, excl: str) -> int:
           f"={excl}+{g(k('매출액/기타'))}-{g(k('매출원가/기타'))}-{g(k('판관비 개별/기타'))}+{g(k('세무조정/기타'))}"
           f"+{g(k('공통 영업외수익 기타 안분'))}-{g(k('공통 판관비 기타 안분'))}-{g(k('공통 영업외비용 기타 안분'))}", kind="total")
     return r.row
+
+
+def _write_capex(s, p: Paper, row: int) -> int:
+    """통합투자세액공제 판단 근거 표: 유형자산 계정마다 기초 · 기말 · 증감 · 당기 취득 전표 합계와 뺀 차변(AR 이슈와 같은 값)."""
+    rows = p.extra.get("capex") or []
+    if not rows:
+        return row
+    row = s.section(row, "통합투자세액공제 판단 근거: 유형자산 계정별 당기 취득 전표(공제 대상 여부는 회계사 판단)")
+    heads = ("계정", "판단 계정", "기초", "기말", "증감", "취득 전표 수", "취득 합계", "계정 대체", "처분", "이월")
+    for col, label in enumerate(heads, start=1):
+        X.header(s.ws, row, [label], col=col)
+    row += 1
+    for r in rows:
+        s.put(row, 1, f"{r['name']}({r['code']})")
+        s.put(row, 2, "예" if r["candidate"] else "아니오")
+        for col, k in enumerate(("opening", "closing", "change"), start=3):
+            s.put(row, col, r[k], money=True)
+        s.put(row, 6, r["vouchers"])
+        for col, k in enumerate(("acquired", "moved", "disposed", "carried"), start=7):
+            s.put(row, col, r[k], money=True)
+        row += 1
+    return row
 
 
 def _write_employment(bk: Book, s, p: Paper, row: int) -> int:

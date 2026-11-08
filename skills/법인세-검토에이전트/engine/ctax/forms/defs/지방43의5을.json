@@ -1,0 +1,121 @@
+{
+ "code": "지방43의5을",
+ "title": "법인지방소득세특별징수세액명세서(을)",
+ "aliases": {
+  "pdf": "법인지방소득세특별징수세액명세서(을)"
+ },
+ "source": "지방세법 시행규칙 별지 제43호의5서식(을)(2019.5.31 개정). 란 번호 · 이름은 전기 신고서 PDF 글자. 채권 보유기간 이자가 있을 때 사람이 넣는다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①채권등의 명칭(액면금액)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②유가증권표준코드",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③채권이자구분",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④취득일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤매도일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥보유기간(이자계산일수)",
+   "dtype": "int",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "⑦이자율",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧보유기간 이자상당액(①×⑥×⑦)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑨원천(특별)징수의무자",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "10",
+   "label": "⑩세율",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "11",
+   "label": "⑪법인세 세액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "12",
+   "label": "⑫납부일(징수일)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "13",
+   "label": "⑬특별징수세액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "14",
+   "label": "⑭납부일(징수일)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "15",
+   "label": "⑮특별징수지",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "합계_8",
+   "label": "합계 ⑧이자상당액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5을','8')",
+   "total": true
+  },
+  {
+   "code": "합계_11",
+   "label": "합계 ⑪법인세 세액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5을','11')",
+   "total": true
+  },
+  {
+   "code": "합계_13",
+   "label": "합계 ⑬특별징수세액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5을','13')",
+   "total": true
+  }
+ ]
+}

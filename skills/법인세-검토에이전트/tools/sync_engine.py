@@ -18,9 +18,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "engine" / "ctax"
-COPY_DIRS = ["intake", "prior", "ar", "wp"]
-COPY_FILES = ["case.py", "xlsx.py"]
-SKIP = shutil.ignore_patterns("tests", "__pycache__", "*.pyc")
+COPY_DIRS = ["intake", "prior", "ar", "wp", "context"]   # context: 조서가 회사 맥락 제안을 읽는다(wp/cli.py)
+COPY_FILES = ["case.py", "xlsx.py", "runlog.py"]   # runlog: 조서 회계사 답의 「누가」(wp/inputs.py)
+HELPER_TESTS = ["test_intake.py", "test_wp.py", "test_wp_inputs.py"]   # 받은자료 · 조서 시험 도우미(합성 자료만)
+FORMS_FILES = ["calc.py", "registry.py", "fx.py", "params.py"]   # 전기 읽기 검사(prior/verify.py)가 정의 계산식을 돌린다
+SKIP = shutil.ignore_patterns("tests", "__pycache__", "*.pyc", "sample")
 
 
 def main(src_root: str) -> int:
@@ -45,6 +47,9 @@ def main(src_root: str) -> int:
     (forms / "plugins").mkdir(parents=True)
     (forms / "__init__.py").write_text("", encoding="utf-8")
     shutil.copy2(src / "forms" / "engine_forms.yaml", forms / "engine_forms.yaml")
+    for name in FORMS_FILES:
+        shutil.copy2(src / "forms" / name, forms / name)
+    shutil.copytree(src / "forms" / "defs", forms / "defs", ignore=SKIP)
     listed = [{"code": f["code"]} for f in plugins.engine_forms()]
     (forms / "plugins" / "__init__.py").write_text(
         '"""서식 플러그인 이름표(tools/sync_engine.py 가 만듦)."""\n'
@@ -56,13 +61,15 @@ def main(src_root: str) -> int:
     shutil.copy2(src / "tests" / "conftest.py", tests / "conftest.py")
     for f in sorted((src / "tests").glob("test_ar*.py")):
         shutil.copy2(f, tests / f.name)
+    for name in HELPER_TESTS:                   # test_ar_*_day1108 이 합성 자료 도우미로 부른다(그 안의 시험도 같이 돈다)
+        shutil.copy2(src / "tests" / name, tests / name)
 
     repo = src.parent.parent
     commit = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%h %ad %s", "--date=short", "--", "법인세/ctax"],
                             capture_output=True, text=True, encoding="utf-8").stdout.strip()
     (ROOT / "engine" / "VENDORED.json").write_text(json.dumps(
         {"source": "kernelspaces/academy-product 법인세/ctax", "commit": commit,
-         "copied": COPY_FILES + [d + "/" for d in COPY_DIRS] + ["score/match.py"], "stubs": ["forms/plugins", "forms/engine_forms.yaml"]},
+         "copied": COPY_FILES + [d + "/" for d in COPY_DIRS] + ["score/match.py"] + ["forms/" + n for n in FORMS_FILES] + ["forms/defs/"], "stubs": ["forms/plugins", "forms/engine_forms.yaml"]},
         ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"engine/ctax 를 만들었습니다({commit})")
     return 0

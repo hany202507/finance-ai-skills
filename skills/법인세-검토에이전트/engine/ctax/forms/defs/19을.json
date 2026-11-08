@@ -1,0 +1,235 @@
+{
+ "code": "19을",
+ "title": "가지급금등의인정이자조정명세서(을)",
+ "aliases": {
+  "pdf": "가지급금등의인정이자조정명세서(을)"
+ },
+ "source": "법인세법 시행규칙 별지 제19호서식(을) 란 이름은 전기 신고본 PDF 글자로 확인(3회차 R3-2). 3. 가수금등의 적수계산은 넣지 않음",
+ "items": [
+  {
+   "code": "성명",
+   "label": "직책 · 성명",
+   "rows": true,
+   "dtype": "text",
+   "table": "1"
+  },
+  {
+   "code": "1",
+   "label": "①발생연월일",
+   "rows": true,
+   "dtype": "text",
+   "table": "1"
+  },
+  {
+   "code": "2",
+   "label": "②회수연월일",
+   "rows": true,
+   "dtype": "text",
+   "table": "1"
+  },
+  {
+   "code": "3",
+   "label": "③연월일",
+   "rows": true,
+   "dtype": "text",
+   "table": "1"
+  },
+  {
+   "code": "4",
+   "label": "④적요",
+   "rows": true,
+   "dtype": "text",
+   "table": "1"
+  },
+  {
+   "code": "5",
+   "label": "⑤차변",
+   "rows": true,
+   "table": "1"
+  },
+  {
+   "code": "6",
+   "label": "⑥대변",
+   "rows": true,
+   "table": "1"
+  },
+  {
+   "code": "7",
+   "label": "⑦잔액(⑤-⑥)",
+   "rows": true,
+   "table": "1"
+  },
+  {
+   "code": "8",
+   "label": "⑧일수",
+   "rows": true,
+   "dtype": "int",
+   "table": "1"
+  },
+  {
+   "code": "9",
+   "label": "⑨가지급금적수(⑦×⑧)",
+   "rows": true,
+   "formula": "max(c('7'),0)*c('8')",
+   "table": "1"
+  },
+  {
+   "code": "10",
+   "label": "⑩가수금적수",
+   "rows": true,
+   "table": "1"
+  },
+  {
+   "code": "11",
+   "label": "⑪차감적수(⑨-⑩)",
+   "rows": true,
+   "formula": "c('9')-c('10')",
+   "table": "1"
+  },
+  {
+   "code": "12",
+   "label": "⑫이자율",
+   "rows": true,
+   "dtype": "rate",
+   "table": "1"
+  },
+  {
+   "code": "13",
+   "label": "⑬인정이자(⑪×⑫)",
+   "rows": true,
+   "table": "1"
+  },
+  {
+   "code": "성명_2",
+   "label": "성명",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "14",
+   "label": "⑭연월일",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "15",
+   "label": "⑮적요",
+   "rows": true,
+   "dtype": "text",
+   "table": "2"
+  },
+  {
+   "code": "16",
+   "label": "(16)차변",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "17",
+   "label": "(17)대변",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "18",
+   "label": "(18)잔액",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "19",
+   "label": "(19)일수",
+   "rows": true,
+   "dtype": "int",
+   "table": "2"
+  },
+  {
+   "code": "20",
+   "label": "(20)가지급금적수((18)×(19))",
+   "rows": true,
+   "formula": "max(c('18'),0)*c('19')",
+   "table": "2"
+  },
+  {
+   "code": "21",
+   "label": "(21)가수금적수",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "22",
+   "label": "(22)차감적수((20)-(21))",
+   "rows": true,
+   "formula": "c('20')-c('21')",
+   "table": "2"
+  },
+  {
+   "code": "계_5",
+   "label": "계 ⑤차변",
+   "formula": "F.sum('19을','5')",
+   "total": true
+  },
+  {
+   "code": "계_6",
+   "label": "계 ⑥대변",
+   "formula": "F.sum('19을','6')",
+   "total": true
+  },
+  {
+   "code": "계_9",
+   "label": "계 ⑨가지급금적수",
+   "formula": "F.sum('19을','9')",
+   "total": true
+  },
+  {
+   "code": "계_10",
+   "label": "계 ⑩가수금적수",
+   "formula": "F.sum('19을','10')",
+   "total": true
+  },
+  {
+   "code": "계_11",
+   "label": "계 ⑪차감적수",
+   "formula": "F.sum('19을','11')",
+   "total": true
+  },
+  {
+   "code": "계_13",
+   "label": "계 ⑬인정이자",
+   "formula": "F.sum('19을','13')",
+   "total": true
+  },
+  {
+   "code": "계_16",
+   "label": "계 (16)차변",
+   "formula": "F.sum('19을','16')",
+   "total": true
+  },
+  {
+   "code": "계_17",
+   "label": "계 (17)대변",
+   "formula": "F.sum('19을','17')",
+   "total": true
+  },
+  {
+   "code": "계_20",
+   "label": "계 (20)가지급금적수",
+   "formula": "F.sum('19을','20')",
+   "total": true
+  },
+  {
+   "code": "계_21",
+   "label": "계 (21)가수금적수",
+   "formula": "F.sum('19을','21')",
+   "total": true
+  },
+  {
+   "code": "계_22",
+   "label": "계 (22)차감적수",
+   "formula": "F.sum('19을','22')",
+   "total": true
+  }
+ ]
+}

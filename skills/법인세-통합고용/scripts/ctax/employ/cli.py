@@ -70,11 +70,23 @@ def write_template(path: Path, case: Case) -> None:
 
 # ---------------------------------------------------------------- 사원명부 범위 확인
 
+DIRECT_STAMP = "잠정 · 사원명부 없이 인원 숫자로 계산"
+
+
+def direct_pending(inp: Inputs) -> list[str]:
+    """사원명부 없이 회사 시트 직접 입력 인원으로 계산했으면 잠정치라고 알린다(rules.yaml count.direct_input)."""
+    if inp.staff or not inp.company.direct_given:
+        return []
+    return ["잠정: 사원명부 없이 인원 숫자로 계산했습니다. 회사 시트 「인원 직접 입력」 인원을 그대로 썼고, 상시근로자 범위 · 청년등 구분 · "
+            "근무개월 수는 엔진이 보지 않았습니다. 상시근로자 명세서(별지 제10호의10서식)는 비웠습니다. 세액공제를 신청하려면 명세서를 내야 하므로"
+            "(시행령 제26조의8 제11항) 사원명부와 급여대장을 넣어 다시 돌리십시오"]
+
+
 def scope_pending(inp: Inputs) -> list[str]:
     """상시근로자 범위를 정하는 열(임원 · 최대주주·친족 · 계약 1년 미만 · 0.75 요건)은 급여대장에서 알 수 없다.
     빈칸은 「아니오」 로 읽히므로, 회사 시트 「사원명부 범위 확인」 이 Y 가 아니면 사람 이름과 함께 잠정치라고 알린다."""
-    if inp.company.scope == "Y":
-        return []
+    if inp.company.scope == "Y" or not inp.staff:
+        return direct_pending(inp)
     st = inp.staff
     short = [p for p in st if p.kind in ("기간제", "파견") and p.short != "Y"]
     part = [p for p in st if p.kind == "단시간" and (p.hours or 0) >= 60 and p.supported != "Y"]
@@ -149,6 +161,43 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
                           "넣으십시오" if res["new_scope"] and res["periods"][per].start.year >= 2025 else ""))
         elif src == "없음" and (per == "직전" or co.first_prev2_youth or co.first_prev2_other):
             out.append(f"{per} 과세연도 인원이 없습니다(급여대장도 전기 신고 인원도 없음). 그 인원이 필요한 공제는 계산하지 않았습니다")
+    for per in PERIODS:
+        if res["source"][per] == "직접 입력":
+            out.append(f"{per} 과세연도 인원은 회사 시트 「인원 직접 입력」 값(상시 {f2(res['used'][per][0]):.2f} · 청년등 "
+                       f"{f2(res['used'][per][1]):.2f})입니다")
+    if not res["direct"] and co.direct_given:          # 사원명부가 있으면 직접 입력 인원은 대조만 한다
+        mine = res["used_new"] if res["new_scope"] else res["used"]
+        given = {"해당": (co.direct_cur_total, co.direct_cur_youth), "직전": (co.direct_prev_total, co.direct_prev_youth),
+                 "직전전": (co.direct_prev2_total, co.direct_prev2_youth)}
+        for per in PERIODS:
+            for i, label in ((0, "상시근로자 수"), (1, "청년등 수")):
+                v = given[per][i]
+                if v is None or res["source"][per] in ("없음", "직접 입력"):
+                    continue
+                if abs(f2(v) - f2(mine[per][i])) >= 0.005:
+                    out.append(f"직접 입력한 {per} 과세연도 {label} {f2(v):.2f} 이(가) 사원명부로 센 {f2(mine[per][i]):.2f} 와 다릅니다. "
+                               "공제액은 사원명부로 센 인원으로 계산했습니다. 어느 쪽이 맞는지 확인하십시오")
+    backs = res["returnees"]
+    miss = [x["name"] for x in backs if not x["counted"] and "복직일이 없습니다" in x["why"]]
+    if miss:
+        out.append(f"「육아휴직 복귀자」 Y 인데 복직일이 없어 세지 않은 사람 {len(miss)}명: {', '.join(miss[:8])}. 복직한 날을 사원명부 "
+                   "「육아휴직 복직일」 에 적으십시오(제29조의8 제5항: 복직한 날이 속하는 과세연도에 공제)")
+    off = [f"{x['name']}({x['why']})" for x in backs if not x["counted"] and x["in_year"]]
+    if off:
+        out.append(f"해당 과세연도에 복직했지만 육아휴직 복귀자로 세지 않은 사람 {len(off)}명: {', '.join(off[:8])}")
+    nolf = [x["name"] for x in backs if x["no_leave_from"]]
+    if nolf:
+        out.append(f"육아휴직 시작일이 없어 연속 6개월 휴직 · 휴직 전 1년 근무 요건을 보지 못하고 센 사람: {', '.join(nolf[:8])}. "
+                   "사원명부 「육아휴직 시작일」 을 적으십시오(제29조의8 제5항 제1호 · 제2호)")
+    if res["returned"]:
+        out.append("육아휴직 복귀자 추가공제는 자녀 1명당 한 차례입니다(제29조의8 제6항). 같은 자녀로 전에 공제받았는지는 자료로 가리지 못하니 "
+                   "확인하십시오. 휴직 전 1년 근무는 근로소득원천징수부로 확인하고(시행령 제26조의8 제10항), 복직일부터 2년 안에 근로관계가 "
+                   "끝나면 공제세액을 납부합니다(제7항, 계산하지 않음)")
+    if co.returned is not None and int(round(co.returned)) != res["returned_roster"] and inp.staff:
+        out.append(f"회사 시트 「육아휴직 복귀자 수」 {f2(co.returned):g} 을(를) 썼습니다. 사원명부로 센 {res['returned_roster']}명과 다릅니다")
+    both = [p.name for p in inp.staff if p.mil_from and p.mil_to and p.mil_months]
+    if both:
+        out.append(f"입대일 · 전역일과 병역 개월 수가 함께 있어 입대일 · 전역일을 쓴 사람: {', '.join(both[:8])}")
     cur_rows = counts["해당"].rows
     deemed = [r for r in cur_rows if r.regular and any(a != b for a, b in zip(r.youth_age, r.youth_deem))]
     if deemed:
@@ -310,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     rules, rates = load_rules(), load_rates()
     res = compute(inp, rules, rates)
     pending = scope_pending(inp)
+    direct = bool(direct_pending(inp))
     notes = pending + memos(inp, res, rules)
     wb, checks = book.build(inp, res, rules, rates, notes)
     out = case.out_dir(WP_DIR) / OUT_XLSX
@@ -323,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     pdf_out = case.out_dir(WP_DIR) / lawform.OUT_PDF
     try:
         legal = lawform.write(pdf_out, inp, res, rules, case.company,
-                              "잠정 · 사원명부 범위(임원 · 최대주주·친족 · 계약기간) 확인 전" if pending else "")
+                              DIRECT_STAMP if direct else "잠정 · 사원명부 범위(임원 · 최대주주·친족 · 계약기간) 확인 전" if pending else "")
     except PermissionError:
         legal = {"written": False, "why": f"{pdf_out} 가 열려 있어 쓰지 못했습니다. PDF 를 닫고 다시 돌리세요"}
 
@@ -346,7 +396,7 @@ def main(argv: list[str] | None = None) -> int:
             "people": {per: {"사원명부": len(inp.staff), "재직": sum(1 for r in res["counts"][per].rows if any(r.worked)),
                              "상시근로자": sum(1 for r in res["counts"][per].rows if r.regular and any(r.worked))}
                        for per in PERIODS},
-            "excel": back, "confirm": notes, "provisional": bool(pending), "workbook": case.rel(out), "input": str(src),
+            "excel": back, "confirm": notes, "provisional": bool(pending), "direct": direct, "workbook": case.rel(out), "input": str(src),
             "law_pdf": case.rel(pdf_out) if legal.get("written") else None}
     case.write_json(OUT_JSON, data)
 
@@ -373,7 +423,9 @@ def main(argv: list[str] | None = None) -> int:
             wrote = True
 
     h = head["해당"]
-    if pending:
+    if direct:
+        print("【잠정치】 사원명부 없이 인원 숫자로 계산했습니다. 상시근로자 명세서를 낼 수 없으니 확정으로 쓰지 마십시오")
+    elif pending:
         print("【잠정치】 사원명부 범위(임원 · 최대주주·친족 · 계약 1년 미만 · 0.75 요건)를 확인하기 전 값입니다. 확정으로 쓰지 마십시오")
     print(f"통합고용세액공제 {won(res['total'])}원 = 1차 {won(res['first'])} + 2차 {won(res['second'])} + 3차 {won(res['third'])} "
           + (f"+ 신규 {won(res['new_total'])} " if res["regime"] == "2026" else "") + f"+ 추가 {won(res['extra'])}")

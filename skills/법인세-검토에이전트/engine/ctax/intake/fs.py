@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .xlsxread import PAREN, ROMAN, compact, norm, num, strip_no
+from .xlsxread import PAREN, ROMAN, Cells, compact, norm, strip_no
 
 CONTRA_NAMES = ("감가상각누계액", "대손충당금", "국고보조금", "정부보조금", "현재가치할인차금", "손상차손누계액",
                 "일반참여분", "사채할인발행차금", "전환권조정", "신주인수권조정", "공사부담금")
@@ -54,29 +54,42 @@ class FsLine:
     code: str | None = None
     how: str = ""
     extra: dict = field(default_factory=dict)
+    src_row: int = 0         # 원본 엑셀 행 번호(1부터, 11-01 PBC 대조)
 
 
-def _body(rows: list[list]) -> list[list]:
-    """머리 두 줄(과목 · 금액)을 건너뛴다."""
+def _start(rows: list[list]) -> int:
     start = 1
     for i, r in enumerate(rows[:4]):
         if any(compact(c) == "금액" for c in (r or [])[1:]):
             start = i + 1
             break
-    return rows[start:]
+    return start
 
 
-def _cells(r):
+def _body(rows: list[list]) -> list[list]:
+    """머리 두 줄(과목 · 금액)을 건너뛴다."""
+    return rows[_start(rows):]
+
+
+def _body_ix(rows: list[list], off: int = 0) -> list[tuple[int, list]]:
+    """(엑셀 행 번호, 행). 머리 줄은 건너뛴다. off 는 머리줄 위에서 건너뛴 제목 줄 수(11-08)."""
+    s = _start(rows)
+    return [(s + 1 + i + off, r) for i, r in enumerate(rows[s:])]
+
+
+def _cells(r, ctx: Cells, row_no: int):
+    """과목과 금액 넷. 금액으로 읽지 못한 칸은 None(빈 칸과 같다)으로 두고 ctx 에 남긴다."""
     r = list(r) + [None] * 5
-    return r[0], num(r[1]), num(r[2]), num(r[3]), num(r[4])
+    return (r[0],) + tuple(ctx.num(r[c], row_no, c) for c in range(1, 5))
 
 
-def parse_bs(rows: list[list]) -> list[FsLine]:
+def parse_bs(rows: list[list], ctx: Cells | None = None) -> list[FsLine]:
+    ctx = ctx or Cells()
     out: list[FsLine] = []
     side, section, sub = "", "", ""
     last_gross = False
-    for r in _body(rows):
-        label, b, c, d, e = _cells(r)
+    for row_no, r in _body_ix(rows, ctx.off):
+        label, b, c, d, e = _cells(r, ctx, row_no)
         if label is None or compact(label) == "":
             continue
         raw = str(label).strip()
@@ -85,10 +98,10 @@ def parse_bs(rows: list[list]) -> list[FsLine]:
         if cp in ("자산", "부채", "자본"):
             side = {"자산": "A", "부채": "L", "자본": "E"}[cp]
             section, sub = "", ""
-            out.append(FsLine(raw, nm, "header", None, None, side=side))
+            out.append(FsLine(raw, nm, "header", None, None, side=side, src_row=row_no))
             continue
         if cp.startswith("(당기순") or cp.startswith("(전기순") or re.match(r"^(당기|전기):", cp):
-            out.append(FsLine(raw, nm, "memo", None, None, side=side))
+            out.append(FsLine(raw, nm, "memo", None, None, side=side, src_row=row_no))
             continue
         if ROMAN.match(cp) or PAREN.match(cp) or nm.endswith("총계"):
             if ROMAN.match(cp):
@@ -103,7 +116,7 @@ def parse_bs(rows: list[list]) -> list[FsLine]:
                 pri = None if pri is None else -pri
             total = cp.endswith("총계")
             out.append(FsLine(raw, nm, "subtotal", cur, pri, section="" if total else section,
-                              sub="" if total else sub, side=side))
+                              sub="" if total else sub, side=side, src_row=row_no))
             last_gross = False
             continue
         # 계정 줄
@@ -119,7 +132,7 @@ def parse_bs(rows: list[list]) -> list[FsLine]:
             pri = d if d is not None else e
         cur = 0 if cur is None else cur
         pri = 0 if pri is None else pri
-        ln = FsLine(raw, nm, "account", cur, pri, section=section, sub=sub, side=side, contra=contra)
+        ln = FsLine(raw, nm, "account", cur, pri, section=section, sub=sub, side=side, contra=contra, src_row=row_no)
         if contra:
             ln.net_cur, ln.net_prior = c, e
         # 차변 양수 부호
@@ -138,11 +151,12 @@ def parse_bs(rows: list[list]) -> list[FsLine]:
     return out
 
 
-def parse_is(rows: list[list]) -> list[FsLine]:
+def parse_is(rows: list[list], ctx: Cells | None = None) -> list[FsLine]:
+    ctx = ctx or Cells()
     out: list[FsLine] = []
     section = ""
-    for r in _body(rows):
-        label, b, c, d, e = _cells(r)
+    for row_no, r in _body_ix(rows, ctx.off):
+        label, b, c, d, e = _cells(r, ctx, row_no)
         if label is None or compact(label) == "":
             continue
         raw = str(label).strip()
@@ -155,7 +169,7 @@ def parse_is(rows: list[list]) -> list[FsLine]:
             if LOSS_HEAD.search(nm):
                 cur = None if cur is None else -cur
                 pri = None if pri is None else -pri
-            out.append(FsLine(raw, nm, "subtotal", cur, pri, section=section))
+            out.append(FsLine(raw, nm, "subtotal", cur, pri, section=section, src_row=row_no))
             continue
         cur = b if b is not None else c
         pri = d if d is not None else e
@@ -166,7 +180,7 @@ def parse_is(rows: list[list]) -> list[FsLine]:
         else:
             kind = "account"
         ln = FsLine(raw, norm(nm), kind, cur if kind == "memo" else (cur or 0),
-                    pri if kind == "memo" else (pri or 0), section=section)
+                    pri if kind == "memo" else (pri or 0), section=section, src_row=row_no)
         out.append(ln)
     return out
 

@@ -10,8 +10,11 @@
 배당 받은 날 전 3개월 안에 처음 샀으면(유가증권 계정 줄의 적요 종목 · 거래처로 찾은 첫 매수일, 그 전 처분 줄 없음, 전기
 16호의2 에 없음) 배당기준일 전 3개월 이내 취득 주식의 배당(법인세법 제18조의2 제2항 제1호)으로 보아 「3개월 이상 보유」 를 X 로 둔다.
 배당기준일은 장부에 없어 받은 날로 어림한다(기준일은 받은 날보다 앞이라 받은 날 전 3개월 안에 산 주식은 기준일 전 3개월 안이다).
-배당 지급법인 이름은 적요(「보이스아이 배당금」 처럼)에서, 없으면 거래처에서 읽는다. 은행 · 증권 계좌번호나 「만기」 가 든
-줄은 펀드 분배금으로 보아 대상 여부를 X 로 둔다(집합투자기구 이익분배금은 피출자법인 배당에 들지 않는다).
+배당 지급법인 이름은 적요(「보이스아이 배당금」 처럼)에서, 없으면 거래처에서 읽는다.
+10-29(RN 기준): 지분율을 모르는 배당(전기 16호의2 에도 없음, 노란 칸 0)을 0 으로 두지 않는다. 출자비율이 얼마든 대상 배당이면
+20% 미만 률(30%) 이상이므로 그 률로 계산하고 「지분율 · 피투자회사 확인」 질문을 남긴다. 지분율을 넣으면 률표대로 다시 센다.
+펀드 분배금(집합투자기구 이익분배금은 피출자법인 배당에 들지 않는다)은 적요 · 거래처에 펀드 · 신탁 · 수익증권 · 집합투자 같은
+말이 있을 때만 대상 X 로 둔다. 계좌번호 · 만기 · 재투자 · 분배 만 있으면 확실하지 않아 대상 O 로 두고 펀드인지 묻는다.
 """
 from __future__ import annotations
 
@@ -29,7 +32,8 @@ LEDGER_CHECK = False
 DIV_ACCOUNT = re.compile(r"배당금수익|수입배당|배당수익|배당금")
 STRIP = re.compile(r"(현금)?배당(금수익|금|수익|소득)?|수령|입금|분배금|중간|결산|기말")
 ACCOUNT_NO = re.compile(r"\d{2,}-\d{2,}-\d{2,}|\d{8,}")
-FUND = re.compile(r"만기|펀드|신탁|분배|수익증권|MMF|ETF", re.I)
+FUND = re.compile(r"펀드|신탁|수익증권|집합투자|MMF|ETF|REITs?|리츠", re.I)   # 펀드 분배금이 확실한 말
+FUND_MAYBE = re.compile(r"만기|분배|재투자")                                    # 펀드일 수도 있는 말(계좌번호와 함께 질문)
 INTEREST = re.compile(r"이자비용|지급이자|사채이자")
 
 
@@ -87,8 +91,11 @@ def recent_purchase(b: Books, name: str, paid_on: str) -> str:
 
 
 def bracket(share: float, table) -> float:
+    """률표대로. 지분율을 모르면(0 이하) 가장 낮은 률(20% 미만)이다: 대상 배당이면 출자비율이 얼마든 그 률 이상이다."""
+    if share <= 0:
+        return table[-1][1]
     for low, rt in table:
-        if share >= low and share > 0:
+        if share >= low:
             return rt
     return 0
 
@@ -101,13 +108,17 @@ def compute(p: Paper, b: Books) -> None:
     for ln in b.lines_of(accts):
         amt = ln.credit - ln.debit
         name = payer_of(ln.memo, ln.partner)
-        fund = bool(ACCOUNT_NO.search(ln.memo) or FUND.search(ln.memo))
-        p.lines.append(LineRow(ln, name, "", why="펀드 분배금으로 보임(계좌번호 · 만기)" if fund else ""))
-        e = payers.setdefault(name, {"payer": name, "배당금액": 0, "fund": False, "lines": 0, "partner": ln.partner,
-                                     "paid_on": ln.date})
+        text = f"{ln.memo} {ln.partner or ''}"
+        fund = bool(FUND.search(text))
+        maybe = not fund and bool(ACCOUNT_NO.search(ln.memo) or FUND_MAYBE.search(ln.memo))
+        why = "펀드 분배금(적요 · 거래처)" if fund else "펀드인지 확인(계좌번호 · 만기 · 재투자)" if maybe else ""
+        p.lines.append(LineRow(ln, name, "", why=why))
+        e = payers.setdefault(name, {"payer": name, "배당금액": 0, "fund": False, "maybe": False, "lines": 0,
+                                     "partner": ln.partner, "paid_on": ln.date})
         e["paid_on"] = min(e["paid_on"], ln.date)
         e["배당금액"] += amt
         e["fund"] = e["fund"] or fund
+        e["maybe"] = e["maybe"] or maybe
         e["lines"] += 1
     interest_default = sum(int(a.get("amount") or 0) for a in b.accounts(cls="비용") if INTEREST.search(a["name"]))
     interest = p.take(b, "차입금 이자", interest_default, "int")
@@ -135,7 +146,8 @@ def compute(p: Paper, b: Books) -> None:
         excl = rd(interest * frac(r) * book / assets) if assets > 0 and r else 0
         rows.append({"i": i, "payer": n, "partner": e["partner"], "배당금액": D, "지분율": share, "보유": hold,
                      "대상": target, "상장": listed, "장부가액": book, "익금불산입률": float(r), "대상금액": base,
-                     "배제금액": excl, "익금불산입액": base - excl, "fund": e["fund"],
+                     "배제금액": excl, "익금불산입액": base - excl, "fund": e["fund"], "펀드확인": e["maybe"] and not e["fund"],
+                     "지분율확인": not share,
                      "가정30": rd(D * frac(table[2][1])), "가정80": rd(D * frac(table[1][1])), "가정100": rd(D * frac(table[0][1]))})
     total = max(0, sum(r_["익금불산입액"] for r_ in rows))
     p.values = {"rows": rows, "배당금수익": sum(r_["배당금액"] for r_ in rows), "차입금 이자": interest, "자산총액": assets,
@@ -148,11 +160,18 @@ def compute(p: Paper, b: Books) -> None:
     for r_ in rows:
         n = r_["payer"]
         if r_["fund"] and f"대상 여부/{n}" not in p.overridden:
-            p.notes.append(f"{n} {r_['배당금액']:,}원: 적요에 계좌번호 · 만기가 있어 펀드 분배금으로 보고 대상에서 뺐습니다(대상 여부 X)")
-        elif not r_["지분율"]:
-            p.confirm.append(f"{n} 배당 {r_['배당금액']:,}원: 지분율을 넣으면 20% 미만 {r_['가정30']:,}원 · 20% 이상 "
-                             f"{r_['가정80']:,}원 · 50% 이상 {r_['가정100']:,}원 익금불산입(지급이자 차감 전)입니다. "
-                             "지분율 · 3개월 이상 보유 여부를 노란 칸에 넣으세요")
+            p.notes.append(f"{n} {r_['배당금액']:,}원: 적요 · 거래처에 펀드 · 신탁 · 수익증권 같은 말이 있어 펀드 분배금으로 보고 "
+                           "대상에서 뺐습니다(대상 여부 X)")
+            continue
+        if r_["펀드확인"] and f"대상 여부/{n}" not in p.overridden:
+            p.confirm.append(f"{n} 배당 {r_['배당금액']:,}원: 적요에 계좌번호 · 만기 · 재투자가 있어 펀드 분배금일 수 있습니다. 적요 · 거래처로 "
+                             "확실하지 않아 내국법인 배당(대상 O)으로 두었습니다. 피투자회사와 배당 종류(주식 배당 · 집합투자기구 분배금)를 "
+                             "확인하고, 펀드 분배금이면 대상 여부를 X 로 고치세요")
+        if r_["지분율확인"] and r_["대상"] == "O" and r_["보유"] == "O" and f"지분율/{n}" not in p.overridden:
+            p.confirm.append(f"{n} 배당 {r_['배당금액']:,}원: 지분율 · 피투자회사 확인. 지분율을 몰라 가장 낮은 률(20% 미만 "
+                             f"{table[-1][1]:.0%})로 {r_['가정30']:,}원을 익금불산입했습니다(지급이자 차감 전). 20% 이상이면 "
+                             f"{r_['가정80']:,}원 · 50% 이상이면 {r_['가정100']:,}원입니다. 배당기준일 현재 지분율과 3개월 이상 보유 여부를 "
+                             "노란 칸에 넣으세요(법인세법 제18조의2 제1항)")
     if claimed and interest and not any(r_["장부가액"] for r_ in claimed):
         p.confirm.append(f"차입금 이자 {interest:,}원이 있어 지급이자 관련 배제금액을 빼야 합니다. 지급법인 주식의 장부가액(일별 잔액 평균)을 "
                          "노란 칸에 넣으세요(시행령 제17조의2 제3항)")
@@ -164,7 +183,7 @@ def compute(p: Paper, b: Books) -> None:
 def _rate_formula(R: dict, share: str, hold: str, target: str) -> str:
     lo1, lo2 = R["수입배당금 출자비율 하한(50% 이상)"], R["수입배당금 출자비율 하한(20% 이상)"]
     r1, r2, r3 = (R[f"수입배당금 익금불산입률({k})"] for k in ("50% 이상", "20% 이상", "20% 미만"))
-    return (f'=IF(OR({hold}<>"O",{target}<>"O",{share}<=0),0,'
+    return (f'=IF(OR({hold}<>"O",{target}<>"O"),0,'
             f'IF({share}>={lo1},{r1},IF({share}>={lo2},{r2},{r3})))')
 
 
@@ -196,7 +215,7 @@ def write(bk: Book, p: Paper) -> None:
         i, n = e["i"], e["payer"]
         r.row = s.section(r.row + 1, f"3-{i + 1}. {n}")
         r.put(f"{i}.배당금액", "배당금액", e["배당금액"])
-        r.put(f"지분율/{n}", "지분율(노란 칸, 모르면 0)", p.inputs[f"지분율/{n}"], kind="input", input_kind="ratio", fmt="0.00%")
+        r.put(f"지분율/{n}", "지분율(노란 칸, 모르면 0 = 20% 미만 률로 계산)", p.inputs[f"지분율/{n}"], kind="input", input_kind="ratio", fmt="0.00%")
         r.put(f"3개월 이상 보유/{n}", "배당기준일 현재 3개월 이상 보유(O · X)", p.inputs[f"3개월 이상 보유/{n}"], kind="input",
               input_kind="pick", fmt="@")
         r.put(f"대상 여부/{n}", "익금불산입 대상(O · X, 펀드 분배금 등은 X)", p.inputs[f"대상 여부/{n}"], kind="input",

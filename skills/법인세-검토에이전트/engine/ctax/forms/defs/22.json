@@ -1,0 +1,98 @@
+{
+ "code": "22",
+ "title": "기부금명세서",
+ "aliases": {
+  "pdf": "기부금명세서"
+ },
+ "source": "법인세법 시행규칙 별지 제22호서식(2023.3.20 개정, 2026-10-10 법제처 판이 같은 판). 란 번호 · 이름을 법제처 판과 대조했다. ①유형은 작성방법 1 에 따라 특례(제24조제2항) · 일반(제24조제3항) · 기타(그 밖의 기부금)로 적고, 같은 기부처는 월별로 합계한다. ⑨소계는 가 ~ 라 줄을 묶는 머리 글이다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①유형(특례 · 일반 · 기타)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②코드",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③과목",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④연월",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤적요",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "기부처 ⑥법인명등",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "기부처 ⑦사업자등록번호등",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧금액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "비고",
+   "label": "비고",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "가",
+   "label": "가. 「법인세법」 제24조제2항제1호의 특례기부금(코드10)",
+   "dtype": "won"
+  },
+  {
+   "code": "나",
+   "label": "나. 「법인세법」 제24조제3항제1호의 일반기부금(코드40)",
+   "dtype": "won"
+  },
+  {
+   "code": "다",
+   "label": "다. 「조세특례제한법」 제88조의4제13항의 우리사주조합 기부금(코드42)",
+   "dtype": "won"
+  },
+  {
+   "code": "라",
+   "label": "라. 그 밖의 기부금(코드50)",
+   "dtype": "won"
+  },
+  {
+   "code": "계",
+   "label": "계",
+   "dtype": "won",
+   "formula": "total(c('가'),c('나'),c('다'),c('라'))",
+   "total": true
+  },
+  {
+   "code": "합계_8",
+   "label": "합계 ⑧금액",
+   "dtype": "won",
+   "formula": "F.sum('22','8')",
+   "total": true
+  }
+ ]
+}

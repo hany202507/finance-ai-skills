@@ -1,0 +1,73 @@
+{
+ "code": "54부표",
+ "title": "주식출자지분양도명세서",
+ "aliases": {
+  "pdf": "주식출자지분양도명세서"
+ },
+ "source": "법인세법 시행규칙 별지 제54호부표 서식(2014.3.14 개정). 란 번호 · 이름은 전기 신고서 PDF 글자. 양도 내역은 사람이 넣는다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①법인명",
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②사업자등록번호",
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③대표자",
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④일련번호",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤성명(법인명)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥주민등록번호(사업자등록번호)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "⑦거주지국코드",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧양도일자",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑨취득일자",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "10",
+   "label": "⑩주식수(출자좌수)",
+   "dtype": "int",
+   "rows": true
+  },
+  {
+   "code": "구분코드",
+   "label": "주식 · 출자지분 구분코드",
+   "dtype": "text",
+   "rows": true
+  }
+ ]
+}

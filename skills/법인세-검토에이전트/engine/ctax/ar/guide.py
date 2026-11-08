@@ -35,10 +35,43 @@ def load_guide() -> list[dict]:
 
 
 @lru_cache(maxsize=1)
+def form_catalog() -> dict:
+    """서식 총괄표 정본(forms.yaml 통째). names · groups · tiers · unresolved · request_default(11-01, 설계안 7.1절)."""
+    return yaml.safe_load((HERE / "forms.yaml").read_text(encoding="utf-8")) or {}
+
+
 def form_names() -> dict[str, str]:
-    data = yaml.safe_load((HERE / "forms.yaml").read_text(encoding="utf-8"))
-    return {str(k): str(v) for k, v in (data.get("names") or {}).items()}
+    return {str(k): str(v) for k, v in (form_catalog().get("names") or {}).items()}
 
 
 def form_name(code: str) -> str:
     return form_names().get(str(code), str(code))
+
+
+OTHER_GROUP = "그 밖의 명세서"
+
+
+@lru_cache(maxsize=1)
+def _group_of() -> dict[str, str]:
+    return {str(c): str(g.get("name")) for g in (form_catalog().get("groups") or []) for c in (g.get("codes") or [])}
+
+
+def form_groups() -> list[str]:
+    """분류 이름 차례(총괄표 묶음 순서)."""
+    return [str(g.get("name")) for g in (form_catalog().get("groups") or [])]
+
+
+def form_group(code: str) -> str:
+    """서식의 분류. 묶음에 없는 코드는 「그 밖의 명세서」."""
+    return _group_of().get(str(code), OTHER_GROUP)
+
+
+def form_tier(code: str) -> tuple[str, bool]:
+    """(티어, 회계사 확인 여부). tiers 에 없는 코드는 (「미정」, False)."""
+    t = (form_catalog().get("tiers") or {}).get(str(code)) or {}
+    return str(t.get("tier") or "미정"), bool(t.get("confirmed", False))
+
+
+def request_default(code: str) -> bool:
+    """서식이 「해당」 이면 결정적으로 요청할 자료가 있는 서식인가(request 단계가 읽는다)."""
+    return bool((form_catalog().get("request_default") or {}).get(str(code), False))

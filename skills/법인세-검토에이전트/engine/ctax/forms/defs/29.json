@@ -1,0 +1,329 @@
+{
+ "code": "29",
+ "title": "업무용승용차관련비용명세서",
+ "aliases": {
+  "pdf": "업무용승용차관련비용명세서"
+ },
+ "source": "법인세법 시행규칙 별지 제29호서식(2025.3.21 개정). ①~⑮ 는 전기 신고서 PDF 글자, ⑮ 아래 칸과 2 · 3 · 4절은 PDF 글자에 원문자가 빠져 서식 차례대로 16~46 을 붙였다. 차량별 줄이 없으면 합계 한 줄로 채운다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①차량번호",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②차종",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③임차여부",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥운행기록 작성여부",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑨업무사용비율(⑧/⑦)",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "14",
+   "label": "⑭해당연도 보유 또는 임차기간 월수",
+   "dtype": "int",
+   "rows": true
+  },
+  {
+   "code": "16",
+   "label": "⑮관련비용 감가상각비",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "17",
+   "label": "⑮관련비용 임차료",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "18",
+   "label": "⑮관련비용 감가상각비상당액(임차료 중)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "19",
+   "label": "⑮관련비용 유류비",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "20",
+   "label": "⑮관련비용 보험료",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "21",
+   "label": "⑮관련비용 수선비",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "22",
+   "label": "⑮관련비용 자동차세",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "23",
+   "label": "⑮관련비용 기타",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "24",
+   "label": "⑮관련비용 합계",
+   "dtype": "won",
+   "formula": "total(c('16'),c('17'),c('19'),c('20'),c('21'),c('22'),c('23'))",
+   "rows": true
+  },
+  {
+   "code": "25",
+   "label": "업무사용금액 감가상각비(상당액)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "26",
+   "label": "업무사용금액 관련비용",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "27",
+   "label": "업무사용금액 합계",
+   "dtype": "won",
+   "formula": "c('25')+c('26')",
+   "rows": true
+  },
+  {
+   "code": "28",
+   "label": "업무외사용금액 감가상각비(상당액)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "29",
+   "label": "업무외사용금액 관련비용",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "30",
+   "label": "업무외사용금액 합계",
+   "dtype": "won",
+   "formula": "c('28')+c('29')",
+   "rows": true
+  },
+  {
+   "code": "31",
+   "label": "감가상각비(상당액) 한도초과금액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "32",
+   "label": "손금불산입 합계(업무외사용금액 합계 + 한도초과금액)",
+   "dtype": "won",
+   "formula": "c('30')+c('31')",
+   "rows": true
+  },
+  {
+   "code": "33",
+   "label": "손금산입 합계(관련비용 합계 - 손금불산입 합계)",
+   "dtype": "won",
+   "formula": "c('24')-c('32')",
+   "rows": true
+  },
+  {
+   "code": "합계_16",
+   "label": "합계 ⑮관련비용 감가상각비",
+   "dtype": "won",
+   "formula": "F.sum('29','16')",
+   "total": true
+  },
+  {
+   "code": "합계_17",
+   "label": "합계 ⑮관련비용 임차료",
+   "dtype": "won",
+   "formula": "F.sum('29','17')",
+   "total": true
+  },
+  {
+   "code": "합계_18",
+   "label": "합계 ⑮관련비용 감가상각비상당액(임차료 중)",
+   "dtype": "won",
+   "formula": "F.sum('29','18')",
+   "total": true
+  },
+  {
+   "code": "합계_19",
+   "label": "합계 ⑮관련비용 유류비",
+   "dtype": "won",
+   "formula": "F.sum('29','19')",
+   "total": true
+  },
+  {
+   "code": "합계_20",
+   "label": "합계 ⑮관련비용 보험료",
+   "dtype": "won",
+   "formula": "F.sum('29','20')",
+   "total": true
+  },
+  {
+   "code": "합계_21",
+   "label": "합계 ⑮관련비용 수선비",
+   "dtype": "won",
+   "formula": "F.sum('29','21')",
+   "total": true
+  },
+  {
+   "code": "합계_22",
+   "label": "합계 ⑮관련비용 자동차세",
+   "dtype": "won",
+   "formula": "F.sum('29','22')",
+   "total": true
+  },
+  {
+   "code": "합계_23",
+   "label": "합계 ⑮관련비용 기타",
+   "dtype": "won",
+   "formula": "F.sum('29','23')",
+   "total": true
+  },
+  {
+   "code": "합계_24",
+   "label": "합계 관련비용 합계",
+   "dtype": "won",
+   "formula": "F.sum('29','24')",
+   "total": true
+  },
+  {
+   "code": "합계_25",
+   "label": "합계 업무사용 감가상각비",
+   "dtype": "won",
+   "formula": "F.sum('29','25')",
+   "total": true
+  },
+  {
+   "code": "합계_26",
+   "label": "합계 업무사용 관련비용",
+   "dtype": "won",
+   "formula": "F.sum('29','26')",
+   "total": true
+  },
+  {
+   "code": "합계_27",
+   "label": "합계 업무사용금액",
+   "dtype": "won",
+   "formula": "F.sum('29','27')",
+   "total": true
+  },
+  {
+   "code": "합계_28",
+   "label": "합계 업무외 감가상각비",
+   "dtype": "won",
+   "formula": "F.sum('29','28')",
+   "total": true
+  },
+  {
+   "code": "합계_29",
+   "label": "합계 업무외 관련비용",
+   "dtype": "won",
+   "formula": "F.sum('29','29')",
+   "total": true
+  },
+  {
+   "code": "합계_30",
+   "label": "합계 업무외사용금액",
+   "dtype": "won",
+   "formula": "F.sum('29','30')",
+   "total": true
+  },
+  {
+   "code": "합계_31",
+   "label": "합계 한도초과금액",
+   "dtype": "won",
+   "formula": "F.sum('29','31')",
+   "total": true
+  },
+  {
+   "code": "합계_32",
+   "label": "합계 손금불산입 합계",
+   "dtype": "won",
+   "formula": "F.sum('29','32')",
+   "total": true
+  },
+  {
+   "code": "합계_33",
+   "label": "합계 손금산입 합계",
+   "dtype": "won",
+   "formula": "F.sum('29','33')",
+   "total": true
+  },
+  {
+   "code": "34",
+   "label": "3. 한도초과금액 이월명세 전기이월액",
+   "dtype": "won"
+  },
+  {
+   "code": "35",
+   "label": "3. 당기 감가상각비(상당액) 한도초과금액",
+   "dtype": "won",
+   "formula": "F.sum('29','31')"
+  },
+  {
+   "code": "36",
+   "label": "3. 감가상각비(상당액) 한도초과금액 누계",
+   "dtype": "won",
+   "formula": "c('34')+c('35')"
+  },
+  {
+   "code": "37",
+   "label": "3. 손금추인(산입)액",
+   "dtype": "won"
+  },
+  {
+   "code": "38",
+   "label": "3. 차기이월액(누계 - 손금추인액)",
+   "dtype": "won",
+   "formula": "c('36')-c('37')"
+  },
+  {
+   "code": "44",
+   "label": "4. 처분손실 합계",
+   "dtype": "won"
+  },
+  {
+   "code": "45",
+   "label": "4. 당기손금산입액",
+   "dtype": "won"
+  },
+  {
+   "code": "46",
+   "label": "4. 처분손실 한도초과금액 손금불산입",
+   "dtype": "won",
+   "formula": "max(c('44')-c('45'),0)"
+  }
+ ]
+}

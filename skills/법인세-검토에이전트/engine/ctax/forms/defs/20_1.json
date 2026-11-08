@@ -1,0 +1,265 @@
+{
+ "code": "20_1",
+ "title": "유형고정자산감가상각비조정명세서(정률법)",
+ "aliases": {
+  "pdf": "미상각분감가상각조정명세서(전체-유형정률법)"
+ },
+ "source": "법인세법 시행규칙 별지 제20호서식(1)(2012.2.28 개정). (1)~(30) 은 전기 신고서 PDF 글자. 신고조정 감가상각비 칸((31)~(39))은 넣지 않았다. 줄은 자산 하나가 아니라 감가상각 조서의 자산 묶음 하나다",
+ "items": [
+  {
+   "code": "1",
+   "label": "(1)종류 또는 업종명",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "(2)구조(용도) 또는 자산명",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "(3)취득일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "(4)내용연수(기준 · 신고)",
+   "dtype": "int",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "(5)재무상태표 자산가액 기말현재액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "(6)감가상각누계액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "(7)미상각잔액(5-6)",
+   "dtype": "won",
+   "formula": "c('5')-c('6')",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "(8)회사계산감가상각비",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "(9)자본적지출액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "10",
+   "label": "(10)전기말의제상각누계액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "11",
+   "label": "(11)전기말부인누계",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "12",
+   "label": "(12)가감계(7+8+9-10+11)",
+   "dtype": "won",
+   "formula": "c('7')+c('8')+c('9')-c('10')+c('11')",
+   "rows": true
+  },
+  {
+   "code": "13",
+   "label": "(13)일반상각률 · 특별상각률",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "14",
+   "label": "(14)일반상각액",
+   "dtype": "won",
+   "formula": "rounddown(c('12')*c('13'))",
+   "rows": true
+  },
+  {
+   "code": "15",
+   "label": "(15)특별상각액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "16",
+   "label": "(16)계(14+15)",
+   "dtype": "won",
+   "formula": "c('14')+c('15')",
+   "rows": true
+  },
+  {
+   "code": "17",
+   "label": "(17)전기말현재취득가액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "18",
+   "label": "(18)당기회사계산증가액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "19",
+   "label": "(19)당기자본적지출액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "20",
+   "label": "(20)계(17+18+19)",
+   "dtype": "won",
+   "formula": "c('17')+c('18')+c('19')",
+   "rows": true
+  },
+  {
+   "code": "21",
+   "label": "(21)잔존가액((20)×5/100)",
+   "dtype": "won",
+   "formula": "rounddown(c('20')*5/100)",
+   "rows": true
+  },
+  {
+   "code": "22",
+   "label": "(22)당기상각시인범위액{(16) 단, (12-16)<21 인 경우 12}",
+   "dtype": "won",
+   "formula": "c('16') if c('12')-c('16') >= c('21') else c('12')",
+   "rows": true
+  },
+  {
+   "code": "23",
+   "label": "(23)회사계산상각액((8)+(9))",
+   "dtype": "won",
+   "formula": "c('8')+c('9')",
+   "rows": true
+  },
+  {
+   "code": "24",
+   "label": "(24)차감액((23)-(22))",
+   "dtype": "won",
+   "formula": "c('23')-c('22')",
+   "rows": true
+  },
+  {
+   "code": "25",
+   "label": "(25)최저한세 적용에 따른 특별상각부인액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "26",
+   "label": "(26)상각부인액((24)+(25))",
+   "dtype": "won",
+   "formula": "max(c('24')+c('25'),0)",
+   "rows": true
+  },
+  {
+   "code": "27",
+   "label": "(27)기왕부인액 중 당기손금추인액(11, 단 11≤│△24│)",
+   "dtype": "won",
+   "formula": "min(c('11'),max(-c('24'),0))",
+   "rows": true
+  },
+  {
+   "code": "28",
+   "label": "(28)당기말부인액누계(11+26-│27│)",
+   "dtype": "won",
+   "formula": "c('11')+c('26')-c('27')",
+   "rows": true
+  },
+  {
+   "code": "29",
+   "label": "(29)당기의제상각액(│△24│-│27│)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "30",
+   "label": "(30)의제상각누계(10+29)",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "합계_5",
+   "label": "합계 (5)기말현재액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','5')",
+   "total": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 (6)감가상각누계액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','6')",
+   "total": true
+  },
+  {
+   "code": "합계_7",
+   "label": "합계 (7)미상각잔액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','7')",
+   "total": true
+  },
+  {
+   "code": "합계_8",
+   "label": "합계 (8)회사계산감가상각비",
+   "dtype": "won",
+   "formula": "F.sum('20_1','8')",
+   "total": true
+  },
+  {
+   "code": "합계_22",
+   "label": "합계 (22)상각범위액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','22')",
+   "total": true
+  },
+  {
+   "code": "합계_23",
+   "label": "합계 (23)회사계산상각액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','23')",
+   "total": true
+  },
+  {
+   "code": "합계_26",
+   "label": "합계 (26)상각부인액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','26')",
+   "total": true
+  },
+  {
+   "code": "합계_27",
+   "label": "합계 (27)손금추인액",
+   "dtype": "won",
+   "formula": "F.sum('20_1','27')",
+   "total": true
+  },
+  {
+   "code": "합계_28",
+   "label": "합계 (28)당기말부인액누계",
+   "dtype": "won",
+   "formula": "F.sum('20_1','28')",
+   "total": true
+  }
+ ]
+}

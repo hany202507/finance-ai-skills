@@ -1,0 +1,129 @@
+{
+ "code": "16의2",
+ "title": "수입배당금액명세서",
+ "aliases": {
+  "pdf": "수입배당금액명세서"
+ },
+ "note": "법인세법 시행규칙 별지 제16호의2 서식(2024. 3. 개정). 란 번호는 전기 신고서 PDF 글자로 확인했다. ④ · ⑤ · ⑨ · ⑯ · ⑰ 은 PDF 글자에 번호 기호가 빠져 차례로 매겼다. 2절(배당금 지급법인 현황)과 3절(수입배당금액 및 익금불산입금액 명세)은 지급법인마다 한 줄이라 한 줄 표로 묶었다",
+ "items": [
+  {
+   "code": "1",
+   "label": "1. 출자법인 현황 ①법인명",
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②사업자등록번호",
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③소재지",
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④대표자성명",
+   "dtype": "text"
+  },
+  {
+   "code": "5",
+   "label": "⑤업태 · 종목",
+   "dtype": "text"
+  },
+  {
+   "code": "6",
+   "label": "2. 배당금 지급법인 현황 ⑥법인명",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "⑦사업자등록번호",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧소재지",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑨대표자",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "10",
+   "label": "⑩발행주식총수",
+   "dtype": "int",
+   "rows": true
+  },
+  {
+   "code": "11",
+   "label": "⑪지분율",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "12",
+   "label": "3. ⑫배당금 지급법인명",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "13",
+   "label": "⑬배당금액",
+   "rows": true
+  },
+  {
+   "code": "14",
+   "label": "⑭익금불산입비율",
+   "dtype": "rate",
+   "rows": true
+  },
+  {
+   "code": "15",
+   "label": "⑮익금불산입 대상금액(⑬×⑭)",
+   "formula": "rounddown(c('13')*c('14'),0)",
+   "rows": true
+  },
+  {
+   "code": "16",
+   "label": "⑯지급이자 관련 익금불산입 배제금액",
+   "rows": true
+  },
+  {
+   "code": "17",
+   "label": "⑰익금불산입액(⑮-⑯)",
+   "formula": "c('15')-c('16')",
+   "rows": true
+  },
+  {
+   "code": "계_13",
+   "label": "계 ⑬배당금액",
+   "formula": "F.sum('16의2','13')",
+   "total": true
+  },
+  {
+   "code": "계_15",
+   "label": "계 ⑮익금불산입 대상금액",
+   "formula": "F.sum('16의2','15')",
+   "total": true
+  },
+  {
+   "code": "계_16",
+   "label": "계 ⑯지급이자 관련 익금불산입 배제금액",
+   "formula": "F.sum('16의2','16')",
+   "total": true
+  },
+  {
+   "code": "계_17",
+   "label": "계 ⑰익금불산입액",
+   "formula": "F.sum('16의2','17')",
+   "total": true
+  }
+ ]
+}

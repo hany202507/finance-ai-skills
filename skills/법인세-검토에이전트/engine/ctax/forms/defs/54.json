@@ -1,0 +1,745 @@
+{
+ "code": "54",
+ "title": "주식등변동상황명세서",
+ "aliases": {
+  "pdf": "주식등변동상황명세서"
+ },
+ "source": "법인세법 시행규칙 별지 제54호서식(2026.3.20 개정). 란 코드는 서식의 란 번호. 1절 ①~⑧, 2절 ⑯ 기초 · ⑰ 기말은 「16_12」(⑯ 줄 ⑫ 열) 꼴, 변동 줄(⑨~⑮)은 표 2. 3절 주주 줄(⑲~㊺)은 표 3, 01 합계 · 02 제출의무면제 주주소계는 「합계_24」 · 「면제_24」 꼴. 4절 자기주식 ㊻~㊽, 5절 주식 신탁 줄(㊿~(61))은 표 5. 옛 정의(2021 판, 1절 보통주 · 우선주 나눔)의 기초_자본금 · 기말_자본금 · 합계_기초_주식수 · 합계_기말_주식수와 주주 줄 란 이름은 별칭으로 남겼다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①법인명",
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②사업자등록번호",
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③대표자성명",
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④상장변경일",
+   "dtype": "date"
+  },
+  {
+   "code": "5",
+   "label": "⑤합병·분할일",
+   "dtype": "date"
+  },
+  {
+   "code": "6",
+   "label": "⑥사업연도",
+   "dtype": "text"
+  },
+  {
+   "code": "7",
+   "label": "⑦주권상장여부",
+   "dtype": "text",
+   "note": "01 유가증권시장상장 · 02 코스닥 · 03 그 외(비상장 등)(작성방법 4)"
+  },
+  {
+   "code": "8",
+   "label": "⑧무액면주식발행여부",
+   "dtype": "text",
+   "note": "01 여 · 02 부(작성방법 5)"
+  },
+  {
+   "code": "16_12",
+   "label": "⑯기초 ⑫주식수(출자좌수)",
+   "dtype": "int",
+   "note": "주식 종류와 관계없이 발행한 총주식수(작성방법 6)"
+  },
+  {
+   "code": "16_13",
+   "label": "⑯기초 ⑬주당 액면가액",
+   "dtype": "won"
+  },
+  {
+   "code": "16_15",
+   "label": "⑯기초 ⑮자본금",
+   "dtype": "won",
+   "aliases": [
+    "기초_자본금"
+   ]
+  },
+  {
+   "code": "17_12",
+   "label": "⑰기말 ⑫주식수(출자좌수)",
+   "dtype": "int"
+  },
+  {
+   "code": "17_13",
+   "label": "⑰기말 ⑬주당 액면가액",
+   "dtype": "won"
+  },
+  {
+   "code": "17_15",
+   "label": "⑰기말 ⑮자본금",
+   "dtype": "won",
+   "aliases": [
+    "기말_자본금"
+   ],
+   "formula": "c('16_15')+F.sum('54','15')",
+   "note": "기초 자본금 ± 당기 변동 줄 ⑮(작성방법 6). ⑫ × ⑬ 과 같아야 한다"
+  },
+  {
+   "code": "9",
+   "label": "⑨일자",
+   "dtype": "date",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "10",
+   "label": "⑩원인코드",
+   "dtype": "text",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "11",
+   "label": "⑪종류",
+   "dtype": "text",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "12",
+   "label": "⑫주식수(출자좌수)",
+   "dtype": "int",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "13",
+   "label": "⑬주당 액면가액",
+   "dtype": "won",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "14",
+   "label": "⑭주당발행(인수)가액",
+   "dtype": "won",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "15",
+   "label": "⑮증가(감소) 자본금",
+   "dtype": "won",
+   "rows": true,
+   "table": "2"
+  },
+  {
+   "code": "19",
+   "label": "⑲구분",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "구분"
+   ]
+  },
+  {
+   "code": "20",
+   "label": "⑳성명(법인명)",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "성명"
+   ]
+  },
+  {
+   "code": "21",
+   "label": "㉑주민등록번호(사업자번호)",
+   "dtype": "text",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "22",
+   "label": "㉒거주지국",
+   "dtype": "text",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "23",
+   "label": "㉓거주지국코드",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "국코드"
+   ]
+  },
+  {
+   "code": "24",
+   "label": "㉔기초 주식수(출자좌수)",
+   "dtype": "int",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "기초_주식수"
+   ]
+  },
+  {
+   "code": "25",
+   "label": "㉕기초 지분율",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "기초_지분율"
+   ]
+  },
+  {
+   "code": "26",
+   "label": "㉖증가 양수",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "27",
+   "label": "㉗증가 유상증자",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "28",
+   "label": "㉘증가 무상증자",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "29",
+   "label": "㉙증가 상속",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "30",
+   "label": "㉚증가 증여",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "31",
+   "label": "㉛증가 전환사채등 출자전환",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "32",
+   "label": "㉜증가 명의신탁등 실명전환",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "33",
+   "label": "㉝증가 신탁",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "34",
+   "label": "㉞증가 기타",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "35",
+   "label": "㉟감소 양도",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "36",
+   "label": "㊱감소 상속",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "37",
+   "label": "㊲감소 증여",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "38",
+   "label": "㊳감소 감자",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "39",
+   "label": "㊴감소 명의신탁등 실명전환",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "40",
+   "label": "㊵감소 신탁",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "41",
+   "label": "㊶감소 이익소각",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "42",
+   "label": "㊷감소 기타",
+   "dtype": "int",
+   "rows": true,
+   "table": "3"
+  },
+  {
+   "code": "43",
+   "label": "㊸기말 주식수(출자좌수)",
+   "dtype": "int",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "기말_주식수"
+   ],
+   "formula": "c('24')+total(c('26'),c('27'),c('28'),c('29'),c('30'),c('31'),c('32'),c('33'),c('34'))-total(c('35'),c('36'),c('37'),c('38'),c('39'),c('40'),c('41'),c('42'))"
+  },
+  {
+   "code": "44",
+   "label": "㊹기말 지분율",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "기말_지분율"
+   ]
+  },
+  {
+   "code": "45",
+   "label": "㊺지배주주와의 관계코드",
+   "dtype": "text",
+   "rows": true,
+   "table": "3",
+   "aliases": [
+    "관계"
+   ]
+  },
+  {
+   "code": "면제_24",
+   "label": "02 제출의무면제 주주소계 ㉔기초 주식수(출자좌수)",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_25",
+   "label": "02 제출의무면제 주주소계 ㉕기초 지분율",
+   "dtype": "text",
+   "table": "3"
+  },
+  {
+   "code": "면제_26",
+   "label": "02 제출의무면제 주주소계 ㉖증가 양수",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_27",
+   "label": "02 제출의무면제 주주소계 ㉗증가 유상증자",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_28",
+   "label": "02 제출의무면제 주주소계 ㉘증가 무상증자",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_29",
+   "label": "02 제출의무면제 주주소계 ㉙증가 상속",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_30",
+   "label": "02 제출의무면제 주주소계 ㉚증가 증여",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_31",
+   "label": "02 제출의무면제 주주소계 ㉛증가 전환사채등 출자전환",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_32",
+   "label": "02 제출의무면제 주주소계 ㉜증가 명의신탁등 실명전환",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_33",
+   "label": "02 제출의무면제 주주소계 ㉝증가 신탁",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_34",
+   "label": "02 제출의무면제 주주소계 ㉞증가 기타",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_35",
+   "label": "02 제출의무면제 주주소계 ㉟감소 양도",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_36",
+   "label": "02 제출의무면제 주주소계 ㊱감소 상속",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_37",
+   "label": "02 제출의무면제 주주소계 ㊲감소 증여",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_38",
+   "label": "02 제출의무면제 주주소계 ㊳감소 감자",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_39",
+   "label": "02 제출의무면제 주주소계 ㊴감소 명의신탁등 실명전환",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_40",
+   "label": "02 제출의무면제 주주소계 ㊵감소 신탁",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_41",
+   "label": "02 제출의무면제 주주소계 ㊶감소 이익소각",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_42",
+   "label": "02 제출의무면제 주주소계 ㊷감소 기타",
+   "dtype": "int",
+   "table": "3"
+  },
+  {
+   "code": "면제_43",
+   "label": "02 제출의무면제 주주소계 ㊸기말 주식수(출자좌수)",
+   "dtype": "int",
+   "table": "3",
+   "formula": "c('면제_24')+total(c('면제_26'),c('면제_27'),c('면제_28'),c('면제_29'),c('면제_30'),c('면제_31'),c('면제_32'),c('면제_33'),c('면제_34'))-total(c('면제_35'),c('면제_36'),c('면제_37'),c('면제_38'),c('면제_39'),c('면제_40'),c('면제_41'),c('면제_42'))"
+  },
+  {
+   "code": "면제_44",
+   "label": "02 제출의무면제 주주소계 ㊹기말 지분율",
+   "dtype": "text",
+   "table": "3"
+  },
+  {
+   "code": "합계_24",
+   "label": "01 합계 ㉔기초 주식수(출자좌수)",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_24')+F.sum('54','24')",
+   "aliases": [
+    "합계_기초_주식수"
+   ]
+  },
+  {
+   "code": "합계_26",
+   "label": "01 합계 ㉖증가 양수",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_26')+F.sum('54','26')"
+  },
+  {
+   "code": "합계_27",
+   "label": "01 합계 ㉗증가 유상증자",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_27')+F.sum('54','27')"
+  },
+  {
+   "code": "합계_28",
+   "label": "01 합계 ㉘증가 무상증자",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_28')+F.sum('54','28')"
+  },
+  {
+   "code": "합계_29",
+   "label": "01 합계 ㉙증가 상속",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_29')+F.sum('54','29')"
+  },
+  {
+   "code": "합계_30",
+   "label": "01 합계 ㉚증가 증여",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_30')+F.sum('54','30')"
+  },
+  {
+   "code": "합계_31",
+   "label": "01 합계 ㉛증가 전환사채등 출자전환",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_31')+F.sum('54','31')"
+  },
+  {
+   "code": "합계_32",
+   "label": "01 합계 ㉜증가 명의신탁등 실명전환",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_32')+F.sum('54','32')"
+  },
+  {
+   "code": "합계_33",
+   "label": "01 합계 ㉝증가 신탁",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_33')+F.sum('54','33')"
+  },
+  {
+   "code": "합계_34",
+   "label": "01 합계 ㉞증가 기타",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_34')+F.sum('54','34')"
+  },
+  {
+   "code": "합계_35",
+   "label": "01 합계 ㉟감소 양도",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_35')+F.sum('54','35')"
+  },
+  {
+   "code": "합계_36",
+   "label": "01 합계 ㊱감소 상속",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_36')+F.sum('54','36')"
+  },
+  {
+   "code": "합계_37",
+   "label": "01 합계 ㊲감소 증여",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_37')+F.sum('54','37')"
+  },
+  {
+   "code": "합계_38",
+   "label": "01 합계 ㊳감소 감자",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_38')+F.sum('54','38')"
+  },
+  {
+   "code": "합계_39",
+   "label": "01 합계 ㊴감소 명의신탁등 실명전환",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_39')+F.sum('54','39')"
+  },
+  {
+   "code": "합계_40",
+   "label": "01 합계 ㊵감소 신탁",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_40')+F.sum('54','40')"
+  },
+  {
+   "code": "합계_41",
+   "label": "01 합계 ㊶감소 이익소각",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_41')+F.sum('54','41')"
+  },
+  {
+   "code": "합계_42",
+   "label": "01 합계 ㊷감소 기타",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_42')+F.sum('54','42')"
+  },
+  {
+   "code": "합계_43",
+   "label": "01 합계 ㊸기말 주식수(출자좌수)",
+   "dtype": "int",
+   "table": "3",
+   "total": true,
+   "formula": "c('면제_43')+F.sum('54','43')",
+   "aliases": [
+    "합계_기말_주식수"
+   ]
+  },
+  {
+   "code": "보유여부",
+   "label": "4. 자기주식 보유여부",
+   "dtype": "text",
+   "note": "여 · 부"
+  },
+  {
+   "code": "46",
+   "label": "㊻자기주식 수(주)",
+   "dtype": "int",
+   "note": "사업연도말 보유 자기주식 전체 수(작성방법 12)"
+  },
+  {
+   "code": "47",
+   "label": "㊼소각 목적 자기주식수",
+   "dtype": "int"
+  },
+  {
+   "code": "48",
+   "label": "㊽소각 목적 외 자기주식수",
+   "dtype": "int"
+  },
+  {
+   "code": "50",
+   "label": "㊿신탁 변동원인(코드)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "51",
+   "label": "(51)신탁 주식수",
+   "dtype": "int",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "52",
+   "label": "(52)위탁자 성명(법인명)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "53",
+   "label": "(53)위탁자 주민등록번호(사업자등록번호)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "54",
+   "label": "(54)수탁자 성명(법인명)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "55",
+   "label": "(55)수탁자 주민등록번호(사업자등록번호)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "56",
+   "label": "(56)수익자 성명(법인명)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "57",
+   "label": "(57)수익자 주민등록번호(사업자등록번호)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "58",
+   "label": "(58)의결권 행사 지시권 보유자 성명(법인명)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "59",
+   "label": "(59)의결권 행사 지시권 보유자 주민등록번호(사업자등록번호)",
+   "dtype": "text",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "60",
+   "label": "(60)신탁 계약 시작일",
+   "dtype": "date",
+   "rows": true,
+   "table": "5"
+  },
+  {
+   "code": "61",
+   "label": "(61)신탁 계약 종료일",
+   "dtype": "date",
+   "rows": true,
+   "table": "5"
+  }
+ ]
+}

@@ -75,6 +75,7 @@ class Paper:
     inputs: dict = field(default_factory=dict)       # 노란 칸에 쓸 지금 값(회계사 값이 있으면 그 값)
     defaults: dict = field(default_factory=dict)     # 노란 칸의 엔진 기본값
     overridden: dict = field(default_factory=dict)   # key → {"value", "default"} (회계사 값)
+    context_used: dict = field(default_factory=dict)  # key → 작년 답으로 채운 칸(회사 맥락). 회계사 값이 아니다
     checks: list[dict] = field(default_factory=list)
     extra: dict = field(default_factory=dict)
 
@@ -89,7 +90,8 @@ class Paper:
         return {"id": self.id, "no": self.no, "name": self.name, "sheet": self.sheet, "status": self.status,
                 "values": self.values, "inputs": self.overridden,
                 "adjustments": [a.json() for a in self.live_adjustments()],
-                "issues": self.issues, "forms": self.forms, "notes": self.notes + self.confirm}
+                "issues": self.issues, "forms": self.forms, "notes": self.notes + self.confirm,
+                **({"context": self.context_used} if self.context_used else {})}
 
     def settle(self, has_amounts: bool) -> None:
         if not has_amounts:
@@ -104,12 +106,34 @@ class Paper:
         """노란 칸 값. 회계사 값(조서입력.json)이 있으면 그 값, 없으면 엔진 기본값. `inputs` · `defaults` 에 남긴다."""
         default = normalize(default, kind)
         got = b.override(self.id, key)
+        ctx = b.suggest(self.id, key)
+        if ctx is not None and normalize(ctx.get("value"), kind) != default:
+            default = self._from_context(key, ctx, default, kind, got)
         value = default if got is MISSING else normalize(got, kind)
         self.defaults[key] = default
         self.inputs[key] = value
         if got is not MISSING and value != default:
             self.overridden[key] = {"value": value, "default": default}
         return value
+
+    def _from_context(self, key: str, ctx: dict, engine, kind: str, got) -> object:
+        """작년 답(회사 맥락)을 이 칸의 기본값으로 쓴다(10-29). 회계사 값이 아니므로 overridden 에 넣지 않고 context_used 에 남긴다.
+        회계사가 확인하기 전(confirmed 가 아님)이면 확인할 것에 올린다. 회계사가 칸을 고쳤으면 그 값이 이긴다."""
+        prev = normalize(ctx.get("value"), kind)
+        mine = None if got is MISSING else normalize(got, kind)
+        state = "회계사가 바꿈" if mine is not None and mine != prev else ("확정" if ctx.get("confirmed") or mine == prev else "확인 전")
+        src = ", ".join(x for x in (f"{ctx.get('fy')} 사업연도" if ctx.get("fy") else "", str(ctx.get("by") or ""),
+                                    str(ctx.get("at") or "")[:10]) if x)
+        self.context_used[key] = {"value": prev, "engine": engine, "state": state, "id": ctx.get("id", ""),
+                                  "fy": ctx.get("fy", ""), "by": ctx.get("by", ""), "at": ctx.get("at", "")}
+        if state == "확인 전":
+            self.confirm.append(f"{key}: 작년 답 「{prev}」 로 채웠습니다({src}, 회계사 확인 전). 맞으면 ctax context confirm 으로 확정하고, "
+                                "다르면 노란 칸을 고치세요")
+        elif state == "확정":
+            self.notes.append(f"{key}: 작년 답 「{prev}」({src}), 올해 회계사 확인")
+        else:
+            self.notes.append(f"{key}: 작년 답은 「{prev}」({src}), 올해 회계사 값 「{mine}」")
+        return prev
 
     def take_lines(self, b: Books, pick: str, pick2: str = "", kind: str = "pick") -> None:
         """원장 검토 줄마다 노란 칸(`pick` · `pick2`) 회계사 값을 반영한다. 줄 열쇠는 `line_keys` 가 붙인다."""

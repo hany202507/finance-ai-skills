@@ -1,0 +1,145 @@
+{
+ "code": "지방43",
+ "title": "법인지방소득세과세표준및세액신고서",
+ "aliases": {
+  "pdf": "법인지방소득세과세표준및세액신고서"
+ },
+ "source": "지방세법 시행규칙 별지 제43호서식(2023.12.29 개정). ①~⑮ 는 전기 신고서 PDF 글자. 「법인별 세액의 계산」 칸은 번호가 없어 이름을 란 코드로 썼다. 안분명세(둘 이상 사업장)는 넣지 않았다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①사업자등록번호",
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②법인등록번호",
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③법인명",
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④전화번호",
+   "dtype": "text"
+  },
+  {
+   "code": "5",
+   "label": "⑤대표자 성명",
+   "dtype": "text"
+  },
+  {
+   "code": "6",
+   "label": "⑥전자우편",
+   "dtype": "text"
+  },
+  {
+   "code": "7",
+   "label": "⑦소재지",
+   "dtype": "text"
+  },
+  {
+   "code": "8",
+   "label": "⑧업태",
+   "dtype": "text"
+  },
+  {
+   "code": "9",
+   "label": "⑨종목",
+   "dtype": "text"
+  },
+  {
+   "code": "10",
+   "label": "⑩주업종코드",
+   "dtype": "text"
+  },
+  {
+   "code": "11",
+   "label": "⑪사업연도",
+   "dtype": "text"
+  },
+  {
+   "code": "13",
+   "label": "⑬법인구분",
+   "dtype": "text"
+  },
+  {
+   "code": "14",
+   "label": "⑭조정구분",
+   "dtype": "text"
+  },
+  {
+   "code": "15",
+   "label": "⑮종류별구분",
+   "dtype": "text"
+  },
+  {
+   "code": "수입금액",
+   "label": "법인별 세액의 계산 수입금액",
+   "dtype": "won",
+   "formula": "F('17','112')"
+  },
+  {
+   "code": "과세표준",
+   "label": "과세표준",
+   "dtype": "won",
+   "formula": "F('지방43의2','10')"
+  },
+  {
+   "code": "산출세액",
+   "label": "표준산출세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','15')"
+  },
+  {
+   "code": "총부담세액",
+   "label": "총부담세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','21')"
+  },
+  {
+   "code": "기납부세액",
+   "label": "기납부세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','28')"
+  },
+  {
+   "code": "차감납부할세액",
+   "label": "차감납부할세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','31')"
+  },
+  {
+   "code": "가감액",
+   "label": "경정 · 수정신고등 가감액",
+   "dtype": "won",
+   "formula": "F('지방43의2','42')"
+  },
+  {
+   "code": "납부할총세액",
+   "label": "납부할 총세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','43')"
+  },
+  {
+   "code": "분납할세액",
+   "label": "분납할 세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','44')"
+  },
+  {
+   "code": "기한내납부할세액",
+   "label": "신고기간 이내 납부할 세액",
+   "dtype": "won",
+   "formula": "F('지방43의2','45')"
+  },
+  {
+   "code": "안분율",
+   "label": "안분율(%)(단일 사업장 100)",
+   "dtype": "rate"
+  }
+ ]
+}

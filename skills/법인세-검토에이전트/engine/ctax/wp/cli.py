@@ -22,11 +22,14 @@ def build(case: Case, overrides: dict | None = None) -> tuple[Books, Result]:
     if not journal.exists():
         raise MissingInput(f"{journal.name} 이 없습니다. 먼저 ctax read 를 돌리세요")
     ar = case.read_json("AR.json") if case.has("AR.json") else None
+    from ..context.apply import suggestions
+
     info = case.info()
     start = str(info.get("fy_start") or "")
     rates = load_rates(fy_start=start)            # 사업연도별 표. 표가 없는 해면 NoRates 로 멈춘다
     books = Books(ledger=ledger, lines=read_journal(journal), prior=prior, ar=ar, info=info, rates=rates,
-                  overrides=overrides or {}, prior_rates=load_rates(fy_start=prior_start(start)))
+                  overrides=overrides or {}, context=suggestions(case), answers=inputs.answers(case),
+                  prior_rates=load_rates(fy_start=prior_start(start)))
     return books, run(books)
 
 
@@ -47,12 +50,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"입력이 없습니다: {e}")
         return 2
     try:
-        excel.write(result, books, xlsx_path)
+        cells = excel.write(result, books, xlsx_path)
     except PermissionError:
         print(f"{xlsx_path} 가 열려 있어 쓰지 못했습니다. 엑셀을 닫고 다시 돌리세요")
         return 1
     data = result.json()
     case.write_json("조정.json", data)
+    # 서식 란 → 조서 칸 주소(forms/wpref.py 가 읽는다, 10-31)
+    case.write_json("조서칸.json", {"file": f"{WP_DIR}/{OUT_XLSX}", "cells": cells})
     s = result.summary
     failed = [c for c in result.checks if not c["ok"]]
     adjs = data["adjustments"]
@@ -65,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         note += f" · 회계사 값 {used}칸"
     if failed:
         note += " · 검사 실패 " + ", ".join(c["title"] for c in failed)
-    case.mark_step("wp", not failed, note, ["_색인/조정.json", f"{WP_DIR}/{OUT_XLSX}"])
+    case.mark_step("wp", not failed, note, ["_색인/조정.json", "_색인/조서칸.json", f"{WP_DIR}/{OUT_XLSX}"])
     print(note)
     for msg in problems:
         print(f"  알림: {msg}")

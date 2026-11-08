@@ -1,0 +1,78 @@
+{
+ "code": "지방43의5병",
+ "title": "법인지방소득세특별징수세액명세서(병)",
+ "aliases": {
+  "pdf": "법인지방소득세특별징수세액명세서(병)"
+ },
+ "source": "지방세법 시행규칙 별지 제43호의5서식(병)(2016.12.30 개정, 양도담보설정채권의 이자소득용). 란 번호 · 이름은 전기 신고서 PDF 글자. 사람이 넣는다",
+ "items": [
+  {
+   "code": "1",
+   "label": "①채권자(양도담보권자)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "2",
+   "label": "②채무자(담보설정자)",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "3",
+   "label": "③원천(특별)징수의무자",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "4",
+   "label": "④유가증권표준코드",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤채권이자구분",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "6",
+   "label": "⑥법인세",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "7",
+   "label": "⑦특별징수세액",
+   "dtype": "won",
+   "rows": true
+  },
+  {
+   "code": "8",
+   "label": "⑧특별징수일",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "9",
+   "label": "⑨특별징수지",
+   "dtype": "text",
+   "rows": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 ⑥법인세",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5병','6')",
+   "total": true
+  },
+  {
+   "code": "합계_7",
+   "label": "합계 ⑦특별징수세액",
+   "dtype": "won",
+   "formula": "F.sum('지방43의5병','7')",
+   "total": true
+  }
+ ]
+}

@@ -1,0 +1,69 @@
+{
+ "code": "10갑",
+ "title": "원천납부세액명세서(갑)",
+ "aliases": {
+  "efile": "D103200",
+  "pdf": "원천납부세액명세서(갑)"
+ },
+ "items": [
+  {
+   "code": "1",
+   "label": "①적요",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2_1",
+   "label": "②원천징수의무자 구분(내국인·외국인)",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2_2",
+   "label": "②원천징수의무자 사업자(주민)등록번호",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "2",
+   "label": "②원천징수의무자 상호(성명)",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "3",
+   "label": "③원천징수일",
+   "rows": true,
+   "dtype": "text"
+  },
+  {
+   "code": "4",
+   "label": "④이자·배당금액",
+   "rows": true
+  },
+  {
+   "code": "5",
+   "label": "⑤세율",
+   "rows": true,
+   "dtype": "rate"
+  },
+  {
+   "code": "6",
+   "label": "⑥법인세(④x⑤, 10원 미만 버림, 1천원 미만은 원천징수 없음)",
+   "rows": true,
+   "formula": "rounddown(c('4')*c('5'), -1) if abs(c('4')*c('5')) >= 1000 else 0"
+  },
+  {
+   "code": "합계_4",
+   "label": "합계 ④이자·배당금액",
+   "formula": "F.sum('10갑','4')",
+   "total": true
+  },
+  {
+   "code": "합계_6",
+   "label": "합계 ⑥법인세",
+   "formula": "F.sum('10갑','6')",
+   "total": true
+  }
+ ]
+}
