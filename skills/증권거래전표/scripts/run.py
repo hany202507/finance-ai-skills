@@ -7,8 +7,9 @@ python run.py <거래내역 파일 ...> --out <산출 폴더> [--config 설정.j
 --opening-from  앞서 만든 검증 파일의 「기초·기말」 시트에서 고친 기초 잔고(수량 · 장부금액)를 읽어 설정 「기초」 대신 쓴다.
 산출(--out 폴더): 위하고_일반전표_<회사>.xlsx(업로드) · 증권전표_검증_<회사>.xlsx(요약 · 전표 · 거래원장 · 기초·기말).
 작업 파일(_작업 폴더): 실행보고.md · 표준거래표.csv · PDF 추출 마크다운.
-두 파일 모두 엔진 값을 그대로 쓴다. 엑셀 · LibreOffice 가 없어도 된다.
+업로드 파일은 엔진 값만, 검증 파일은 수식으로 쓰고 만들 때 수식을 다시 계산해 엔진 값과 대조한다. 엑셀 · LibreOffice 가 없어도 된다.
 종료코드: 0 검산 통과, 2 확인필요 남음, 3 중단(이때는 위하고 업로드 파일을 만들지 않는다).
+표준출력 맨 앞과 맨 끝에 「[증권거래전표] 실행보고: <절대경로>」 줄을, 맨 끝 바로 위에 결론 줄을 찍는다.
 """
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ import engine as E                     # noqa: E402
 import normalize as NZ                 # noqa: E402
 import read_source as RS               # noqa: E402
 import build_workbook as BW            # noqa: E402
+
+REPORT_MARK = "[증권거래전표] 실행보고: "   # 출력 앞 · 끝에서 실행보고 위치를 찾는 줄. 세법 훅도 이 줄을 본다
 
 BROKERS = ["삼성증권", "키움증권", "미래에셋증권", "한국투자증권", "NH투자증권", "KB증권", "신한투자증권", "토스증권",
            "대신증권", "하나증권", "메리츠증권", "카카오페이증권", "한화투자증권", "유안타증권", "교보증권", "IBK투자증권",
@@ -395,9 +398,16 @@ def main(argv=None):
     if a.opening_from:
         report.append("- [기초 입력] 이번에 쓴 기초 전체는 _작업/설정_기초.json 에 있다. 설정 파일 「기초」 에 옮겨 두면 다음 실행에도 그대로 쓴다")
     report += ["", BW.PASS_NOTE]
-    (work / "실행보고.md").write_text("\n".join(report), encoding="utf-8")
+    rp = (work / "실행보고.md").resolve()
+    rp.write_text("\n".join(report), encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
+    print(f"{REPORT_MARK}{rp}")
     print("\n".join(report[:70]))
+    if len(report) > 70:
+        print(f"… 아래 {len(report) - 70}줄은 실행보고에 있다")
+    # 출력 끝만 보는 경우(tail)에도 결론이 보이게 한다. 실행보고 끝줄은 결론과 상관없이 PASS 주의문이다
+    print(f"결론: {({0: '통과', 2: '확인필요', 3: '중단'})[status]} (종료코드 {status})")
+    print(f"{REPORT_MARK}{rp}")
     return status
 
 

@@ -12,12 +12,53 @@
  * 훅 자체가 무시당한다 — 그게 이 장치가 죽는 방식이다.
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 // 세법 '해석' 쟁점 신호. 단순 기장·발행 작업어(전표·발행·마감)는 일부러 뺐다.
 const PATTERN = new RegExp(
   '가산세|부가가치세|부가세|법인세|소득세|원천세|원천징수|조세특례|조특법|국세기본법|' +
   '세법|세무 ?(검토|자문|질의|회신)|예규|심판례|경정청구|제척기간|매입세액|영세율|' +
   '과세표준|비과세|면세사업|세액감면|신고불성실|납부지연'
 );
+
+// 전표를 만드는 스킬을 돌린 세션의 후속 질문은 세법 해석보다 전표 확인인 경우가 많다.
+// 증권거래전표를 돌린 뒤 「배당 원천세 맞게 들어갔어」 에 이 규약이 붙어 결론 · 쟁점분석 · 근거규정 꼴의 답이 나왔다(2026-11-10).
+// 그 세션에서는 세율 · 조문 · 해석처럼 법을 묻는 말이 있을 때만 넣는다.
+const LEGAL = new RegExp(
+  '세율|조문|법령|시행령|시행규칙|예규|판례|심판례|해석|가산세|경정청구|제척기간|' +
+  '조세특례|조특법|국세기본법|세법'
+);
+// 스킬을 돌린 흔적. 전사(transcript) 끝 1MB 에서 찾는다.
+// 증권거래전표 run.py 가 찍는 실행보고 제목과 실행보고 경로 줄이다.
+const WORK_MARKS = ['# 증권 거래 전표 실행 보고', '[증권거래전표] 실행보고: '];
+const TAIL_BYTES = 1024 * 1024;
+
+function ranJournalSkill(transcriptPath) {
+  if (!transcriptPath) return false;
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, TAIL_BYTES);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      const text = buf.toString('utf8');
+      return WORK_MARKS.some((m) => text.includes(m));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+function shouldInject(prompt, transcriptPath) {
+  if (!prompt || !PATTERN.test(prompt)) return false;
+  if (!LEGAL.test(prompt) && ranJournalSkill(transcriptPath)) return false;
+  return true;
+}
 
 const MSG = `[세법 근거 규약 — 자동 주입]
 세법 쟁점으로 보인다. 해석·검토가 필요하면 \`세법자문-회신\` 스킬을 쓰고, 아래를 지켜라.
@@ -51,13 +92,20 @@ async function readStdin() {
  * 그래서 명령줄을 순수 ASCII 로 두고, 한글은 이 파일 안에서 만든다.
  */
 if (process.argv.includes('--selftest')) {
-  const hit = PATTERN.test('가산세 붙나요');
-  const miss = !PATTERN.test('README 고쳐줘');
-  const ok = hit && miss;
+  const hit = shouldInject('가산세 붙나요', null);
+  const miss = !shouldInject('README 고쳐줘', null);
+  // 증권거래전표를 돌린 세션의 전사를 흉내 낸다
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tax-guard-'));
+  const tr = path.join(dir, 't.jsonl');
+  fs.writeFileSync(tr, JSON.stringify({ type: 'user', content: '\n' + WORK_MARKS[0] + ' (2026-11-10 10:00)\n' }) + '\n');
+  const skip = !shouldInject('배당 원천세 맞게 들어갔어', tr);
+  const legal = shouldInject('배당 원천세율 근거 조문 알려줘', tr);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const ok = hit && miss && skip && legal;
   process.stdout.write(
     ok
-      ? 'PASS — 훅이 정상이다. 세법 프롬프트에 규약이 주입되고, 그 외에는 조용히 빠진다.\n'
-      : `FAIL — 패턴 매칭이 깨졌다 (세법어=${hit}, 비세법어제외=${miss}).\n`,
+      ? 'PASS — 훅이 정상이다. 세법 프롬프트에 규약이 주입되고, 그 외와 전표 스킬 후속 질문에는 조용히 빠진다.\n'
+      : `FAIL — 패턴 매칭이 깨졌다 (세법어=${hit}, 비세법어제외=${miss}, 전표후속제외=${skip}, 전표세션세법질문=${legal}).\n`,
   );
   process.exit(ok ? 0 : 1);
 }
@@ -66,8 +114,8 @@ try {
   const raw = await readStdin();
   if (!raw.trim()) process.exit(0);
 
-  const prompt = JSON.parse(raw)?.prompt;
-  if (!prompt || !PATTERN.test(prompt)) process.exit(0);
+  const input = JSON.parse(raw) ?? {};
+  if (!shouldInject(input.prompt, input.transcript_path)) process.exit(0);
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {

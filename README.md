@@ -161,6 +161,8 @@ claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈 폴더 절�
 
 `node "<홈 폴더 절대경로>/.claude/hooks/tax-source-guard.mjs" --selftest` 가 `PASS` 를 내면 정상입니다.
 
+증권거래전표를 돌린 세션에서는 세율 · 조문 · 해석처럼 법을 묻는 말이 없는 질문(「배당 원천세 맞게 들어갔어」)에 규약을 넣지 않습니다. 전표 확인 질문에 세법 회신 꼴의 답이 나오지 않게 하려는 것입니다.
+
 플러그인으로 설치하려면 `/plugin marketplace add hany202507/finance-ai-skills` 후 `/plugin install finance-ai-skills@finance-ai-skills`.
 
 ## 세법자문-회신
