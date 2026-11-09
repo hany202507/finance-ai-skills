@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from .base import norm
 from .dsd_grid import Doc, Table
@@ -120,6 +121,182 @@ FORMAT = [      # 읽기 자료 맨 앞 한 화면(2026-10-23 분석 6.4). 연�
 def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = None, proposals: list[dict] | None = None) -> str:
     """AI 가 읽을 자료: 재무제표 넷과 주석 전부를 원문 순서대로. 표는 이름을 글자 그대로 적는다(연결을 적을 때 이 이름을 쓴다).
     defs 와 checks 를 주면 표마다 엔진이 금액 근거로 찾은 합계 구조와, 합계 줄 · 열인데 구조를 찾지 못한 곳을 적는다."""
+    head, blocks = _reading_blocks(doc, defs, checks, proposals)
+    return "\n".join(head + [y for _, lines in blocks for y in lines]) + "\n"
+
+
+# 몫으로 나눠 읽기(2026-11-09 기준 「10분 안 · 80%」). 숫자 쪽 에이전트 여럿이 주석 범위를 하나씩 맡는다.
+# 재무제표 넷은 몫마다 싣고, 다른 몫의 주석은 표 번호 · 열 · 줄 이름만 싣는다. 검증 · 할 일 · 후보의 주인은 걸린 표 가운데
+# 가장 뒤 몫이다(재무제표만 걸리면 1몫). 뒤 주석(금융상품 · 현금흐름 · 특수관계자)이 앞 주석과 잇는 연결을 뒤 몫이 적는다.
+PARTS_FILE = "dsd_몫.json"
+
+
+def note_key(tid: str) -> str | None:
+    """표 번호의 주석 번호(「주석5-1」 → 「주석5」). 재무제표 · 작년 · 짝 · 정산표 칸이면 None."""
+    m = re.match(r"주석(\d+)", tid or "")
+    return f"주석{m.group(1)}" if m else None
+
+
+def owner(plan: dict, tids) -> int:
+    """표 묶음의 주인 몫: 걸린 주석 가운데 가장 뒤 몫, 주석이 없으면 1."""
+    ks = [plan["notes"].get(note_key(t)) for t in tids]
+    ks = [k for k in ks if k]
+    return max(ks) if ks else 1
+
+
+def check_owner(plan: dict, c: Check) -> int:
+    return owner(plan, [c.table] + [x[0] for x in c.terms if x and isinstance(x[0], str)])
+
+
+def text_owner(plan: dict, s: str) -> int:
+    """할 일 한 줄의 주인 몫. 「주석을 가리키는데 연결 없음」 줄은 가리킨 첫 주석의 몫, 그 밖은 적힌 주석 가운데 가장 뒤 몫."""
+    ks = [plan["notes"].get(f"주석{m}") for m in re.findall(r"주석(\d+)", s)]
+    ks = [k for k in ks if k]
+    if not ks:
+        return 1
+    return ks[0] if "과 연결 없음" in s else max(ks)
+
+
+def plan_parts(doc: Doc, n: int, defs: dict | None = None, checks: list[Check] | None = None, proposals: list[dict] | None = None) -> dict:
+    """주석을 차례대로 n 몫으로 나눈다. 몫마다 읽기 자료 줄 수가 비슷하게(재무제표 넷은 모든 몫에 들어가 세지 않는다)."""
+    _, blocks = _reading_blocks(doc, defs, checks, proposals)
+    _n = lambda lines: sum(x.count("\n") + 1 for x in lines)      # 원소 안에 줄바꿈이 든 줄(표 머리)도 센다
+    notes = [(k, _n(lines)) for k, lines in blocks if k.startswith("주석")]
+    n = max(1, min(n, len(notes) or 1))
+    total = sum(x for _, x in notes) or 1
+    out, acc, cur = {}, 0, 1
+    for i, (k, size) in enumerate(notes):
+        left = len(notes) - i                        # 남은 주석이 남은 몫보다 적어지면 몫마다 하나씩
+        if cur < n and (acc >= total * cur / n or left <= n - cur):
+            cur += 1
+        out[k] = cur
+        acc += size
+    lines = {k: 0 for k in range(1, n + 1)}
+    for k, size in notes:
+        lines[out[k]] += size
+    fs = sum(_n(x) for k, x in blocks if not k.startswith("주석"))
+    return {"n": n, "notes": out, "lines": lines, "fs_lines": fs}
+
+
+def _index(doc: Doc, keys: set[str]) -> list[str]:
+    """다른 몫 주석의 표 목록: 표 번호 · 열 번호와 이름 · 줄 번호와 이름(금액은 싣지 않는다)."""
+    out = []
+    for p in doc.parts:
+        if p.key not in keys:
+            continue
+        out.append(f"\n### {p.key} {p.title}")
+        for x in p.items:
+            if x[0] != "t":
+                continue
+            t = x[1]
+            if _no_money(t):
+                out.append(f"[{t.id}] 금액 없는 표")
+                continue
+            cols = " · ".join(f"{j} {h}" for j, h in enumerate(t.header) if j and h.strip())
+            rows = " · ".join(f"{i + 1} {lab}" for i, lab in enumerate(_labels(t)))
+            out.append(f"[{t.id}] 열: {cols} | 줄: {rows}")
+    return out
+
+
+def part_reading(doc: Doc, plan: dict, k: int, defs: dict | None = None, checks: list[Check] | None = None, proposals: list[dict] | None = None) -> str:
+    """k 몫의 읽기 자료: 맨 앞 쓰는 법 · 이 몫이 맡는 것, 재무제표 넷, 이 몫 주석 전부, 다른 몫 주석의 표 목록."""
+    mine = {key for key, v in plan["notes"].items() if v == k}
+    own = [x for x in (proposals or []) if owner(plan, [x["left"]["table"]] + [r["table"] for r in x["right"]]) == k]
+    head, blocks = _reading_blocks(doc, defs, checks, own, fs_extras=(k == 1))
+    first = [key for key in plan["notes"] if plan["notes"][key] == k]
+    rng = f"{first[0]} ~ {first[-1]}" if first else "없음"
+    note = ["", f"## 이 몫({k}/{plan['n']}): {rng}", "",
+            f"이 자료는 숫자 쪽을 {plan['n']} 몫으로 나눈 가운데 {k} 몫이다. 재무제표 넷과 {rng} 를 싣고, 이 몫 주석에 맞는 연결 유형 절과 "
+            "다른 몫 주석의 표 목록(표 번호 · 열 · 줄 이름)을 맨 끝에 실었다. 하는 순서는 스킬의 references/몫-숫자.md 다.",
+            f"- 연결_초안_{k}.json 을 연결_{k}.json 으로 복사해 채운다. 할 일은 이 몫의 것만 실었다.",
+            "- 이 몫이 적는 것: 이 몫 주석의 표 · 합계 구조 · 계산, 이 몫 주석과 재무제표를 잇는 연결, 이 몫 주석과 앞 몫 주석을 잇는 연결."
+            + (" 재무제표끼리의 연결과 재무제표 표의 합계 구조도 이 몫이 적는다." if k == 1 else " 재무제표끼리의 연결 · 재무제표 합계 구조는 1몫이 적는다."),
+            "- 뒤 몫 주석과 잇는 연결은 뒤 몫이 적는다. 앞 몫 주석의 칸은 맨 끝 목록의 표 번호 · 줄 · 열 번호로 적는다.",
+            "- 표 아래 후보 줄은 이 몫이 판정할 것만 실었다.",
+            f"- 넣어 보기: foot --links 연결_{k}.json --part {k} --out <폴더>\\몫{k}. 화면 · 판정자료의 FALSE · 확인은 이 몫 것만 나온다. 판정까지 적고 끝낸다(합치기는 맡긴 쪽이 한다)."]
+    body = [y for key, lines in blocks if not key.startswith("주석") or key in mine for y in lines]
+    titles = [p.title for p in doc.parts if p.key in mine]
+    types = _type_sections(titles, first=(k == 1))
+    kinds = (["", "## 이 몫 주석에 맞는 연결 유형", "",
+              "스킬의 references/연결-유형.md 에서 이 몫 주석 제목에 맞는 절과 합계 구조 · 문장 속 금액 절을 옮겼다. 연결-유형.md 를 따로 열지 않는다. "
+              "그 주석의 제목과 문장이 이 목록보다 우선이다."] + types) if types else []
+    others = {key for key, v in plan["notes"].items() if v != k}
+    tail = ["", "## 다른 몫 주석의 표 목록", "", "금액은 싣지 않았다. 칸은 「표:줄:열」 로 적는다."] + _index(doc, others) if others else []
+    return "\n".join(head + note + body + kinds + tail) + "\n"
+
+
+_HERE = Path(__file__).resolve()
+# 연결 유형 목록: 이 저장소는 감사/claude/skills/감사-DSD푸팅/references/, 스킬 하나로 낸 판은 <스킬>/references/(엔진이 <스킬>/scripts/audit/report/)
+TYPES_CANDIDATES = (_HERE.parents[2] / "claude" / "skills" / "감사-DSD푸팅" / "references" / "연결-유형.md",
+                    _HERE.parents[3] / "references" / "연결-유형.md")
+TYPES = next((p for p in TYPES_CANDIDATES if p.exists()), TYPES_CANDIDATES[0])
+_ALWAYS = ("합계 구조", "문장 속 금액")
+
+
+def _type_sections(titles: list[str], first: bool = False) -> list[str]:
+    """연결-유형.md 에서 주석 제목에 맞는 절. 절 제목의 과목 이름(쉼표 · 가운뎃점으로 나눔)이 주석 제목에 들어 있거나 그 반대면 맞는 절이다.
+    합계 구조 · 문장 속 금액 절은 늘 싣고, 재무제표 사이 절은 1몫만 싣는다. 파일이 없으면 빈 목록."""
+    if not TYPES.exists():
+        return []
+    secs = re.split(r"(?m)^## ", TYPES.read_text(encoding="utf-8"))[1:]
+    ts = [norm(t) for t in titles if norm(t)]
+    out = []
+    for s in secs:
+        head, _, body = s.partition("\n")
+        name = re.sub(r"\s*\((?:일반|K|연결|별도|,|\s)+\)\s*$", "", head).strip()
+        keys = [norm(x) for x in re.split(r"[,·()]", name) if len(norm(x)) >= 2]
+        hit = any(name.startswith(a) for a in _ALWAYS) or (first and name.startswith("재무제표 사이")) \
+            or any(kw in t or t in kw for kw in keys for t in ts)
+        if hit:
+            out.append(f"\n### {head}")
+            out += [("#" + x if x.startswith("### ") else x) for x in body.rstrip().split("\n")]
+    return out
+
+
+def part_draft(plan: dict, k: int, d: dict) -> dict:
+    """k 몫의 연결_초안: 할 일 가운데 이 몫의 것만."""
+    return dict(d, **{"할 일": [x for x in d.get("할 일", []) if text_owner(plan, x) == k]})
+
+
+def part_request(doc: Doc, plan: dict, k: int, req: dict) -> dict:
+    """k 몫의 연결요청: 잇지 못한 과목 · 합계 구조 없음 · 금액이 같은 칸 짝 가운데 이 몫의 것만. 후보 번호 장부(proposals)는 그대로 둔다."""
+    out = dict(req)
+    out["unlinked"] = [x for x in req.get("unlinked") or [] if text_owner(plan, f"{x['table']}: 가리킨 {', '.join(x['notes'])} 과 연결 없음") == k]
+    out["unchecked_totals"] = [x for x in req.get("unchecked_totals") or [] if owner(plan, [x["table"]]) == k]
+    out["amount_evidence"] = [x for x in req.get("amount_evidence") or []
+                              if owner(plan, [x["left"]["table"]] + [r["table"] for r in x.get("right") or []]) == k]
+    return out
+
+
+def merge_patches(patches: list[dict]) -> dict:
+    """몫마다 적은 연결.json 을 하나로. 목록은 이어 붙이고, 후보 판정은 X 를 합치고 O · 고침을 이어 붙인다."""
+    out: dict = {}
+    props = {"O": [], "X": {}, "고침": []}
+    any_props = False
+    for p in patches:
+        for key, v in p.items():
+            if key == "할 일":
+                continue
+            if key == "proposals":
+                if v is None:
+                    continue
+                any_props = True
+                props["O"] += list(v.get("O") or [])
+                xs = v.get("X") or {}
+                props["X"].update(xs if isinstance(xs, dict) else {e.get("id"): e.get("why", "") for e in xs})
+                props["고침"] += list(v.get("고침") or v.get("edit") or [])
+                continue
+            if isinstance(v, list):
+                out.setdefault(key, []).extend(v)
+            elif key not in out:
+                out[key] = v
+    out["proposals"] = props if any_props else None
+    return out
+
+
+def _reading_blocks(doc: Doc, defs: dict | None = None, checks: list[Check] | None = None, proposals: list[dict] | None = None,
+                    fs_extras: bool = True) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """읽기 자료의 머리와 부분(재무제표 · 주석)마다 줄. fs_extras 가 거짓이면 재무제표 표 아래 엔진 합계 · 합계 구조 없음 줄을 싣지 않는다(1몫만 싣는다)."""
     out = [f"# {doc.source} 읽기 자료", "", *FORMAT, "", "## 읽는 법", "",
            "표 번호는 [대괄호]다. 표의 첫 칸은 줄 번호, 「열」 줄은 열 번호, 「줄」 줄은 열 이름이다. 칸은 「표:줄:열」 로 적는다. "
            "재무제표 표의 마지막 열 「주석」 은 그 과목이 가리키는 주석 번호다.",
@@ -139,8 +316,11 @@ def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = Non
     for x in (unchecked_totals(doc, checks, defs) if checks is not None else []):
         lost.setdefault(x["table"], []).append(f"{'줄' if x['what'] == '합계 줄' else '열'} {x.get('at', '')} 「{x.get('row', x.get('col'))}」({', '.join(x.get('cells', []))})"
                                                + (" · 항 하나" if x.get("one") else "") + (f" · {x['by']}" if x.get("by") else ""))
+    head, blocks = out, []
     for p in doc.parts:
-        out.append(f"\n## {p.key} {p.title}")
+        out = [f"\n## {p.key} {p.title}"]
+        blocks.append((p.key, out))
+        extras = fs_extras or p.key.startswith("주석")
         for x in p.items:
             if x[0] == "p":
                 if p.key.startswith("주석"):
@@ -152,7 +332,7 @@ def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = Non
                 what = "지분율 · 비율만 있는 표" if any(_isnum(v) for r in t.nums for v in r[1:]) else "글만 있는 표"
                 out.append(f"\n[{t.id}] {what}. 줄 {len(t.rows)}개 · 열 {' · '.join(h for h in t.header if h.strip())}"
                            + (f" · 첫 줄 「{labels[0]}」 · 끝 줄 「{labels[-1]}」" if labels else "") + ". 맞춰 볼 금액이 없어 칸을 적지 않았다")
-                if t.id in lost:
+                if t.id in lost and extras:
                     out.append("합계 구조를 찾지 못한 곳: " + ", ".join(lost[t.id]))
                 continue
             pre = col_prefix(t.header)
@@ -171,13 +351,13 @@ def reading(doc: Doc, defs: dict | None = None, checks: list[Check] | None = Non
                 out.append("| " + " | ".join(cells) + " |")
             s = overlay(t, found.get(t.id), [x for x in (defs or {}).get("sums", []) + [dict(n, off=True) for n in (defs or {}).get("no_sums", [])] if x["table"] == t.id])
             for key, name in (("vsum", "세로"), ("hsum", "가로")):
-                if s[key]:
+                if s[key] and extras:
                     out.append(f"엔진 합계({name}): " + "; ".join(struct_text(t, x, key) + (" (AI)" if x.get("source") == "AI" else "") for x in s[key]))
-            if t.id in lost:
+            if t.id in lost and extras:
                 out.append("합계 구조를 찾지 못한 곳: " + ", ".join(lost[t.id]))
             for x in by_table.get(t.id, []):
                 out.append(f"후보 {x['id']}{(' (' + x['mark'] + ')') if x.get('mark') else ''}: {proposal_text(x)}")
-    return "\n".join(out) + "\n"
+    return head, blocks
 
 
 def _cell_text(d: dict) -> str:
@@ -200,6 +380,56 @@ def _psig(doc: Doc, x: dict) -> str:
     return _sig(_ref_of(doc, x["left"])) + "=" + "+".join(_sig(_ref_of(doc, r)) for r in x["right"])
 
 
+def _rsig(x: dict) -> str:
+    """후보의 서명(근거 종류 · 왼쪽 칸 · 오른쪽 칸, 빈칸 뺌). 번호 장부에서 같은 후보를 찾을 때 쓴다."""
+    return re.sub(r"\s+", "", json.dumps({"h": x.get("how"), "l": x.get("left"), "r": x.get("right")}, ensure_ascii=False, sort_keys=True))
+
+
+class Book(dict):
+    """후보 번호 장부 {서명: 번호}. rows 는 그 번호의 후보 내용(엔진이 더는 내지 않는 후보를 풀 때 쓴다)."""
+    rows: dict
+
+
+def id_book(path) -> dict:
+    """결과 폴더의 dsd_연결요청.json 에 적힌 후보 번호 → {서명: 번호}. 없으면 빈 장부."""
+    from pathlib import Path
+
+    p = Path(path)
+    book = Book()
+    book.rows = {}
+    if not p.exists():
+        return book
+    try:
+        rows = json.loads(p.read_text(encoding="utf-8")).get("proposals") or []
+    except (OSError, ValueError, AttributeError):
+        return book
+    for x in rows:
+        if isinstance(x, dict) and x.get("id") and x.get("left") and x.get("right"):
+            book[_rsig(x)] = x["id"]
+            book.rows[x["id"]] = {k: v for k, v in x.items() if k != "mark"}
+    return book
+
+
+def numbered(doc: Doc, book: dict | None = None) -> list[dict]:
+    """엔진 후보에 번호를 붙인다. 장부(앞서 이 폴더에 낸 후보 번호)가 있으면 같은 후보는 그 번호를 그대로 쓰고, 새 후보만 뒤 번호를 받는다.
+    엔진이 후보를 더하거나 빼면 차례 번호가 밀려, 연결.json 에 적어 둔 X · 고침이 다른 후보에 붙었다(2026-11-09: 「줄이 하나인 표」 후보
+    여섯을 고치자 공개 별도 보고서 후보 121 → 115 로 줄며 뒤 번호가 모두 밀렸다)."""
+    from . import dsd_propose
+
+    ps = dsd_propose.proposals(doc)
+    if not book:
+        return ps
+    nxt = max((int(v[1:]) for v in book.values() if re.fullmatch(r"P\d+", v)), default=0) + 1
+    out, used = [], set()
+    for x in ps:
+        pid = book.get(_rsig(x))
+        if pid is None or pid in used:
+            pid, nxt = f"P{nxt:04d}", nxt + 1
+        used.add(pid)
+        out.append(dict(x, id=pid))
+    return out
+
+
 def _ids(spec) -> list[str]:
     """「P0003」 · 「P0001-P0012」 → 후보 번호 목록."""
     m = re.fullmatch(r"\s*P(\d+)\s*[-~]\s*P?(\d+)\s*", str(spec))
@@ -209,7 +439,7 @@ def _ids(spec) -> list[str]:
     return [str(spec).strip()]
 
 
-def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bool = True) -> tuple[dict, list[str], dict]:
+def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bool = True, book: dict | None = None) -> tuple[dict, list[str], dict]:
     """연결.json 의 proposals(엔진 후보의 O · X · 고침)를 links · skipped 로 풀어 patch 에 더한다. (새 patch, 문제, {후보 서명: 판정}).
 
     proposals = {"O": ["P0001-P0012", "P0015"], "X": {"P0013": "이유"}, "고침": [{"id": "P0020", "right": [...], ...}]}
@@ -222,10 +452,17 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
     got = patch.get("proposals") or {}
     if not isinstance(got, dict):
         return patch, ["proposals 는 {\"O\": [...], \"X\": {...}, \"고침\": [...]} 꼴로 적어 주십시오"], {}
-    props = {x["id"]: x for x in dsd_propose.proposals(doc)}
+    props = {x["id"]: x for x in numbered(doc, book)}
     problems, marks, links, skipped = [], {}, [], []
 
+    gone = {k: v for k, v in (getattr(book, "rows", None) or {}).items() if k not in props}
+
     def take(pid, verdict):
+        if pid not in props and pid in gone and pid not in marks:
+            # 장부에는 있는데 지금 엔진이 더는 내지 않는 후보(2026-11-09 「줄이 하나인 표」 고침으로 빠진 후보). X 는 걸 것이 없으니 넘기고,
+            # O · 고침은 장부에 적힌 그 후보의 칸으로 연결을 만든다(판정한 뜻을 잃지 않는다)
+            marks[pid] = verdict
+            return None if verdict == "X" else gone[pid]
         if pid not in props:
             problems.append(f"proposals {verdict}: 후보 「{pid}」 가 없습니다(dsd_연결요청.json 의 proposals 를 다시 보십시오)")
         elif pid in marks:
@@ -273,7 +510,7 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
     out = {k: v for k, v in patch.items() if k != "proposals"}
     out["links"] = list(patch.get("links", [])) + links
     out["skipped"] = list(patch.get("skipped", [])) + skipped
-    return out, problems, {_psig(doc, props[pid]): v for pid, v in marks.items()}
+    return out, problems, {_psig(doc, props[pid]): v for pid, v in marks.items() if pid in props}      # 장부에만 있는 후보는 서명을 남기지 않는다
 
 
 def evidence(doc: Doc, checks: list[Check]) -> list[dict]:
@@ -471,7 +708,8 @@ def unchecked_totals(doc: Doc, checks: list[Check], defs: dict | None = None) ->
     return out
 
 
-def request(doc: Doc, checks: list[Check], defs: dict | None = None, with_evidence: bool = True, with_proposals: bool = False) -> dict:
+def request(doc: Doc, checks: list[Check], defs: dict | None = None, with_evidence: bool = True, with_proposals: bool = False,
+            book: dict | None = None) -> dict:
     """엔진이 잇지 못한 과목과 그 과목이 가리키는 주석의 표. with_proposals 면 엔진의 연결 후보(proposals)와 앞서 적은 판정(mark)도 싣는다."""
     tied = set()
     for c in checks:
@@ -509,7 +747,7 @@ def request(doc: Doc, checks: list[Check], defs: dict | None = None, with_eviden
                           "notes": [f"주석{n}" for n in t.refs[r]], "near": near})
     return {"source": doc.source, "unlinked": lines, "unchecked_totals": unchecked_totals(doc, checks, defs),
             "amount_evidence": evidence(doc, checks) if with_evidence else [], "notes": notes,
-            **({"proposals": proposal_list(doc, defs)} if with_proposals else {}),
+            **({"proposals": proposal_list(doc, defs, book)} if with_proposals else {}),
             "how": "left 는 주석 칸, right 는 재무제표 과목(여러 칸이면 더한다). 표 · 행 · 열 이름은 이 파일에 적힌 글자 그대로. "
                    "회계상 같아야 하는 칸만 적는다. 일부만 담은 표(특수관계자 잔액, 외화 금액)는 과목 전체와 같지 않으므로 걸지 않는다."}
 
@@ -530,17 +768,18 @@ def draft(doc: Doc, req: dict) -> dict:
                     + (" · 항 하나" if x.get("one") else "") + (f" · {x['by']}" if x.get("by") else "") + ". sums 나 no_sums")
     for x in req.get("unlinked") or []:
         todo.append(f"{x['table']} 줄 {x.get('at', '')} 「{x['row']}」: 가리킨 {', '.join(x['notes'])} 과 연결 없음. tables · links, 걸지 않으면 skipped")
+    from . import dsd_checklist                      # 연결 유형 점검표(2026-11-08 D9): 실행마다 거는 연결이 달라 놓치던 유형
+
+    todo += dsd_checklist.items(doc)
     return {"할 일": todo, "proposals": {"X": {}, "고침": []}, "tables": [], "links": [], "sums": [], "no_sums": [], "calcs": [],
             "workpapers": [], "skipped": [], "units": [], "prior_pairs": []}
 
 
-def proposal_list(doc: Doc, defs: dict | None = None) -> list[dict]:
-    """엔진 후보와, 앞서 넣은 연결.json 에서 적은 판정(mark: O · X · 고침)."""
-    from . import dsd_propose
-
+def proposal_list(doc: Doc, defs: dict | None = None, book: dict | None = None) -> list[dict]:
+    """엔진 후보와, 앞서 넣은 연결.json 에서 적은 판정(mark: O · X · 고침). 번호는 장부(book)를 따른다."""
     marks = (defs or {}).get("proposal_marks", {})
     out = []
-    for x in dsd_propose.proposals(doc):
+    for x in numbered(doc, book):
         m = marks.get(_psig(doc, x))
         out.append(dict(x, **({"mark": m} if m else {})))
     return out
@@ -566,7 +805,7 @@ def _sig(ref: dict) -> str:
     return f"{'-' if ref.get('sign', 1) < 0 else ''}{ref['table']}|{ref['row']}#{ref['row_nth']}|{ref['col']}#{ref['col_nth']}"
 
 
-def apply(doc: Doc, defs: dict, patch: dict, add: bool = False) -> tuple[dict, list[str]]:
+def apply(doc: Doc, defs: dict, patch: dict, add: bool = False, book: dict | None = None) -> tuple[dict, list[str]]:
     """AI 가 적은 연결을 검사해 defs 의 links 에 넣는다. (새 defs, 문제 목록). 문제가 있으면 defs 는 그대로다.
 
     patch 는 AI 연결의 전체 목록이다. 앞서 넣은 AI 연결은 지우고 이 목록으로 바꾼다(고치거나 뺀 연결이 남지 않게).
@@ -578,7 +817,7 @@ def apply(doc: Doc, defs: dict, patch: dict, add: bool = False) -> tuple[dict, l
         return defs, problems
     pmarks = {}
     if patch.get("proposals", {}) is not None:      # 엔진 후보의 O · X · 고침을 links · skipped 로 풀고, 판정이 없는 후보는 기본으로 넣는다(2026-10-22).
-        patch, problems, pmarks = expand_proposals(doc, patch, defs, strict=not add)      # "proposals": null 이면 후보를 쓰지 않는다
+        patch, problems, pmarks = expand_proposals(doc, patch, defs, strict=not add, book=book)      # "proposals": null 이면 후보를 쓰지 않는다
         if problems:
             return defs, problems
     problems, new, seen = [], [], set()

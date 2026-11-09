@@ -345,6 +345,7 @@ def proposals(doc: Doc) -> list[dict]:
     _xbrl_props(doc, fs, add)
     _name_props(doc, fs, interim, add)
     _sce_props(doc, fs, interim, add)
+    _sce_tci_props(doc, fs, add_sum)
     if not interim:
         _roll_props(doc, add)
     _group_props(doc, add_sum)
@@ -528,6 +529,16 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
                 cands = {(lt.id, li) for s in pointed for lt, li in fs.lines(s)}
             if not cands or len({c[0] for c in cands}) != len(cands):      # 표마다 과목이 하나로 정해질 때만
                 continue
+            # 표 설명이 재무제표의 다른 과목을 말하면(퇴직급여충당부채 주석 안 「(2) 퇴직연금운용자산의 공정가치 및 변동내역」) 제목 과목에 잇지 않는다
+            # (2026-11-09 스터디 15 별도: 운용자산 변동표 · 구성 표를 퇴직급여충당부채에 이었다)
+            # 설명 글 전체가 아니라 「…의 (공정가치 및) 변동 · 구성 · 내역 · 명세」 앞 과목만 본다. 각주 글(「(*) 유형자산에서 투자부동산으로 …」)이
+            # 설명 자리에 든 표가 있다(스터디 02 연결). 재무상태표 두 줄이 같은 주석을 가리켜도(퇴직급여충당부채 · 퇴직연금운용자산 → 주석10)
+            # 제목으로 정한 과목만 이 표의 과목이다
+            m = re.search(r"([가-힣A-Za-z]+)의(?:공정가치및)?(?:변동|구성|내역|명세)", norm(t.caption or ""))
+            subj = ({norm(x) for x in (_subject(p.title), _subject(labels_of.get(t.id, ""))) if len(x) >= 2} if by_title
+                    else {norm(x) for x in pointed})
+            if m and any(len(n) >= 4 and m.group(1).endswith(n) and not any(n in x or x in n for x in subj) for n in fs.by_name):
+                continue
             ends = [i for i in data_rows if _point(labels[i]) and (not items[i] or items[i] in subjects)]
             one = len(data_rows) == 1 and (by_title or len(vcols) == 1)
             rows = totals[-1:] if totals else (data_rows if one else [])
@@ -538,8 +549,13 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
                 for i in rows + ([] if flow else ends):
                     if items[i] and items[i] not in subjects and i not in ends and not one:
                         continue
+                    # 줄이 하나인 표의 그 줄이 재무제표의 다른 과목이면(유형자산 주석의 「토지」 한 줄 표) 1) 이 이름으로 잇는다.
+                    # 제목 과목(유형자산)에 잇지 않는다(2026-11-09 스터디 16 별도 주석4-3 토지 공시지가 표)
+                    if one and items[i] and items[i] not in subjects and fs.lines(items[i]):
+                        continue
                     what = "합계 줄" if i in totals else ("기초 · 기말 줄" if i in ends else "줄이 하나")
-                    for j in (vcols if i in ends or not pcols else pcols):
+                    # 공시지가 · 공정가치 · 시가 열은 장부금액이 아니다(판정-근거 3절)
+                    for j in [k for k in (vcols if i in ends or not pcols else pcols) if not re.search(r"공시지가|공정가치|시가", norm(t.header[k]))]:
                         link(i, j, lt, li, "주석 열" if _fs_name(_labels(lt)[li]) in pointed else "이름",
                              f"{p.key} {_subject(p.title) or p.title} 표의 {what} = {lt.id} 「{_labels(lt)[li]}」", flow)
     order = {t.id: k for k, t in enumerate(doc.tables())}
@@ -578,11 +594,32 @@ def _sce_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
             return "C"
         return _rel_word(labels[k])[0] or ("C" if k == starts[-1] else "P")
 
+    kinds = {j: _sce_col(t.header[j]) for j in cols}
+    has_total = any(k == "total" for k in kinds.values())
     for i, lab in enumerate(labels):
         point, rel = _point(lab), block(i)
         for j in cols:
             tail = str(t.header[j])[len(head):].strip() if head else str(t.header[j]).strip()
             whole = not tail or total_kind(t.header[j]) == "합계"
+            if has_total and kinds.get(j) == "parent":
+                # 전체 합계 열이 따로 있으면 「지배기업지분 합계」 열은 전체 합계가 아니다. 손익계산서 총액에 잇지 않고 귀속 줄에 잇는다(_sce_tci_props).
+                # 전체로 이은 후보는 AI 가 매번 X 로 지웠다(2026-11-08 공개 연결 보고서 P0011 ~ P0020)
+                whole = False
+                if point:
+                    per = _ctx_period(*tags[(i, j)][:2]) if (i, j) in tags else None
+                    if per is None and rel:
+                        per = ("P.e" if rel == "C" else "PP.e") if point == "s" else ("C.e" if rel == "C" else ("Ph.e" if interim else "P.e"))
+                    for lt in fs.tables:
+                        if not lt.id.startswith("재무상태표"):
+                            continue
+                        for li, x in enumerate(_labels(lt)):
+                            nx = _fs_name(x)
+                            if ("지배" in nx or "소유주" in nx) and "비지배" not in nx and any(_isnum(v) for v in lt.nums[li][1:]):
+                                hit = fs.cell(lt, li, per) if per else None
+                                if hit:
+                                    add("자본변동표", (t, i, j), hit, f"자본변동표 「{lab}」 줄 「{t.header[j]}」 열 = 재무상태표 「{x}」")
+                                break
+                    continue
             per = _ctx_period(*tags[(i, j)][:2]) if (i, j) in tags else None
             if point:
                 if per is None and rel:
@@ -605,6 +642,117 @@ def _sce_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
                             when="자본변동표의 금액이 모두 그 기간에 현금으로 오갔다")
                     else:
                         add("자본변동표", (t, i, j), hit, f"자본변동표 「{lab}」 줄 합계 열 = {lt.id} 「{_labels(lt)[li]}」")
+
+
+def _sce_col(header: str) -> str | None:
+    """자본변동표 열의 갈래: total(전체 합계 · 총계) · parent(지배기업 소유주지분 합계) · nci(비지배지분) · None(자본 항목)."""
+    n = norm(header)
+    if "비지배" in n:
+        return "nci"
+    if total_kind(header) == "합계" or n.endswith("총계"):
+        return "parent" if ("지배" in n or "소유주" in n) else "total"
+    return None
+
+
+_TCI_STOP = re.compile(r"소유주|거래|배당|자본에직접|증자|감자|자기주식|주식기준|주식선택권|합병|연결범위|전환|대체|변동|이익준비금|적립")
+_TCI_ITEM_OK = re.compile(r"당기순|기타포괄|재측정|환산|지분법|평가|위험회피|재평가|공정가치|파생|순확정급여|해외사업|이익잉여금변동|자본변동")
+
+
+def _sce_tci_props(doc: Doc, fs: _Fs, add_sum) -> None:
+    """자본변동표의 「총포괄손익」 묶음 합 = 포괄손익계산서 총포괄손익(전체 합계 열), 그 지배 · 비지배 귀속 줄(지배 합계 열 · 비지배 열).
+    당기순이익 줄의 지배 합계 열 · 비지배 열 = 포괄손익계산서 당기순이익의 귀속 줄. 금액은 보지 않는다(2026-11-08 3단계:
+    공개 연결 보고서 에서 자본변동표만 「지분법이익잉여금변동」 을 총포괄손익에 넣은 차이를 세 실행 가운데 하나만 잡았다).
+    묶음 머리 줄에 금액이 있으면 그 줄이 합계다. 머리 줄에 금액이 없으면 다음 묶음 머리(「소유주와의 거래」 · 배당 · 기말 줄)까지 더한다."""
+    t = doc.table("자본변동표")
+    st = next((x for x in fs.tables if x.id.startswith("손익계산서")), None)
+    if t is None or st is None:
+        return
+    sl = _labels(st)
+    num = lambda q, i: any(_isnum(v) for v in q.nums[i][1:])  # noqa: E731
+
+    def attrib(k0: int, what: str) -> dict:
+        """귀속 줄. 「총포괄손익의 귀속:」 · 「당기순손익의 귀속:」 머리가 있으면 그 아래에서, 없으면 k0 아래에서 찾는다.
+        총포괄 귀속에서는 순이익 귀속 줄을, 순이익 귀속에서는 총포괄 줄을 건너뛴다(한 상장사: 두 귀속 묶음이 맨 끝에 이어 있다)."""
+        tci_word = what == "tci"
+        # 머리 줄에 금액이 적힌 보고서가 있다(「당기총포괄이익(손실)의 귀속 | 512,306」, 2026-11-09 스터디 02 연결). 금액으로 가르지 않는다
+        head = next((k for k, x in enumerate(sl) if "귀속" in norm(x)
+                     and (("총포괄" in norm(x)) == tci_word) and (tci_word or "순" in norm(x))), None)
+        start = head if head is not None else k0
+        got = {}
+        for k in range(start + 1, min(start + 4, len(sl))):
+            n = norm(sl[k])
+            if k > start + 1 and n.endswith(":"):
+                break
+            if (tci_word and re.search(r"당기순|순이익|순손익|순손실", n)) or (not tci_word and "총포괄" in n):
+                continue
+            if "비지배" in n:
+                got.setdefault("nci", k)
+            elif "지배" in n or "소유주" in n:
+                got.setdefault("parent", k)
+        return got
+
+    tci = next((i for i, x in enumerate(sl) if "총포괄" in norm(x) and num(st, i)), None)
+    ni = next((i for i, x in enumerate(sl) if norm(x).startswith(("당기순이익", "당기순손익", "당기순손실", "반기순이익", "분기순이익")) and num(st, i)), None)
+    cols = [j for j in range(1, len(t.header)) if any(_isnum(r[j]) for r in t.nums)]
+    kinds = {j: _sce_col(t.header[j]) for j in cols}
+    if not any(kinds.values()):
+        return
+    labels = _labels(t)
+    starts = [i for i, lab in enumerate(labels) if _point(lab) == "s"]
+
+    def block(i):
+        k = max((s0 for s0 in starts if s0 <= i), default=None)
+        if k is None:
+            return None
+        if "당기초" in norm(labels[k]):
+            return "C"
+        return _rel_word(labels[k])[0] or ("C" if k == starts[-1] else "P")
+
+    for i0, lab in enumerate(labels):
+        n = norm(lab).rstrip(":")
+        rel = block(i0)
+        if rel is None:
+            continue
+        per = rel + ".d"
+        if n.startswith(("총포괄", "당기총포괄")) and tci is not None:
+            if any(_isnum(t.nums[i0][j]) for j in cols):
+                rows = [i0]
+            else:
+                rows = []
+                for k in range(i0 + 1, len(labels)):
+                    lk = labels[k]
+                    nk = norm(lk)
+                    # 묶음 안 소제목 「기타포괄손익:」 은 넘긴다. 여기서 끊었더니 묶음이 「당기순이익」 한 줄로 줄어 총포괄이익 · 귀속 줄을
+                    # 당기순이익 줄과 견줬다(2026-11-09 스터디 07 연결). 묶음을 닫는 소계 줄에 금액이 있으면 그 줄이 묶음 합계다
+                    if nk.endswith(":") and "기타포괄" in nk:
+                        continue
+                    if total_kind(lk) and any(_isnum(t.nums[k][j]) for j in cols):
+                        rows = [k]
+                        break
+                    if not nk or nk.endswith(":") or _point(lk) or total_kind(lk) or (_TCI_STOP.search(nk) and not _TCI_ITEM_OK.search(nk)):
+                        break
+                    if any(_isnum(t.nums[k][j]) for j in cols):
+                        rows.append(k)
+            if not rows:
+                continue
+            target = {"total": tci, **attrib(tci, "tci")}
+            for j, kd in kinds.items():
+                if kd is None or target.get(kd) is None:
+                    continue
+                hit = fs.cell(st, target[kd], per)
+                cells = [(t, k, j) for k in rows if _isnum(t.nums[k][j])]
+                if not hit or not cells:
+                    continue
+                what = f"「{lab}」 줄" if rows == [i0] else f"「{lab}」 아래 {len(cells)}줄(「{labels[rows[0]]}」 ~ 「{labels[rows[-1]]}」)의 합"
+                add_sum("자본변동표 총포괄", hit, cells, f"포괄손익계산서 「{sl[target[kd]]}」 = 자본변동표 {what} · 「{t.header[j]}」 열")
+        elif ni is not None and n.startswith(("당기순이익", "당기순손익", "당기순손실", "반기순이익", "분기순이익")):
+            att = attrib(ni, "ni")
+            for j, kd in kinds.items():
+                if kd not in ("parent", "nci") or att.get(kd) is None or not _isnum(t.nums[i0][j]):
+                    continue
+                hit = fs.cell(st, att[kd], per)
+                if hit:
+                    add_sum("자본변동표 총포괄", hit, [(t, i0, j)], f"포괄손익계산서 「{sl[ni]}」 의 「{sl[att[kd]]}」 = 자본변동표 「{lab}」 줄 · 「{t.header[j]}」 열")
 
 
 def _roll_props(doc: Doc, add) -> None:

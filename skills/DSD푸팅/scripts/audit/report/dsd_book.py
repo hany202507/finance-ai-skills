@@ -411,7 +411,7 @@ def _ai_sheet(wb, checks: list[Check], tres: dict | None) -> None:
         _ai_mark(y)
         y.alignment = Alignment(wrap_text=True, vertical="top")
         ws.cell(row, 4, (c.cause or c.id)).font = style.font()
-        review = (f"독립 검증 {c.verified}" if c.verified else "독립 검증 대상 아님(엔진 근거 확인 · 늘 나는 차이)" if dsd_links.no_review(c) else "독립 검증 전")
+        review = (f"독립 검증 {c.verified}" if c.verified else "독립 검증 대상 아님(엔진 근거 확인 · 정산표 · 늘 나는 차이)" if dsd_links.no_review(c) else "독립 검증 전")
         ws.cell(row, 5, "볼 것 「확인」 → 검증 목록 K열 · " + review).font = style.font()
         row += 1
     for what, cnt, sheet, where in (("AI 연결(엔진 후보를 판정 없이 넣은 것 포함)", n["links"], LIST, "검증 목록 K열 O · X(출처 AI 줄이 연보라)"),

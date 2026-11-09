@@ -285,9 +285,38 @@ def fetch(rcept_no: str, out: Path, with_prior: bool = True) -> dict:
     return res
 
 
+def _views(rcept_no: str, files: list[Path]) -> list[str]:
+    """감사보고서 · 연결감사보고서 원문마다 공시 화면(<이름>.view.html)을 받는다. 원문 xml 에는 문단 안 줄바꿈이 없어
+    판독 · 변환이 화면으로 되살린다(2026-11-08 D1). 사업 · 반기보고서를 나눈 xml 은 화면 문서와 1:1 이 아니라 받지 않는다.
+    받지 못하면 그 사실만 돌려준다(줄바꿈 없이 읽는다). AUDIT_DSD_NO_VIEW=1 이면 받지 않는다."""
+    import os
+
+    from . import dsd_breaks
+
+    notes = []
+    if os.environ.get("AUDIT_DSD_NO_VIEW"):
+        return notes
+    for x in files:
+        if x.suffix.lower() != ".xml":
+            continue
+        m = re.search(rb'<DOCUMENT-NAME ACODE="(\d+)"', x.read_bytes()[:4000])
+        code = m.group(1).decode() if m else ""
+        if code not in ("00760", "00761"):
+            continue
+        dest = x.with_name(x.stem + ".view.html")
+        if dest.exists():
+            continue
+        try:
+            dsd_breaks.fetch_view(rcept_no, code, dest)
+        except Exception as e:                    # 공시 화면은 사람이 보는 페이지라 명령줄 연속 요청을 막을 때가 있다(11-08)
+            notes.append(f"공시 화면을 받지 못함({x.name}: {type(e).__name__}). 줄바꿈 없이 읽는다")
+    return notes
+
+
 def fetch_one(rcept_no: str, out: Path) -> dict:
-    """하나를 받아 정기보고서면 나눈다. {rcept_no, files, main, name, split: {연결|별도: 경로}}"""
+    """하나를 받아 정기보고서면 나눈다. {rcept_no, files, main, name, split: {연결|별도: 경로}, view_notes}"""
     files = download(rcept_no, out)
+    view_notes = _views(rcept_no, files)
     main = files[0]
     name = doc_name(main)
     parts = {}
@@ -296,4 +325,4 @@ def fetch_one(rcept_no: str, out: Path) -> dict:
             p = out / f"{rcept_no}_{kind}.xml"
             p.write_bytes(raw)
             parts[kind] = p
-    return {"rcept_no": rcept_no, "files": files, "main": main, "name": name, "split": parts}
+    return {"rcept_no": rcept_no, "files": files, "main": main, "name": name, "split": parts, "view_notes": view_notes}

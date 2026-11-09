@@ -51,7 +51,7 @@
 
   python -m audit dsd quick <dsd> [--wtb …] [--prior …] [--prev …] [--pair …] [--facts …] [--case …] --out <폴더> [--serve [--port 8791]]
       빠른 검토(2026-11-04): links --text 와 foot --html 을 한 번에 돈다. AI 연결 정의가 아직 없으면 연결_초안.json 을 넣어 엔진 후보를
-      판정 없이 건다. AI 없이 첫 HTML 까지 간다(채널코퍼레이션 vF 14초). --serve 면 끝나고 검토 화면 서버를 띄운다
+      판정 없이 건다. AI 없이 첫 HTML 까지 간다(한 회사 vF 14초). --serve 면 끝나고 검토 화면 서버를 띄운다
   python -m audit dsd serve <결과 폴더> [--port 8791] [--no-open]
       검토 화면 서버(2026-11-04): DSD보기 HTML 을 127.0.0.1 에서 열고, 화면의 「수정」 을 받아 원본은 두고 <이름>_수정판.dsd 에 쓴 뒤
       foot 을 다시 돌린다(옵션은 foot --html 이 남긴 dsd_실행.json). 수정 기록은 수정기록.json, 되돌리기는 마지막 묶음을 뺀다
@@ -88,7 +88,9 @@ def register(sub) -> None:
     f.add_argument("--facts", default=None, help="문장 검토의 기준 사실 json(없으면 --out 폴더의 기준사실.json)")
     f.add_argument("--case", default=None, help="감사 폴더. 회사명 · 결산일과 공시 확인 대상(의사록 · 등기부 판독 사실)을 읽는다")
     f.add_argument("--text", default=None, nargs="+", help="AI 가 적은 문장 검토 json(없으면 --out 폴더의 문장.json). 여럿이면(문장_1.json 문장_2.json) 합쳐 문장.json 에 쓴다")
-    f.add_argument("--links", default=None, help="AI 가 적은 연결.json. 엑셀을 만들기 전에 links --apply 와 같이 넣는다(2026-10-23)")
+    f.add_argument("--links", default=None, nargs="+", help="AI 가 적은 연결.json. 엑셀을 만들기 전에 links --apply 와 같이 넣는다(2026-10-23). "
+                                                             "여럿이면(몫마다 적은 연결_1.json 연결_2.json) 첫 파일 옆 연결.json 으로 합쳐 넣는다(2026-11-09)")
+    f.add_argument("--part", type=int, default=0, help="--links 와 함께: 몫 번호. 화면 · 판정자료의 FALSE · 확인을 그 몫 것만 낸다(links --parts 가 쓴 dsd_몫.json)")
     f.add_argument("--add", action="store_true", help="--links 와 함께: 앞서 넣은 AI 연결을 두고 더한다")
     f.add_argument("--html", action="store_true", help="판 비교 · 숫자 검증 HTML 보기(DSD보기_<이름>.html)와 자료 dsd_보기.json 도 쓴다")
     f.add_argument("--stage", choices=("회사제시", "제출"), default=None,
@@ -122,6 +124,7 @@ def register(sub) -> None:
     k.add_argument("--case", default=None, help="--text 와 함께: 감사 폴더")
     k.add_argument("--prior", default=None, nargs="+", help="--text 와 함께: 작년 보고서(같은 문장에 작년 날짜가 남은 곳을 본다). foot 처럼 둘을 줘도 되고 첫째만 쓴다")
     k.add_argument("--split", type=int, default=0, help="--text 와 함께: 문장읽기를 N 몫으로도 나눠 쓴다")
+    k.add_argument("--parts", type=int, default=0, help="숫자 쪽 읽기 자료 · 연결_초안을 주석 범위 N 몫으로도 나눠 쓴다(dsd_읽기자료_1.md · 연결_초안_1.json …, 2026-11-09)")
     # quick 이 --stage 를 links 에 넘긴다. 옵션이 없어 「unrecognized arguments」 로 멈췄다(2026-11-06 실제 회사 시험)
     k.add_argument("--stage", choices=("회사제시", "제출"), default=None, help="--text 와 함께: foot 의 --stage 와 같다")
     k.add_argument("--out", default=None)
@@ -153,6 +156,7 @@ def register(sub) -> None:
     cv.add_argument("--out", default=None, help="결과 폴더. 없으면 원문 xml 이 있는 폴더(접수번호면 지금 폴더)")
     cv.add_argument("--roll", action="store_true", help="다음 기수 초안도 만든다: 당기 숫자 → 전기 칸, 기수 · 해 +1, 당기 칸 비움(dsd sheet --roll → build)")
     cv.add_argument("--bare", action="store_true", help="뼈대 없이: 머리 감싸개와 meta.xml 만 더한다(편집기 확인용 비교판)")
+    cv.add_argument("--view", default=None, help="같은 보고서의 DART 공시 화면 HTML. 없으면 원문 옆 <이름>.view.html 을 쓴다. 원문에서 빠진 줄바꿈을 되살린다")
     cv.set_defaults(func=_convert)
     q = ps.add_parser("quick", help="빠른 검토: links --text 와 foot --html 을 한 번에(엔진 후보는 판정 없이 넣는다). AI 없이 첫 HTML 까지")
     q.add_argument("dsd")
@@ -197,7 +201,7 @@ def _read(a) -> int:
 
 def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = None, defs_path: Path | None = None, amount_links: bool = False,
          wtb: Path | None = None, pair: Path | None = None, facts: Path | None = None, case: Path | None = None, text: Path | None = None,
-         draft: list | None = None, html: bool = False, mask: Path | None = None, stage: str | None = None) -> dict:
+         draft: list | None = None, html: bool = False, mask: Path | None = None, stage: str | None = None, only=None) -> dict:
     """검증 엑셀을 만들고 요약을 돌려준다. {book, doc, checks, unresolved, changes, consistency, view}
     html 이면 같은 결과를 dsd_보기.json 과 DSD보기_<이름>.html 로도 쓴다(2026-10-26). mask 는 이름 치환표 json(HTML 만 치환한다)."""
     import json
@@ -229,10 +233,10 @@ def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = No
             more, missing = dsd_links.prior_checks(doc, y, ym, tag, defs.get("prior_pairs", []))
             dsd_links.apply_marks(more, marks)
             dsd_links.apply_prior_verdicts(more, defs.get("prior", []))
-            notes = {x["id"]: x for x in defs.get("findings", [])}       # 전기 대사 차이를 「확인」 으로 판정한 근거도 「볼 것」 시트에 보인다
+            notes = dsd_links.by_idk(defs.get("findings", []))       # 전기 대사 차이를 「확인」 으로 판정한 근거도 「볼 것」 시트에 보인다
             for c in more:
-                if not c.finding and c.id in notes:
-                    dsd_links.apply_finding(c, notes[c.id])
+                if not c.finding and dsd_links.idk(c.id) in notes:
+                    dsd_links.apply_finding(c, notes[dsd_links.idk(c.id)])
             checks, unresolved = checks + more, unresolved + missing
     wdoc = None
     if wtb:                                          # 정산표와 본표 과목의 대사
@@ -241,10 +245,10 @@ def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = No
         wdoc = dsd_wtb.read_wtb(Path(wtb))             # 읽지 못하면 WtbFormatError(_foot 이 한 줄로 끝낸다)
         more, missing = dsd_wtb.checks(doc, wdoc, {(c.table, c.r) for c in checks if c.kind == "세로합"})
         dsd_links.apply_marks(more, marks)
-        notes = {x["id"]: x for x in defs.get("findings", [])}
+        notes = dsd_links.by_idk(defs.get("findings", []))
         for c in more:
-            if c.id in notes:
-                dsd_links.apply_finding(c, notes[c.id])
+            if dsd_links.idk(c.id) in notes:
+                dsd_links.apply_finding(c, notes[dsd_links.idk(c.id)])
         checks, unresolved = checks + more, unresolved + missing
     dsd_links.evaluate(doc, checks, ydoc, wdoc, odoc)
     from .report import dsd_diff, dsd_verify          # 11단계: 고칠 칸 근거 · 독립 검증 · 차이 설명 후보 · 판정자료
@@ -253,7 +257,8 @@ def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = No
     review_problems = dsd_verify.apply_review(checks, dsd_verify.load_review(out / dsd_verify.REVIEW), doc, ydoc, wdoc, odoc)
     tabs = dsd_diff.tables(doc, ydoc, wdoc, odoc)
     dsd_diff.explain(doc, checks, tabs, prior_matches)
-    (out / dsd_verify.PACK).write_text(dsd_verify.pack(doc, checks, tabs, dsd_book.causes(doc, checks), dsd_book.last_year(doc, tabs, checks), ydoc), encoding="utf-8")
+    mine = [c for c in checks if only(c)] if only else checks      # 몫 하나만 판정할 때(--part) 그 몫의 검증만 판정자료에 싣는다
+    (out / dsd_verify.PACK).write_text(dsd_verify.pack(doc, mine, tabs, dsd_book.causes(doc, checks), dsd_book.last_year(doc, tabs, checks), ydoc), encoding="utf-8")
     m = dsd_compare.match(doc, pdoc, fuzzy=True) if pdoc is not None else None
     old_checks = None
     if pdoc is not None:                             # 기존 판에도 같은 연결을 걸어 검증 결과가 달라진 것을 본다(고쳐 달라고 한 곳이 고쳐졌는지)
@@ -335,8 +340,26 @@ def _foot(a) -> int:
     src, draft, base = resolve_draft(src, out)          # 원고 엑셀이면 dsd 로 만든다(2026-10-26 DSD 네 기능 C)
     if draft is not None and not a.prev:
         a.prev = str(base)
+    part = None
     if a.links:                                       # 연결.json 을 먼저 넣는다(links --apply 와 같다). 풀리지 않는 칸이 있으면 엑셀을 만들지 않는다
-        code = apply_links(src, out, Path(a.defs) if a.defs else out / "dsd_연결정의.json", Path(a.links), add=a.add, pair=Path(a.pair) if a.pair else None)
+        import json
+
+        from .report import dsd_ai
+
+        links = Path(a.links[0])
+        if len(a.links) > 1:                          # 몫마다 적은 연결을 하나로(2026-11-09). 후보 번호 장부는 첫 파일 옆 것을 쓴다
+            merged = dsd_ai.merge_patches([json.loads(Path(x).read_text(encoding="utf-8")) for x in a.links])
+            links = links.with_name("연결.json")
+            links.write_text(json.dumps(merged, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"연결 {len(a.links)}개를 합침: 연결 {len(merged.get('links', []))} · 표 한 줄 {len(merged.get('tables', []))} · 합계 구조 {len(merged.get('sums', []))} · "
+                  f"계산 {len(merged.get('calcs', []))} · 판정 {len(merged.get('findings', []))} · 전기 판정 {len(merged.get('prior', []))} → {links}")
+        if a.part:
+            pf = next((x for x in (links.with_name(dsd_ai.PARTS_FILE), out / dsd_ai.PARTS_FILE) if x.exists()), None)
+            if pf is None:
+                print(f"--part {a.part}: {dsd_ai.PARTS_FILE} 이 없습니다. links --parts 로 먼저 나눕니다")
+                return 2
+            part = (json.loads(pf.read_text(encoding="utf-8")), a.part)
+        code = apply_links(src, out, Path(a.defs) if a.defs else out / "dsd_연결정의.json", links, add=a.add, pair=Path(a.pair) if a.pair else None, part=part)
         if code:
             return code
     text = None
@@ -354,7 +377,8 @@ def _foot(a) -> int:
     try:
         r = foot(src, out, Path(a.prev) if a.prev else None, [Path(p) for p in a.prior] if a.prior else None, Path(a.defs) if a.defs else None, a.amount_links,
                  Path(a.wtb) if a.wtb else None, Path(a.pair) if a.pair else None, Path(a.facts) if a.facts else None,
-                 Path(a.case) if a.case else None, text, draft, a.html or bool(a.mask), Path(a.mask) if a.mask else None, a.stage)
+                 Path(a.case) if a.case else None, text, draft, a.html or bool(a.mask), Path(a.mask) if a.mask else None, a.stage,
+                 only=(lambda c: dsd_ai.check_owner(part[0], c) == part[1]) if part else None)
     except dsd_wtb.WtbFormatError as e:               # 정산표 양식을 못 읽으면 역추적 없이 한 줄(2026-10-18 실제 회사 자료 B-1)
         print(f"이 WTB 양식을 읽지 못함: {e}")
         return 2
@@ -371,6 +395,10 @@ def _foot(a) -> int:
     bad = [c for c in live if dsd_links.failed(c)]
     minor = [c for c in live if c.minor]
     ask = [c for c in live if dsd_links.asks(c)]
+    if part:                                          # 몫 하나: 그 몫의 FALSE · 확인만 보인다. 다른 몫의 후보는 판정 없이 들어가 FALSE 가 섞인다
+        bad = [c for c in bad if dsd_ai.check_owner(part[0], c) == part[1]]
+        ask = [c for c in ask if dsd_ai.check_owner(part[0], c) == part[1]]
+        print(f"  {part[1]}몫만 보입니다(FALSE · 확인 · 판정자료). 합친 결과는 맡긴 쪽이 foot --links 연결_1.json … 으로 냅니다")
     by = {g: sum(1 for c in live if c.group == g) for g in ("합계", "레퍼", "전기")}
     n_calc = sum(1 for c in live if c.expr)
     lost = [u for u in unresolved if u.get("kind") == "전기"]       # 작년 보고서에서 줄을 찾지 못한 전기 금액. 풀지 못한 연결과 따로 센다
@@ -613,13 +641,23 @@ def _links(a) -> int:
     doc = dsd_grid.read_cached(src, dsd_grid.cache_dir())
     checks, base, _ = dsd_links.build(doc, defs)
     dsd_links.evaluate(doc, checks)
-    req = dsd_ai.request(doc, checks, base, with_proposals=True)
     p = out / "dsd_연결요청.json"
+    req = dsd_ai.request(doc, checks, base, with_proposals=True, book=dsd_ai.id_book(p))      # 이 폴더에 앞서 낸 후보 번호를 그대로 쓴다
     p.write_text(json.dumps(req, ensure_ascii=False, indent=1), encoding="utf-8")
     (out / "dsd_읽기자료.md").write_text(dsd_ai.reading(doc, base, checks, req["proposals"]), encoding="utf-8")
     d = dsd_ai.draft(doc, req)
     (out / "연결_초안.json").write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{src.name}: {dsd_ai.summary(req)} → {p}")
+    if a.parts and a.parts > 1:                      # 숫자 쪽을 주석 범위로 나눈다(2026-11-09). 몫마다 에이전트 하나가 읽고 연결_k.json 을 쓴다
+        plan = dsd_ai.plan_parts(doc, a.parts, base, checks, req["proposals"])
+        (out / dsd_ai.PARTS_FILE).write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
+        for k in range(1, plan["n"] + 1):
+            txt = dsd_ai.part_reading(doc, plan, k, base, checks, req["proposals"])
+            (out / f"dsd_읽기자료_{k}.md").write_text(txt, encoding="utf-8")
+            pd = dsd_ai.part_draft(plan, k, d)
+            (out / f"연결_초안_{k}.json").write_text(json.dumps(pd, ensure_ascii=False, indent=1), encoding="utf-8")
+            keys = [x for x, v in plan["notes"].items() if v == k]
+            print(f"  몫 {k}: {keys[0] if keys else '-'} ~ {keys[-1] if keys else '-'} · 읽기 자료 {txt.count(chr(10))}줄 · 할 일 {len(pd['할 일'])}건 → dsd_읽기자료_{k}.md · 연결_초안_{k}.json")
     print("  " + _proposal_line(req["proposals"]))
     print(f"  연결_초안.json: 할 일 {len(d['할 일'])}건(후보 없는 표 · 합계 구조 없음 · 잇지 못한 과목) → {out / '연결_초안.json'}")
     for x in req["unlinked"][:40]:
@@ -630,7 +668,8 @@ def _links(a) -> int:
     return 0
 
 
-def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bool = False, carry: Path | None = None, pair: Path | None = None) -> int:
+def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bool = False, carry: Path | None = None, pair: Path | None = None,
+                part: tuple | None = None) -> int:
     """links --apply 의 몸통. foot --links 도 이것을 부른다(2026-10-23). 넣지 못하면 1."""
     import json
 
@@ -641,6 +680,8 @@ def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bo
     doc = dsd_grid.read_cached(src, cache)
     checks, base, _ = dsd_links.build(doc, defs)
     patch = json.loads(Path(patch_path).read_text(encoding="utf-8"))
+    # 후보 번호 장부: AI 가 읽은 dsd_연결요청.json 의 번호. 연결.json 옆에 있으면 그것을, 없으면 결과 폴더의 것을 쓴다(2026-11-09)
+    book = dsd_ai.id_book(Path(patch_path).with_name("dsd_연결요청.json")) or dsd_ai.id_book(out / "dsd_연결요청.json")
     cdoc = dsd_grid.read_cached(carry, cache) if carry else None
     odoc = dsd_grid.read_cached(pair, cache) if pair else None
     patch, problems, notes = dsd_patch.normalize(cdoc if cdoc is not None else doc, patch, odoc)      # 번호 칸 · 표 한 줄은 그 연결을 적은 판의 번호다
@@ -668,7 +709,7 @@ def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bo
         print(f"{Path(carry).name} 의 연결을 옮겼습니다: 연결 {len(patch['links'])} · 합계 구조 {len(patch['sums'])} · 합계 아님 {len(patch['no_sums'])} · 옮기지 못함 {len(lost)} → {moved}")
         for x in lost:
             print(f"  옮기지 못함 {x}")
-    new, problems = dsd_ai.apply(doc, base, patch, add=add)
+    new, problems = dsd_ai.apply(doc, base, patch, add=add, book=None if carry else book)
     if problems:
         print(f"연결을 넣지 않았습니다. 고칠 곳 {len(problems)}건")
         for x in problems:
@@ -698,9 +739,12 @@ def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bo
     for x in dsd_ai.sum_review(doc, base, checks):
         why = "걸린 칸이 전부 안 맞습니다. 구조를 잘못 읽었을 수 있으니 표를 다시 읽으십시오" if x["all"] else f"{x['checks']}칸 가운데 {x['false']}칸이 안 맞습니다"
         print(f"  합계 안 맞음 {x['table']} {x['kind']} {x['ai']}: {why}" + (f" (엔진이 찾았던 구조: {x['engine']})" if x["engine"] else ""))
-    req = dsd_ai.request(doc, checks, new, with_proposals=True)      # 넣은 뒤의 요청 자료: 아직 이어지지 않은 과목과 금액 대조 참고가 줄어든다
+    req = dsd_ai.request(doc, checks, new, with_proposals=True, book=None if carry else book)      # 넣은 뒤의 요청 자료: 아직 이어지지 않은 과목과 금액 대조 참고가 줄어든다
+    if part:                                          # 몫 하나: 잇지 못한 과목 · 합계 구조 없음 · 금액이 같은 칸 짝도 그 몫 것만
+        req = dsd_ai.part_request(doc, part[0], part[1], req)
     (out / "dsd_연결요청.json").write_text(json.dumps(req, ensure_ascii=False, indent=1), encoding="utf-8")
-    (out / "dsd_읽기자료.md").write_text(dsd_ai.reading(doc, new, checks, req["proposals"]), encoding="utf-8")
+    (out / "dsd_읽기자료.md").write_text(dsd_ai.part_reading(doc, part[0], part[1], new, checks, req["proposals"]) if part
+                                       else dsd_ai.reading(doc, new, checks, req["proposals"]), encoding="utf-8")
     if n_prop:
         vids = {x["id"] for x in new["links"] if x.get("via")}
         via = [c for c in ai if c.id in vids or c.id.rsplit("|", 1)[0] in vids]
@@ -709,7 +753,7 @@ def apply_links(src: Path, out: Path, defs_path: Path, patch_path: Path, add: bo
     else:
         print("  " + _proposal_line(req["proposals"]) + '. 연결.json 의 "proposals": null 이라 후보는 넣지 않았습니다')
     print(f"  {dsd_ai.summary(req)} · 금액이 같은데 아직 연결이 없는 칸 짝 {len(req['amount_evidence'])}건 → dsd_연결요청.json")
-    for x in dsd_ai.review(doc, checks):
+    for x in dsd_ai.review(doc, [c for c in checks if dsd_ai.check_owner(part[0], c) == part[1]] if part else checks):
         print(f"  {'단수 차이' if x['minor'] else ('확인' if x['when'] else '안 맞음')} {x['left']}: {x['left_value']:,} ↔ {x['right']} {x['right_value']:,} (차이 {x['diff']:,})")
         for y in ([] if x["minor"] else x["same_amount_cells"]):
             print(f"    같은 주석에서 그 금액과 같은 칸: {y['table']} {y['row']} · {y['col']}")
@@ -864,8 +908,12 @@ def _convert(a) -> int:
     out = Path(a.out) if a.out else xp.resolve().parent
     out.mkdir(parents=True, exist_ok=True)
     raw = xp.read_bytes()
+    from .report import dsd_breaks
+
+    vp = Path(a.view) if a.view else dsd_breaks.view_for(xp)
+    view = vp.read_text(encoding="utf-8", errors="replace") if vp and vp.exists() else None
     try:
-        r = C.convert(raw, bare=a.bare)
+        r = C.convert(raw, bare=a.bare, view=view)
     except (ValueError, ExpatError) as e:
         print(f"바꾸지 못함: {e}")
         return 2
@@ -875,7 +923,8 @@ def _convert(a) -> int:
     same = C.same_body(raw, r.contents)
     print(f"{xp.name} → {path.name}: {C.FORMS[r.form]}({r.form}) · {r.company} · 결산 {r.period_end or '?'} · "
           f"삽입 위치 {r.counts.get('삽입 위치', 0)}(넣은 LIBRARY {r.counts.get('넣은 LIBRARY', 0)}) · ENG 뺌 {r.counts.get('ENG 뺌', 0)} · "
-          f"본문 원문과 {'같음' if same else '다름'}")
+          f"본문 원문과 {'같음' if same else '다름'} · 줄바꿈 "
+          + (f"{r.counts.get('줄바꿈 되살림', 0)}곳 · 빈칸 {r.counts.get('빈칸 되살림', 0)}곳 되살림(공시 화면 {vp.name})" if r.breaks == "화면" else "없음(공시 화면 없음)"))
     for x in r.notes:
         print(f"  {x}")
     print("  편집기에서: 재무제표마다 [재무제표 > 재무제표 검사] 를 돌린 뒤 파일형식 검사를 한다(공시 원문에는 그 검사 기록이 없다)")

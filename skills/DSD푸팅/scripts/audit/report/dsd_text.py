@@ -67,21 +67,27 @@ def _n(s: str) -> str:
 
 
 # ---------------------------------------------------------------- 읽기
+_COVER_TAIL = re.compile(r"\s+(부터|까지)(?=\s|$)")
+
+
 def _cover(path: Path) -> list[str]:
     if path.suffix.lower() == ".xml":
         return []
     import xml.etree.ElementTree as ET
 
-    with zipfile.ZipFile(path) as z:
-        name = next((n for n in z.namelist() if n.lower().endswith("contents.xml")), None)
-        if name is None:
-            return []
-        root = ET.fromstring(z.read(name))
+    from . import dsd_breaks
+
+    try:
+        raw, _ = dsd_breaks.prepare(path, text=True)
+    except ValueError:
+        return []
+    root = ET.fromstring(raw)
     c = root.find(".//COVER")
     if c is None:
         return []
     raw = "".join(c.itertext())
-    return [re.sub(r"\s+", " ", x).strip() for x in raw.split(CR) if x.strip()]
+    # 표지 기간 표는 날짜와 「부터」 · 「까지」 가 다른 칸이다. 칸 사이 빈칸을 띄어쓰기로 읽어 「01일 부터」 를 지적했다(2026-11-08 회사 dsd S4)
+    return [_COVER_TAIL.sub(r"\1", re.sub(r"\s+", " ", x).strip()) for x in raw.split(CR) if x.strip()]
 
 
 PDF_NOISE = re.compile(r"^(전자공시시스템\s*dart\.fss\.or\.kr|Page\s*\d+|-\s*\d+\s*-)$")
@@ -122,7 +128,7 @@ def segments(path: Path) -> list[Seg]:
     for i, line in enumerate(_cover(path), 1):
         add("표지", "", "표지", line, i)
     part, head, k_p, k_t = "기타", "", 0, 0
-    for b in dsd.read_dsd(path, note_refs=True):            # 과목 옆 「(주석2)」 를 남겨 AI 가 참조 번호를 맞춰 본다(2026-11-06 N1)
+    for b in dsd.read_dsd(path, note_refs=True, text=True):  # 과목 옆 「(주석2)」 를 남겨 AI 가 참조 번호를 맞춰 본다(2026-11-06 N1). 흰 글자는 뺀다(11-08)
         if b[0] == "h" and b[1] == 1:
             part, head, k_p, k_t = b[2], b[2], 0, 0
             continue
@@ -132,6 +138,8 @@ def segments(path: Path) -> list[Seg]:
             continue
         if b[0] in ("p", "cap"):
             k_p += 1
+            if _TOC_LINE.search(b[1]):                # 점선으로 쪽 번호를 잇는 목차 문단. 공시 화면에 목차가 없어 줄바꿈을 되살리지 못하고,
+                continue                              # 「13내부회계관리제도」 같은 붙음이 틀린 지적이 됐다(2026-11-09 한 상장사 별도 S3)
             add(part, head, "문단", b[1], k_p)
             continue
         if b[0] == "table":
@@ -144,8 +152,69 @@ def segments(path: Path) -> list[Seg]:
     return out
 
 
+_TOC_LINE = re.compile(r"-{8,}\s*\d+[^-]*-{8,}\s*\d+")
+
+
 # ---------------------------------------------------------------- 글자 규칙
-_LIST_MARK = re.compile(r"(?:^|(?<=\s)|(?<=\|))(?:\d{1,2}|[가나다라마바사아자차카타파하]|[a-z]|[ⅰ-ⅹ])\)(?=\s|$)")
+_NOTE1 = re.compile(r"^\s*1\s*[.)]\s*\S")
+_NOTE2 = re.compile(r"^\s*2\s*[.)]\s*\S")
+_PLACE = re.compile(r"소재|본점|본사|주소|위치하|(?:특별시|광역시|특별자치시|특별자치도|경기도|강원도|충청북도|충청남도|전라북도|전라남도|경상북도|경상남도|제주도)")
+_APPROVE = re.compile(r"승인|확정")
+
+
+def required_findings(segs: list[Seg]) -> list[dict]:
+    """주석에 반드시 적을 것 두 가지가 빠졌는지(2026-11-08, S4 에서 회사 개요 소재지 문단을 지운 것을 세 번 모두 놓쳤다).
+    1) 회사 개요(주석 1)에 소재지 · 본점 주소가 없다: 기업회계기준서 제1001호 문단 138(1)
+    2) 연차 재무제표 주석에 재무제표 발행승인(승인 · 확정)이 없다: 제1010호 문단 17(반기 · 분기 보고서는 보지 않는다)
+    주석 1 제목을 찾지 못하면(제목이 문단 서식) 1) 은 보지 않는다."""
+    out = []
+    notes = [s for s in segs if s.part == "주석"]
+    if not notes:
+        return out
+    # 주석 제목을 굵은 글씨가 아닌 문단으로 적은 보고서가 있다(2026-11-08 S4v2 팜양주: 「1. 회사의 개요」 가 문단)
+    i1 = next((k for k, s in enumerate(notes) if _NOTE1.match(s.text)
+               and (s.kind == "제목" or len(s.text) <= 30 or re.search(r"개요|일반", s.text[:20]))), None)
+    if i1 is not None:
+        i2 = next((k for k in range(i1 + 1, len(notes)) if _NOTE2.match(notes[k].text)), len(notes))
+        body = notes[i1:i2]
+        # 표 줄은 보지 않는다. 연결 보고서의 종속기업 표 머리 「소재지」 가 지배기업 소재지로 읽혔다(2026-11-08 S4v2 티앤이코리아).
+        # 문단 138 은 「재무제표와 함께 공표된 기타 정보에 공시되지 않았다면」 이다. 재무제표 머리 · 표지의 본점 소재지 줄에 주소가 있으면 누락이 아니다
+        # (공개 원문 121건에서 주석에만 소재지가 없는 보고서 다섯을 지적했고 다섯 모두 머리에 주소가 있었다)
+        head_place = any(_PLACE.search(s.text) for s in segs if s.part != "주석" and not s.kind.startswith("표 ") and s.part != "외부감사 실시내용")
+        if len(body) >= 2 and not head_place and not any(_PLACE.search(s.text) for s in body if not s.kind.startswith("표")):
+            out.append(_f(notes[i1], "필수 공시", "공시 누락", notes[i1].text[:60], "회사 개요에 본점(등록된 사무소) 소재지를 적는다",
+                          "기업회계기준서 제1001호 문단 138(1): 기업의 소재지와 법적 형태, 설립지 국가, 등록된 본점사무소의 주소를 주석으로 공시한다"
+                          "(재무제표와 함께 공표된 다른 정보에 없으면). 주석 1 에 소재지 · 본점 · 주소 글이 없다"))
+    head = " ".join(s.text for s in segs[:60] if s.part in ("표지", "감사보고서", "기타"))
+    interim = bool(re.search(r"반기|분기|중간재무", head))
+    if not interim and not any(_APPROVE.search(s.text) and re.search(r"재무제표|발행", s.text) for s in notes):
+        out.append(_f(notes[0], "필수 공시", "공시 누락", notes[0].text[:60], "재무제표 발행승인일과 승인자(이사회 · 주주총회)를 주석에 적는다",
+                      "기업회계기준서 제1010호 문단 17: 재무제표의 발행승인일과 승인자를 공시한다. 주석에 재무제표 승인 · 확정 글이 없다"))
+    return out
+
+
+def _unpaired(text: str, a: str, b: str) -> tuple[int, int]:
+    """짝 없는 여는 괄호 수와 닫는 괄호 수. 닫는 괄호는 앞에 열린 괄호가 있으면 그것을 닫는다. 열린 괄호가 없을 때만 목록 번호(「1)」 「가)」)를
+    목록 번호로 본다. 수만 세면 「(주석 27)」 의 「27)」 을 목록 번호로 빼 틀린 지적이 났다(2026-11-08 라벨 세트 31건 가운데 거의 전부)."""
+    if a not in text and b not in text:
+        return 0, 0
+    marks = {m.end() - 1 for m in _LIST_MARK.finditer(text)} if a == "(" else set()
+    if a == "(":                                  # 전화번호 지역번호 「031)123-4567」(2026-11-08 S4v2 팜양주)
+        marks |= {m.end() - 1 for m in re.finditer(r"(?<![\d(])0\d{1,2}\)(?=\s*\d)", text)}
+    depth = stray = 0
+    for i, ch in enumerate(text):
+        if ch == a:
+            depth += 1
+        elif ch == b:
+            if depth:
+                depth -= 1
+            elif i not in marks:
+                stray += 1
+    return depth, stray
+
+
+# 줄바꿈 표시 「⏎」 뒤도 줄 앞이다(2026-11-08: 「⏎1)」 「⏎2)」 를 짝 없는 괄호로 셌다, 공개 별도 보고서 7건)
+_LIST_MARK = re.compile(r"(?:^|(?<=\s)|(?<=\|)|(?<=\u23ce))(?:\d{1,2}|[가나다라마바사아자차카타파하]|[a-z]|[ⅰ-ⅹ])\)(?=\s|$|\u23ce)")
 _COPULA = re.compile(r"([가-힣A-Za-z0-9)%」]+)\s+입니다")
 _RATE = re.compile(r"(?<![가-힣])([가-힣]+?)([율률])")
 _DATE_COMMA = re.compile(r"20\d\d\.\d{1,2},\d{1,2}(?!\d)")
@@ -325,11 +394,11 @@ def _xbrl_total(s: "Seg", word: str) -> bool:
 
 _HOLDING = re.compile(r"[이가은는의]?\s*(?:(?:보통주|우선주|주식|지분율?)\s*)?\d[\d,]*(?:\.\d+)?\s*(?:주(?![당년간])|%)")
 def _auditor_sign(segs: list) -> set:
-    """감사보고서 끝 서명란(감사인 주소 · 「회계법인」 · 「감사반」 이름 · 대표이사)의 조각 id. 서명란 대표이사는 감사인 대표라
+    """감사인 서명란(감사인 주소 · 「회계법인」 · 「감사반」 이름 · 대표이사)의 조각 id. 서명란 대표이사는 감사인 대표라
     회사 대표이사와 견주지 않는다(2026-11-06 다른 회사 시험 N5: 띄어 쓴 회계법인 이름 다음 줄 「대표이사 ○○○」)."""
     out = set()
     for i, s in enumerate(segs):
-        if s.part != "감사보고서" or "대표" not in s.text:
+        if "대표" not in s.text:               # 감사보고서 끝만이 아니다. 내부회계관리제도 감사보고서 서명란도 같다(2026-11-07 상장사 시험 S2865)
             continue
         near = [x for x in segs[max(0, i - 2): i + 1] if x.part == s.part]
         if any(re.search(r"회계법인|감사반", re.sub(r"\s+", "", x.text)) and len(x.text) <= 60 for x in near):
@@ -495,7 +564,17 @@ def _fy_start(segs: list[Seg], fy: date) -> date:
 
 
 def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None, xml: bool = False) -> list[dict]:
-    """xml 이면 OpenDART 원문이다. 문단 안 줄바꿈이 빠져 있어 띄어쓰기 규칙 가운데 dsd_only 를 쓰지 않는다."""
+    """xml 이면 줄바꿈이 빠진 본문이다. 띄어쓰기 규칙 가운데 dsd_only 를 쓰지 않는다.
+    글의 「⏎」 는 원문 줄바꿈이다(2026-11-08 D1). 사실 대조(1 ~ 5, 7 이후)는 「⏎」 를 빈칸으로 본 글로, 오타 · 띄어쓰기 · 괄호(6)는 「⏎」 를 둔 글로 본다
+    (줄바꿈 자리는 붙음 · 띄어쓰기가 아니다)."""
+    import dataclasses
+
+    from .dsd import BRK
+
+    marked = segs
+    segs = [dataclasses.replace(s, text=s.text.replace(BRK, " ")) if BRK in s.text else s for s in segs]
+    if prior:
+        prior = [dataclasses.replace(s, text=s.text.replace(BRK, " ")) if BRK in s.text else s for s in prior]
     D = defs()
     out: list[dict] = []
     # 1. 옛 값이 남은 곳(주소 · 대표이사 · 상호가 바뀌었는데 예전 글이 남음)
@@ -556,7 +635,7 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
                 if nxt and not nxt.endswith(roles):
                     names.append((nxt, k.start(1)))
                     end = k.end()
-            while (k := more.match(s.text, end)) is not None:      # 「공동대표이사 최시원, 김재홍」: 둘째 이름부터(2026-10-18 B-7)
+            while (k := more.match(s.text, end)) is not None:      # 「공동대표이사 김가온, 이가온」: 둘째 이름부터(2026-10-18 B-7)
                 nxt = clean(k.group(1))
                 if nxt is None or nxt.endswith(roles):
                     break
@@ -669,7 +748,10 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
         s, d = valid[0]
         out.append(_f(s, "감사보고서일", "일관성", _excerpt(s.text, _k(d)), f"서명 날짜({_k(sig[0][1])})와 맞춘다",
                       "감사인 서명 아래 날짜와 유효 기간 문단의 감사보고서일이 다르다"))
-    # 6. 오타 사전 · 기준서 용어 · 반복 낱말 · 띄어쓰기 · 율과 률 · 날짜 쉼표 · 괄호 짝
+    # 5-2. 필수 공시(2026-11-08): 회사 개요의 소재지 · 재무제표 발행승인
+    out += required_findings(segs)
+    # 6. 오타 사전 · 기준서 용어 · 반복 낱말 · 띄어쓰기 · 율과 률 · 날짜 쉼표 · 괄호 짝(줄바꿈 표시를 둔 글로 본다)
+    plain_segs, segs = segs, marked
     typos = D.get("typos") or {}
     terms = D.get("terms") or {}
     ok = set(D.get("repeat_ok") or [])
@@ -700,14 +782,15 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
                 out.append(_f(s, "율 · 률", "오타", _excerpt(s.text, word), f"{word} → {m.group(1)}{fix}", "앞 글자에 받침이 있으면(ㄴ 제외) 「률」, 없거나 ㄴ 이면 「율」"))
         for m in _DATE_COMMA.finditer(s.text):
             out.append(_f(s, "날짜 쉼표", "오타", _excerpt(s.text, m.group(0)), f"{m.group(0)} → {m.group(0).replace(',', '.')}", "날짜 구분이 쉼표로 적혔다"))
-        bare = _LIST_MARK.sub("", s.text)              # 줄 앞 번호 「1)」 「가)」 의 닫는 괄호는 세지 않는다(한 상장사 2025 감사보고서에서 4건 잘못 잡음, 10-18)
         for a, b in (("(", ")"), ("「", "」"), ("“", "”")):
-            if bare.count(a) != bare.count(b):
-                out.append(_f(s, "괄호 짝", "오타", s.text[:80], f"{a} {bare.count(a)}개 · {b} {bare.count(b)}개를 맞춘다", "여는 괄호와 닫는 괄호 수가 다르다"))
+            left, stray = _unpaired(s.text, a, b)
+            if left or stray:
+                out.append(_f(s, "괄호 짝", "오타", s.text[:80], f"짝 없는 {a} {left}개 · {b} {stray}개를 맞춘다", "여는 괄호와 닫는 괄호의 짝이 맞지 않는다"))
     for wrong, ss in term_at.items():                  # 같은 옛 용어는 보고서에 한 번만 적는다(한 상장사 2026 반기에서 37칸에 따로 나옴, 10-18)
         more = f". 보고서 안 {len(ss)}곳(" + ", ".join(x.id for x in ss[:8]) + (" 등" if len(ss) > 8 else "") + ")" if len(ss) > 1 else ""
         out.append(_f(ss[0], "기준서 용어", "표현", _excerpt(ss[0].text, wrong), f"{wrong} → {terms[wrong]}", f"기준서의 용어와 다르다(definitions/dsd_text.yaml){more}"))
     out += spacing_findings(segs, D, xml, typo_at)
+    segs = plain_segs
     # 7. 작년 보고서와 같은 문장에 남은 작년 날짜
     if prior and fy:
         before = {_n(s.text) for s in prior if s.kind == "문단"}
@@ -717,6 +800,8 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
                 continue
             if _n(s.text) not in before and not (blob and len(_n(s.text)) >= 20 and _n(s.text) in blob):
                 continue
+            if re.match(r"\s*제\s*\d+\s*(?:\(\s*[당전]\s*\))?\s*기\s*[:：]", s.text):
+                continue                          # 「제 18 기 : 2024년 1월 1일부터 …」 는 전기 기간 머리다(2026-11-07 상장사 시험 S217)
             old = [d for d in _dates(s.text) if d.year == fy.year - 1]
             if old and not any(d.year == fy.year for d in _dates(s.text)):
                 out.append(_f(s, "작년 문장", "사실 불일치", _excerpt(s.text, _k(old[0])), "날짜를 당기로 고치거나 문장이 당기에도 맞는지 확인한다",
@@ -895,14 +980,18 @@ def review(path: Path, facts: dict | None = None, prior: Path | None = None, ai:
     segs = segments(path)
     psegs = segments(prior) if prior else None
     facts = facts or {}
-    engine = engine_findings(segs, facts, psegs, xml=Path(path).suffix.lower() == ".xml")
+    from . import dsd_breaks
+
+    kind = dsd_breaks.kind_of(Path(path))
+    nobreak = kind["줄바꿈"] == "없음"               # 줄바꿈이 빠진 본문(공시 화면 없는 xml · 그것을 바꾼 dsd, 2026-11-08 D2)
+    engine = engine_findings(segs, facts, psegs, xml=nobreak)
     if isinstance(ai, (str, Path)):
         ai = json.loads(Path(ai).read_text(encoding="utf-8")) if Path(ai).exists() else None
     got, bad, disc = check_ai(segs, ai or {}, engine)
     stage = stage or stage_of(path)
     drafted = mark_draft(segs, engine + got) if stage == "회사제시" else 0
     return {"segments": segs, "engine": engine, "ai": got, "invalid": bad, "disclosures": disc, "candidates": candidates(case),
-            "facts": facts, "ai_given": ai is not None, "xml": Path(path).suffix.lower() == ".xml", "stage": stage, "drafted": drafted}
+            "facts": facts, "ai_given": ai is not None, "xml": nobreak, "원본": kind, "stage": stage, "drafted": drafted}
 
 
 # ---------------------------------------------------------------- AI 읽기 자료
@@ -936,7 +1025,11 @@ def _cuts(units: list, n: int) -> list[int]:
     """units 를 글자 수가 비슷한 n 몫으로 나눌 자리(몫이 시작하는 units 번호). 주석 제목이나 부분이 바뀌는 곳에서만 끊는다."""
     w = [len(_line(s, same)) + 1 for s, same in units]
     total = sum(w)
-    ok = [i for i in range(1, len(units)) if (units[i][0].kind == "제목" and units[i][0].part == "주석") or units[i][0].part != units[i - 1][0].part]
+    # 주석 제목을 굵은 제목이 아닌 문단(「12. 퇴직급여」)으로 적은 보고서는 끊을 자리가 부분 경계뿐이라 한 몫에 몰렸다(2026-11-09 한 상장사 별도
+    # 222줄 · 1,502줄). 주석 번호로 시작하는 짧은 문단에서도 끊는다
+    def head(s):
+        return s.part == "주석" and (s.kind == "제목" or (s.kind == "문단" and len(s.text) <= 40 and re.match(r"^\s*\d{1,2}\s*[.)]\s*\S", s.text)))
+    ok = [i for i in range(1, len(units)) if head(units[i][0]) or units[i][0].part != units[i - 1][0].part]
     acc, run = [], 0
     for x in w:
         acc.append(run)
@@ -946,7 +1039,12 @@ def _cuts(units: list, n: int) -> list[int]:
         cand = [i for i in ok if not cuts or i > cuts[-1]]
         if not cand:
             break
-        cuts.append(min(cand, key=lambda i: abs(acc[i] - total * k / n)))
+        best = min(cand, key=lambda i: abs(acc[i] - total * k / n))
+        if abs(acc[best] - total * k / n) > total * 0.15:      # 목표에서 전체의 15% 넘게 벗어나면 표 줄이 아닌 아무 조각 앞에서 끊는다
+            loose = [i for i in range(1, len(units)) if (not cuts or i > cuts[-1]) and not units[i][0].kind.startswith("표")]
+            if loose:
+                best = min(loose, key=lambda i: abs(acc[i] - total * k / n))
+        cuts.append(best)
     return [0] + cuts
 
 
@@ -967,11 +1065,16 @@ def reading(res: dict, part: tuple[int, int, list] | None = None) -> str:
              "처음부터 끝까지 읽고 오타 · 어색한 표현 · 사실 불일치 · 공시 누락 · 일관성을 문장.json 에 적는다(형식은 감사-DSD푸팅 스킬의 references/문장-검토.md).",
              "발췌(quote)는 아래 글 그대로 적는다. 엔진이 이미 적은 것은 다시 적지 않는다. 엔진의 고칠 안이 틀렸거나 엔진이 잡은 줄에 다른 문제가 있으면 "
              "그 줄을 발췌해 적는다(엑셀에 엔진 지적과 함께 나온다).",
-             f"띄어쓰기는 엔진 규칙({_spacing_names()})이 보고서 전체에서 찾았다. 이 꼴은 적지 않는다. "
-             "규칙에 없는 띄어쓰기(낱말 가운데 든 빈칸, 한 글 안에서 띄어 쓴 말과 붙여 쓴 말이 섞인 용어)만 적는다."]
+             f"띄어쓰기는 엔진 규칙({_spacing_names()})이 보고서 전체에서 찾았다. 아래 「엔진이 찾은 것」 에 있는 곳은 다시 적지 않는다. "
+             "엔진 규칙이 모든 꼴을 잡지 못하므로, 규칙과 같은 꼴이어도 엔진 목록에 없는 붙음 · 띄어쓰기는 적는다(2026-11-08: 「반기재무제표를작성하고」 를 엔진도 AI 도 놓쳤다).",
+             "「표 N-k (dsd 위치로 붙인 번호)」 는 판독이 붙인 번호다. 원문에는 없으니 근거 · 고칠 곳으로 쓰지 않는다. 칸 사이(「|」)와 표지 칸 사이의 빈칸은 원문에서 칸이 나뉜 자리다.",
+             "「⏎」 는 원문(편집기의 줄바꿈, 공시 원문이면 공시 화면의 줄바꿈)에서 줄이 바뀐 자리다. 「자본⏎잉여금」 처럼 칸 안에서 줄을 바꾼 것은 띄어쓰기 · 표기 통일로 적지 않는다. "
+             "발췌에는 「⏎」 를 그대로 둔다.",
+             "표 줄의 「#」 는 숫자 칸이다(값은 숫자 푸팅이 본다. 발췌에 「#」 를 쓰지 않는다). 줄 끝 숫자 칸은 줄였다. 위 줄과 합친 칸(병합 칸)은 아래 줄에 다시 나오지 않아, "
+             "칸 수가 머리줄보다 적으면 앞 칸이 위 줄과 합쳐진 것이다. 칸이 빠졌다 · 비었다는 지적은 원문 칸을 보고 적는다."]
     if res.get("xml"):
-        lines.append("원문이 OpenDART xml 이다. xml 에는 문단 안 줄바꿈이 빠져 있어 두 문장이나 목록 항목이 붙어 보인다(「…습니다.회사의」 「측정나머지」). "
-                     "이런 곳은 오타로 적지 않는다.")
+        lines.append("이 본문에는 문단 안 줄바꿈이 빠져 있다(OpenDART xml 이나 공시 화면 없이 바꾼 dsd). 두 문장이나 목록 항목이 붙어 보인다(「…습니다.회사의」 「측정나머지」). "
+                     "붙음 · 띄어쓰기는 오타로 적지 않는다.")
     if n > 1:
         lines += ["", f"보고서 글을 {n} 몫으로 나눈 가운데 {k}번째다. 아래 「글」 에 있는 S번호만 맡는다. 다른 몫은 다른 에이전트가 읽는다. "
                   "주석 참조 번호와 주석 제목은 「목차」 로 맞춰 본다.",
@@ -1067,7 +1170,19 @@ def _shown(s: Seg) -> str:
     (같은 날 가온정밀 재기에서 문장 검토 에이전트가 dsd 원문을 직접 풀어 읽었다)."""
     if not s.kind.startswith("표") or s.part == "외부감사 실시내용":
         return s.text
-    return " | ".join(c for c in (x.strip() for x in s.text.split(" | ")) if re.search(r"[가-힣A-Za-z]", c))
+    # 숫자 칸은 「#」, 「-」 칸은 그대로 둔다. 칸을 통째로 빼면 AI 가 칸이 비었다고 읽었다
+    # (2026-11-08 회사 dsd 「교환가액의 조정」 칸 공시 누락, 약정 표에 은행이 빠졌다는 지적 둘 다 틀림)
+    out = []
+    for c in (x.strip() for x in s.text.split(" | ")):
+        if re.search(r"[가-힣A-Za-z]", c):
+            out.append(c)
+        elif re.fullmatch(r"[-–—]+", c):
+            out.append("-")
+        elif c:
+            out.append("#")
+    while out and out[-1] == "#":                 # 줄 끝의 숫자 칸은 줄인다(이름 칸 하나에 숫자 칸들인 줄이 대부분이다)
+        out.pop()
+    return " | ".join(out)
 
 
 def to_json(res: dict) -> dict:

@@ -101,9 +101,16 @@ def engine_checked(c: Check) -> bool:
     return failed(c) and c.finding.startswith(("숫자 오류", "보고서 불일치")) and c.fix_note.startswith("근거 확인")
 
 
+def wtb_checked(c: Check) -> bool:
+    """정산표 대사에서 엔진이 정한 숫자 오류(dsd_wtb): dsd 금액이 정산표의 회사제시 금액과 같고 최종 금액과의 차이가 수정분개다.
+    엔진이 정산표 두 열로 계산해 정한 것이라 독립 검증을 하지 않는다(2026-11-09 회사 dsd v1.1: 독립 검증 48건 가운데 39건이 이것이라 14.8분이 들었다)."""
+    return failed(c) and c.finding_by == "엔진" and c.finding.startswith("숫자 오류") and "회사제시 금액과 같고" in c.finding
+
+
 def no_review(c: Check) -> bool:
-    """독립 검증 에이전트에게 보내지 않는 판정: 늘 나는 차이(sampled)와 엔진이 근거를 확인한 숫자 오류(engine_checked)."""
-    return sampled(c) or engine_checked(c)
+    """독립 검증 에이전트에게 보내지 않는 판정: 늘 나는 차이(sampled), 엔진이 근거를 확인한 숫자 오류(engine_checked),
+    정산표 대사에서 엔진이 정한 수정분개 미반영(wtb_checked)."""
+    return sampled(c) or engine_checked(c) or wtb_checked(c)
 
 
 @lru_cache(maxsize=1)
@@ -182,6 +189,13 @@ def find_row(t: Table, label: str, nth: int = 1) -> int | None:
     i = _find(_labels(t), label, nth)
     if i is None and t.old_labels:               # 줄 이름을 여러 칸으로 읽기 전에 적은 것(첫 칸 이름, 빈 이름과 순번)도 받는다
         i = _find(t.old_labels, label, nth)
+    if i is None and t.kind == "문장" and nth == 1 and norm(label):
+        # 문장 금액 표의 줄 이름은 금액 앞 글이라 판독이 바뀌면 시작이 달라진다(2026-11-08 줄바꿈 되살리기: 「및 1좌당 금액은 …」 →
+        # 「(1) 당사가 발행한 출자좌수 및 1좌당 금액은 …」). 한쪽이 다른 쪽의 끝부분인 줄이 하나뿐이면 그 줄이다
+        want = norm(label)
+        hits = [k for k, x in enumerate(_labels(t)) if norm(x) and (norm(x).endswith(want) or want.endswith(norm(x)))]
+        if len(hits) == 1:
+            i = hits[0]
     return i
 
 
@@ -728,10 +742,22 @@ def kind_of(c: Check) -> str:
     return {DISPLAY: "표시 오류", EXPLAIN: "설명 부족", LAST_YEAR: "작년 보고서의 오류"}.get(c.when, "확인")
 
 
+def idk(cid) -> str:
+    """판정 · 표시 · 전기 판정을 검증에 붙일 때 쓰는 id 열쇠(빈칸을 뺀 id). 공시 화면으로 줄바꿈 · 빈칸을 되살리면 열 머리
+    「당기」 가 「당 기」 가 되어 검증 id 가 바뀌고, 지난 판정이 붙지 않아 판정을 마친 검증이 FALSE 로 다시 올라왔다
+    (2026-11-09 스터디 37건 회귀). 연결은 원래 빈칸을 뺀 이름으로 칸을 찾는다."""
+    return re.sub(r"\s+", "", str(cid or ""))
+
+
+def by_idk(rows) -> dict:
+    return {idk(x["id"]): x for x in rows if isinstance(x, dict) and x.get("id")}
+
+
 def apply_marks(checks: list[Check], marks: dict) -> None:
     """회계사가 지난 엑셀에 적은 확인(X 는 쓰지 않음, O 는 맞는 연결)을 검증에 옮긴다."""
+    mk = {idk(k): v for k, v in (marks or {}).items()}
     for c in checks:
-        m = marks.get(c.id) or {}
+        m = marks.get(c.id) or mk.get(idk(c.id)) or {}
         c.excluded, c.confirmed = bool(m.get("excluded")), bool(m.get("confirmed"))
 
 
@@ -776,9 +802,9 @@ def build(doc: Doc, defs: dict | None = None, amount_links: bool = False, other:
         if got:
             checks += got
             links.append(dict(x, source="규칙"))
-    from . import dsd_appropriation, dsd_kicpa       # 처분계산서 규칙과 감리지적 유형 검사(12단계). 연결 정의에 남기지 않고 판마다 다시 찾는다
+    from . import dsd_appropriation, dsd_display, dsd_kicpa   # 처분계산서 규칙 · 감리지적 유형 검사(12단계) · 표시 오류(11-08). 연결 정의에 남기지 않고 판마다 다시 찾는다
 
-    for got in (dsd_appropriation.checks(doc), dsd_kicpa.checks(doc)):
+    for got in (dsd_appropriation.checks(doc), dsd_kicpa.checks(doc), dsd_display.checks(doc)):
         checks += [c for c in got if c.id.split("|")[0] not in have]
     for x in (rules().get("pair_links", []) if other is not None else []):      # 함께 낸 다른 보고서와 견주는 규칙(--pair)
         if x["id"] in have:
@@ -802,18 +828,18 @@ def build(doc: Doc, defs: dict | None = None, amount_links: bool = False, other:
     checks = _drop_same(checks)
     marks = defs.get("marks", {})
     apply_marks(checks, marks)
-    notes = {x["id"]: x for x in defs.get("findings", [])}
+    notes = by_idk(defs.get("findings", []))
     for c in checks:
-        if c.id in notes:
-            apply_finding(c, notes[c.id])
+        if idk(c.id) in notes:
+            apply_finding(c, notes[idk(c.id)])
     # 규칙과 같은 두 칸이라 뺀 AI 연결에 적어 둔 판정은 남은 규칙 검증으로 옮긴다(12단계: 처분계산서 규칙을 넣자 스터디 보고서에서
     # AI 가 먼저 적고 판정한 처분계산서 연결이 빠지고 규칙 검증의 판정이 비었다)
     ruled = {_pair(c): c for c in checks if c.source != "AI" and _pair(c) is not None}
     kept = {id(c) for c in checks}
     for g in before:
-        r = ruled.get(_pair(g)) if id(g) not in kept and g.id in notes else None
+        r = ruled.get(_pair(g)) if id(g) not in kept and idk(g.id) in notes else None
         if r is not None and not r.finding:
-            apply_finding(r, notes[g.id])
+            apply_finding(r, notes[idk(g.id)])
     return checks, {"version": 1, "source": doc.source, "structures": structures, "sums": sums, "no_sums": no_sums, "units": units, "links": links, "marks": marks,
                     "prior": list(defs.get("prior", [])), "findings": list(defs.get("findings", [])), "skipped": list(defs.get("skipped", [])),
                     "workpapers": list(defs.get("workpapers", [])), "prior_pairs": list(defs.get("prior_pairs", []))}, unresolved
@@ -897,9 +923,9 @@ def _text_sig(t: Table, i: int) -> tuple:
 
 def apply_prior_verdicts(checks: list[Check], verdicts: list[dict]) -> None:
     """전기 대사 차이에 적어 둔 판정을 반영한다. 불일치는 조건을 떼어 FALSE 로 세고, 설명됨 · 걸지 않음은 검증에서 뺀다."""
-    by = {x["id"]: x for x in verdicts}
+    by = by_idk(verdicts)
     for c in checks:
-        v = by.get(c.id)
+        v = by.get(idk(c.id))
         if v is None:
             continue
         c.basis = (c.basis + " · " if c.basis else "") + f"판정 {v['verdict']}: {v['why']}"

@@ -125,9 +125,9 @@ def _sign_only(c: Check, note: dict, doc: Doc, prior: Doc | None, wtb: Doc | Non
 
 
 def apply_fixes(checks: list[Check], notes: list[dict], doc: Doc, prior: Doc | None = None, wtb: Doc | None = None, other: Doc | None = None) -> None:
-    by = {c.id: c for c in checks}
+    by = {dsd_links.idk(c.id): c for c in checks}
     for x in notes or []:
-        c = by.get(str(x.get("id", "")))
+        c = by.get(dsd_links.idk(x.get("id", "")))
         if c is not None:
             apply_fix(c, x, doc, prior, wtb, other)
 
@@ -145,10 +145,10 @@ def load_review(path: Path) -> list[dict]:
 def apply_review(checks: list[Check], items: list[dict], doc: Doc, prior: Doc | None = None, wtb: Doc | None = None,
                  other: Doc | None = None) -> list[str]:
     """독립 검증 결과를 검증에 반영한다. 문제 목록(없는 id, 결과 · 판정 이름이 틀림)을 돌려준다."""
-    by = {c.id: c for c in checks}
+    by = {dsd_links.idk(c.id): c for c in checks}
     problems = []
     for n, x in enumerate(items, 1):
-        c = by.get(str(x.get("id", "")))
+        c = by.get(dsd_links.idk(x.get("id", "")))
         res = x.get("result")
         if c is None:
             problems.append(f"판정검증 {n}번째: 검증 id 「{x.get('id')}」 가 없다")
@@ -388,7 +388,8 @@ def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict, pri
            "그리고 두 칸이 든 주석과 작년 같은 주석의 문장 가운데 두 금액 · 차이나 줄 이름의 낱말이 든 것이다. 원문을 열기 전에 이것부터 본다.", "",
            f"- FALSE(숫자 오류) {sum(1 for c in rows if dsd_links.failed(c))}건, 확인 · 표시 오류 · 설명 부족 · 작년 보고서의 오류 {sum(1 for c in rows if not dsd_links.failed(c))}건",
            f"- 독립 검증 대상 {sum(1 for c in rows if not dsd_links.no_review(c))}건. 판정이 확인인 늘 나는 차이 {sum(1 for c in rows if dsd_links.sampled(c))}건과"
-           f" 엔진이 근거를 확인한 숫자 오류 {sum(1 for c in rows if dsd_links.engine_checked(c))}건은 독립 검증을 하지 않는다"
+           f" 엔진이 근거를 확인한 숫자 오류 {sum(1 for c in rows if dsd_links.engine_checked(c))}건,"
+           f" 정산표 대사에서 엔진이 정한 수정분개 미반영 {sum(1 for c in rows if dsd_links.wtb_checked(c))}건은 독립 검증을 하지 않는다"
            "(2026-10-22 결정. 「독립 검증: 대상 아님」 으로 적었다)", ""]
     for c in rows:
         t = tabs.get(c.table)
@@ -423,5 +424,7 @@ def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict, pri
             out.append(f"- 독립 검증: 대상 아님(늘 나는 차이 「{c.usual}」. 회계사가 표본으로 본다)")
         elif dsd_links.engine_checked(c):
             out.append("- 독립 검증: 대상 아님(엔진이 근거 칸으로 맞는 숫자를 확인했다)")
+        elif dsd_links.wtb_checked(c):
+            out.append("- 독립 검증: 대상 아님(엔진이 정산표로 확인했다. dsd 금액 = 회사제시 금액, 차이 = 수정분개)")
         out.append("")
     return "\n".join(out)

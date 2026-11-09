@@ -898,10 +898,21 @@ def parts_from_blocks(blocks: list) -> tuple[list[str], list[tuple[str, list]]]:
 
 
 # ---------------------------------------------------------------- 읽기
+BRK = "\u23ce"                    # 문장 검토 판독에서 원문 줄바꿈(&cr;) 자리 표시 「⏎」(2026-11-08 D1)
+_CRM = " "                        # &cr; 을 무엇으로 읽나. 숫자 판독은 빈칸, 문장 검토(read_dsd text=True)는 BRK
+
+
+def _tidy(t: str) -> str:
+    """공백을 하나로, 줄바꿈 표시 앞뒤 공백을 지우고 겹친 표시를 하나로, 앞뒤 표시를 뗀다."""
+    t = re.sub(r"\s+", " ", t)
+    if BRK in t:
+        t = re.sub(r"\s*" + BRK + r"[\s" + BRK + r"]*", BRK, t).strip(" " + BRK)
+    return t.strip()
+
+
 def _text(e) -> str:
-    """요소 안 글자 전체. &cr; 은 줄바꿈, 공백은 하나로 줄인다."""
-    t = "".join(e.itertext()).replace(CR, "\n")
-    return re.sub(r"\s+", " ", t).strip()
+    """요소 안 글자 전체. &cr; 은 줄바꿈(숫자 판독은 빈칸, 문장 검토는 「⏎」), 공백은 하나로 줄인다."""
+    return _tidy("".join(e.itertext()).replace(CR, _CRM))
 
 
 def _bold_level(mark: str | None) -> int | None:
@@ -973,6 +984,20 @@ def _finance_rows(t, note_refs: bool = False) -> list[list[str]]:
     return out
 
 
+_GLUE_CELL = ("부터", "까지", "현재")
+
+
+def _join_cells(cells: list[str]) -> str:
+    """테두리 없는 표 한 줄을 한 문단으로. 칸 사이는 빈칸이다. 문장 검토 판독(_CRM 이 BRK)에서는 「부터」 · 「까지」 · 「현재」 만 든 칸을
+    앞 칸에 붙인다(재무제표 머리 기간 줄 「2026년 01월 01일 | 부터」 를 띄어쓰기로 지적했다, 2026-11-08 회사 dsd S21)."""
+    if _CRM != BRK:
+        return " ".join(cells)
+    out = ""
+    for x in cells:
+        out = (out + x) if (out and x in _GLUE_CELL) else (f"{out} {x}" if out else x)
+    return out
+
+
 class _Reader:
     def __init__(self, note_refs: bool = False):
         self.out, self.part, self.note, self.ntab, self.last_cap = [], None, None, 0, False
@@ -997,7 +1022,7 @@ class _Reader:
 
     def table(self, t):
         rows0 = _rows(t)
-        lines = [" ".join(x for x in r if x) for r in rows0]
+        lines = [_join_cells([x for x in r if x]) for r in rows0]
         first = [next((x for x in r if x), "") for r in rows0]
         k = next((i for i, x in enumerate(first) if x.rstrip().endswith("귀중")), None)
         if self.part == "감사보고서" and k is not None and (t.get("BORDER") or "1").strip() == "0":
@@ -1027,14 +1052,18 @@ class _Reader:
 
     def P(self, e):
         kids = [c for c in e if c.tag == "SPAN"]
-        if self.part == "감사보고서" and sum(1 for k in kids if _bold_level(k.get("USERMARK"))) > 1:
+        bold = [k for k in kids if _bold_level(k.get("USERMARK"))]
+        # 굵은 소제목 SPAN 이 하나여도 문단 가운데 줄을 바꿔 들어가 있으면(「…재작성하였습니다.<SPAN B>&cr;기타사항</SPAN><SPAN>&cr;우리는 …」)
+        # 소제목에서 끊는다. 둘 이상일 때만 끊었더니 「기타사항」 이 앞 문단에 묻혔다(2026-11-09 공개 연결 감사보고서 재발행본)
+        own_line = [k for k in bold[:1] if kids.index(k) > 0 and (k.text or "").lstrip(" ").startswith(CR)]
+        if self.part == "감사보고서" and (len(bold) > 1 or own_line):
             self.P_split(e)
             return
         if kids and not (e.text or "").replace(CR, "").strip() and _bold_level(kids[0].get("USERMARK")):
             first = kids[0]
-            self.para(re.sub(r"\s+", " ", (first.text or "").replace(CR, " ")).strip(), first.get("USERMARK"))
+            self.para(_tidy((first.text or "").replace(CR, _CRM)), first.get("USERMARK"))
             rest = (first.tail or "") + "".join(ET.tostring(c, encoding="unicode", method="text") for c in kids[1:])
-            self.para(re.sub(r"\s+", " ", rest.replace(CR, " ")).strip())
+            self.para(_tidy(rest.replace(CR, _CRM)))
             return
         if _bold_level(e.get("USERMARK")) and any("!B" in (k.get("USERMARK") or "").split() for k in kids):
             self.P_unbold(e)
@@ -1046,15 +1075,20 @@ class _Reader:
         P 의 글과 SPAN 꼬리는 제목, 「!B」 SPAN 은 문단으로 읽는다. 통째로 제목 하나로 읽으면 본문이 제목에 묻히고 줄바꿈이 빠져
         붙은 다음 주석 제목(「13.」)을 앞 주석으로 읽었다(2026-11-06 다른 회사 시험 N2)."""
         mark = e.get("USERMARK")
-        one = lambda t: re.sub(r"\s+", " ", (t or "").replace(CR, " ")).strip()  # noqa: E731
+        one = lambda t: _tidy((t or "").replace(CR, _CRM))  # noqa: E731
         self.para(one(e.text), mark)
         for c in e:
             t = one("".join(c.itertext())) if c.tag == "SPAN" else ""
+            tail = one(c.tail)
             if c.tag == "SPAN" and "!B" in (c.get("USERMARK") or "").split():
+                # 「!B」 SPAN 뒤 꼬리가 문장부호뿐이면(「…책임이 있습니다</SPAN>.」) 문단 끝에 붙인다. 따로 떼면 「.」 가 제목 조각이 되고
+                # 문단에는 마침표가 빠졌다는 틀린 지적이 났다(2026-11-09 공개 연결 감사보고서 S13 · S14)
+                if tail and not re.search(r"[0-9A-Za-z가-힣]", tail):
+                    t, tail = t + tail, ""
                 self.para(t)
             else:
                 self.para(t, mark)
-            self.para(one(c.tail), mark)
+            self.para(tail, mark)
 
     def P_split(self, e):
         """감사보고서 절에서 한 P 안에 굵은 소제목 SPAN 이 여럿 이어진 꼴(공개 원문에 흔하다: 「감사의견근거」 SPAN 뒤에 본문,
@@ -1062,7 +1096,7 @@ class _Reader:
         buf: list[str] = []
 
         def flush():
-            self.para(re.sub(r"\s+", " ", "".join(buf).replace(CR, " ")).strip())
+            self.para(_tidy("".join(buf).replace(CR, _CRM)))
             buf.clear()
 
         buf.append(e.text or "")
@@ -1070,7 +1104,7 @@ class _Reader:
             t = "".join(c.itertext()) if c.tag == "SPAN" else ""
             if c.tag == "SPAN" and _bold_level(c.get("USERMARK")) and t.strip():
                 flush()
-                self.para(re.sub(r"\s+", " ", t.replace(CR, " ")).strip(), c.get("USERMARK"))
+                self.para(_tidy(t.replace(CR, _CRM)), c.get("USERMARK"))
             else:
                 buf.append(t)
             buf.append(c.tail or "")
@@ -1140,21 +1174,24 @@ def lenient_xml(raw: bytes) -> bytes:
     return s.encode("utf-8")
 
 
-def read_dsd(path: Path, note_refs: bool = False) -> list:
+def read_dsd(path: Path, note_refs: bool = False, text: bool = False) -> list:
     """dsd 를 블록 목록으로 읽는다. HTML(read_html)과 같은 꼴이다: 부분 이름은 h1, 그 안 제목은 h2 이하.
-    .xml 이면 OpenDART 공시서류원본파일 XML(contents.xml 과 같은 dart4 · dart3 꼴, 편집기용 INSERTION 이 없는 판)로 읽는다."""
-    if Path(path).suffix.lower() == ".xml":
-        root = ET.fromstring(lenient_xml(Path(path).read_bytes()))
-    else:
-        with zipfile.ZipFile(Path(path)) as z:
-            name = next((n for n in z.namelist() if n.lower().endswith("contents.xml")), None)
-            if name is None:
-                raise ValueError(f"dsd 안에 contents.xml 이 없습니다: {path}")
-            root = ET.fromstring(z.read(name))
+    .xml 이면 OpenDART 공시서류원본파일 XML(contents.xml 과 같은 dart4 · dart3 꼴, 편집기용 INSERTION 이 없는 판)로 읽는다.
+    본문은 dsd_breaks.prepare 로 손질한다(옆에 공시 화면이 있으면 줄바꿈을 되살리고, SPAN 줄 정리 공백을 지운다, 2026-11-08 D1).
+    text 면 흰 글자(화면에 안 보이는 줄 맞춤 글)를 뺀다(문장 검토)."""
+    from . import dsd_breaks
+
+    global _CRM
+    raw, _ = dsd_breaks.prepare(Path(path), text=text)
+    root = ET.fromstring(raw)
     body = root.find("BODY")
     r = _Reader(note_refs)
     if body is not None:
-        r.walk(body)
+        _CRM = BRK if text else " "
+        try:
+            r.walk(body)
+        finally:
+            _CRM = " "
     real = any(b[0] == "cap" and len(b) == 2 for b in r.out)      # 「표 N-k」 설명이 하나라도 있으면 붙인 번호는 쓰지 않는다
     return [b[:2] if b[0] == "cap" else b for b in r.out if not (b[0] == "cap" and len(b) == 3 and real)]
 

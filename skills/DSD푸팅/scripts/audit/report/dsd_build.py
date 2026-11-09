@@ -165,6 +165,9 @@ def _tu_date(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------- 계획
+_DASH = {"-", "－", "—", "–"}
+
+
 def _cell_value(rv, orig: dsd_draft.Cell, sheet: str, where: str, plan: Plan, cached=None) -> str | None:
     """원고 칸 → 새 원문 글. 그대로면 None."""
     text, num, note = value_text(rv, cached)
@@ -177,7 +180,8 @@ def _cell_value(rv, orig: dsd_draft.Cell, sheet: str, where: str, plan: Plan, ca
         if num is None and text.strip():
             v, f = parse_num(text)
             if v is None:
-                plan.issues.append(issue("엑셀 손상", sheet, where, f"숫자였던 칸이 글자가 됨: 「{text[:40]}」"))
+                if orig.text.strip() not in _DASH:   # 「-」 만 있던 칸은 빈칸이다. 롤포워드가 글을 옮겨 넣어도 손상이 아니다(2026-11-07)
+                    plan.issues.append(issue("엑셀 손상", sheet, where, f"숫자였던 칸이 글자가 됨: 「{text[:40]}」"))
                 return text if text != orig.text else None
             num = v
         if num is None:
@@ -187,12 +191,23 @@ def _cell_value(rv, orig: dsd_draft.Cell, sheet: str, where: str, plan: Plan, ca
         if num == 0 and not (orig.fmt or {}).get("zero"):
             return "-"                                     # dsd 는 0 을 「-」 로 적는다(롤포워드가 「-」 를 「0」 으로 바꿨다, 2026-11-06 D8)
         return format_num(num, orig.fmt)
+    if num is not None and not orig.text.strip():
+        # 빈칸이던 칸(롤포워드가 옮긴 전기 칸 등)은 원문 꼴이 없어 쉼표 · 괄호 음수로 쓴다. 원고 숫자를 그대로 쓰면
+        # 「36000000」 이 됐다(2026-11-09 공개 원문 2024 → 2025 초안을 실제 2025 공시와 칸마다 견준 시험)
+        # 사용자가 엑셀에 꼴을 갖춰 적은 글(「1,234」 · 「12.5%」)이면 그 꼴을, 숫자면 소수 자리만 살린다
+        f = parse_num(text)[1] if isinstance(rv, str) and text.strip() else None
+        if not (f and (f.get("comma") or f.get("suf") or f.get("dec") or f.get("neg"))):
+            dec = len(repr(float(num)).split(".")[1].rstrip("0")) if not float(num).is_integer() else 0
+            f = {"neg": "paren", "comma": True, "dec": min(dec, 6), "suf": ""}
+        return "-" if num == 0 else format_num(num, f)
     if num is not None and text != orig.text:
         o = orig.text.strip()
         if o.isdigit() and (o.startswith("0") or len(o) >= 12):
             plan.issues.append(issue("엑셀 손상", sheet, where, f"앞자리 0 · 긴 코드가 숫자로 바뀜: 원문 「{o}」 을 그대로 둔다", "막음"))
             return None
         if parse_num(orig.text)[0] is None and orig.text.strip():
+            if num == 0:
+                return "-"                     # 롤포워드가 옮긴 「-」(0) 이다. 글 칸에는 「-」 로 적는다(2026-11-07 특수관계자 명단 표)
             plan.issues.append(issue("엑셀 손상", sheet, where, f"글자 칸이 숫자로 바뀜: 「{orig.text[:30]}」 → {text}"))
     new = text.replace("\r\n", "\n")
     return None if new == orig.text else new
@@ -533,13 +548,21 @@ def build(xlsx: Path, out: Path | None = None) -> dict:
 
 def _dedupe(edits: list) -> list:
     """같은 구간을 두 번 지우는 고침(주석을 빼며 그 안 문단도 지운 것)을 하나로, 지운 구간 안의 고침은 버린다."""
+    import bisect
+
     dels = sorted((a, b) for a, b, new in edits if new == b"" and b > a)
+    xs = [x for x, _ in dels]
+    top, m = [], -1                                      # top[i] = dels[:i+1] 의 가장 큰 끝. 고침마다 전부 훑으면 큰 보고서에서 수십 초가 걸렸다(2026-11-07)
+    for _, y in dels:
+        m = max(m, y)
+        top.append(m)
     out, seen = [], set()
     for a, b, new in sorted(edits, key=lambda x: (x[0], -(x[1] - x[0]))):
-        if a == b:                                       # 넣기: 지운 구간의 가장자리면 남기고, 한가운데면 버린다
-            inside = any(x < a < y for x, y in dels)
-        else:
-            inside = any(x <= a and b <= y and (x, y) != (a, b) for x, y in dels) or any(x < a < y for x, y in dels)
+        i = bisect.bisect_left(xs, a)
+        inside = i > 0 and top[i - 1] > a                # 시작이 a 앞이고 a 를 넘어가는 지운 구간(x < a < y, 그리고 a < b 면 x < a ≤ b ≤ y 도 여기에 든다)
+        if not inside and a != b:                        # 넣기는 지운 구간의 가장자리면 남긴다. 같은 시작에서 더 긴 지운 구간이 있으면 버린다
+            j = bisect.bisect_right(xs, a)
+            inside = any(y > b for _, y in dels[i:j])
         if inside or (a, b, new) in seen:
             continue
         seen.add((a, b, new))

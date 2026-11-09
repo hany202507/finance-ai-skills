@@ -295,7 +295,7 @@ def build(doc: Doc, checks: list, pdoc: Doc | None = None, m=None, old_checks: l
         from . import dsd_fix, dsd_text
 
         summary["문장"] = dsd_text.summary(text)
-        # AI 가 엔진 지적과 같은 곳에 다른 안을 적은 S번호(11-04 채널코퍼레이션 S209: 엔진 「김재홍 → 최시원」, AI 「주주 이름이라 고치지 않는다」).
+        # AI 가 엔진 지적과 같은 곳에 다른 안을 적은 S번호(11-04 한 회사 S209: 엔진 「옛 대표이사 이름 → 새 대표이사 이름」, AI 「주주 이름이라 고치지 않는다」).
         # 두 안이 엇갈리면 엔진 줄에는 단추를 내지 않는다. 회계사가 둘을 견줘 보고 정한다
         disputed = {x.get("seg") for x in text.get("ai", []) if x.get("rule") == "AI(엔진과 같은 곳)"}
         for x in text.get("engine", []) + [x for x in text.get("ai", []) if not x.get("same_as_engine")]:

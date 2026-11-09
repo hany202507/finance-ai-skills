@@ -752,16 +752,12 @@ def sentence_table(p: Part) -> Table | None:
 
 def read_grid(path: Path) -> Doc:
     """dsd(zip) 또는 OpenDART 원문 xml 을 읽는다."""
+    from . import dsd_breaks
+
     path = Path(path)
     raw = path.read_bytes()
-    if path.suffix.lower() == ".xml":
-        root = ET.fromstring(dsd.lenient_xml(raw))
-    else:
-        with zipfile.ZipFile(path) as z:
-            name = next((n for n in z.namelist() if n.lower().endswith("contents.xml")), None)
-            if name is None:
-                raise ValueError(f"dsd 안에 contents.xml 이 없습니다: {path}")
-            root = ET.fromstring(z.read(name))
+    contents, _ = dsd_breaks.prepare(path)            # 공시 화면 줄바꿈 되살리기 · SPAN 줄 정리(2026-11-08 D1)
+    root = ET.fromstring(contents)
     r = _GridReader()
     body = root.find("BODY")
     if body is not None:
@@ -785,7 +781,7 @@ def _code_sig() -> str:
     global _SIG
     if _SIG is None:
         h = hashlib.sha256(sys.version.encode())
-        for f in (Path(__file__), Path(dsd.__file__), Path(__file__).with_name("base.py")):
+        for f in (Path(__file__), Path(dsd.__file__), Path(__file__).with_name("base.py"), Path(__file__).with_name("dsd_breaks.py")):
             h.update(f.read_bytes())
         _SIG = h.hexdigest()[:12]
     return _SIG
@@ -800,7 +796,9 @@ def read_cached(path: Path, cache: Path | None) -> Doc:
     path = Path(path)
     if cache is None:
         return read_grid(path)
-    sha, sig = hashlib.sha256(path.read_bytes()).hexdigest(), _code_sig()
+    from . import dsd_breaks
+
+    sha, sig = hashlib.sha256(dsd_breaks.signature(path)).hexdigest(), _code_sig()
     p = Path(cache) / f"{sha}-{sig}.pkl"
     if p.exists():
         try:
