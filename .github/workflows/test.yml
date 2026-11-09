@@ -45,6 +45,7 @@ jobs:
           - 법령검토
           - 양도소득세
           - 분개테스트
+          - 표본sampling
     runs-on: ${{ matrix.os }}
     defaults:
       run:
