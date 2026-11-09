@@ -26,7 +26,28 @@ from . import common
 from .common import ask, won
 
 
+_MEMO: dict = {}
+
+
+def _memo(fn, x: common.Line, group: dict) -> bool:
+    """계정 묶음 판정은 줄의 (코드, 이름) 과 묶음만으로 정해진다. 같은 짝은 한 번만 계산한다(2026-11-09: 37만 줄 분개장에서
+    _in · _hit 이 실행 시간의 3분의 1). 묶음은 id 로 찾고 객체가 같은지 다시 본다(다른 run 에서 id 가 다시 쓰여도 틀리지 않게)."""
+    k = (fn, id(group), x.code, x.name)
+    e = _MEMO.get(k)
+    if e is not None and e[0] is group:
+        return e[1]
+    r = fn(x, group)
+    if len(_MEMO) > 200_000:
+        _MEMO.clear()
+    _MEMO[k] = (group, r)
+    return r
+
+
 def _in(x: common.Line, group: dict) -> bool:
+    return _memo(_in_raw, x, group)
+
+
+def _in_raw(x: common.Line, group: dict) -> bool:
     """줄 하나가 계정 묶음에 드는지(2026-10-21). 코드가 있으면 코드 범위로, 코드가 없으면 계정명 낱말로 본다.
     except 낱말이 든 계정명은 낱말 판정에서 뺀다(「매출」 묶음에서 외상매출금 · 매출원가를 뺀다). 다만 unless 낱말이 들면 except 를 넘어 넣는다
     (손익 묶음의 「대손충당금환입」 · 「충당부채전입액」).
@@ -122,6 +143,10 @@ WEEKDAYS = "월화수목금토일"
 
 
 def _hit(x: common.Line, group: dict) -> bool:
+    return _memo(_hit_raw, x, group)
+
+
+def _hit_raw(x: common.Line, group: dict) -> bool:
     """줄 하나가 계정 묶음에 드는지: 코드 범위 · 이름 낱말 · 이름 전체 가운데 하나라도 맞으면 든다(R9 결산조정 유형)."""
     if x.code is not None and common.in_ranges(x.code, group.get("ranges", [])):
         return True
@@ -978,6 +1003,130 @@ def run(d: Path, mat: dict | None = None) -> dict:
     else:
         for k in ("late_entry", "off_hours"):
             tests[k]["note"] = "분개장에 입력일시 열이 없어 시험하지 못했습니다. 회사 전산에서 입력일시가 든 분개장을 받아 주십시오"
+
+    # ---- 2026-11-09 4단계 추가 시험(검토 문서 4.4, 감사기준서 240 A44 · 315 A161 · ICAI 실무 접근)
+    def floor_of(t: dict) -> float:
+        """금액 하한: 수행중요성 × ratio, 수행중요성이 없으면 min_amount."""
+        return pm * t.get("ratio", 0.1) if pm else t.get("min_amount", 10_000_000)
+
+    def floor_note(t: dict) -> str:
+        return f"금액 하한 {won(floor_of(t))}" + (f" (수행중요성 × {t.get('ratio', 0.1)})" if pm else " (수행중요성이 없어 min_amount)")
+
+    # 승인 한도 바로 아래 금액
+    t = tests.get("below_limit")
+    if t is not None:
+        limits = sorted(float(x) for x in (t.get("limits") or []) if x)
+        if not limits:
+            t["note"] = "jet.yaml below_limit.limits 에 회사 전결 규정의 승인 한도가 없어 시험하지 않았습니다. 한도를 넣으면 돕니다"
+        else:
+            band = t.get("band", 0.9)
+            groups: dict[tuple, list] = defaultdict(list)
+            for v in cur:
+                lim = next((x for x in limits if x * band <= v.amount < x), None)
+                if lim is None:
+                    continue
+                who = (meta.get(id(v)) or {}).get("user") or ", ".join(v.parties) or "(작성자 · 거래처 없음)"
+                groups[(lim, who)].append(v)
+            for (lim, who), vs in groups.items():
+                if len(vs) < t.get("min_count", 2):
+                    continue
+                for v in vs:
+                    hit("below_limit", v, f"한도 {won(lim)} 의 {v.amount / lim:.0%} · {who} 에 이 구간 {len(vs)}건")
+            t["note"] = f"한도 {', '.join(won(x) for x in limits)} · {band:.0%} 이상 한도 미만 · 같은 작성자(없으면 거래처) {t.get('min_count', 2)}건 이상"
+
+    # 결산일 근처 가계정 정리
+    t = tests.get("suspense")
+    if t is not None and "suspense" in acc:
+        cut = floor_of(t)
+        start = end - timedelta(days=t.get("days", 15))
+        for v in cur:
+            if not (start < v.date <= end) or v.amount < cut:
+                continue
+            sus = [x for x in v.lines if _in(x, acc["suspense"])]
+            clears = [x for x in sus if (x.dr if "가수" in (x.name or "") else x.cr) > 0]
+            others = [x for x in v.lines if x not in sus and not _in(x, acc["cash"])]
+            if clears and others:
+                names = ", ".join(sorted({x.name or str(x.code) for x in clears}))
+                to = ", ".join(sorted({x.name or str(x.code) for x in others}))[:60]
+                hit("suspense", v, f"결산일 전 {(end - v.date).days}일, {names} 을 {to} 로 대체")
+        t["note"] = floor_note(t)
+
+    # 추정 계정의 기말 조정 · 환입
+    t = tests.get("estimate")
+    if t is not None and "estimates" in acc:
+        cut = floor_of(t)
+        for v in cur:
+            if v.amount < cut:
+                continue
+            est = [x for x in v.lines if _in(x, acc["estimates"])]
+            if not est:
+                continue
+            why = []
+            if v.date.year == end.year and v.date.month == end.month:
+                why.append("결산월 " + ", ".join(sorted({x.name or str(x.code) for x in est})))
+            back = sorted({x.name for x in est if x.name and "환입" in x.name})
+            if back:
+                why.append("환입 " + ", ".join(back))
+            if why:
+                hit("estimate", v, " · ".join(why))
+        t["note"] = floor_note(t)
+
+    # 결산일 근처 매출의 기말 후 회수 없음
+    t = tests.get("no_collection")
+    if t is not None:
+        if not post:
+            t["note"] = "결산일 후 분개장이 없어 시험하지 못했습니다. 기말 후 2개월 분개장을 받아 주십시오"
+        else:
+            cut = floor_of(t)
+            start = end - timedelta(days=t.get("days", 15))
+            paid = {x.party for v in post for x in v.lines if x.party and x.cr > 0 and _in(x, acc["receivable"])}
+            no_party = 0
+            for v in cur:
+                if not (start < v.date <= end) or v.amount < cut:
+                    continue
+                ar = [x for x in v.lines if x.dr > 0 and _in(x, acc["receivable"])]
+                if not ar or not any(x.cr > 0 and _in(x, acc["revenue"]) for x in v.lines):
+                    continue
+                ps = sorted({x.party for x in ar if x.party})
+                if not ps:
+                    no_party += 1
+                    continue
+                left = [p for p in ps if p not in paid]
+                if left:
+                    hit("no_collection", v, f"결산일 전 {(end - v.date).days}일 외상 매출 · 기말 후 분개장에 {', '.join(left)} 매출채권 대변 없음")
+            t["note"] = floor_note(t) + (f". 거래처가 빈 외상 매출 {no_party}건은 보지 못했습니다" if no_party else "")
+
+    # 현금 · 채권 · 채무 없이 이익을 늘린 전표(기간 전체)
+    t = tests.get("noncash_profit")
+    if t is not None:
+        cut = floor_of(t)
+        money = [acc[g] for g in ("cash", "receivable", "payable", "other_payable") if g in acc]
+        for v in cur:
+            if v.amount < cut:
+                continue
+            e = _pnl(v, acc, pl_names)
+            if e >= cut and not any(_in(x, g) for x in v.lines for g in money):
+                hit("noncash_profit", v, f"이익 +{won(e)}, 상대 계정 {v.label('dr') if e > 0 else v.label('cr')}")
+        t["note"] = floor_note(t)
+
+    # 드물게 쓰는 계정
+    t = tests.get("rare_account")
+    if t is not None:
+        uses: dict[str, set] = defaultdict(set)
+        for v in cur:
+            for x in v.lines:
+                k = x.code or common.reader._norm(x.name or "")
+                if k:
+                    uses[k].add(id(v))
+        rare = {k for k, s in uses.items() if len(s) <= t.get("max_count", 3)}
+        low = float(mat.get("trivial") or 0) or t.get("min_amount", 1_000_000)
+        for v in cur:
+            if v.amount < low:
+                continue
+            ks = sorted({x.name or str(x.code) for x in v.lines if (x.code or common.reader._norm(x.name or "")) in rare})
+            if ks:
+                hit("rare_account", v, f"당기 {t.get('max_count', 3)}건 이하로 쓴 계정: {', '.join(ks)}")
+        t["note"] = f"계정 {len(rare)}개가 당기 {t.get('max_count', 3)}건 이하 · 금액 하한 {won(low)}"
 
     # 모집단 분석: 첫 자리 분포 · 월별
     an = spec.get("analyses") or {}

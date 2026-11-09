@@ -21,6 +21,10 @@ accounts:
   # 구독 매출 회사에서 「매출 상대 계정이 매출채권 · 현금이 아님」 규칙에 달마다 걸려 드문 조합의 대부분이 되던 것을 뺀다(가상 회사 세트 약 140건)
   advances: {ranges: [[259, 259]], names: [선수금, 선수수익, 계약부채]}
   asset: {ranges: [[101, 250]]}
+  # 2026-11-09 4단계 추가. 매입채무 · 미지급금(현금 없이 이익을 늘린 전표의 「채무」), 가계정, 추정 계정
+  payable: {ranges: [[251, 253]], names: [외상매입금, 매입채무, 지급어음, 미지급금]}
+  suspense: {ranges: [[134, 134], [257, 257]], names: [가지급금, 가수금, 미결산, 가계정, 전도금, 임시계정], any: true}
+  estimates: {names: [충당금, 충당부채, 대손상각, 평가손실, 평가이익, 손상차손, 재고자산평가], any: true}
   expense: {ranges: [[451, 899], [951, 999]]}
   # 2026-10-21 추가. 손익 효과는 매출 · 매출원가(401~499)와 판관비 · 영업외 · 법인세(801~999)로 센다. 제조원가(501~799)는 재고로 가므로 뺀다.
   # 코드가 없는 줄만 names 로 찾고 except 낱말이 든 계정명(외상매출금 · 선급비용 · 이익잉여금 등)은 뺀다
@@ -56,7 +60,7 @@ entry_columns:
 # 점수 = 걸린 시험의 weight 합 + 금액 점수. 필수 검토(review: required) 시험에 하나라도 걸린 전표만 고른다.
 selection:
   # 이 시험에 걸린 전표는 점수와 상관없이 전부 본다(기말 · 결산 후 · 경영진 무시 위험이 가장 직접적인 시험, 240 A45)
-  all_tests: [post_ye_reversal, near_ye_large, profit_up, manual_adjust, self_approval, late_entry]
+  all_tests: [post_ye_reversal, near_ye_large, profit_up, manual_adjust, self_approval, late_entry, no_collection]
   all_min: trivial      # 위 시험이라도 이 금액 미만이면 점수 순으로 넘긴다. trivial(명백히 사소한 금액) | 숫자 | 0
   top_n: 25             # 나머지는 점수 높은 순으로 이만큼. 같은 반복 묶음에서는 한 건만 고른다
   amount_points: [[1.0, 2], [0.5, 1]]   # 금액 ÷ 수행중요성이 1 이상이면 +2, 0.5 이상이면 +1
@@ -192,6 +196,52 @@ tests:
     multiple: 10
     ratio: 0.5
     min_amount: 10000000
+    review: optional
+    weight: 1
+  # 2026-11-09 4단계 추가(docs/specs/2026-11-09-감사-JET-속도-시나리오-검토.md 4.4). 감사기준서 240 A44 · 315 A161 · ICAI 실무 접근
+  - id: below_limit
+    title: 승인 한도 바로 아래 금액
+    condition: 전표 금액이 회사 승인 한도(limits)의 band 배 이상 한도 미만이고, 같은 작성자(작성자 열이 없으면 거래처)에 이런 전표가 min_count 건 이상 몰린 것. limits 가 비면 시험하지 않는다
+    limits: []            # 회사 전결 규정의 승인 한도(원). 예: [10000000, 50000000]
+    band: 0.9
+    min_count: 2
+    review: required
+    weight: 2
+  - id: suspense
+    title: 결산일 근처 가계정 정리
+    condition: 결산일 전 days 일부터 결산일까지 가지급금 · 미결산 · 가계정 · 전도금(대변) 또는 가수금(차변)을 현금 · 예금이 아닌 계정으로 대체한 전표로 금액이 수행중요성 × ratio 이상(수행중요성이 없으면 min_amount)
+    days: 15
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: estimate
+    title: 추정 계정의 기말 조정 · 환입
+    condition: 결산월에 충당금 · 충당부채 · 대손상각 · 평가손익 · 손상차손 계정을 쓴 전표, 또는 기간 중 그 계정을 환입한 전표로 금액이 수행중요성 × ratio 이상(수행중요성이 없으면 min_amount)
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: no_collection
+    title: 결산일 근처 매출의 기말 후 회수 없음
+    condition: 결산일 전 days 일 안의 외상 매출(차변 매출채권 · 대변 매출)로 금액이 수행중요성 × ratio 이상인데 기말 후 분개장에 그 거래처의 매출채권 대변(회수 · 취소)이 없는 전표. 기말 후 분개장과 거래처 열이 있어야 돈다
+    days: 15
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 3
+  - id: noncash_profit
+    title: 현금 · 채권 · 채무 없이 이익을 늘린 전표
+    condition: 기간 전체에서 손익 효과(이익 증가)가 수행중요성 × ratio 이상인데 현금 · 예금 · 매출채권 · 매입채무 · 미지급금 줄이 없는 전표(재무상태표 계정과 손익만 맞바꾼 조정, 감사기준서 315 A161). 결산일 근처는 「결산일 근처 이익을 늘린 전표」 도 본다
+    ratio: 0.5
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: rare_account
+    title: 드물게 쓰는 계정
+    condition: 당기 전표 max_count 건 이하에만 나온 계정을 쓴 전표로 금액이 명백히 사소한 금액 이상(없으면 min_amount)
+    max_count: 3
+    min_amount: 1000000
     review: optional
     weight: 1
   # 아래 넷은 분개장에 작성자 · 승인자 · 입력일시 열(entry_columns)이 있을 때만 돈다
