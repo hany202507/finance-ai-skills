@@ -309,9 +309,16 @@ def _reading_blocks(doc: Doc, defs: dict | None = None, checks: list[Check] | No
         out.append("표 아래 「후보 P0001」 줄은 엔진이 위치 · 이름 · XBRL 코드로 낸 연결 후보다(금액은 보지 않았다). 판정을 적지 않은 후보는 그대로 연결로 들어간다. "
                    "틀린 후보만 연결.json 의 proposals 에 번호로 X(이유) · 고침을 적는다.")
     found = {s["table"]: s for s in (defs or {}).get("structures", [])}
+    sure = [x for x in proposals or [] if x.get("tier") == "확정"]
+    if sure:
+        out.append(f"엔진 확정 연결 {len(sure)}개(변동표 기초 = 전기 기말 · 같은 주석 표의 같은 과목 장부금액 · 자본변동표 열 · 주당이익 · 자본금 계산식, 공시 원문에서 98% 안팎이 맞는 규칙)는 "
+                   "읽기 자료에 싣지 않았다. 판정 없이 연결로 들어가고, 금액이 다르면 FALSE 로 나온다. "
+                   "「엔진이 모두 확인한 표」 는 칸마다 엔진 합계나 확정 연결이 걸려 맞는 표라 칸을 적지 않았다.")
+    done = _done_tables(doc, checks, sure, proposals) if checks is not None else set()
     by_table: dict[str, list] = {}
     for x in proposals or []:
-        by_table.setdefault(x["left"]["table"], []).append(x)
+        if x.get("tier") != "확정":
+            by_table.setdefault(x["left"]["table"], []).append(x)
     lost: dict[str, list] = {}
     for x in (unchecked_totals(doc, checks, defs) if checks is not None else []):
         lost.setdefault(x["table"], []).append(f"{'줄' if x['what'] == '합계 줄' else '열'} {x.get('at', '')} 「{x.get('row', x.get('col'))}」({', '.join(x.get('cells', []))})"
@@ -334,6 +341,11 @@ def _reading_blocks(doc: Doc, defs: dict | None = None, checks: list[Check] | No
                            + (f" · 첫 줄 「{labels[0]}」 · 끝 줄 「{labels[-1]}」" if labels else "") + ". 맞춰 볼 금액이 없어 칸을 적지 않았다")
                 if t.id in lost and extras:
                     out.append("합계 구조를 찾지 못한 곳: " + ", ".join(lost[t.id]))
+                continue
+            if t.id in done:                          # 칸마다 엔진 합계 · 확정 연결이 걸려 맞는 주석 표(2026-11-09)
+                labels = _labels(t)
+                out.append(f"\n[{t.id}] 엔진이 모두 확인한 표. 줄 {len(t.rows)}개 · 열 {' · '.join(h for h in t.header if h.strip())}"
+                           + (f" · 첫 줄 「{labels[0]}」 · 끝 줄 「{labels[-1]}」" if labels else ""))
                 continue
             pre = col_prefix(t.header)
             out.append(f"\n[{t.id}] 단위 {t.unit}" + (f" · 줄 이름: 앞의 {_label_cols(t)}칸" if t.labels else "")
@@ -360,6 +372,43 @@ def _reading_blocks(doc: Doc, defs: dict | None = None, checks: list[Check] | No
     return head, blocks
 
 
+def _done_tables(doc: Doc, checks: list[Check], sure: list[dict], proposals: list[dict] | None) -> set[str]:
+    """엔진이 모두 확인한 주석 표: 금액 칸마다 맞는 엔진 검증(합계 · 규칙)이나 확정 연결이 걸려 있고, 맞지 않는 검증 · 판정할 후보가 없는 표."""
+    from .dsd_links import _resolve
+
+    good, bad = set(), set()
+    for c in checks:                                 # AI 가 적은 검증이 걸린 표는 줄이지 않는다(AI 가 자기 합계 구조를 다시 본다)
+        for e in [(c.table, c.r, c.c)] + [(x[0], x[1], x[2]) for x in c.terms]:
+            (good if c.ok and c.source != "AI" else bad).add(e)
+    for x in sure:
+        for d in [x["left"]] + x["right"]:
+            g = _resolve(doc, _ref_of(doc, d), None)
+            if g is not None:
+                good.add((g[0].id, g[1], g[2]))
+    busy = {e[0] for e in bad} | {d["table"] for x in proposals or [] if x.get("tier") != "확정" for d in [x["left"]] + x["right"]}
+    # 재무제표 과목이 가리키는데 아직 연결도 후보도 없는 주석은 줄이지 않는다(AI 가 그 주석 표에서 이을 칸을 찾는다)
+    tied = {(e[0], e[1]) for e in good | bad}
+    for x in proposals or []:
+        for d in [x["left"]] + x["right"]:
+            g = _resolve(doc, _ref_of(doc, d), None)
+            if g is not None:
+                tied.add((g[0].id, g[1]))
+    open_notes = set()
+    for name in STATEMENTS:
+        ft = doc.table(name)
+        for r, refs in enumerate((ft.refs or []) if ft is not None else []):
+            if refs and (ft.id, r) not in tied:
+                open_notes |= {f"주석{n}" for n in refs}
+    out = set()
+    for t in doc.tables():
+        if not t.id.startswith("주석") or t.kind or t.id in busy or doc.part_of(t.id).key in open_notes:
+            continue
+        cells = [(i, j) for i in range(len(t.rows)) for j in range(1, len(t.header)) if _isnum(t.nums[i][j]) and not t.rate(i, j)]
+        if cells and all((t.id, i, j) in good for i, j in cells):
+            out.add(t.id)
+    return out
+
+
 def _cell_text(d: dict) -> str:
     return f"{d['table']} 「{d['row']}」{'#' + str(d['row_nth']) if d.get('row_nth', 1) != 1 else ''} · 「{d['col']}」{'#' + str(d['col_nth']) if d.get('col_nth', 1) != 1 else ''}"
 
@@ -372,6 +421,8 @@ def proposal_text(x: dict) -> str:
     else:
         right = " + ".join(f"{'-' if y.get('sign', 1) < 0 else ''}{_cell_text(y)}" for y in x["right"]) if len(x["right"]) > 1 \
             else f"{'-' if r.get('sign', 1) < 0 else ''}{_cell_text(r)}"
+    if x.get("expr"):
+        right = x["expr"].format(*[_cell_text(y) for y in x["right"]])
     return (f"{_cell_text(x['left'])} = {right} [{x['how']}"
             + (f" · {x['grade']}" if x.get("grade") != "항등식" else "") + (f" · 조건: {x['when']}" if x.get("when") else "") + "]")
 
@@ -476,7 +527,7 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
         for pid in _ids(spec):
             x = take(pid, "O")
             if x is not None:
-                links.append({k: x[k] for k in ("left", "right", "grade", "when") if k in x} | {"basis": x["basis"] + " (엔진 후보)", "via": pid})
+                links.append({k: x[k] for k in ("left", "right", "grade", "when", "expr") if k in x} | {"basis": x["basis"] + " (엔진 후보)", "via": pid})
     xs = got.get("X") or {}
     xs = xs if isinstance(xs, dict) else {str(e.get("id")): e.get("why", "") for e in xs if isinstance(e, dict)}
     for spec, why in xs.items():
@@ -491,7 +542,7 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
         x = take(str((e or {}).get("id", "")), "고침") if isinstance(e, dict) else None
         if x is None:
             continue
-        y = {k: x[k] for k in ("left", "right", "grade", "when") if k in x}
+        y = {k: x[k] for k in ("left", "right", "grade", "when", "expr") if k in x}
         y.update({k: v for k, v in e.items() if k != "id"})
         if "grade" in e and "when" not in e and e["grade"] != "조건부":
             y.pop("when", None)
@@ -506,9 +557,16 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
         if old and old != "기본":
             continue
         marks[pid] = "기본"
-        links.append({k: x[k] for k in ("left", "right", "grade", "when") if k in x} | {"basis": x["basis"] + " (엔진 후보, 판정 없이 넣음)", "via": pid})
+        links.append({k: x[k] for k in ("left", "right", "grade", "when", "expr") if k in x} | {"basis": x["basis"] + " (엔진 후보, 판정 없이 넣음)", "via": pid})
+    calcs = []
+    for y in [y for y in links if y.get("expr")]:   # 계산식 후보(주당이익 · 자본금)는 계산 검증으로 넣는다. 항 자리 {0} {1} → 이름 a b
+        links.remove(y)
+        names = [chr(ord("a") + k) for k in range(len(y["right"]))]
+        calcs.append({"left": y["left"], "expr": y["expr"].format(*names), "vars": dict(zip(names, y["right"])), "basis": y["basis"], "via": y.get("via")}
+                     | {k: y[k] for k in ("grade", "when") if k in y})
     out = {k: v for k, v in patch.items() if k != "proposals"}
     out["links"] = list(patch.get("links", [])) + links
+    out["calcs"] = list(patch.get("calcs", [])) + calcs
     out["skipped"] = list(patch.get("skipped", [])) + skipped
     return out, problems, {_psig(doc, props[pid]): v for pid, v in marks.items() if pid in props}      # 장부에만 있는 후보는 서명을 남기지 않는다
 
@@ -894,6 +952,7 @@ def apply(doc: Doc, defs: dict, patch: dict, add: bool = False, book: dict | Non
             continue
         seen.add(lid)
         new.append({"id": lid, "left": left, "right": rights, "expr": expr, "source": "AI", "basis": str(x.get("basis", "")).strip(), "confirmed": False,
+                    **({"via": str(x["via"])} if x.get("via") else {}),
                     **({"tol": float(x["tol"])} if x.get("tol") is not None else {}),
                     **({"grade": str(x["grade"]).strip()} if str(x.get("grade") or "").strip() in GRADES else {}),
                     **({"when": str(x["when"]).strip()} if str(x.get("when") or "").strip() else {})})

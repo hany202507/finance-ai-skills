@@ -143,6 +143,9 @@ def _fs_periods(t: Table) -> dict:
         if got:
             out[j] = got.most_common(1)[0][0]
             continue
+        if not flow and re.search(r"전기\s*초|전전기\s*말", norm(t.header[j])):      # 재작성한 재무상태표의 「제 31기 전기초」 열(2026-11-09)
+            out[j] = "PP.e"
+            continue
         if j in terms:
             rel = "C" if terms[j] == top else "P"
         elif j == a:
@@ -296,6 +299,12 @@ def _text(t: Table, i: int, j: int) -> str:
     return f"{t.id} 「{_labels(t)[i]}」 · 「{t.header[j] or str(j + 1) + '번째 열'}」"
 
 
+# 확정 규칙(2026-11-09 레퍼 규칙 엔진화): 공시 원문에 판정 없이 넣었을 때 금액이 98% 넘게 맞는 근거. AI 읽기 자료에 싣지 않고 바로 연결로 넣는다.
+# 공개 원문 200건: 변동표 98.3% · 같은 주석 표 98.4% · 자본변동표 97.9% · 계산식 100%. 재무제표끼리 97.9% · 변동표 과목 97.6% 는 기준에 조금 못 미쳐
+# 후보로 두고, 이름 · 주석 열 · 자본변동표 총포괄 · 현금흐름 조정(조건부)도 후보다.
+CONFIRMED = {"변동표", "같은 주석 표", "자본변동표", "계산식"}
+
+
 def proposals(doc: Doc) -> list[dict]:
     """연결 후보 목록. [{id, how, left, right, grade, basis, (when)}]. 금액은 보지 않는다."""
     from . import dsd_links
@@ -313,8 +322,8 @@ def proposals(doc: Doc) -> list[dict]:
     def add(how, left, right, basis, grade="항등식", when=None, sign=1):
         lt, li, lj = left
         rt, ri, rj = right
-        if lt.id == rt.id or not _isnum(lt.nums[li][lj]) or not _isnum(rt.nums[ri][rj]):
-            return
+        if (lt.id == rt.id and how != "변동표") or not _isnum(lt.nums[li][lj]) or not _isnum(rt.nums[ri][rj]):
+            return                                        # 같은 표 안은 「당기 열 기초 = 전기 열 기말」 만(2026-11-09, 그 전에는 막혀 하나도 나오지 않았다)
         key = frozenset([(lt.id, li, lj), (rt.id, ri, rj)])
         if key in seen or key in ruled:
             return
@@ -326,6 +335,16 @@ def proposals(doc: Doc) -> list[dict]:
         if when:
             x["when"] = when
         out.append(x)
+
+    def add_calc(how, left, rights, expr, basis):
+        """계산식 후보: 왼쪽 칸 = expr(오른쪽 칸들). 항 자리는 {0} {1} …."""
+        lt, li, lj = left
+        key = ("식", (lt.id, li, lj), tuple((t.id, i, j) for t, i, j in rights))
+        if key in seen or not all(_isnum(t.nums[i][j]) for t, i, j in [left] + list(rights)):
+            return
+        seen.add(key)
+        out.append({"how": how, "left": _ref_of(lt, li, lj, fs.periods.get(lt.id)), "right": [_ref_of(t, i, j, fs.periods.get(t.id)) for t, i, j in rights],
+                    "grade": "항등식", "basis": basis, "expr": expr})
 
     def add_sum(how, left, rights, basis, grade="항등식", when=None, sum_of=None):
         """왼쪽 칸 = 오른쪽 칸들의 합. sum_of 는 읽기 자료의 한 줄 글(표 · 줄 · 열 이름 앞부분 · 칸 수)."""
@@ -345,14 +364,21 @@ def proposals(doc: Doc) -> list[dict]:
     _xbrl_props(doc, fs, add)
     _name_props(doc, fs, interim, add)
     _sce_props(doc, fs, interim, add)
+    _fs_cross_props(doc, fs, add)
     _sce_tci_props(doc, fs, add_sum)
     if not interim:
         _roll_props(doc, add)
+    _note_cells_props(doc, interim, add)
+    _move_fs_props(doc, fs, interim, add, add_sum)
     _group_props(doc, add_sum)
+    _calc_props(doc, add_calc)
     _pair_props(doc, fs, interim, add)
     _sentence_props(doc, add)
     order = {t.id: k for k, t in enumerate(doc.tables())}
     out.sort(key=lambda x: (order.get(x["left"]["table"], 0), x["left"]["row"], x["left"]["col"]))
+    for x in out:
+        if x["how"] in CONFIRMED and not x.get("when"):
+            x["tier"] = "확정"
     for k, x in enumerate(out, 1):
         x["id"] = f"P{k:04d}"
     return [{"id": x.pop("id"), **x} for x in out]
@@ -431,6 +457,16 @@ def _table_kind(t: Table, rel_word: str | None) -> bool:
     return rel_word == "말" or any(_point(h) for h in t.header[1:]) or any(_point(x) for x in _labels(t))
 
 
+_MOVE_ROW = re.compile(r"^(?:취득원가|감가상각누계액|상각누계액|손상차손누계액|정부보조금|환율변동효과|환율차이|사업결합.*증감|대체|기타|순외환차이)$")
+_CARRY_HEAD = re.compile(r"장부|순액|잔액|^말$|^기말$|^합계$|^계$|^금액$|^$")
+_OTHER_MEASURE = re.compile(r"취득|원가|누계|충당금|손상|재평가|보조금|평가손실|할인차금|명목|액면|채권액|총액")
+_RISK_INTRO = re.compile(r"위험|노출|민감도|사업결합|취득일")
+_FLOW_INTRO = re.compile(r"순손익|손익|수익|비용|발생한|인식한|인식된")
+_BAL_INTRO = re.compile(r"장부금액|잔액|말\s*현재|기말|구성|내역은\s*다음")
+_FLOW_OTHER_NOTE = re.compile(r"유형자산|무형자산|투자부동산|사용권자산|리스|퇴직|종업원급여|확정급여|부가가치")
+_INVESTEE_NOTE = re.compile(r"관계기업|종속기업|공동기업|지분법")
+
+
 def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
     """주석 표 칸 = 재무제표 과목, 주석 칸 = 다른 주석 칸.
     1) 줄의 과목 이름 = 재무제표 과목 이름(금액 열 · 합계 열에서). 2) 열 이름 = 과목 이름인 가로 표(금액 줄에서).
@@ -455,11 +491,19 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
             continue
         labels_of = period_labels(p)
         tables = [x[1] for x in p.items if x[0] == "t" and not x[1].kind]
+        intro = _intros(p)
+        title = _plain(p.title)
         for t in tables:
             if _skip_note(doc, t):
                 continue
+            if _SUBSET_WORDS.search(intro.get(t.id, "")):
+                continue                                  # 담보 · 사용제한 · 운휴 자산 표는 일부 금액이다(공시 원문 76% 다름, 2026-11-09)
             rel = _rel_word(labels_of.get(t.id, "") or t.caption)
+            rel2 = _table_rel(labels_of.get(t.id, ""), t.caption)
             subjects = {s for s in (_subject(p.title), _subject(t.caption), _subject(labels_of.get(t.id, ""))) if len(s) >= 2}
+            said = intro.get(t.id, "") + " " + norm(str(t.caption or ""))
+            has_carry = any(_CARRY_HEAD.search(_measure(h)) for h in t.header[1:])
+            not_bal = bool(_RISK_INTRO.search(said)) or (bool(_FLOW_INTRO.search(said)) and not _BAL_INTRO.search(said))
             pointed = refs.get(p.key, set())
             labels = _labels(t)
             cols = [j for j in range(1, len(t.header)) if any(_isnum(r[j]) for r in t.nums) and not is_rate(t.header[j])]
@@ -471,10 +515,30 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
 
             adj = _cf_adjust(doc, p.key, cf_refs)
 
-            def link(i, j, lt, li, how, basis, flow, t=t, rel=rel, adj=adj):
-                per = note_period(doc, t, i, j, flow, interim, rel)
+            def link(i, j, lt, li, how, basis, flow, t=t, rel=rel, rel2=rel2, adj=adj, has_carry=has_carry, not_bal=not_bal):
+                fname = _fs_name(_labels(lt)[li])
+                head = norm(str(t.header[j] or ""))
+                if "소계" in norm(_labels(t)[i]):
+                    return False                          # 소계 줄은 일부다(공시 원문 86% 다름)
+                if not flow:                              # 재무상태표 과목(2026-11-09 지난 실행 AI 의 X 이유를 규칙으로)
+                    if adj or not_bal:
+                        return False                      # 현금흐름 조정 · 범주별 순손익 · 리스 손익 · 사업결합(취득일) · 신용위험 노출 표는 잔액이 아니다
+                    if "수량" in head or (has_carry and _OTHER_MEASURE.search(_measure(head)) and not _CARRY_HEAD.search(_measure(head))):
+                        return False                      # 장부금액 열이 있는 표의 취득원가 · 누계액 · 충당금 열, 수량 열
+                    if (re.search(r"단기|유동", fname) and "비유동" not in fname and "비유동" in head) or \
+                            (re.search(r"장기|비유동", fname) and re.search(r"(?<!비)유동", head) and "비유동" not in head):
+                        return False                      # 유동 과목 ↔ 비유동 열, 비유동 과목 ↔ 유동 열
+                if flow and _FLOW_OTHER_NOTE.search(title):
+                    return False                          # 손익 과목 ↔ 유형자산 · 퇴직급여 · 부가가치 주석: 제조원가 몫이 섞인다(85% 다름)
+                if _INVESTEE_NOTE.search(title) and not re.search(r"투자|지분법", fname):
+                    return False                          # 관계기업 주석의 「자본총계」 「당기순이익」 은 피투자회사 금액이다
+                crel = next((r for r in (_rel_last(t.header[j]), _rel_last(_labels(t)[i]), rel2) if r[0]), None)
+                # 표의 기간은 표 앞 글 마지막 문장 뒤로 정한다(첫 낱말로 정하면 「(*) 당기 중 … ② 전기」 를 당기로 읽는다). 모르면 옛 방식
+                per = note_period(doc, t, i, j, flow, interim, crel if crel and crel[1] != "초" else rel)
                 hit = fs.cell(lt, li, per) if per else None
-                if hit and adj and not lt.id.startswith("현금흐름표"):      # 현금흐름 조정 내역 = 손익 과목: 조건부, 수익 · 이익은 부호 반대
+                if hit and adj and fname in ("당기순이익", "당기순손익") and not lt.id.startswith("현금흐름표"):
+                    add(how, (t, i, j), hit, basis)       # 현금흐름 조정 내역의 당기순이익은 더하는 줄이라 손익계산서와 같은 부호다(AI 가 매번 고쳤다)
+                elif hit and adj and not lt.id.startswith("현금흐름표"):      # 현금흐름 조정 내역 = 손익 과목: 조건부, 수익 · 이익은 부호 반대
                     add(how, (t, i, j), hit, basis, grade="조건부", when=CF_ADJ_WHEN, sign=_adjust_sign(_fs_name(_labels(lt)[li])))
                 elif hit:
                     add(how, (t, i, j), hit, basis)
@@ -509,7 +573,7 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
                 if j in vcols:
                     continue
                 name = _row_name(str(t.header[j])[len(head):] if head else t.header[j])
-                for flow in (False, True):
+                for flow in ((False, True) if name in pointed else (False,)):      # 손익 · 현금흐름 과목은 그 주석을 가리킬 때만 가로 표 열로 잇는다(그 밖은 공시 원문 89% 다름)
                     lines = fs.lines(name, flow) if name else []
                     if len({id(lt) for lt, _ in lines}) != len(lines):
                         continue
@@ -564,6 +628,8 @@ def _name_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
         tabs = Counter(c[0].id for c in cells)
         if len(notes) < 2 or len(notes) > 3 or max(tabs.values()) > 1 or max(notes.values()) > 1:
             continue
+        if _MOVE_ROW.search(name) or any(_movement(c[0]) for c in cells) or any("성격별" in _plain(doc.part_of(c[0].id).title) for c in cells):
+            continue                                      # 변동표의 「취득원가」 「환율차이」 「손상차손」 은 주석마다 다른 자산의 변동이다. 성격별 비용 ↔ 판관비 명세는 범위가 다르다
         cells.sort(key=lambda c: order[c[0].id])
         a = cells[0]
         for c in cells[1:]:
@@ -600,6 +666,7 @@ def _sce_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
         point, rel = _point(lab), block(i)
         for j in cols:
             tail = str(t.header[j])[len(head):].strip() if head else str(t.header[j]).strip()
+            tail = _PARENT_HEAD.sub("", tail) if kinds.get(j) is None else tail      # 「지배기업지분 자본금」 → 자본금(2026-11-09 공개 연결 보고서)
             whole = not tail or total_kind(t.header[j]) == "합계"
             if has_total and kinds.get(j) == "parent":
                 # 전체 합계 열이 따로 있으면 「지배기업지분 합계」 열은 전체 합계가 아니다. 손익계산서 총액에 잇지 않고 귀속 줄에 잇는다(_sce_tci_props).
@@ -642,6 +709,130 @@ def _sce_props(doc: Doc, fs: _Fs, interim: bool, add) -> None:
                             when="자본변동표의 금액이 모두 그 기간에 현금으로 오갔다")
                     else:
                         add("자본변동표", (t, i, j), hit, f"자본변동표 「{lab}」 줄 합계 열 = {lt.id} 「{_labels(lt)[li]}」")
+
+
+_PARENT_HEAD = re.compile(r"^\s*지배\s*기업(?:의)?\s*(?:소유주\s*(?:에게\s*귀속되는\s*)?)?(?:지분|자본)?\s*")
+
+
+_CF_SPLIT = re.compile(r"감가상각비|상각비|퇴직급여|급여|이자비용|이자수익|배당금수익|법인세비용|복리후생비|주식보상비용|주식보상비")
+_CF_SKIP = re.compile(r"활동|현금흐름|합계|소계|총계|^계$|조정|가산|차감|증가|감소|순증|순감|변동|수취|지급|납부|환급|유입|유출|취득|처분$|상환|차입|발행")
+
+
+def _fs_cross_props(doc: Doc, fs: _Fs, add) -> None:
+    """재무제표끼리(2026-11-09 레퍼 규칙 3단계): 간접법 현금흐름표의 조정 줄 = 손익계산서의 같은 이름 과목(감가상각비 · 외화환산손실 ·
+    유형자산처분이익), 현금흐름표 당기순이익 = 손익계산서 당기순이익, 현금흐름표 기초 · 기말 현금 = 재무상태표 현금및현금성자산.
+    이름이 두 표에 한 번씩일 때만. 수익 · 이익은 「차감」 구역 아래면 같은 부호, 아니면 반대 부호(조정에서 뺀다)."""
+    cf = [t for t in fs.tables if t.id.startswith("현금흐름표")]
+    pl = [t for t in fs.tables if t.id.startswith(("손익계산서", "포괄손익계산서"))]
+    bs = [t for t in fs.tables if t.id.startswith("재무상태표")]
+    if not cf:
+        return
+    names = Counter()
+    for t in pl:
+        for lab in _labels(t):
+            names[_fs_name(lab)] += 1
+    for t in cf:
+        labels = _labels(t)
+        counted = Counter(_fs_name(x) for x in labels)
+        section = ""
+        for i, lab in enumerate(labels):
+            name = _fs_name(lab)
+            if re.search(r"차감|가산|조정|영업활동|투자활동|재무활동", name):
+                section = name
+            net = name in ("당기순이익", "당기순손익")
+            if len(name) < 3 or counted[name] != 1:
+                continue
+            if re.search(r"^(?:기초|기말)의?현금|현금및현금성자산의?(?:기초|기말)", name) or re.search(r"(?:기초|기말)현금및현금성자산$", name):
+                start = "기초" in name
+                for lt in bs:
+                    for li, x in enumerate(_labels(lt)):
+                        if _fs_name(x) not in ("현금및현금성자산", "현금및현금등가물"):
+                            continue
+                        for j, per in fs.periods.get(t.id, {}).items():
+                            if not _isnum(t.nums[i][j]) or per[-2:] != ".d":
+                                continue
+                            want = ({"C": "P.e", "P": "PP.e"} if start else {"C": "C.e", "P": "P.e"}).get(per[0])
+                            hit = fs.cell(lt, li, want) if want else None
+                            if hit:                   # 기초 현금은 전기 재무상태표 재작성 · 매각예정 분류로 다른 일이 있다(공시 원문 200건 기초만 2% 넘게 다름)
+                                add("재무제표끼리" if not start else "현금흐름표 기초 현금", (t, i, j), hit,
+                                    f"현금흐름표 「{lab}」 = 재무상태표 「{x}」({'기초' if start else '기말'})")
+                        break
+                continue
+            if "조정" not in section and "가산" not in section and "차감" not in section and name not in ("당기순이익", "당기순손실", "당기순손익"):
+                continue                                  # 영업활동 조정 구역 밖(투자 · 재무활동)의 같은 이름은 현금 금액이다
+            if _CF_SKIP.search(name) and name not in ("당기순이익", "당기순손실", "당기순손익"):
+                continue
+            if names[name] != 1:
+                continue
+            if not net and _CF_SPLIT.search(name):
+                continue                                  # 감가상각비 · 퇴직급여는 제조원가 몫, 이자는 현금 이자를 따로 적어 손익계산서와 자주 다르다
+            sign = 1
+            if _GAIN.search(name) and not _LOSS.search(name) and "차감" not in section and name not in ("당기순이익", "당기순손익"):
+                sign = -1                                 # 조정에서 빼는 수익 · 이익은 음수로 적는다
+            if name == "당기순손실":
+                continue                                  # 손실을 양수로 적은 손익계산서 · 음수로 적은 현금흐름표가 섞여 부호를 정할 수 없다
+            for lt in pl:
+                li = next((k for k, x in enumerate(_labels(lt)) if _fs_name(x) == name), None)
+                if li is None:
+                    continue
+                for j, per in fs.periods.get(t.id, {}).items():
+                    hit = fs.cell(lt, li, per) if _isnum(t.nums[i][j]) else None
+                    if not hit:
+                        continue
+                    if net:
+                        add("재무제표끼리", (t, i, j), hit, f"현금흐름표 「{lab}」 = {lt.id} 「{_labels(lt)[li]}」")
+                    else:                                 # 감가상각비 · 퇴직급여는 제조원가 몫이 섞여 손익계산서와 다른 일이 많다(공시 원문 120건 25% 다름)
+                        add("현금흐름 조정", (t, i, j), hit, f"현금흐름표 「{lab}」 = {lt.id} 「{_labels(lt)[li]}」(같은 이름, {section or '조정'})",
+                            grade="조건부", when="현금흐름 조정 금액이 그 손익 과목 금액 전부다(제조원가 · 다른 계정에 들어간 몫이 없다)", sign=sign)
+
+
+def _one(labels: list[str], want, avoid=None) -> int | None:
+    hit = [i for i, x in enumerate(labels) if want.search(x) and not (avoid and avoid.search(x))]
+    return hit[0] if len(hit) == 1 else None
+
+
+def _calc_props(doc: Doc, add_calc) -> None:
+    """계산식(2026-11-09 레퍼 규칙 3단계 E): 주당이익 주석의 기본주당이익 = 보통주 순이익 ÷ 가중평균유통보통주식수(같은 열),
+    자본금 주석의 자본금 = 발행주식수 × 1주 액면금액. 주식수 · 주당 금액 칸의 단위가 원 · 주(1)일 때만(표 단위 천원을 곱하면 틀린다)."""
+    for p in doc.parts:
+        if not p.key.startswith("주석"):
+            continue
+        title = _plain(p.title)
+        for x in p.items:
+            if x[0] != "t" or x[1].kind:
+                continue
+            t = x[1]
+            labels = [_plain(v) for v in _labels(t)]
+            cols = [j for j in range(1, len(t.header)) if any(_isnum(r[j]) for r in t.nums)]
+            if "주당" in title:
+                for kind, mark in (("기본", re.compile(r"희석")), ("희석", None)):
+                    if kind == "기본":
+                        eps = _one(labels, re.compile(r"^(?:기본)?주당(?:순)?(?:이익|손익|손실)$"), mark)
+                        num = _one(labels, re.compile(r"보통주.*순(?:이익|손익|손실)|순(?:이익|손익|손실).*보통주"), mark) \
+                            or _one(labels, re.compile(r"순(?:이익|손익|손실)"), re.compile(r"희석|우선주|조정|차감|가산|배당"))
+                        den = _one(labels, re.compile(r"가중평균.*주식수"), mark)
+                    else:
+                        eps = _one(labels, re.compile(r"^희석주당(?:순)?(?:이익|손익|손실)$"))
+                        num = _one(labels, re.compile(r"희석.*순(?:이익|손익|손실)|순(?:이익|손익|손실).*희석"))
+                        den = _one(labels, re.compile(r"희석.*가중평균.*주식수|가중평균.*희석.*주식수"))
+                    if None in (eps, num, den) or len({eps, num, den}) < 3:
+                        continue
+                    for j in cols:
+                        if t.unit_at(eps, j) != 1 or t.unit_at(den, j) != 1:
+                            continue                      # 주당 금액 · 주식수에 표 단위(천원)를 곱하면 틀린다
+                        add_calc("계산식", (t, eps, j), [(t, num, j), (t, den, j)], "{0} / {1}",
+                                 f"{p.key} {t.id} 「{_labels(t)[eps]}」 = 「{_labels(t)[num]}」 ÷ 「{_labels(t)[den]}」({t.header[j]})")
+            if "자본금" in title or "자본" == title[-2:]:
+                cap = _one(labels, re.compile(r"^(?:보통주)?자본금$"))
+                sh = _one(labels, re.compile(r"발행(?:한)?주식(?:의)?(?:총)?수|발행주식수"), re.compile(r"수권|할"))
+                par = _one(labels, re.compile(r"(?:1|일)?주(?:당|의)?액면(?:금액|가액|가)?$"))
+                if None in (cap, sh, par) or len({cap, sh, par}) < 3:
+                    continue
+                for j in cols:
+                    if t.unit_at(sh, j) != 1 or t.unit_at(par, j) != 1:
+                        continue
+                    add_calc("계산식", (t, cap, j), [(t, sh, j), (t, par, j)], "{0} * {1}",
+                             f"{p.key} {t.id} 「{_labels(t)[cap]}」 = 「{_labels(t)[sh]}」 × 「{_labels(t)[par]}」({t.header[j]})")
 
 
 def _sce_col(header: str) -> str | None:
@@ -755,40 +946,359 @@ def _sce_tci_props(doc: Doc, fs: _Fs, add_sum) -> None:
                     add_sum("자본변동표 총포괄", hit, [(t, i0, j)], f"포괄손익계산서 「{sl[ni]}」 의 「{sl[att[kd]]}」 = 자본변동표 「{lab}」 줄 · 「{t.header[j]}」 열")
 
 
+# 같은 주석 안 표끼리(2026-11-09 레퍼 규칙 엔진화 2단계). AI 가 손으로 쓴 연결의 39%(845/2,153)가 이 꼴이었다.
+# 같은 항목 · 같은 시점의 「장부금액 꼴」 칸은 표가 달라도 같은 금액이다(구성 표 장부금액 = 변동표 기말, 당기 변동표 기초 = 전기 변동표 기말).
+_CARRY = re.compile(r"^(?:기초|기말|기초잔액|기말잔액|기초금액|기말금액|기초장부금액|기말장부금액|기말순장부금액|기초순장부금액|장부금액|순장부금액|장부가액|순장부가액|"
+                    r"잔액|금액|합계|계|총계|말|초)?$")
+
+
+def _measure(s) -> str:
+    """칸 이름에서 기간 · 단위 · 각주를 뗀 「무엇을 잰 칸인가」(「당기말 장부금액」 → 장부금액, 「제 11 (당) 기말」 → 기말)."""
+    h = norm(str(s or ""))
+    h = re.sub(r"\(\*\d*\)|\(주\d*\)|\(단위[^)]*\)|\(당\)|\(전\)", "", h)
+    h = re.sub(r"제\s*\d+\s*기", "", h)
+    h = _REL.sub(lambda m: "말" if m.group(3) else "", h)
+    h = re.sub(r"\d{4}[.\-년]\s*\d{1,2}[.\-월]?\s*\d{0,2}일?|\d{4}년말?|\d{4}", "", h)
+    return re.sub(r"^말(?=순?장부|잔액|금액)", "", _plain(h).replace("말기말", "기말"))   # 「당기말 장부금액」 → 장부금액(「기말장부금액」 은 그대로)
+
+
+# 항목이 될 수 없는 낱말: 기간 · 측정 · 합계(「당기」 「손상차손누계액」 「적수」 를 항목으로 잡아 다른 뜻의 두 표를 이었다, 공시 원문 40건 58% 안 맞음)
+_NOT_ITEM = re.compile(r"^(?:당|전)?(?:기|반기|분기)(?:초|말)?$|원가$|누계액$|정부보조금|적수|공정가치|평가|합계|소계|총계|^계$|^기타$|장부금액|장부가액|잔액$|금액$|"
+                       r"취득|처분|상각|대체|증가|감소|전입|환입|지급|사용|설정|손상|재평가|환율|변동|기초|기말|비율|율$|수량|주식수|단가")
+_POINT_ROW = re.compile(r"^(?:기초|기말|기초잔액|기말잔액|기초장부금액|기말장부금액|기말순장부금액|기초순장부금액|장부금액|순장부금액|장부가액)$")
+# 열 이름이 시점을 말하는 칸만(「당기」 「금액」 「합계」 처럼 잔액인지 손익인지 모르는 열은 뺀다: 손익 인식 표의 「당기」 를 잔액으로 잡았다)
+_POINT_COL = re.compile(r"^(?:말|초|기초|기말|기초잔액|기말잔액|기초금액|기말금액|기초장부금액|기말장부금액|기말순장부금액|기초순장부금액|장부금액|순장부금액|장부가액|순장부가액|잔액|말잔액|말금액)$")
+
+
+_NEUTRAL_SEC = re.compile(r"^(?:유동|비유동|유동성|비유동성|금융자산|금융부채|자산|부채|당기|전기|당기말|전기말)(?:항목|자산|부채)?:?$")
+_PERIOD_HEAD = re.compile(r"제\s*\d+\s*\(?\s*(?:당|전)?\s*\)?\s*기|\d{4}|당기|전기|반기|분기")
+
+
+_REL2 = re.compile(r"(당|전)\s*\)?\s*(반기|분기|기)(말|초)?")
+# 다른 뜻의 금액을 재는 표: 표 설명에 이 낱말이 한쪽에만 있으면 잇지 않는다(대손충당금 변동표의 「매출채권」 기말은 충당금이다).
+# 열 이름이 「장부금액」 처럼 잰 것을 말하면 _MEASURE_WORDS 는 보지 않는다(「매출채권 등의 장부금액과 대손충당금의 내역」 표의 장부금액 열).
+# _SUBSET_WORDS 는 열 이름과 상관없이 일부 금액을 담은 표다(담보로 제공된 자산의 장부금액, 운휴 자산 장부금액)
+_MEASURE_WORDS = re.compile(r"충당금|손상|공정가치|차액|미실현|누계액|연령|만기|한도|약정|신용|중지|인식하지\s*(?:못|않)")
+_SUBSET_WORDS = re.compile(r"담보|질권|사용제한|제한된|운휴|유휴|중에는|보험|정부보조금")
+_DERIVED = re.compile(_MEASURE_WORDS.pattern + "|" + _SUBSET_WORDS.pattern)
+
+
+# 무엇을 쟀는지 말하지 않는 시점 이름(이 칸의 뜻은 표 앞 글이 정한다). 「장부금액」 처럼 잰 것을 말하면 표 앞 글을 보지 않는다
+_GENERIC = re.compile(r"^(?:말|초|기초|기말|기초잔액|기말잔액|기초금액|기말금액|잔액|말잔액|말금액)$")
+
+
+def _intros(part) -> dict[str, str]:
+    """표마다 그 표를 설명하는 글: 표 앞의 마지막 설명 문단(「… 다음과 같습니다」). 「(2) 전기」 처럼 기간만 적은 문단은 건너뛰어
+    당기 · 전기 두 표가 한 설명을 함께 쓴다(대손충당금 변동 「(1) 당기」 「(2) 전기」)."""
+    out, desc = {}, ""
+    for x in part.items:
+        if x[0] == "p":
+            t = norm(x[1])
+            if re.search(r"(?:다음|아래)\s*과\s*같|(?:다음|아래)와\s*같", t):
+                desc = t                                  # 「(*1) 감가상각비 중에는 운휴 … 내역은 다음과 같습니다」 는 각주여도 표 설명이다
+            elif re.match(r"\(?\*|\(?주\d*\)|※", t) or period_labels_like(t):
+                continue                                  # 각주(「(*) 당기 중 손상은 …」)와 기간만 적은 문단은 표 설명이 아니다
+            elif _HEADING.match(t):
+                desc = t                                  # 「다. 대손충당금 변동 내역」 처럼 번호를 단 제목도 표 설명이다
+            continue
+        out[x[1].id] = desc
+    return out
+
+
+_HEADING = re.compile(r"(?:[가-하]\.|\(\d+\)|\d+\)|[①-⑳]|\d+(?:-\d+)+\.?)\s*[가-힣A-Za-z]")
+
+
+def period_labels_like(t: str) -> bool:
+    return bool(re.fullmatch(r"[(<\[①-⑳\d.)\s]*(?:제\s*\d+\s*\(?\s*(?:당|전)?\s*\)?\s*기|당기|전기|당기말|전기말|당반기|전반기)[)>\]\s]*(?:\(단위[^)]*\))?", t))
+
+
+def _rel_last(text) -> tuple[str | None, str | None]:
+    """「제 52(전) 기」 「당기말」 처럼 기간을 적은 말의 (C · P, 말 · 기). 여러 개면 마지막 것."""
+    ms = list(_REL2.finditer(norm(str(text or ""))))
+    if not ms:
+        return None, None
+    m = ms[-1]
+    return ("C" if m.group(1) == "당" else "P"), (m.group(3) or m.group(2))
+
+
+def _table_rel(label: str, caption: str) -> tuple[str | None, str | None]:
+    """표의 기간: 표 바로 위 기간 문단, 아니면 표 앞 글의 마지막 문장 뒤(「… 같습니다. ② 제 52(전) 기」), 아니면 표 앞 글 전체가 한 기간만 말할 때."""
+    if label:
+        return _rel_last(label)
+    cap = norm(str(caption or ""))
+    tail = re.split(r"다\.\s*", cap)[-1]
+    if _REL2.search(tail):
+        return _rel_last(tail)
+    rels = {("C" if m.group(1) == "당" else "P") for m in _REL2.finditer(cap)}
+    return _rel_last(cap) if len(rels) == 1 else (None, None)
+
+
+def _movement(t: Table) -> bool:
+    """변동표인가: 줄이나 열에 기초와 기말이 함께 있다."""
+    for names in (_labels(t), t.header):
+        ms = {_measure(x) for x in names}
+        if any(_POINT_S.search(m) for m in ms) and any(_POINT_E.search(m) or m == "말" for m in ms):
+            return True
+    return False
+
+
+def _sections(t: Table) -> list[str]:
+    """줄마다 그 줄이 속한 구역 머리(숫자가 없는 줄, 「대손충당금:」). 유동 · 비유동처럼 과목을 가르지 않는 머리는 빈칸."""
+    out, sec = [], ""
+    labels = _labels(t)
+    for i in range(len(t.rows)):
+        if not any(_isnum(v) for v in t.nums[i][1:]):
+            name = _plain(labels[i]).rstrip(":")
+            sec = "" if not name or _NEUTRAL_SEC.match(name) else name
+        out.append(sec)
+    return out
+
+
+def _note_cells_props(doc: Doc, interim: bool, add) -> None:
+    """같은 주석의 두 표에서 같은 항목 이름 · 같은 시점의 장부금액 꼴 칸(기초 · 기말 · 장부금액 · 합계 · 금액)을 잇는다.
+    항목은 줄 이름이나 열 이름(가로 표)이고, 시점은 note_period 로 정한다(기초는 앞 기말). 표마다 그 항목 · 시점 칸이 하나일 때만 걸고,
+    주석 하나에서 그 항목 · 시점이 셋 넘게 나오면 뜻이 갈린 것으로 보고 걸지 않는다. 금액은 보지 않는다."""
+    for p in doc.parts:
+        if not p.key.startswith("주석"):
+            continue
+        labels_of = period_labels(p)
+        tabs = [x[1] for x in p.items if x[0] == "t" and not x[1].kind and not _skip_note(doc, x[1])]
+        if len(tabs) < 2:
+            continue
+        groups: dict[tuple, list] = {}
+        intro = _intros(p)
+        for t in tabs:
+            rel = _table_rel(labels_of.get(t.id, ""), t.caption)
+            derived = bool(_MEASURE_WORDS.search(intro.get(t.id, "")))
+            subset = bool(_SUBSET_WORDS.search(intro.get(t.id, "")))
+            if subset:
+                continue                                  # 담보 · 운휴 자산 표는 일부 금액이다
+            labels = _labels(t)
+            cols = [j for j in range(1, len(t.header)) if any(_isnum(r[j]) for r in t.nums) and not is_rate(t.header[j])]
+            head = _common_head([t.header[j] for j in cols])
+            secs, moving = _sections(t), _movement(t)
+            lc = _label_cols(t) if t.labels else 1
+            compound = any(not any(_isnum(r[j]) for r in t.nums) and any(str(r[j]).strip() for r in t.rows)
+                           for j in range(lc, len(t.header)))      # 차입처 · 종류처럼 글 열이 더 있으면 줄 이름만으로 항목이 정해지지 않는다
+            for i in range(len(t.rows)):
+                if is_rate(labels[i]):
+                    continue
+                row_item = _item(t, i)
+                if row_item and secs[i]:
+                    row_item = secs[i] + "/" + row_item         # 「대손충당금: - 매출채권」 은 매출채권이 아니다
+                if row_item and i + 1 < len(t.rows) and _CONTRA.search(_plain(labels[i + 1])):
+                    row_item = ""                               # 「비품」 바로 아래 「감가상각누계액」: 비품 줄은 취득원가(총액)다(2026-11-09 회사 dsd 시험)
+                m_row = _measure(labels[i])
+                for j in cols:
+                    if not _isnum(t.nums[i][j]) or t.rate(i, j):
+                        continue
+                    crel = next((r for r in (_rel_last(t.header[j]), _rel_last(labels[i]), rel) if r[0]), (None, None))
+                    if rel[0] and crel[0] != rel[0]:
+                        continue                              # 전기 표의 「당기말」 열: 표의 기간과 열 이름이 어긋나면 걸지 않는다
+                    if not (t.xbrl or {}).get((i, j)) and crel[0] is None:
+                        continue                              # 당기 표인지 전기 표인지 모르면 걸지 않는다(같은 꼴 두 표를 같은 시점으로 이었다)
+                    per = ({"C": "P.e", "P": "PP.e"}[crel[0]] if crel[1] == "초" and not _point(t.header[j]) and not _point(labels[i])
+                           else note_period(doc, t, i, j, False, interim, crel))       # 「3) 전기초」 표의 장부금액은 전전기말이다
+                    if not per:
+                        continue
+                    col_item = _row_name(str(t.header[j])[len(head):] if head else t.header[j])
+                    m_col = _measure(t.header[j])
+                    if row_item and not compound and len(row_item) >= 2 and _POINT_COL.match(m_col) and not _NOT_ITEM.search(_plain(row_item)):
+                        groups.setdefault((row_item, per), []).append((t, i, j))
+                    elif (col_item and len(col_item) >= 2 and _POINT_ROW.match(m_row) and not _NOT_ITEM.search(_plain(col_item))
+                          and not _PERIOD_HEAD.search(norm(str(t.header[j] or "")))):    # 「제 20(전) 기」 열은 항목이 아니다
+                        groups.setdefault((col_item, per), []).append((t, i, j, moving, derived and _GENERIC.match(m_row) is not None, rel[0]))
+                        continue
+                    else:
+                        continue
+                    groups[(row_item, per)][-1] = (t, i, j, moving, derived and _GENERIC.match(m_col) is not None, rel[0])
+        order = {t.id: k for k, t in enumerate(tabs)}
+        for (item, per), cells in groups.items():
+            by_tab = Counter(c[0].id for c in cells)
+            if len(by_tab) < 2 or max(by_tab.values()) > 1 or len(cells) > 3:
+                continue
+            if len({c[4] for c in cells}) > 1:            # 한쪽 표만 충당금 · 담보 · 공정가치 표다
+                continue
+            mov = [c[5] for c in cells if c[3]]
+            if len(mov) > 1 and (None in mov or len(set(mov)) < len(mov)):
+                continue                                  # 같은 기간 변동표 둘이 같은 시점에 걸리면 다른 것을 잰다(투자차액 변동 · 장부금액 변동). 당기 · 전기 짝이면 잇는다
+            cells.sort(key=lambda c: order[c[0].id])
+            cells = [c[:3] for c in cells]
+            a = cells[0]
+            for c in cells[1:]:
+                add("같은 주석 표", c, a, f"{p.key} {c[0].id} 「{_labels(c[0])[c[1]]}」 · 「{c[0].header[c[2]]}」 = {a[0].id} 「{_labels(a[0])[a[1]]}」 · "
+                    f"「{a[0].header[a[2]]}」(같은 항목 「{item}」 · 같은 시점)")
+
+
+def _stem(x) -> str:
+    """기초 · 기말 짝을 찾는 이름: 기간 · 기초 · 기말을 뗀 나머지(「기초장부금액」 「기말장부금액」 → 장부금액, 「이연법인세자산(부채) 기초」 → 이연법인세자산(부채))."""
+    m = _measure(x)
+    return re.sub(r"기초|기말|당기초|당기말|전기말|전기초|^말|^초|말$|초$", "", m)
+
+
+def _pairs(names: list[str]) -> list[tuple[int, int]]:
+    """기초 칸과 기말 칸의 짝(줄이나 열 번호). 기초 · 기말을 뗀 이름이 같은 것끼리, 하나씩뿐이면 그 둘."""
+    starts = [k for k, x in enumerate(names) if k and _point(x) == "s" and not is_rate(x)]
+    ends = [k for k, x in enumerate(names) if k and _point(x) == "e" and not is_rate(x)]
+    if len(starts) == 1 and len(ends) == 1:
+        a, b = _stem(names[starts[0]]), _stem(names[ends[0]])
+        if not a or not b or a.endswith(b) or b.endswith(a):      # 「기초 기대수익률」 ↔ 「기말 할인율」 은 짝이 아니다
+            return [(starts[0], ends[0])]
+        return []
+    out = []
+    for a in starts:
+        hit = [b for b in ends if _stem(names[b]) == _stem(names[a])]
+        if len(hit) == 1:
+            out.append((a, hit[0]))
+    return out
+
+
+def _row_pairs(labels: list[str]) -> list[tuple[int, int]]:
+    return [(i - 1, k - 1) for i, k in _pairs(["_"] + labels)]
+
+
+_CONTRA = re.compile(r"누계액|충당금|정부보조금|현재가치할인차금|할인발행차금|국고보조금")
+_OTHER_NOTE = re.compile(r"법인세|일시적\s*차이|이연|평가|공정가치|손상|대손충당금|손실충당금|위험|민감도|특수관계|담보")
+_NOT_NET = re.compile(r"취득원가|원가의?\s*변동|누계액|정부보조금|담보|손상차손의?\s*변동|공정가치")
+
+
+def _move_fs_props(doc: Doc, fs: _Fs, interim: bool, add, add_sum) -> None:
+    """변동표의 과목 줄 기초 · 기말 = 재무상태표 같은 이름 과목(2026-11-09 레퍼 규칙 종류 A). 열이 기초 · 취득 · … · 기말인 표는
+    금액 열이 없어 1) 줄 이름 규칙이 건너뛰었다(AI 가 손으로 쓴 「주석7-4 토지 기말장부가액 = 재무상태표 토지」).
+    재무상태표가 과목 바로 아래 감가상각누계액 · 대손충당금처럼 차감 과목을 적으면 변동표(순액) = 과목 + 차감 과목들.
+    표 기간을 모르면, 취득원가 · 누계액 변동표면, 과목 이름이 표나 재무상태표에 두 번 나오면 걸지 않는다."""
+    contra: dict[tuple, list] = {}
+    pointed: dict[tuple, set] = {}                         # 과목이 가리키는 주석(과목 줄에 없으면 위로 올라가 처음 주석 번호가 있는 머리 줄)
+    for lt in fs.tables:
+        if not lt.id.startswith("재무상태표"):
+            continue
+        labels = _labels(lt)
+        refs = lt.refs or [[] for _ in labels]
+        for li in range(len(labels)):
+            k = li
+            while k >= 0 and not refs[k] and li - k < 12:
+                k -= 1
+            pointed[(lt.id, li)] = {f"주석{n}" for n in refs[k]} if k >= 0 else set()
+            k, got = li + 1, []
+            while k < len(labels) and _CONTRA.search(_fs_name(labels[k])):
+                got.append(k)
+                k += 1
+            contra[(lt.id, li)] = got
+    for p in doc.parts:
+        if not p.key.startswith("주석"):
+            continue
+        labels_of = period_labels(p)
+        intro = _intros(p)
+        for x in p.items:
+            if x[0] != "t" or x[1].kind or _skip_note(doc, x[1]):
+                continue
+            t = x[1]
+            if _NOT_NET.search(intro.get(t.id, "")) or _SUBSET_WORDS.search(intro.get(t.id, "")) or _OTHER_NOTE.search(_plain(p.title) + " " + intro.get(t.id, "")):
+                continue                                  # 이연법인세 변동표의 「확정급여부채」 줄은 일시적차이 · 세효과다
+            rel = _table_rel(labels_of.get(t.id, ""), t.caption)[0]
+            if rel is None:
+                continue
+            pairs = _pairs([str(h) for h in t.header])
+            if len(pairs) != 1:
+                continue
+            js, je = pairs[0]
+            if _NOT_NET.search(norm(str(t.header[js]))) or _NOT_NET.search(norm(str(t.header[je]))):
+                continue
+            per = {js: "P.e" if rel == "C" else "PP.e", je: "C.e" if rel == "C" else ("Ph.e" if interim else "P.e")}
+            items = [_item(t, i) for i in range(len(t.rows))]
+            secs = _sections(t)
+            for i, name in enumerate(items):
+                if not name or len(name) < 2 or items.count(name) != 1 or secs[i] or _CONTRA.search(name):
+                    continue
+                lines = [(lt, li) for lt, li in fs.lines(name, False)]
+                if len(lines) != 1:
+                    continue
+                lt, li = lines[0]
+                if pointed.get((lt.id, li)) and p.key not in pointed[(lt.id, li)]:
+                    continue                              # 과목이 다른 주석을 가리킨다(투자부동산 주석의 「토지」, 종속기업 요약의 「유형자산」)
+                for j in (js, je):
+                    hit = fs.cell(lt, li, per[j]) if _isnum(t.nums[i][j]) else None
+                    if not hit:
+                        continue
+                    subs = [(lt, k, hit[2]) for k in contra.get((lt.id, li), []) if _isnum(lt.nums[k][hit[2]])]
+                    what = f"{p.key} {t.id} 「{_labels(t)[i]}」 · 「{t.header[j]}」 = 재무상태표 「{_labels(lt)[li]}」"
+                    if subs:
+                        add_sum("변동표 과목", (t, i, j), [hit] + subs, what + " + " + " + ".join(f"「{_labels(lt)[k]}」" for _, k, _ in subs) + "(순액)")
+                    else:
+                        add("변동표 과목", (t, i, j), hit, what)
+
+
 def _roll_props(doc: Doc, add) -> None:
-    """연차 보고서: 같은 주석의 당기 변동표 기초 = 전기 변동표 기말(같은 줄 · 같은 열 이름)."""
+    """같은 주석의 당기 변동표 기초 = 전기 변동표 기말(같은 꼴 두 표, 같은 줄 · 같은 열), 한 표 안에서 당기 열 기초 = 전기 열 기말.
+    표의 기간은 표 바로 위 기간 문단이나 표 앞 글 마지막 문장 뒤로 정하고(11-09), 모르면 걸지 않는다. 기초 · 기말 칸은 이름으로 짝짓는다."""
     for p in doc.parts:
         if not p.key.startswith("주석"):
             continue
         labels_of = period_labels(p)
         tabs = [x[1] for x in p.items if x[0] == "t" and not x[1].kind]
+        rel = {}
+        for t in tabs:
+            r, w = _table_rel(labels_of.get(t.id, ""), t.caption)
+            rel[t.id] = "PP" if (r, w) == ("P", "초") else r      # 「(전기초)」 표는 전기 표가 아니다
+        heads = {t.id: [norm(h) for h in t.header] for t in tabs}
+        rows = {t.id: [norm(x) for x in _labels(t)] for t in tabs}
+        keys = {t.id: [f"{sec}/{x}" for sec, x in zip(_sections(t), rows[t.id])] for t in tabs}   # 구역 머리까지 붙인 줄 이름
+
+        def same_row(a, b, i):
+            # 줄 이름(구역 머리 포함)이 두 표에 하나씩만 있을 때 그 줄
+            ka, kb = keys[a.id], keys[b.id]
+            hit = [n for n, y in enumerate(kb) if y == ka[i]]
+            return hit[0] if len(hit) == 1 and ka.count(ka[i]) == 1 else None
+
+        def overlap(a, b) -> float:
+            ha, hb = set(heads[a.id][1:]), set(heads[b.id][1:])
+            ra, rb = set(rows[a.id]), set(rows[b.id])
+            return (len(ha & hb) + len(ra & rb)) / max(len(ha | hb) + len(ra | rb), 1)
+
         for a in tabs:
-            ra = _rel_word(labels_of.get(a.id, "") or a.caption)[0]
-            if ra != "C":
+            if rel[a.id] != "C":
                 continue
-            for b in tabs:
-                rb = _rel_word(labels_of.get(b.id, "") or b.caption)[0]
-                if b is a or rb != "P" or [norm(h) for h in a.header] != [norm(h) for h in b.header]:
+            cand = [(overlap(a, b), b) for b in tabs if b is not a and rel[b.id] == "P" and heads[b.id][:1] == heads[a.id][:1]]
+            cand = sorted([c for c in cand if c[0] >= 0.5], key=lambda c: -c[0])
+            if not cand or (len(cand) > 1 and cand[1][0] == cand[0][0]):
+                continue                                 # 짝이 될 전기 표가 없거나 둘이면 어느 것인지 모른다
+            b = cand[0][1]
+            la, lb, ha, hb = rows[a.id], rows[b.id], heads[a.id], heads[b.id]
+            ends_rows = [e2 for _, e2 in _row_pairs(lb)]
+            for i, e in _row_pairs(la):                 # 줄이 기초 · 기말인 변동표: 열은 이름으로 짝짓는다
+                k = same_row(a, b, e)
+                if k is None and len(ends_rows) == 1:
+                    k = ends_rows[0]                      # 「당기초금액」 = 전기 표 「전기말금액」
+                if k is None:
                     continue
-                la, lb = [norm(x) for x in _labels(a)], [norm(x) for x in _labels(b)]
-                for i, x in enumerate(la):
-                    if _point(x) != "s":
+                for j in range(1, len(ha)):
+                    jb = next((m for m in range(1, len(hb)) if hb[m] == ha[j]), None) if ha.count(ha[j]) == 1 and hb.count(ha[j]) == 1 else None
+                    if jb is not None and _isnum(a.nums[i][j]) and _isnum(b.nums[k][jb]):
+                        add("변동표", (a, i, j), (b, k, jb), f"{p.key} 당기 표 「{_labels(a)[i]}」 = 전기 표 「{_labels(b)[k]}」")
+            ends_b = {_stem(b.header[e]): e for _, e in _pairs([str(h) for h in b.header])}
+            for j, _e in _pairs([str(h) for h in a.header]):  # 열이 기초 · 기말인 변동표: 줄은 이름으로 짝짓는다
+                k = ends_b.get(_stem(a.header[j]))
+                if k is None and len(ends_b) == 1:
+                    k = next(iter(ends_b.values()))
+                if k is None:
+                    continue
+                for i in range(len(la)):
+                    ib = same_row(a, b, i)
+                    if ib is not None and _isnum(a.nums[i][j]) and _isnum(b.nums[ib][k]):
+                        add("변동표", (a, i, j), (b, ib, k), f"{p.key} 당기 표 「{a.header[j]}」 = 전기 표 「{b.header[k]}」")
+        cost = bool(re.search(r"매출원가|제조원가|원가명세", _plain(p.title)))
+        for t in tabs:                                   # 한 표: 줄이 기초 · 기말, 열이 당기 · 전기
+            if cost:
+                continue                                  # 매출원가 계산의 「기말재고액」 은 빼는 줄이라 부호가 다르다
+            la = [norm(x) for x in _labels(t)]
+            cols = {j: _rel_last(h) for j, h in enumerate(t.header) if j}
+            for i, k in _row_pairs(la):
+                for jc, (rc, wc) in cols.items():
+                    if rc != "C":
                         continue
-                    k = next((k for k, y in enumerate(lb) if _point(y) == "e"), None)
-                    if k is None:
-                        continue
-                    for j in range(1, len(a.header)):
-                        if _isnum(a.nums[i][j]) and _isnum(b.nums[k][j]):
-                            add("변동표", (a, i, j), (b, k, j), f"{p.key} 당기 표 「{_labels(a)[i]}」 = 전기 표 「{_labels(b)[k]}」")
-                for j, h in enumerate(a.header):          # 열이 기초 · 기말인 변동표
-                    if j and _point(h) == "s":
-                        k = next((k for k, y in enumerate(b.header) if k and _point(y) == "e"), None)
-                        if k is None:
-                            continue
-                        for i in range(len(la)):
-                            ib = next((n for n, y in enumerate(lb) if y == la[i]), None)
-                            if ib is not None and _isnum(a.nums[i][j]) and _isnum(b.nums[ib][k]):
-                                add("변동표", (a, i, j), (b, ib, k), f"{p.key} 당기 표 「{a.header[j]}」 = 전기 표 「{b.header[k]}」")
+                    mates = [jp for jp, (rp, wp) in cols.items() if rp == "P" and _stem(t.header[jp]) == _stem(t.header[jc])]
+                    if len(mates) == 1 and _isnum(t.nums[i][jc]) and _isnum(t.nums[k][mates[0]]) and not t.rate(i, jc) and not t.rate(k, mates[0]):
+                        add("변동표", (t, i, jc), (t, k, mates[0]), f"{p.key} {t.id} 당기 열 「{_labels(t)[i]}」 = 전기 열 「{_labels(t)[k]}」")
 
 
 # ---- 2차(10-22): 회사별 표 · 이름 짝 · 문장 ----------------------------------------------------------------
