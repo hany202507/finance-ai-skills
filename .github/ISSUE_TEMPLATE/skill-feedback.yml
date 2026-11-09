@@ -29,6 +29,7 @@ body:
         - 회계기준검토
         - 분개테스트
         - DSD푸팅
+        - DSD변환
         - AI면접점검
         - 설치 · 저장소 전체
     validations:
