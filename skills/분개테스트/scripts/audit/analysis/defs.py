@@ -87,6 +87,13 @@ def map_account(code: str | None, name: str) -> dict:
     hits = [a for a in accs if any(re.search(p, n) for p in a.get("names", []))]
     basis = "계정명"
     code = str(code)[:3] if code else code
+    sec_c = section_of_code(code) if code and str(code).isdigit() else None
+    if sec_c and hits:
+        # 이름이 재무상태표 계정을 가리키는데 코드는 손익(또는 그 반대)이면 이름 매핑을 버린다(2026-11-05).
+        # 「단기투자증권평가손」 · 「회원권처분손실」 이 「투자증권」 · 「회원권」 이름으로 자산에 매핑돼 세전이익이 5억 넘게 커졌다
+        bs = ("자산", "부채", "자본")
+        same = [a for a in hits if (a["section"] in bs) == (sec_c in bs)]
+        hits = same
     if len(hits) > 1 and code:
         by_code = [a for a in hits if code in a.get("codes", [])]
         hits = by_code or hits[:1]
@@ -105,7 +112,12 @@ def map_account(code: str | None, name: str) -> dict:
         return {"id": None, "area": None, "section": section_of_code(code), "label": None, "contra": False,
                 "basis": "매핑 안 됨", "confidence": "low"}
     a = hits[0]
-    return {"id": a["id"], "area": a.get("area"), "section": a["section"], "label": a.get("label"), "contra": bool(a.get("contra")),
+    sec = a["section"]
+    if sec_c and sec_c != sec and sec in ("자산", "부채", "자본") and sec_c in ("자산", "부채", "자본"):
+        # 같은 재무상태표 안에서 코드 자리가 다르면 코드 자리를 따른다(2026-11-05). 퇴직급여충당부채에서 차감하는 퇴직연금운용자산
+        # (부채 자리 코드)을 자산으로 더하면 자산총계 · 부채총계가 공시 재무제표보다 커진다(중요성 기준 금액이 어긋난다)
+        sec = sec_c
+    return {"id": a["id"], "area": a.get("area"), "section": sec, "label": a.get("label"), "contra": bool(a.get("contra")),
             "basis": basis, "confidence": "high"}
 
 

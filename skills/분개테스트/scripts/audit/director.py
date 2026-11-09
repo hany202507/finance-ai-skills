@@ -22,13 +22,37 @@ from . import folder
 from .errors import DefinitionError
 
 STAGES = ("준비", "계획", "실행", "보고", "종결")
-RULE_IDS = ("확인-판독", "요청-빠진자료", "다시확인", "기본값확인", "수정반영", "보고준비", "스킬실행", "전기이어받기", "초도기초잔액",
+RULE_IDS = ("확인-판독", "요청-빠진자료", "다시확인", "기본값확인", "수정반영", "보고준비", "스킬실행", "표본위험", "DSD푸팅", "전기이어받기", "초도기초잔액",
             "검토요청", "작성", "확인-분석값")
 AREA_DEFAULT = "4000*"
+DSD_DIR = "8000 감사완결/8820_DSD푸팅"      # 감사 폴더 안에서 돌린 DSD 푸팅 결과(8820 의 부속 파일로 스캔된다, 2026-11-02)
 # 손익 계정 단위 전기 원천이 없을 때 빠진 자료로 세는 항목(R7, 2026-10-06)
 PRIOR_PL_ITEM = "전기 시산표(계정별) 또는 전기 분개장"
 PERIODS = ("annual", "events", "fy_end", "after_end")
 NO_BALANCE = "해당 없음 후보"          # 시산표 · 재무제표에 영역 잔액이 당기 · 전기 모두 0 인 요청 줄(2026-10-18)
+_AGENT_CACHE: dict = {}
+
+
+def skill_agent(skill: str) -> str | None:
+    """스킬 줄의 담당 에이전트(판독 · 묶음 · 점검 · 문안). run_steps.yaml 의 agent 를 읽는다(파일 시각이 같으면 다시 읽지 않는다).
+    정의 파일이 없거나 깨졌으면 None 으로 두고 지휘는 그대로 돈다(실행기 몫 정의라 지휘를 멈출 까닭이 아니다)."""
+    p = folder.DEFS / "run_steps.yaml"
+    try:
+        stamp = p.stat().st_mtime_ns
+    except OSError:
+        return None
+    hit = _AGENT_CACHE.get("agents")
+    if not hit or hit[0] != stamp:
+        try:
+            from . import runner
+
+            cfg = runner.load_steps()
+            table = {s: runner.agent_of(s, cfg) for s in runner.known_skills(cfg)}
+        except Exception:  # noqa: BLE001
+            table = {}
+        _AGENT_CACHE["agents"] = (stamp, table)
+        hit = _AGENT_CACHE["agents"]
+    return hit[1].get(skill)
 
 
 # ---------------------------------------------------------------- 정의
@@ -593,6 +617,13 @@ def _missing_of(c: _Case) -> list[dict]:
                 prev.setdefault(k, m["requested_at"])
                 prev.setdefault(_unperiod(k, c.fy), m["requested_at"])
 
+    # _기록 의 「요청 메일 보냄」 줄로 요청한 날을 되살린다. _색인 을 지우고 다시 만들어도 다시 요청이 처음 요청으로 돌아가지 않는다(2026-10-22)
+    from . import records
+
+    for k, v in records.sent_items(c.d).items():
+        prev.setdefault(k, v)
+        prev.setdefault(base_item(k), v)
+
     out, seen, superseded, pbc_text, pbc_line = [], set(), set(), {}, {}
     rows = _pbc_rows(c)
     for row, e in rows:
@@ -658,6 +689,16 @@ def _missing_of(c: _Case) -> list[dict]:
     # 분석적 검토는 감사범위와 상관없이 전기 · 당기 두 해로 한다. 손익을 계정 단위로 견줄 원천이 없으면 요청한다(R7)
     if c.missing_prior_pl() and PRIOR_PL_ITEM not in seen:
         out.append({"item": PRIOR_PL_ITEM, "workpaper": "2120A", "issue": None, "requested_at": prev.get(PRIOR_PL_ITEM)})
+    # 회계사가 판독 확인 화면에서 「회사에 묻기」 로 남긴 질문(_기록). 그 파일을 확인 · 고치면 빠진다(2026-10-22)
+    for q in records.questions(c.d):
+        text = records.question_item(q)
+        if text in seen:
+            continue
+        seen.add(text)
+        m = {"item": text, "issue": None, "requested_at": prev.get(text), "source": "질문", "asked_by": q["by"]}
+        if q.get("workpaper"):
+            m["workpaper"] = str(q["workpaper"])
+        out.append(m)
     for m in out:
         m["item"] = period_words(m["item"], c.fy)
     return out
@@ -875,6 +916,9 @@ def _actions(c: _Case, miss: list[dict], full: bool = False, through: str | None
             a["detail"] = r[detail_key].format(**kw).strip()
         if (kw.get("skill") or r.get("skill")) and not who_override:
             a["skill"] = kw.get("skill") or r["skill"]
+            agent = skill_agent(a["skill"])
+            if agent:
+                a["kind"] = a["agent"] = agent     # 그 스킬의 AI 몫 종류(2026-10-23 agent, 2026-10-31 kind. 한 시즌은 둘 다 싣는다)
         if workpaper:
             a["workpaper"] = workpaper
             who = (c.assign.get(workpaper) or {}).get("reviewer" if r["id"] == "검토요청" else "to")
@@ -994,6 +1038,22 @@ def _actions(c: _Case, miss: list[dict], full: bool = False, through: str | None
                 needs = (f"필요한 자료가 모두 있습니다({' · '.join(g['needs'])})" if g["needs"] else "받은자료 없이 만들 수 있습니다")
                 add(r, workpaper=first["no"], skill=skill, needs=needs, **kw)
                 out[-1]["_nos"] = [x["no"] for x in g["wps"]]
+        elif rid == "표본위험":
+            # 표본 시트의 위험 수준 · 신뢰계수를 회계사가 아직 정하지 않았다(2026-11-02 스킬 리뷰, 감사기준서 530 문단 7)
+            from . import params
+
+            try:
+                set_all = params.overrides(c.d).get("sampling.default_risk")     # 2700B 에 감사 건 기본값을 정했으면 묻지 않는다
+            except Exception:  # noqa: BLE001  2700B 를 읽지 못하면 감사인 값 없음으로 본다
+                set_all = None
+            items = [] if set_all else [x for x in (_sample_risk_open(c, w) for w in wps) if x]
+            if items:
+                add(r, workpaper=items[0].split()[0], count=len(items), items=_more(items, 3))
+        elif rid == "DSD푸팅":
+            # 받은자료의 회사제시 dsd 를 정산표까지 대사한 푸팅 엑셀이 없거나 dsd 보다 옛것이다(2026-11-02 스킬 리뷰)
+            todo = _dsd_open(c)
+            if todo:
+                add(r, workpaper="8820", count=len(todo), items=_more(todo, 2))
         elif rid == "전기이어받기":
             # 2100 「전기에서 이어진 사항」 가운데 당기 이슈로 볼지 판단 칸이 빈 것(2100 이 없으면 전부)
             carry = (c.prior_source() or {}).get("carry") or []
@@ -1039,6 +1099,31 @@ def _readback(c: _Case, no: str) -> dict:
         return {(x["sheet"], x["label"]): x["value"] for x in wp.readback(p)}
     except Exception:  # noqa: BLE001  회계사가 다른 꼴로 저장한 파일
         return {}
+
+
+def _sample_risk_open(c: _Case, w: dict) -> str | None:
+    """초안 · 작성중인 4000 조서의 표본 시트에 위험 수준과 신뢰계수가 둘 다 비었으면 「4000C 매출채권」 꼴 글."""
+    if not folder._is_area(w["no"]) or not w.get("file") or w["status"] not in ("초안", "작성중"):
+        return None
+    vals = _readback(c, w["no"])
+    risk = [k for k in vals if k[0].endswith("표본") and k[1].startswith("위험 수준 확인")]    # 절차 시트로 묶이면 「.02 표본」 이다
+    if not risk or any(not _blank(vals[k]) or not _blank(vals.get((k[0], k[1].replace("위험 수준 확인", "신뢰계수 직접 입력")))) for k in risk):
+        return None
+    return f"{w['no']} {w.get('name') or c.names.get(w['no'], '')}".strip()
+
+
+def _dsd_open(c: _Case) -> list[str]:
+    """푸팅할 회사제시 dsd 이름들. 정산표(8100B)가 있어야 리드 최종 숫자 대사까지 돌므로 그 전에는 비운다."""
+    dsds = [f for f in c.docs["files"] if f["role"] == "received" and f["path"].lower().endswith(".dsd")]
+    if not dsds or not any(w["no"] == "8100B" and w.get("file") for w in c.wps):
+        return []
+    done = list((c.d / DSD_DIR).glob("DSD푸팅_*.xlsx"))
+    out = []
+    for f in dsds:
+        p = Path(f["path"])
+        if not any(p.stem in b.stem and b.stat().st_mtime >= (c.d / p).stat().st_mtime for b in done if (c.d / p).exists()):
+            out.append(p.name)
+    return out
 
 
 def _blank(v) -> bool:

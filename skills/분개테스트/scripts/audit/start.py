@@ -123,7 +123,7 @@ def _report_date(texts: list[str], fiscal_year_end: str | None) -> str | None:
 
 
 def corp_name(name: str | None) -> str:
-    """회사명 비교용. 「주식회사 · (주) · ㈜」 와 공백을 뗀다(감사 폴더 「가온정밀」 과 보고서 「주식회사 가온정밀」 은 같다)."""
+    """회사명 비교용. 「주식회사 · (주) · ㈜」 와 공백을 뗀다(감사 폴더 「채널코퍼레이션」 과 보고서 「주식회사 채널코퍼레이션」 은 같다)."""
     n = dart.norm(name or "")
     for t in ("주식회사", "(주)", "（주）", "㈜"):
         n = n.replace(t, "")
@@ -1024,7 +1024,7 @@ def make_1100(d: Path, data: dict, case: dict) -> wp.Book:
             b.put(ws, row, 2, x, flag=True, wrap=True)
             row += 1
     if pr.get("opinion") not in (None, "적정") or pr.get("emphasis") or pr.get("going_concern"):
-        ws.cell(row, 1, "전기 의견이 적정이 아니거나 강조사항 · 계속기업 불확실성이 있습니다. 계약 수락 판단에 반영해 주십시오").font = wp.font(size=9, color="B3261E")
+        ws.cell(row, 1, "전기 의견이 적정이 아니거나 강조사항 · 계속기업 불확실성이 있습니다. 계약 수락 판단에 반영해 주십시오").font = wp.font(size=9, color=wp.RED)
         row += 1
     row += 1
     row = b.section(ws, row, "감사인 교체")
@@ -1136,10 +1136,10 @@ def make_2100(d: Path, data: dict, case: dict) -> wp.Book:
         row += 1
     row += 1
     if ch.get("unmatched_prior"):
-        ws3.cell(row, 1, "전기 과목 가운데 당기 표시과목과 이름이 맞지 않은 것(계정 매핑은 분석적 검토 단계에서): " + ", ".join(ch["unmatched_prior"])).font = wp.font(size=9, color="B3261E")
+        ws3.cell(row, 1, "전기 과목 가운데 당기 표시과목과 이름이 맞지 않은 것(계정 매핑은 분석적 검토 단계에서): " + ", ".join(ch["unmatched_prior"])).font = wp.font(size=9, color=wp.RED)
         row += 1
     if ch.get("unmatched_current"):
-        ws3.cell(row, 1, "당기 표시과목 가운데 전기 과목에 없는 것: " + ", ".join(ch["unmatched_current"])).font = wp.font(size=9, color="B3261E")
+        ws3.cell(row, 1, "당기 표시과목 가운데 전기 과목에 없는 것: " + ", ".join(ch["unmatched_current"])).font = wp.font(size=9, color=wp.RED)
     priorwp.reference_sheet(b, d, "2100")       # 작년 2100 에 회계사가 적은 내용(참고 시트, 2026-10-12)
     return b
 
@@ -1341,18 +1341,31 @@ def write_mail(d: Path, at: date | None = None) -> Path | None:
         lines += ["", "[감사반 확인용: 담당자별 받을 자료. 보내기 전에 이 아래를 지웁니다]"]
         for name in sorted(by, key=lambda x: (x == "미배정", x)):
             lines.append(f"{name}: " + ", ".join(f"{k}번" + (f"(조서 {m['workpaper']})" if m.get("workpaper") else "") for k, m in by[name]))
-    p = d / "1000 감사계약" / f"{MAIL_PREFIX}{at.isoformat()}.txt"
+    # 오늘 초안에는 시각(HHMM)을 붙여 같은 날 다시 써도 보낸 초안을 덮지 않는다(2026-10-22 화면 시험 8절 1, T3). 같은 분이면 _2 · _3
+    from datetime import datetime
+
+    stamp = f"{at.isoformat()}_{datetime.now().strftime('%H%M')}" if at == date.today() else at.isoformat()
+    p = d / "1000 감사계약" / f"{MAIL_PREFIX}{stamp}.txt"
+    n = 2
+    while p.exists():
+        p = p.with_name(f"{MAIL_PREFIX}{stamp}_{n}.txt")
+        n += 1
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return p
 
 
-def mark_requested(d: Path, at: str, now: str | None = None) -> int:
-    """회계사가 요청 메일을 보낸 뒤 빠진 자료에 요청한 날을 적는다. 이미 적힌 것은 두고, 적은 수를 돌려준다."""
+def mark_requested(d: Path, at: str, now: str | None = None, by: str | None = None) -> int:
+    """회계사가 요청 메일을 보낸 뒤 빠진 자료에 요청한 날을 적는다. 이미 적힌 것은 두고, 적은 수를 돌려준다.
+    by(보낸 회계사)를 주면 `_기록` 에 「요청 메일 보냄」 한 줄(보낸 날 · 그때 빠진 자료 전부)을 남긴다. 다시 요청(재회신)도 이 줄로 남는다(2026-10-22)."""
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", at):
         raise IntakeError(f"보낸 날은 2026-01-21 꼴로 적어 주십시오: {at}")
     d = Path(d)
     docs = _idx(d, "문서목록.json")
+    if by:
+        from . import records
+
+        records.add(d, by, "요청 메일 보냄", "PBC", None, {"date": at, "items": [m["item"] for m in docs.get("missing", [])]})
     n = 0
     for m in docs.get("missing", []):
         if not m.get("requested_at"):
@@ -1411,6 +1424,13 @@ def build(d: Path, dart_target: str | None = None, force: bool = False, now: str
         data["changes"] = big_changes(current_statement(d), g["prior_fs"], mat["amount"] if mat else None)
         if g["saved_dart"]:
             data["dart_saved"] = g["saved_dart"]
+    # _기록 의 회사정보 확인 · 고침(사람). 시작자료.json 을 지우고 다시 읽어도 되살아난다(2026-10-22)
+    from . import records
+
+    rec = records.company_fields(d)
+    if rec:
+        fields = {x["field"] for x in rec}
+        data["ai"] = [x for x in data.get("ai", []) if x.get("field") not in fields] + rec
     _merge_ai(data)
     data["made_at"] = at
     # 전기 자료(R7): 작년 감사 폴더 · 전임 전기조서 · 전기조서 없음을 판정하고 전기 판단 정보를 모은다

@@ -165,6 +165,13 @@
                                                "codes": {"type": "array", "items": {"type": "string"}},
                                                "cur": {"$ref": "#/$defs/num"}, "prior": {"$ref": "#/$defs/num"}}}}}
       },
+      "journal_recon": {
+        "type": "object",
+        "description": "8100B 「분개장 대사」(2026-10-26, audit/analysis/subledger.py): 분개장 세부 계정을 시산표 상위 계정에 모아 회사제시 시산표와 맞춘 결과. status(ok · no_journal · no_tb · failed) · why(대사하지 못한 까닭) · rows(상위 계정마다 기초 · 차변 · 대변 · 분개장 기말 · 시산표 · 차이 · 판정 · 기초 원천 · 세부 계정 details, 차이 줄이 먼저) · unmatched(짝 없음) · counts · levels · tolerance",
+        "required": ["status", "why", "rows", "unmatched"],
+        "properties": {"rows": {"type": "array", "items": {"type": "object", "required": ["code", "name", "level", "open", "dr", "cr", "close", "tb", "diff", "verdict", "details"]}},
+                       "unmatched": {"type": "array", "items": {"type": "object", "required": ["code", "name", "dr", "cr", "net"]}}}
+      },
       "mfg_cost": {
         "type": "object",
         "description": "R9 묶음 B1: 제조원가 계정(501~799) 구성과 매출원가 연결(재공품 · 제품 잔액이 있을 때만 link). 2120A 제조원가 시트",

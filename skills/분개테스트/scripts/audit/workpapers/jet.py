@@ -71,8 +71,51 @@ def _net(v: common.Voucher) -> dict:
     return {k: val for k, val in out.items() if abs(val) > 0.5}
 
 
+def _debit_not_others(v: common.Voucher, acc: dict, groups: list) -> list:
+    """차변 줄 가운데 groups 어느 묶음에도 들지 않는 줄. 줄마다 묶음 판정을 한 번만 한다(2026-11-09: 차변 줄마다 전표 전체를
+    다시 걸러 `in` 으로 찾아 전표 줄 수의 제곱으로 늘던 것. 37만 줄 분개장에서 실행 시간의 97%)."""
+    return [x for x in v.lines if x.dr and not any(_in(x, acc[g]) for g in groups)]
+
+
 def _any(v: common.Voucher, group: dict) -> bool:
     return bool(_grp(v, "dr", group) or _grp(v, "cr", group))
+
+
+JOURNAL_CHART = "분개장 계정과목 칸"
+
+
+def tb_codes_from_journal(tb: list[dict], lines: list) -> tuple[list[dict], dict]:
+    """코드 없는 더존 합계잔액시산표에 계정과목표가 없으면 엔진은 계정 사전 · 재무제표 위치로 코드를 붙인다(reader.assign_codes).
+    분개장 계정과목 칸에 '[41501]국내매출' 처럼 회사 코드가 있으면 그 짝으로 다시 붙인다. 안 그러면 손익계정 대사가 계정마다
+    「시산표에 없음」 으로 갈라진다(2026-10-21 실제 회사 분개장: 순합은 0 인데 손익계정 대부분이 어긋났다).
+    같은 이름이 여럿이면 assign_codes 처럼 지금 코드의 재무제표 묶음 범위 안에서 고른다. 분개장에 같은 이름이 없는 계정(더존 상위 계정
+    「제예금」 등)은 그대로 둔다. 반환: (시산표 행, {"journal": 바꾼 계정 수, "guessed": 그대로 둔 추정 코드 계정 수})."""
+    guess = lambda r: bool(r.get("code_basis")) and not str(r["code_basis"]).startswith("계정과목표")  # noqa: E731
+    stat = {"journal": 0, "guessed": sum(1 for r in tb if guess(r))}
+    chart: dict[str, str] = {}
+    for x in lines:
+        if x.code is not None and x.name:
+            chart.setdefault(str(x.code), x.name)
+    if not stat["guessed"] or not chart:
+        return tb, stat
+    coa = {"rows": [{"code": c, "name": n, "group": "", "full": re.sub(r"\s+", "", n)} for c, n in chart.items()]}
+    rows = []
+    for r in tb:
+        k = common.code3(r["code"]) if guess(r) else None
+        grp = next((g for g, (lo, hi) in common.reader.FS_RANGES.items() if k is not None and lo <= k <= hi), None)
+        rows.append({"code": None if guess(r) else r["code"], "name": r["name"], "raw_name": re.sub(r"\s+", "", r["name"]),
+                     "fs_group": grp, "subgroup": r.get("subgroup")})
+    common.reader.assign_codes(rows, coa)
+    out = []
+    for r, x in zip(tb, rows):
+        if guess(r) and x.get("code_basis") == "계정과목표":
+            c = str(x["code"])
+            s = common.sign(c)
+            r = {**r, "code": c, "code_basis": f"계정과목표 {JOURNAL_CHART}", "sign": s, "disp": s * r["amount"], "pl": common.is_pl(c)}
+            stat["journal"] += 1
+            stat["guessed"] -= 1
+        out.append(r)
+    return out, stat
 
 
 WEEKDAYS = "월화수목금토일"
@@ -433,6 +476,63 @@ def monthly(cur: list, start: date, end: date, acc: dict, spec: dict) -> dict:
     return {"rows": out, "ye_ratio": ratio, "flag": flag}
 
 
+def _pkey(name: str | None) -> str:
+    from ..analysis.balances import party_name
+    return party_name(name or "") or common.reader._norm(name or "")
+
+
+def opposite_cause(d: Path, cur: list, t: dict, hit) -> None:
+    """분석의 거래처별 기말 반대 잔액마다 그 잔액을 반대쪽으로 민 전표(2026-10-24).
+
+    기말 잔액(정상 쪽 부호, 반대면 음수)에서 전표를 늦은 것부터 거꾸로 빼 가며, 잔액이 정상 쪽(0 이상)이던 때 뒤에
+    잔액을 반대쪽으로 민 전표를 적는다. 거래처 기초 잔액이 없어도 기말 잔액과 분개장만으로 된다.
+    분석(_색인/분석.json party_balances.opposite)이 없으면 돌지 않고 까닭을 적는다."""
+    from .. import folder as _folder
+    a = _folder._read(Path(d) / "_색인" / "분석.json", None)
+    rows =[(o["sheet"], o["side"], p) for o in ((a or {}).get("party_balances") or {}).get("opposite", []) for p in o.get("top", [])]
+    if a is None:
+        t["note"] = "분석(analyze) 전이라 돌지 않았습니다"
+        return
+    if not rows:
+        t["note"] = "분석이 찾은 기말 반대 잔액이 없습니다"
+        return
+    cap = int(t.get("max_vouchers", 12))
+    notes = []
+    for sheet, side, p in rows:
+        acct, bal = common.reader._norm(sheet), float(p["bal"])
+        asset = side == "대변"            # 자산 계정의 대변 잔액이 반대다
+
+        def collect(key, same):
+            out = []
+            for v in cur:
+                m = sum((x.dr - x.cr) if asset else (x.cr - x.dr) for x in v.lines
+                        if common.reader._norm(x.name) == acct and same(x.party, key))
+                if m:
+                    out.append((v, m))
+            return out
+        # 이름이 정확히 같은 거래처를 먼저 본다. 「울림홀딩스」 와 「울림홀딩스(본점)」 은 명세서에서 다른 거래처다
+        moves = collect(common.reader._norm(p["party"]), lambda a, k: common.reader._norm(a or "") == k)
+        if not moves:
+            moves = collect(_pkey(p["party"]), lambda a, k: _pkey(a) == k)
+        moves.sort(key=lambda e: (e[0].date, e[0].no), reverse=True)
+        after, found = bal, []
+        for v, m in moves:
+            before = after - m
+            if m < 0 and after < 0:
+                found.append((v, before, after))
+            after = before
+            if after >= 0:
+                break
+        found.sort(key=lambda e: -abs(e[2] - e[1]))
+        for v, before, after_v in found[:cap]:
+            hit("opposite_cause", v, f"{sheet} {p['party']} 기말 {won(bal)}(반대쪽). 이 전표로 {won(before)} → {won(after_v)}")
+        if len(found) > cap:
+            notes.append(f"{sheet} {p['party']} {len(found) - cap}건 더")
+        if not found:
+            notes.append(f"{sheet} {p['party']}: 분개장에서 원인 전표를 찾지 못함(거래처 이름이 다를 수 있음)")
+    t["note"] = f"반대 잔액 거래처 {len(rows)}곳" + (". " + " · ".join(notes) if notes else "")
+
+
 def run(d: Path, mat: dict | None = None) -> dict:
     d = Path(d)
     spec = common.load_def("jet.yaml")
@@ -445,14 +545,17 @@ def run(d: Path, mat: dict | None = None) -> dict:
     post = common.vouchers(j["post"])
     hol = {date.fromisoformat(str(x)) for x in spec.get("holidays", [])}
     tests = {t["id"]: {**t, "hits": [], "note": ""} for t in spec["tests"]}
-    tb = common.tb_rows(d)
+    tb, tb_coded = tb_codes_from_journal(common.tb_rows(d), j["cur"] + j["post"])
     # 코드 없는 분개장의 손익 판정에 쓴다: 시산표에서 코드가 있는 행의 계정명 → 손익 여부
     pl_names = {common.reader._norm(r["name"]): bool(r["pl"]) for r in tb if r.get("code") is not None and r.get("name")}
 
     def hit(tid: str, v: common.Voucher, why: str):
         tests[tid]["hits"].append({"voucher": v, "why": why})
 
-    # 주말 · 공휴일
+    # 주말 · 공휴일. 공휴일 표에 없는 해의 전표는 주말만 본 것이라 시험 메모에 적는다(2026-11-02 스킬 리뷰)
+    no_hol = sorted({v.date.year for v in cur + post} - {x.year for x in hol})
+    if no_hol:
+        tests["weekend"]["note"] = "; ".join(x for x in [tests["weekend"].get("note"), f"{' · '.join(map(str, no_hol))}년은 jet.yaml 공휴일 표에 없어 주말만 봄"] if x)
     for v in cur + post:
         # 월말 일자 결산 전표(감가상각 · 원가 대체 · 이자 계상)는 날짜를 월말로 다는 것이 정상이라 주말이어도 보지 않는다
         if (v.date + timedelta(days=1)).month != v.date.month:
@@ -501,11 +604,14 @@ def run(d: Path, mat: dict | None = None) -> dict:
     for v in cur:
         k = ("+".join(_keys(v, "dr")), "+".join(_keys(v, "cr")))
         sig[k] = sig.get(k, 0) + 1
+    found = []
+    by_rule: dict[str, list] = defaultdict(list)
     for v in cur:
         why = []
         k = ("+".join(_keys(v, "dr")), "+".join(_keys(v, "cr")))
         if sig[k] <= t.get("max_count", 1):
             why.append(f"차변 {v.label('dr')} / 대변 {v.label('cr')} 조합이 당기 {sig[k]}번")
+        rules = []
         for rule in t.get("rules", []):
             ok = True
             if "credit" in rule and not _grp(v, "cr", acc[rule["credit"]]):
@@ -513,17 +619,39 @@ def run(d: Path, mat: dict | None = None) -> dict:
             if ok and "debit" in rule and not _grp(v, "dr", acc[rule["debit"]]):
                 ok = False
             if ok and "debit_not" in rule:
-                drs = [x for x in v.lines if x.dr]
-                others = [x for x in drs if not any(x in _grp(v, "dr", acc[g]) for g in rule["debit_not"])]
-                ok = bool(others)
+                ok = bool(_debit_not_others(v, acc, rule["debit_not"]))
             if ok and "without" in rule and _any(v, acc[rule["without"]]):
                 ok = False
+            if ok and "credit_except" in rule:
+                # 대변 계정이 모두 이 낱말이 든 계정이면 뺀다(해외 · 수출 매출은 영세율이라 부가세예수금이 없는 것이 정상, 2026-10-21)
+                ok = any(not any(w in common.reader._norm(x.name or "") for w in rule["credit_except"])
+                         for x in _grp(v, "cr", acc[rule["credit"]]))
             if ok and "any_of" in rule:
                 ok = any(_any(v, acc[g]) for g in rule["any_of"]) and any(_any(v, acc[g]) for g in rule.get("with", []))
             if ok and ("credit" in rule or "debit" in rule or "any_of" in rule):
-                why.append(rule["title"])
+                rules.append(rule)
+                by_rule[rule["title"]].append(v)
+        found.append((v, why, rules))
+    # 규칙 하나에 당기 전표의 widespread 비율과 widespread_min 건 가운데 큰 쪽보다 많이 걸리면 회사가 늘 그렇게 분개하는 것으로 보고
+    # 목록 대신 메모로 남긴다(2026-10-21 실제 회사 분개장: 자동 매출 전표가 부가세예수금 없는 외상 매출에 모두 걸려 결과 목록이 매출 전표 전부가 됐다)
+    lim = max(t.get("widespread_min", 5), t.get("widespread", 1.0) * max(len(cur), 1))
+    wide = {title for title, vs in by_rule.items() if len(vs) > lim}
+    notes = []
+    for rule in t.get("rules", []):
+        if rule["title"] not in wide:
+            continue
+        vs = by_rule[rule["title"]]
+        side, g = ("cr", rule["credit"]) if "credit" in rule else ("dr", rule["debit"]) if "debit" in rule else (None, None)
+        top = Counter(", ".join(sorted({x.name for x in _grp(v, side, acc[g])})) for v in vs).most_common(4) if side else []
+        msg = (f"{rule['title']} {len(vs):,}건(당기 전표의 {len(vs) / max(len(cur), 1):.0%}" + "".join(f" · {n} {c:,}" for n, c in top)
+               + f")은 {t.get('widespread', 1.0):.0%} 를 넘어 회사가 늘 그렇게 분개하는 것으로 보고 목록에 올리지 않았습니다")
+        notes.append(msg + (f". {rule['widespread_note']}" if rule.get("widespread_note") else ""))
+    for v, why, rules in found:
+        why = why + [r["title"] for r in rules if r["title"] not in wide]
         if why:
             hit("rare_pair", v, " · ".join(why))
+    if notes:
+        t["note"] = ". ".join(notes)
 
     # 끝자리 0 반복
     t = tests["round"]
@@ -533,11 +661,14 @@ def run(d: Path, mat: dict | None = None) -> dict:
         if a >= low and abs(a - round(a)) < 1e-6 and int(round(a)) % unit == 0:
             hit("round", v, f"{won(unit)} 원 단위로 떨어지는 {won(a)}")
 
-    # 적요 없음
-    for v in cur + post:
-        n = sum(1 for x in v.lines if not x.memo)
-        if n:
-            hit("no_memo", v, f"적요 빈 행 {n}개")
+    # 적요 없음. 적요 열이 없거나 모두 비면 전표 전부가 걸리므로 시험하지 않는다(2026-11-09)
+    if any(x.memo for v in cur + post for x in v.lines):
+        for v in cur + post:
+            n = sum(1 for x in v.lines if not x.memo)
+            if n:
+                hit("no_memo", v, f"적요 빈 행 {n}개")
+    elif cur or post:
+        tests["no_memo"]["note"] = "분개장에 적요 열이 없거나 모두 비어 시험하지 못했습니다. 회사 전산에서 적요가 든 분개장을 받아 주십시오"
 
     # 수기 조정 전표
     t = tests["manual_adjust"]
@@ -650,6 +781,10 @@ def run(d: Path, mat: dict | None = None) -> dict:
     else:
         for v, others in sorted(pairs.values(), key=lambda e: (e[0].date, e[0].no)):
             hit("duplicate", v, "계정 · 거래처 · 금액이 같은 전표 " + ", ".join(f"{o.date.isoformat()} {o.no}" for o in others))
+
+    # 기말 반대 잔액을 만든 전표(2026-10-24)
+    if "opposite_cause" in tests:
+        opposite_cause(d, cur, tests["opposite_cause"], hit)
 
     # 대표 · 주주 · 임원 관련 계정, 자본 계정
     words = spec.get("related_parties", [])
@@ -781,11 +916,23 @@ def run(d: Path, mat: dict | None = None) -> dict:
     for x in j["cur"]:
         if x.code is not None:
             jnet[x.code] = jnet.get(x.code, 0.0) + x.dr - x.cr
+    tb_codes = {str(r["code"]) for r in tb}
+    # 더존 세목(41501 · 41503)은 합계잔액시산표에 본계정(41500)으로 합쳐 나온다. 시산표에 없는 5자리 코드는 앞 세 자리가 같은
+    # 본계정(끝 00, 또는 3자리 코드)이 시산표에 있으면 그 계정에 더한다(2026-10-21, 예: 세목 41501 → 본계정 41500)
+    rolled: dict[str, str] = {}
+    for c in sorted(jnet):
+        s = str(c)
+        if s in tb_codes or not (len(s) == 5 and s.isdigit()) or not common.is_pl(s):
+            continue
+        parent = next((p for p in (s[:3] + "00", s[:3]) if p != s and p in tb_codes), None)
+        if parent:
+            jnet[parent] = jnet.get(parent, 0.0) + jnet.pop(c)
+            rolled[s] = parent
+    tb_coded["rolled"] = rolled
     comp = []
     for r in tb:
         if r["pl"]:
             comp.append({"code": r["code"], "name": r["name"], "journal": common.reader._int(jnet.get(str(r["code"]), 0.0)), "tb": r["amount"]})
-    tb_codes = {str(r["code"]) for r in tb}
     for c, v in sorted(jnet.items()):
         if common.is_pl(c) and c not in tb_codes and abs(v) > 0.5:
             comp.append({"code": c, "name": "(시산표에 없음)", "journal": common.reader._int(v), "tb": 0})
@@ -797,8 +944,9 @@ def run(d: Path, mat: dict | None = None) -> dict:
         why = "; ".join(f"{x['path']} {x['why']}" for x in j["failed"])
         for t in tests.values():
             t["note"] = f"분개장을 판독하지 못해 시험하지 못했습니다({why})"
-    return {"tests": list(tests.values()), "completeness": comp, "bs_completeness": bs, "closing": closing, "sources": sources,
-            "files": j["files"], "failed": j["failed"],
+    return {"tests": list(tests.values()), "completeness": comp, "tb_codes": tb_coded, "bs_completeness": bs, "closing": closing, "sources": sources,
+            "files": j["files"], "failed": j["failed"], "file_stats": j.get("file_stats", []), "file_checks": j.get("file_checks", []),
+            "excluded": j.get("excluded", []),
             "dr": sum(x.dr for x in j["cur"]), "cr": sum(x.cr for x in j["cur"]), "lines": len(j["cur"]),
             "vouchers": len(cur), "post_vouchers": len(post), "mat": mat,
             "seq": seq, "analyses": analyses, "entry_cols": cols, "meta": meta, "pnl": {id(v): _pnl(v, acc, pl_names) for v in cur + post}}
@@ -814,6 +962,32 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
     if r["failed"]:
         shown += ". 판독 실패: " + "; ".join(f"{x['path']} {x['why']}" for x in r["failed"])
     ws.cell(6, 1, "분개장: " + shown).font = wp.font(size=9, color=wp.MUTED, bold=bool(r["failed"]))
+
+    # 완전성 0: 받은 분개장 파일별 행 수 · 기간 · 차대(2026-11-09). 잘린 파일 · 빠진 달이 있으면 시험 0건이 「해당 없음」 이 아니다
+    if r["file_stats"]:
+        row = b.section(ws, row, "완전성 0: 받은 분개장 파일 (파일 안 그대로, 겹친 줄을 빼기 전)")
+        row = b.head(ws, row, ["파일", "줄 수", "차변 합계", "대변 합계", "차이", "기간"])
+        for f in r["file_stats"]:
+            b.put(ws, row, 1, f["path"])
+            b.put(ws, row, 2, f["lines"], fmt="#,##0")
+            b.put(ws, row, 3, f["dr"], fmt=wp.WON)
+            b.put(ws, row, 4, f["cr"], fmt=wp.WON)
+            b.put(ws, row, 5, f"=C{row}-D{row}", fmt=wp.WON, flag=abs(f["dr"] - f["cr"]) > 0.5)
+            b.put(ws, row, 6, f"{f['first']} ~ {f['last']}" if f["first"] else "")
+            row += 1
+        for x in r["excluded"]:
+            if x.get("why"):
+                ws.cell(row, 1, f"{x['path']}: {x['why']}" + (f" (뺀 줄 {x['dropped']:,})" if x.get("dropped") else "")).font = wp.font(size=9, color=wp.MUTED)
+                row += 1
+        if r["file_checks"]:
+            ws.cell(row, 1, "모집단 미확정: 아래가 풀리기 전에는 시험 0건을 「해당 없음」 으로 결론 내지 않는다").font = wp.font(size=10, bold=True, color=wp.RED)
+            row += 1
+            for msg in r["file_checks"]:
+                ws.cell(row, 1, "· " + msg).font = wp.font(size=9, bold=True)
+                row += 1
+            ask(b, ws, row, 6, "확인: 분개장 완전성(잘린 파일 · 빠진 달 · 차대 차이)")
+            row += 1
+        row += 1
 
     row = b.section(ws, row, "완전성 1: 당기 분개장 차변 합계 = 대변 합계")
     row = b.head(ws, row, ["항목", "행 수", "차변 합계", "대변 합계", "차이", ""])
@@ -841,6 +1015,19 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
         b.verify("손익계정 분개장 − 시산표 차이 합", f"='요약'!E{row}", sum(c["journal"] - c["tb"] for c in r["completeness"]))
         b.verify("손익계정 차이 절대값 합", "=" + "+".join(f"ABS('요약'!E{x})" for x in range(f0, row)),
                  sum(abs(c["journal"] - c["tb"]) for c in r["completeness"]))
+        row += 1
+    tc = r.get("tb_codes") or {}
+    if tc.get("journal"):
+        msg = f"시산표에 계정코드가 없어 {JOURNAL_CHART}의 [코드]이름 짝으로 계정 {tc['journal']}개의 코드를 붙였습니다"
+        if tc.get("guessed"):
+            msg += f". 분개장에 같은 이름이 없는 계정 {tc['guessed']}개는 계정 사전 · 재무제표 위치로 붙인 코드입니다"
+        ws.cell(row, 1, msg).font = wp.font(size=9, color=wp.MUTED)
+        row += 1
+    if tc.get("rolled"):
+        pairs = sorted(tc["rolled"].items())
+        msg = (f"분개장 세목 {len(pairs)}개는 시산표에 본계정으로 합쳐 나와 본계정 순액에 더했습니다: "
+               + " · ".join(f"{c} → {p}" for c, p in pairs[:12]) + (" 외" if len(pairs) > 12 else ""))
+        ws.cell(row, 1, msg).font = wp.font(size=9, color=wp.MUTED)
         row += 1
     row += 1
 
@@ -885,10 +1072,15 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
     ask(b, ws, row, 6, "확인: 전표번호 연속성")
     ws.row_dimensions[row].height = 30
     row += 2
+    # 질문과 전체 기간 고려는 3600 점검표 문항에 있다(2026-11-02 스킬 리뷰에서 칸을 더했다가 겹쳐서 뺐다). 여기서는 잇기만 한다
+    ws.cell(row, 1, "재무보고절차 관여자 질문(감사기준서 240 문단 33(a)(i))과 보고기간 전체 테스트 고려(33(a)(iii))는 3600 부정검토 점검표 문항에 적는다").font = \
+        wp.font(size=9, color=wp.MUTED)
+    row += 2
     b.conclusion(ws, row, 6)
 
+    _first_sheet(b, r, d)
     has_entry = any(r["entry_cols"].get(k) for k in ("user", "approver", "entered"))
-    wl, rl = b.sheet("결과 목록", widths=[20, 12, 6, 16, 6, 26, 26, 16, 34, 16, 34, 30, 16] + ([30] if has_entry else []))
+    wl, rl = b.sheet("결과 목록",widths=[20, 12, 6, 16, 6, 26, 26, 16, 34, 16, 34, 30, 16] + ([30] if has_entry else []))
     rl = b.head(wl, rl, ["시험", "일자", "요일", "전표번호", "줄 수", "차변 계정", "대변 계정", "거래처", "적요", "금액", "근거", "검토 결과", "이익 효과"] +
                 (["작성 · 승인 · 입력"] if has_entry else []))
     for t in r["tests"]:
@@ -906,7 +1098,8 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
             b.put(wl, rl, 9, common.short(v.memo, 60), wrap=True)
             b.put(wl, rl, 10, v.amount, fmt=wp.WON)
             b.put(wl, rl, 11, h["why"], wrap=True, flag=req)
-            ask(b, wl, rl, 12, f"검토 결과: {t['id']} {v.date.isoformat()} {v.no}", rule="required" if req else "optional")
+            # 필수 검토 전표의 답은 「먼저 볼 전표」 시트에서 전표마다 한 번 받는다(2026-10-24). 여기는 시험 단위 참고 칸
+            ask(b, wl, rl, 12, f"검토 결과: {t['id']} {v.date.isoformat()} {v.no}", rule="optional")
             pnl = r["pnl"].get(id(v), 0.0)
             b.put(wl, rl, 13, common.reader._int(pnl) if abs(pnl) > 0.5 else None, fmt=wp.WON)
             if has_entry:
@@ -923,6 +1116,100 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
     out["summary"] = {t["id"]: len(t["hits"]) for t in r["tests"]}
     out["run"] = r
     return out
+
+
+def _owner_map(d: Path) -> tuple[dict, dict]:
+    """(계정코드 → 영역, 조서번호 → 배정). 배정이 없으면 빈 사전."""
+    try:
+        areas = {str(x["code"]): x.get("area") for x in common.tb_rows(d) if x.get("code") is not None}
+    except Exception:  # 시산표가 없거나 영역을 못 정하면 담당 칸을 비운다
+        areas = {}
+    from .. import assign
+    try:
+        owners = assign.of(d)
+    except Exception:
+        owners = {}
+    return areas, owners
+
+
+def priority(r: dict, d: Path | None = None) -> list[dict]:
+    """먼저 볼 전표(2026-10-24). 필수 검토 시험에 하나라도 걸린 전표를 전표마다 한 줄로, 점수 높은 순.
+
+    점수 = 걸린 필수 시험마다 2 · 참고 시험마다 1 + 금액이 수행중요성 이상 2(절반 이상 1) + 기말 반대 잔액 원인 3.
+    담당은 전표의 주된 계정(현금 · 예금 · 부가세를 뺀 가장 큰 줄)의 영역 조서(4000+영역) 배정."""
+    pm = (r.get("mat") or {}).get("performance") or 0
+    by: dict[int, dict] = {}
+    for t in r["tests"]:
+        req = t.get("review") == "required"
+        for h in t["hits"]:
+            v = h["voucher"]
+            e = by.setdefault(id(v), {"voucher": v, "tests": [], "whys": [], "required": False, "score": 0})
+            if t["title"] in e["tests"]:
+                continue
+            e["tests"].append(t["title"])
+            e["whys"].append(h["why"])
+            e["required"] |= req
+            e["score"] += 2 if req else 1
+            if t["id"] == "opposite_cause":
+                e["score"] += 3
+    areas, owners = _owner_map(d) if d else ({}, {})
+    out = []
+    for e in by.values():
+        if not e["required"]:
+            continue
+        v = e["voucher"]
+        if pm and v.amount >= pm:
+            e["score"] += 2
+        elif pm and v.amount >= pm * 0.5:
+            e["score"] += 1
+        main = sorted((x for x in v.lines if not any(w in (x.name or "") for w in ("현금", "예금", "부가세"))),
+                      key=lambda x: -max(x.dr, x.cr))
+        area = areas.get(str(main[0].code)) if main and main[0].code is not None else None
+        e["area"] = area
+        e["owner"] = (owners.get(f"4000{area}") or {}).get("to") if area else None
+        out.append(e)
+    return sorted(out, key=lambda e: (-e["score"], -e["voucher"].amount, e["voucher"].date, e["voucher"].no))
+
+
+def _first_sheet(b: wp.Book, r: dict, d: Path) -> None:
+    rows = priority(r, d)
+    ws, row = b.sheet("먼저 볼 전표", widths=[6, 6, 12, 10, 16, 30, 40, 24, 24, 18, 30, 10, 26, 26])
+    ws.cell(6, 1, "필수 검토 시험에 걸린 전표만 전표마다 한 줄이다. 점수 = 걸린 필수 시험마다 2 · 참고 시험마다 1 + 금액이 수행중요성 이상 2"
+                  "(절반 이상 1) + 기말 반대 잔액 원인 3. 담당은 전표의 주된 계정 영역 조서(4000+영역)의 배정(2110-배정). "
+                  "담당자가 확인 결과와 증빙을 적고 검토자가 본다. 참고 시험(주말 · 끝자리 등)만 걸린 전표는 결과 목록에서 시험 단위로 확인한다"
+                  ).font = wp.font(size=9, color=wp.MUTED)
+    who = Counter(e["owner"] or "미배정" for e in rows)
+    row = b.section(ws, row, "담당자별 건수")
+    row = b.head(ws, row, ["담당", "", "전표 수", "", "", ""])
+    for name, n in who.most_common():
+        b.put(ws, row, 1, name)
+        b.put(ws, row, 3, n, fmt="#,##0")
+        row += 1
+    row += 1
+    row = b.section(ws, row, "먼저 볼 전표 (점수 높은 순)")
+    row = b.head(ws, row, ["순위", "점수", "일자", "전표번호", "금액", "걸린 시험", "근거", "차변 계정", "대변 계정", "거래처", "적요",
+                           "담당", "확인 결과", "증빙 · 답"])
+    for i, e in enumerate(rows, 1):
+        v = e["voucher"]
+        b.put(ws, row, 1, i)
+        b.put(ws, row, 2, e["score"])
+        b.put(ws, row, 3, v.date.isoformat())
+        b.put(ws, row, 4, v.no)
+        b.put(ws, row, 5, v.amount, fmt=wp.WON)
+        b.put(ws, row, 6, " · ".join(e["tests"]), wrap=True)
+        b.put(ws, row, 7, " / ".join(e["whys"]), wrap=True)
+        b.put(ws, row, 8, v.label("dr"), wrap=True)
+        b.put(ws, row, 9, v.label("cr"), wrap=True)
+        b.put(ws, row, 10, ", ".join(v.parties), wrap=True)
+        b.put(ws, row, 11, common.short(v.memo, 60), wrap=True)
+        b.put(ws, row, 12, e["owner"] or "")
+        ask(b, ws, row, 13, f"확인 결과: {v.date.isoformat()} {v.no}", rule="required")
+        ask(b, ws, row, 14, f"증빙 · 답: {v.date.isoformat()} {v.no}", rule="optional")
+        row += 1
+    if not rows:
+        ws.cell(row, 1, "필수 검토 시험에 걸린 전표가 없습니다").font = wp.font(color=wp.MUTED)
+    if rows:   # 순위 칸의 가장 큰 값이 전표 수다(재계산기 xlcalc 는 COUNTA 를 모른다)
+        b.verify("먼저 볼 전표 수", f"=MAX('먼저 볼 전표'!A{row - len(rows)}:A{row - 1})", len(rows))
 
 
 def _bs_sheet(b: wp.Book, r: dict) -> None:

@@ -43,10 +43,11 @@ BASIS = {
     "predecessor": "전임 전기조서 8100B 최종",
     "prior_tb": "회사제시 전기 시산표",
     "comparative": "당기 시산표 파일의 전기 열",
+    "comparative_fs": "회사제시 재무제표의 전기 열",
     "book_bs": "당기 시산표 − 당기 분개장",
     "book_pl": "전기 분개장",
 }
-AUDITED = {"last_year": True, "predecessor": True, "prior_tb": False, "comparative": False, "book": False}
+AUDITED = {"last_year": True, "predecessor": True, "prior_tb": False, "comparative": False, "comparative_fs": False, "book": False}
 NONE = "없음"
 BS_SECTIONS, PL_SECTIONS = ("자산", "부채", "자본"), ("수익", "비용")
 
@@ -251,11 +252,25 @@ def _read_comparative(d: Path) -> dict | None:
     path = found[0]
     got = reader.prior_columns(path)
     if not got:
-        return None
+        return _read_comparative_fs(d)
     s = _source("comparative", Path(path).relative_to(d).as_posix(),
                 [(_code(r["code"]), r["name"], r["amount"]) for r in got["rows"]], got["sheet"])
     if s:
         s["column"] = got["column"]
+    return s
+
+
+def _read_comparative_fs(d: Path) -> dict | None:
+    """계정 단위 비교식 재무제표(코드 없음, 재무상태표 · 손익계산서)의 전기 열(2026-11-05). figures.fs_tb 가 당기 열과 같은 줄 ·
+    같은 코드로 붙인 전기 금액을 쓴다. 회사가 만든 숫자라 감사받은 숫자가 아니다(초도감사면 3800 기초잔액 대사 대상).
+    시산표 꼴 파일(코드 열)의 전기 열은 _read_comparative 가 먼저 본다."""
+    rows = [r for r in figures.current_tb(d) if r.get("source") == figures.FS_SOURCE and "prior" in r]
+    if not rows:
+        return None
+    paths = sorted({r["path"] for r in rows})
+    s = _source("comparative_fs", " · ".join(paths), [(_code(r["code"]), r["name"], r["prior"]) for r in rows])
+    if s:
+        s["column"] = "전기 열(제 n-1 (전)기)"
     return s
 
 
@@ -295,7 +310,10 @@ def book(d: Path, tb: list[dict]) -> dict[str, tuple[int, str]]:
     for f in plan:
         if not f["use"]:
             continue
+        shut = {(x["date"], x["voucher"], x["code"], x["dr"], x["cr"]) for x in reader.journal_rows(d / f["path"]) if x.get("closing")}
         for _, dt, dr, cr, _, vno, code in reader._journal(d / f["path"])[1]:
+            if (dt, vno, None if code is None else str(code), dr, cr) in shut:
+                continue                # 결산 마감 분개(2026-11-05)
             k = figures.journal_line_key(dt, vno, code, dr, cr)
             if not dd.keep(f["path"], k, bool(f["dedupe"])):
                 continue

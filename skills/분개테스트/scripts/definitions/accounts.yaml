@@ -52,6 +52,8 @@ code_sections:
 # 매출로 보는 단계다. 근거: 더존 표준 계정체계 매출 401~430(reader 의 매출액 사실과 같은 범위). 이름에 '원가' 가 있으면 잇지 않는다
 code_ranges:
   - {from: 401, to: 430, id: revenue, not_names: ['원가']}
+  # 제조원가 경비 계정(이름 · 코드 목록에 없는 것만). 임금 · 퇴직급여 · 감가상각비처럼 이름이 있는 계정은 위 사전이 먼저다(2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {from: 501, to: 600, id: mfg_cost}
 
 # 표시과목 열이 없는 시산표의 재무제표 표시과목(R8, 2026-10-06). 보고(8810 · 8800)와 조서(3650A · 4000 영역)가 쓴다.
 # 위 accounts 의 label 은 분석 비교 줄(2120A)용 큰 묶음(기타유동자산 · 판매비와관리비 등)이라 재무제표 과목으로는 너무 굵다.
@@ -104,16 +106,25 @@ accounts:
   - {id: prepaid_expenses, label: 기타유동자산, section: 자산, area: D, names: ['선급비용'], codes: ['133']}
   - {id: prepaid_income_tax, label: 당기법인세자산, section: 자산, area: T, names: ['^선납세금$'], codes: ['136']}
   - {id: suspense_payments, label: 가지급금, section: 자산, area: D, names: ['가지급금', '전도금'], codes: ['134']}
-  - {id: vat_input, label: 기타유동자산, section: 자산, area: D, names: ['부가세대급금', '부가가치세대급금'], codes: ['135']}
+  - {id: vat_input, label: 기타유동자산, section: 자산, area: D, names: ['부가세대급금', '부가가치세대급금', '국고부가세선급금'], codes: ['135']}
   - {id: inventory, label: 재고자산, section: 자산, area: E, names: ['재고자산', '^제품$', '^상품$', '원재료', '재공품', '부재료', '저장품'], codes: ['146', '150', '153', '162', '169']}
+  # 매도가능증권 평가손익 누계(기타포괄손익누계액). 「매도가능증권」 을 품는 이름이라 investments 보다 앞에 둔다. 영역은 평가를 함께 보는 B(2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: oci_valuation, label: 기타포괄손익누계액, section: 자본, area: B, names: ['^매도가능증권평가(이)?익$', '^매도가능증권평가손(실)?$', '^기타포괄손익누계액$', '^해외사업환산(이익|손실)$'], codes: []}
   - {id: investments, label: 투자자산, section: 자산, area: B, names: ['투자증권', '유가증권', '매도가능증권', '지분법', '단기매매증권'], codes: ['107', '178', '180']}
   - {id: accumulated_depreciation, label: 유형자산, section: 자산, area: G, contra: true, names: ['감가상각누계액'], codes: ['203', '205', '207', '209', '211', '213']}
-  - {id: ppe, label: 유형자산, section: 자산, area: G, names: ['^토지$', '^건물$', '구축물', '기계장치', '차량운반구', '공구와기구', '^비품$', '건설중인자산', '^시설장치$'], codes: ['201', '202', '204', '206', '208', '210', '212', '214']}
+  # 정부보조금은 받아 산 자산에서 차감한다(일반기업회계기준 17.5). 유형자산 아래 줄이 대부분이라 G 로 둔다. 무형자산 · 예금 차감이면 회계사가 영역을 바꾼다(2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: government_grants, label: 유형자산, section: 자산, area: G, contra: true, names: ['국고보조금', '정부보조금'], codes: []}
+  - {id: ppe, label: 유형자산, section: 자산, area: G, names: ['^토지$', '^건물$', '구축물', '기계장치', '차량운반구', '공구와기구', '^비품$', '^집기비품$', '^중장비$', '건설중인자산', '^시설장치$'], codes: ['201', '202', '204', '206', '208', '210', '212', '214']}
   # 「경상연구개발비」 · 「연구개발비」 는 비용이다. 이름만으로 맞출 때(전기 재무제표 과목 맞춤) 무형자산 「개발비」 와 섞이지 않게 앞에 「연구」 가 붙은 것은 뺀다(2026-10-18)
   - {id: intangibles, label: 무형자산, section: 자산, area: H, names: ['(?<!연구)개발비', '^소프트웨어$', '영업권', '특허권', '산업재산권', '건설중인무형자산'], codes: ['226', '231', '232', '239']}
-  # 보증금은 4000D(workpapers.yaml line_areas 보증금 · 임차보증금 D). 2026-10-13 가온정밀 시산표에서 매핑이 빠져 조서에서 조용히 빠지던 것을 넣었다
+  # 보증금은 4000D(workpapers.yaml line_areas 보증금 · 임차보증금 D). 2026-10-13 채널코퍼레이션 시산표에서 매핑이 빠져 조서에서 조용히 빠지던 것을 넣었다
   - {id: lease_deposits, label: 임차보증금, section: 자산, area: D, names: ['^임차보증금$'], codes: []}
   - {id: other_deposits, label: 기타보증금, section: 자산, area: D, names: ['^기타보증금$', '^보증금$'], codes: []}
+  # 회원권 · 시설이용권(기타비유동자산), 퇴직연금운용자산 · 국민연금전환금(퇴직급여충당부채 차감, 일반기업회계기준 21.8 · 실21.7),
+  # 이연법인세자산 · 부채(일반기업회계기준 22.54) (2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: memberships, label: 기타비유동자산, section: 자산, area: D, names: ['회원권', '시설이용권'], codes: []}
+  - {id: plan_assets, label: 퇴직연금운용자산, section: 자산, area: EE, names: ['퇴직연금운용자산', '국민연금전환금', '퇴직보험예치금'], codes: ['186', '198']}
+  - {id: deferred_tax_assets, label: 이연법인세자산, section: 자산, area: T, names: ['^이연법인세자산$'], codes: []}
   # ------------------------------------------------------------ 부채
   - {id: accounts_payable, label: 매입채무, section: 부채, area: AA, names: ['외상매입금', '지급어음', '^매입채무$'], codes: ['251', '252']}
   - {id: other_payables, label: 기타유동부채, section: 부채, area: CC, names: ['^미지급금$'], codes: ['253']}
@@ -121,7 +132,10 @@ accounts:
   - {id: vat_output, label: 기타유동부채, section: 부채, area: CC, names: ['부가세예수금', '부가가치세예수금'], codes: ['255']}
   - {id: advances_received, label: 기타유동부채, section: 부채, area: CC, names: ['^선수금$'], codes: ['259']}
   - {id: accrued_expenses, label: 기타유동부채, section: 부채, area: CC, names: ['미지급비용'], codes: ['262']}
-  - {id: income_tax_payable, label: 당기법인세부채, section: 부채, area: T, names: ['미지급법인세', '당기법인세부채'], codes: ['261']}
+  # 「미지급세금」 은 더존 261 계정 이름이다(미지급법인세 자리). 법인세 외 세금이 섞였는지는 계정명세서로 회계사가 본다(2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: income_tax_payable, label: 당기법인세부채, section: 부채, area: T, names: ['미지급법인세', '당기법인세부채', '^미지급세금$'], codes: ['261']}
+  - {id: deferred_tax_liabilities, label: 이연법인세부채, section: 부채, area: T, names: ['^이연법인세부채$'], codes: []}
+  - {id: unearned_revenue, label: 기타유동부채, section: 부채, area: CC, names: ['^선수수익$'], codes: ['263']}
   - {id: dividends_payable, label: 기타유동부채, section: 부채, area: GG, names: ['미지급배당금'], codes: ['265']}
   - {id: borrowings, label: 차입금, section: 부채, area: BBDD, names: ['단기차입금', '장기차입금', '유동성장기부채', '^차입금$', '^사채$'], codes: ['260', '264', '291', '293']}
   - {id: retirement_liability, label: 퇴직급여충당부채, section: 부채, area: EE, names: ['퇴직급여충당부채', '퇴직급여부채'], codes: ['295']}
@@ -135,6 +149,8 @@ accounts:
   - {id: stock_options, label: 기타자본, section: 자본, area: GG, names: ['주식매수선택권', '주식선택권'], codes: []}
   - {id: subscription_deposit, label: 신주청약증거금, section: 자본, area: GG, names: ['신주청약증거금'], codes: []}
   - {id: retained_earnings, label: 이익잉여금, section: 자본, area: GG, names: ['이월이익잉여금', '미처분이익잉여금', '이익잉여금', '이익준비금', '결손금'], codes: ['351', '375', '377']}
+  # 결산 대체 계정(더존 400 손익). 분개장에 마감 분개로만 나온다(2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: closing_pl, label: 이익잉여금, section: 자본, area: GG, names: ['^손익$', '^집합손익$'], codes: ['400']}
   # ------------------------------------------------------------ 손익
   - {id: cogs, label: 매출원가, section: 비용, area: Q, names: ['매출원가'], codes: ['451', '455']}
   - {id: revenue, label: 매출액, section: 수익, area: P, names: ['^(제품|상품|용역|공사)?매출$', '^매출액$'], codes: ['401', '404', '411']}
@@ -147,11 +163,13 @@ accounts:
   # 영역은 sga_other 에 있을 때와 같은 R 이다(4000H 로 옮길지는 회계사 판단)
   - {id: amortization, label: 판매비와관리비, section: 비용, area: R, names: ['무형고정자산상각', '무형자산상각'], codes: ['840']}
   - {id: share_based_comp, label: 판매비와관리비, section: 비용, area: GG, names: ['주식보상비용', '주식기준보상비용'], codes: []}
-  - {id: sga_other, label: 판매비와관리비, section: 비용, area: R, names: ['복리후생비', '여비교통비', '접대비', '기업업무추진비', '통신비', '세금과공과', '임차료', '보험료', '차량유지비', '운반비', '지급수수료', '광고선전비', '소모품비', '수선비', '교육훈련비', '도서인쇄비', '대손상각비', '건물관리비', '판매수수료'], codes: ['811', '812', '813', '814', '817', '819', '820', '821', '822', '824', '826', '830', '831', '833', '835']}
+  - {id: sga_other, label: 판매비와관리비, section: 비용, area: R, names: ['복리후생비', '여비교통비', '접대비', '기업업무추진비', '통신비', '세금과공과', '임차료', '보험료', '차량유지비', '운반비', '지급수수료', '광고선전비', '소모품비', '수선비', '교육훈련비', '도서인쇄비', '대손상각비', '건물관리비', '판매수수료', '수도광열비', '^리스료$', '^렌트비$'], codes: ['811', '812', '813', '814', '817', '819', '820', '821', '822', '824', '826', '830', '831', '833', '835']}
   # 소프트웨어사용료는 영업비용으로 보고 4000R 에 둔다(회사 표시과목이 따로 있어 라벨은 계정명). 영역이 맞는지는 회계사 확인 사항
   - {id: software_fees, label: 소프트웨어사용료, section: 비용, area: R, names: ['^소프트웨어사용료$'], codes: []}
   - {id: interest_income, label: 금융수익, section: 수익, area: P, names: ['이자수익'], codes: ['901']}
-  - {id: other_income, label: 기타수익, section: 수익, area: P, names: ['잡이익', '유형자산처분이익', '외환차익', '외화환산이익'], codes: ['907', '914', '930']}
+  - {id: other_income, label: 기타수익, section: 수익, area: P, names: ['잡이익', '유형자산처분이익', '외환차익', '외화환산이익', '배당금수익', '임대료$', '처분이익$', '평가이익$', '처분익$'], codes: ['907', '914', '930']}
   - {id: interest_expense, label: 금융원가, section: 비용, area: BBDD, names: ['이자비용'], codes: ['931', '951']}
-  - {id: other_expense, label: 기타비용, section: 비용, area: R, names: ['잡손실', '기부금', '유형자산처분손실', '외환차손', '외화환산손실'], codes: ['933', '953', '960', '970']}
+  - {id: other_expense, label: 기타비용, section: 비용, area: R, names: ['잡손실', '기부금', '유형자산처분손실', '외환차손', '외화환산손실', '^보상비$', '처분손실$', '평가손실$', '처분손$', '평가손$'], codes: ['933', '953', '960', '970']}
+  # 제조원가 명세의 경비(약품비 · 전력비 · 위탁처리비 등, 더존 501 ~ 600). 회사마다 이름이 달라 코드 범위로 잇는다(아래 code_ranges, 2026-11-05 더존 계정 단위 재무제표(폐기물 처리업, 계정 146개) 시험에서 매핑이 빠진 계정)
+  - {id: mfg_cost, label: 매출원가, section: 비용, area: Q, names: [], codes: []}
   - {id: income_tax_expense, label: 법인세비용, section: 비용, area: T, names: ['법인세비용', '법인세등'], codes: ['998', '999']}

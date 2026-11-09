@@ -149,7 +149,7 @@ def _with_lines(rows: list[dict]) -> list[dict]:
     names = {defs.norm(r["name"]) for r in rows}
     for r in rows:
         if r.get("line"):
-            r["line_basis"] = "표시과목 열"
+            r.setdefault("line_basis", "표시과목 열")
             continue
         line, basis = defs.display_line(r["name"], names)
         r["line"], r["line_basis"] = (line, basis) if line else (r["name"], "계정명")
@@ -161,6 +161,7 @@ def _with_lines(rows: list[dict]) -> list[dict]:
 FS_PLACEHOLDER = reader.FS_PLACEHOLDER
 FS_RANGES = reader.FS_RANGES
 FS_SOURCE = "계정 단위 재무제표"
+CONTRA_LINE = "재무제표 차감 짝(위 과목)"
 
 
 JOURNAL_FOLDER = "분개장"
@@ -258,6 +259,12 @@ class JournalDedupe:
 
 def journal_codes(d: Path) -> dict[str, str]:
     """받은자료 분개장의 계정명 → 계정코드(가장 많이 쓰인 코드)."""
+    return {n: max(c, key=c.get) for n, c in journal_code_counts(d).items()}
+
+
+def journal_code_counts(d: Path) -> dict[str, dict[str, int]]:
+    """받은자료 분개장의 계정명 → {계정코드: 줄 수}. 더존은 같은 이름을 제조원가(5xx) · 판관비(8xx) 두 코드로 쓴다
+    (보험료(제) 52100 · 보험료(판) 82100, 이름의 괄호는 _norm 이 지운다). fs_tb 가 재무제표 위치 범위 안의 코드를 고른다(2026-11-05)."""
     count: dict[str, dict[str, int]] = {}
     for rel in received(d, reader.JOURNAL):
         p = Path(d) / rel
@@ -267,7 +274,7 @@ def journal_codes(d: Path) -> dict[str, str]:
             if x["code"] and x["name"]:
                 c = count.setdefault(x["name"], {})
                 c[x["code"]] = c.get(x["code"], 0) + 1
-    return {n: max(c, key=c.get) for n, c in count.items()}
+    return count
 
 
 def fs_tb(d: Path, files: list | None = None) -> list[dict]:
@@ -291,42 +298,87 @@ def fs_tb(d: Path, files: list | None = None) -> list[dict]:
             sheets += [dict(s, path=p) for s in got["sheets"]]
     if not sheets:
         return []
-    by_name = journal_codes(d)
+    by_name = journal_code_counts(d)
     accs = defs.load("accounts")["accounts"]
+    items = [(s, it) for s in sheets for it in s["items"]]
+
+    def inside(it):
+        lo, hi = FS_RANGES[it["group"]]
+        return {c: n for c, n in (by_name.get(it["name"]) or {}).items() if c.isdigit() and lo <= int(c[:3]) <= hi}
+
+    # 차감 짝이 아닌 줄의 분개장 코드(위치 범위 안, 가장 많이 쓴 것). 차감 짝 코드를 고를 때 앞뒤 경계로 쓴다
+    anchor = [None if it.get("contra_of") else (max(inside(it), key=inside(it).get) if inside(it) else None) for _, it in items]
     seq: dict[str, int] = {}
     used: dict[str, str] = {}
+    taken: set[str] = set()         # 차감 짝 줄에 이미 준 분개장 코드
+    owner: dict[str, str] = {}      # 차감 짝 코드 → 위 과목 이름
     out = []
-    for s in sheets:
-        for it in s["items"]:
-            lo, hi = FS_RANGES[it["group"]]
-            code, basis = by_name.get(it["name"]), "분개장 계정코드"
-            if code and not lo <= int(code[:3]) <= hi:
-                code = None
-            if code is None:
-                m = defs.map_account(None, it["name"])
-                spec = next((a for a in accs if a["id"] == m["id"]), None) if m["id"] else None
-                code = next((c for c in (spec or {}).get("codes", []) if lo <= int(c) <= hi), None)
-                basis = "계정 사전"
-            if code is None:
-                base = FS_PLACEHOLDER[it["group"]]
-                seq[base] = seq.get(base, 0) + 1
-                code, basis = f"{base}{seq[base]:02d}", "재무제표 위치(회계사 확인 필요)"
-            elif basis == "계정 사전" and used.get(code, it["name"]) != it["name"]:
-                # 사전 코드가 다른 계정에 이미 쓰였으면 앞 3자리는 두고 순번을 붙여 계정을 따로 둔다
-                seq[code] = seq.get(code, 0) + 1
-                code = f"{code}{seq[code]:02d}"
-            used.setdefault(code, it["name"])
-            out.append({"code": code, "name": it["name"], "line": "", "amount": it["amount"], "version": ver,
-                        "path": s["path"].relative_to(d).as_posix(), "source": FS_SOURCE, "code_basis": basis,
-                        "fs_group": it["group"]})
+    for k, (s, it) in enumerate(items):
+        lo, hi = FS_RANGES[it["group"]]
+        cands = by_name.get(it["name"]) or {}
+        ins = inside(it)
+        code, basis = (max(ins, key=ins.get) if ins else None), "분개장 계정코드"
+        if it.get("contra_of"):
+            # 차감 짝(대손충당금 · 감가상각누계액 · 국고보조금)은 이름이 같아 분개장 코드가 여럿이다(2026-11-05). 더존은 위 과목 뒤
+            # 코드를 쓰므로, 앞쪽 과목 코드(가장 가까운 분개장 코드)보다 크고 뒤쪽 과목 코드보다 작은 코드 가운데 아직 주지 않은
+            # 가장 작은 것을 고른다. 없으면 가장 많이 쓴 코드를 쓰되, 그 코드가 이미 다른 위 과목의 차감 짝이면 계정 사전 코드로 따로 둔다
+            mine = [j for j, (s2, _) in enumerate(items) if s2 is s]          # 같은 시트(재무상태표) 줄만 경계로 본다
+            lo_c = max((int(anchor[j]) for j in mine if j < k and anchor[j]), default=0)
+            hi_c = min((int(anchor[j]) for j in mine if j > k and anchor[j]), default=10 ** 9)
+            near = sorted(c for c in cands if c.isdigit() and lo_c < int(c) < hi_c and c not in taken)
+            if near:
+                code, basis = near[0], "분개장 계정코드(차감 짝)"
+                taken.add(code)
+            elif code in taken:
+                code = None             # 다른 위 과목의 차감 짝 코드다. 계정 사전 코드로 따로 둔다(합치면 분개장 대사가 어긋난다)
+        # 회사가 표준 범위 밖 코드를 쓴 계정(기타보증금 96400 · 회원권 97800)은 분개장 코드를 쓰지 않는다. 여러 곳이 코드 앞 3자리로
+        # 구분(자산 · 손익)을 정하므로 손익으로 잘못 간다(2026-11-05). 계정 사전 코드를 쓰고 분개장 대사에서 「짝 없음」 으로 보인다
+        if code and used.get(code, it["name"]) != it["name"]:
+            code = None             # 같은 코드를 다른 이름이 이미 썼다
+        if code and it.get("contra_of") and owner.get(code, it["contra_of"]) != it["contra_of"]:
+            code = None             # 이름이 같은 차감 계정(대손충당금)이 다른 위 과목에 이미 이 코드를 썼다. 합치면 위 과목별 순액이 깨진다
+        if code is None:
+            m = defs.map_account(None, it["name"])
+            spec = next((a for a in accs if a["id"] == m["id"]), None) if m["id"] else None
+            code = next((c for c in (spec or {}).get("codes", []) if lo <= int(c) <= hi), None)
+            basis = "계정 사전"
+        if code is None:
+            base = FS_PLACEHOLDER[it["group"]]
+            seq[base] = seq.get(base, 0) + 1
+            code, basis = f"{base}{seq[base]:02d}", "재무제표 위치(회계사 확인 필요)"
+        elif basis == "계정 사전" and (used.get(code, it["name"]) != it["name"]
+                                       or (it.get("contra_of") and owner.get(code, it["contra_of"]) != it["contra_of"])):
+            # 사전 코드가 다른 계정(또는 다른 위 과목의 차감 짝)에 이미 쓰였으면 앞 3자리는 두고 순번을 붙여 계정을 따로 둔다
+            while True:
+                seq[code[:3]] = seq.get(code[:3], 0) + 1
+                cand = f"{code[:3]}{seq[code[:3]]:02d}"
+                if cand not in used:
+                    break
+            code = cand
+        used.setdefault(code, it["name"])
+        if it.get("contra_of"):
+            owner.setdefault(code, it["contra_of"])
+        out.append({"code": code, "name": it["name"], "line": "", "amount": it["amount"], "version": ver,
+                    "path": s["path"].relative_to(d).as_posix(), "source": FS_SOURCE, "code_basis": basis,
+                    "fs_group": it["group"], **({"prior": it["prior"]} if "prior" in it else {}),
+                    # 재무제표 파일 안 자리(시트 · 줄 번호). 공시 양식(analysis.fslayout)이 같은 파일이면 이 자리로 계정을 붙인다
+                    **({"fs_ref": (s["path"].relative_to(d).as_posix(), s["sheet"], it["i"])} if "i" in it else {}),
+                    **({"contra_of": it["contra_of"]} if it.get("contra_of") else {})})
+    # 부채에서 차감하는 줄(퇴직급여충당부채의 퇴직연금운용자산)은 위 과목의 표시과목에 둔다(2026-11-05). 이름대로 「퇴직연금운용자산」
+    # 과목에 두면 투자자산 쪽 같은 이름 계정과 한 과목이 되어 자산과 부채가 섞인다
+    for r in out:
+        if r.get("contra_of") and r["fs_group"] in ("유동부채", "비유동부채"):
+            r["line"], r["line_basis"] = r["contra_of"], CONTRA_LINE
     pl = [r for r in out if r["fs_group"] in ("매출액", "매출원가", "판매비와관리비", "영업외수익", "영업외비용", "법인세비용")]
     if pl:
-        ni = -sum(r["amount"] for r in pl)
         eq = [r for r in out if r["fs_group"] == "자본" and ("잉여금" in r["name"] or "결손금" in r["name"])]
         re_row = next((r for r in eq if any(k in r["name"] for k in ("미처분", "미처리", "이월"))), eq[-1] if eq else None)
         if re_row is not None:
-            re_row["amount"] = reader._int(re_row["amount"] + ni)
+            re_row["amount"] = reader._int(re_row["amount"] - sum(r["amount"] for r in pl))
             re_row["closing_adjusted"] = True
+            # 전기 열도 같은 규칙(전기 미처분이익잉여금에 전기 당기순이익이 들어 있다, 2026-11-05)
+            if "prior" in re_row and all("prior" in r for r in pl):
+                re_row["prior"] = reader._int(re_row["prior"] - sum(r["prior"] for r in pl))
     return out
 
 
@@ -374,7 +426,45 @@ def prior(d: Path) -> dict | None:
     """전기 재무제표 과목별 금액. 작년 감사 폴더의 8810 날인재무제표(우리가 감사한 최종본)가 먼저, 다음은 받은자료
     '전기 재무제표' 엑셀, 없으면 시작 자료(R2)가 전기조서 8100B · DART · 전기 감사보고서에서 읽어 `_색인/시작자료.json` 에
     둔 전기 재무제표를 쓴다. 모두 없으면 None."""
-    return drop_group_lines(prior_last_year(d) or prior_excel(d) or _prior_from_start(d))
+    return drop_group_lines(prior_last_year(d) or prior_excel(d) or _prior_from_start(d) or prior_company_fs(d))
+
+
+def prior_company_fs(d: Path) -> dict | None:
+    """회사제시 비교식 재무제표(받은자료 회사제시)의 전기 열(2026-11-05). 위 원천(작년 8810 · 받은 전기 재무제표 · 전기 감사보고서 ·
+    DART)이 모두 없을 때만 쓴다. 회사가 다시 적은 전기 숫자라 감사받은 재무제표와 다를 수 있다(source 에 「회사제시」 를 남긴다)."""
+    import openpyxl
+
+    files = _tb_files(d)
+    if not files:
+        return None
+    ver = files[0][1]
+    out = {"as_of": None, "bs": {}, "is": {}, "path": None, "source": "회사제시 재무제표 전기 열"}
+    paths = []
+    for p, v in files:
+        if v != ver or Path(p).suffix.lower() not in reader.EXCEL:
+            continue
+        wb = openpyxl.load_workbook(p, data_only=True, read_only=True)
+        try:
+            for ws in wb.worksheets:
+                rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+                h = reader._fs_header(rows) if _is_fs_layout(rows) else None
+                if h is None or not h[3]:          # 전기 열이 없는 시트
+                    continue
+                got = _prior_fs_sheet(rows)
+                if not got:
+                    continue
+                out[got["stmt"]].update(got["values"])
+                out.setdefault("positions", {}).update(got["positions"])
+                out.setdefault("column", {})[got["stmt"]] = got["basis"]
+                if got["stmt"] == "bs" and out["as_of"] is None:
+                    out["as_of"] = got["basis"]
+                paths.append(Path(p).relative_to(d).as_posix())
+        finally:
+            wb.close()
+    if not (out["bs"] or out["is"]):
+        return None
+    out["path"] = " · ".join(dict.fromkeys(paths))
+    return out
 
 
 # 전기 재무제표의 묶음 줄 후보(일반기업회계기준 제2장 중분류 · 손익 구분 이름). 이름만으로 정하지 않고, 바로 아래 과목들의 합과
@@ -532,17 +622,21 @@ def _prior_fs_sheet(rows) -> dict | None:
     if got is None:
         return None
     hi, lab, cols, basis = got
-    seq = reader._fs_lines(rows[hi + 1:], lab, cols)
-    if not seq:
+    full = reader._fs_lines_full(rows[hi + 1:], lab, cols)
+    if not full:
         return None
-    keys = {x[1] for x in seq}
+    keys = {x[1] for x in full}
     stmt = "bs" if ("자산총계" in keys or "자산" in keys) else "is"
+    contras = reader._fs_contras(full) if stmt == "bs" else None
+    seq = [x[:4] for x in full]
     vals, pos = {}, {}
-    for it in reader._fs_items(seq, stmt):
+    for it in reader._fs_items(seq, stmt, contras):
         g, sign = reader._fs_group(stmt, it)
         v = it["value"]
         if stmt == "bs" and sign < 0 and g in ("유동자산", "비유동자산"):
             v = -abs(v)
+        if stmt == "bs" and sign > 0 and g in ("유동부채", "비유동부채"):
+            v = -abs(v)             # 부채에서 차감하는 과목(퇴직급여충당부채의 퇴직연금운용자산, 2026-11-05)
         if stmt == "bs" and g == "자본" and sign > 0:
             v = -abs(v)
         vals[it["name"]] = reader._int(vals.get(it["name"], 0) + v)     # 같은 이름(감가상각누계액 · 대손충당금 둘)은 더한다

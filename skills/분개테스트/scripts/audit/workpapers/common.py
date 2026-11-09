@@ -247,6 +247,7 @@ class Line:
     party: str | None
     extra: dict = field(default_factory=dict)
     file: str = ""
+    closing: bool = False       # 결산 마감 분개(집합손익 대체, reader._mark_closing)
 
 
 @dataclass
@@ -300,7 +301,8 @@ def read_journal(path: Path, rel: str = "") -> list[Line]:
         dt = x["date"]
         out.append(Line(date=dt, voucher=x["voucher"] or dt.isoformat(),
                         row=int(x["row"]) if x["row"] is not None else None, code=x["code"], name=x["name"],
-                        dr=x["dr"], cr=x["cr"], memo=x["memo"] or "", party=x["party"], extra=dict(x["extra"]), file=rel))
+                        dr=x["dr"], cr=x["cr"], memo=x["memo"] or "", party=x["party"], extra=dict(x["extra"]), file=rel,
+                        closing=bool(x.get("closing"))))
     return out
 
 
@@ -311,7 +313,8 @@ def journals(d: Path) -> dict:
     excluded: 다른 분개장과 기간이 겹쳐 합치지 않았거나 같은 줄을 뺀 분개장 [{path, why, dropped}](figures.journal_plan, 2026-10-18)"""
     d = Path(d)
     start, end = fy_start(d), fy_end(d)
-    cur, post, prior, files, extra, failed, excluded = [], [], [], [], set(), [], []
+    cur, post, prior, files, extra, failed, excluded, stats = [], [], [], [], set(), [], [], []
+    closing = []                # 결산 마감 분개(집합손익 대체). 당기 줄에서 빼고 따로 둔다(2026-11-05)
     parts = {"cur": (cur, set()), "post": (post, set()), "prior": (prior, set())}
     plan = figures.journal_plan(d, reader.READABLE)
     dd = figures.JournalDedupe(plan)
@@ -326,19 +329,85 @@ def journals(d: Path) -> dict:
             failed.append({"path": rel, "why": reader.read_failure(d / rel, reader.JOURNAL) or reader.READ_FAIL})
             continue
         files.append(rel)
+        stats.append(journal_file_stat(d / rel, rel, lines))
         for x in lines:
             k = figures.journal_line_key(x.date, x.voucher, x.code or x.name, x.dr, x.cr)
             if not dd.keep(rel, k, bool(f["dedupe"])):
                 continue
             dd.seen(k)
             extra |= set(x.extra)
+            if x.closing and start <= x.date <= end:
+                closing.append(x)
+                continue
             rows, used = parts["cur" if start <= x.date <= end else "post" if x.date > end else "prior"]
             rows.append(x)
             used.add(rel)
         if f["dedupe"]:
             excluded.append({"path": rel, "why": f["why"], "dropped": dd.dropped.get(rel, 0)})
-    return Journals({"cur": cur, "post": post, "prior": prior, "files": files, "extra_cols": sorted(extra), "failed": failed,
-                     "part_files": {k: sorted(used) for k, (_, used) in parts.items()}, "excluded": excluded})
+    return Journals({"cur": cur, "post": post, "prior": prior, "closing": closing, "files": files, "extra_cols": sorted(extra), "failed": failed,
+                     "part_files": {k: sorted(used) for k, (_, used) in parts.items()}, "excluded": excluded,
+                     "file_stats": stats, "file_checks": journal_file_checks(stats, start, end)})
+
+
+# 엑셀 한 시트 행 한도. 옛 엑셀(.xls)은 65,536행이고 더존은 그보다 조금 앞에서 끊어 내보낸다(2026-11-09 실제 분개장 65,492행).
+# 한도의 99% 넘게 찼으면 잘렸을 수 있다고 본다
+SHEET_ROW_LIMIT = {".xls": 65_536, ".xlsx": 1_048_576, ".xlsm": 1_048_576}
+_YM_IN_NAME = (re.compile(r"(?<!\d)(20\d{2})[-_.]?(0[1-9]|1[0-2])(?!\d)"), re.compile(r"(?<!\d)(\d{2})(0[1-9]|1[0-2])(?!\d)"))
+_M_IN_NAME = re.compile(r"(?<!\d)(1[0-2]|0?[1-9])\s*월")
+
+
+def journal_file_stat(path: Path, rel: str, lines: list[Line]) -> dict:
+    """분개장 파일 하나의 행 수 · 기간 · 차대 합계(파일 안 그대로, 겹침을 빼기 전). 파일별 완전성 표에 쓴다(2026-11-09)."""
+    ds = [x.date for x in lines]
+    return {"path": rel, "ext": Path(rel).suffix.lower(), "sheet_rows": reader.journal_sheet_rows(Path(path)),
+            "lines": len(lines), "dr": sum(x.dr for x in lines), "cr": sum(x.cr for x in lines),
+            "first": min(ds) if ds else None, "last": max(ds) if ds else None,
+            "months": sorted({f"{x.year:04d}-{x.month:02d}" for x in ds})}
+
+
+def _name_month(path: str) -> tuple[int | None, int] | None:
+    """파일 이름에 적힌 달. (연도 | None, 월). 「2607 분개장」 → (2026, 7), 「7월 분개장」 → (None, 7)."""
+    name = Path(path).stem
+    for rx in _YM_IN_NAME:
+        m = rx.search(name)
+        if m:
+            y = int(m.group(1))
+            return (y if y >= 100 else 2000 + y, int(m.group(2)))
+    m = _M_IN_NAME.search(name)
+    return (None, int(m.group(1))) if m else None
+
+
+def journal_file_checks(stats: list[dict], start: date, end: date) -> list[str]:
+    """분개장 모집단이 다 왔는지 파일별로 본다(2026-11-09, 검토 문서 3.4). 확인할 문장 목록. 빈 목록이면 걸린 것이 없다.
+    시트 행 한도에 닿은 파일, 파일 안 차대 불일치, 이름의 달과 안의 날짜가 다른 파일, 회계기간 가운데 전표가 없는 달."""
+    out = []
+    for f in stats:
+        lim = SHEET_ROW_LIMIT.get(f.get("ext") or "")
+        if lim and f.get("sheet_rows", 0) >= lim * 0.99:
+            out.append(f"{f['path']}: 시트가 {f['sheet_rows']:,}행으로 엑셀 한 시트 한도({lim:,}행)에 닿아 뒷부분이 잘렸을 수 있습니다. "
+                       "csv 나 xlsx 로, 또는 기간을 나눠 다시 받아 주십시오")
+        diff = (f.get("dr") or 0.0) - (f.get("cr") or 0.0)
+        if abs(diff) > 0.5:
+            out.append(f"{f['path']}: 파일 안 차변 − 대변이 {diff:,.0f}원입니다")
+        nm = _name_month(f["path"])
+        if nm and nm[0] and not (start.year - 1 <= nm[0] <= end.year + 1):
+            nm = None                       # 「1203」 같은 숫자를 연월로 잘못 읽지 않는다
+        if nm and f.get("months"):
+            y, m = nm
+            inside = {(int(k[:4]), int(k[5:7])) for k in f["months"]}
+            if not any(mm == m and (y is None or yy == y) for yy, mm in inside):
+                want = f"{y:04d}-{m:02d}" if y else f"{m}월"
+                out.append(f"{f['path']}: 파일 이름은 {want} 인데 안의 전표는 {', '.join(f['months'])} 입니다")
+    have = {k for f in stats for k in f.get("months", [])}
+    miss, y, m = [], start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        k = f"{y:04d}-{m:02d}"
+        if k not in have:
+            miss.append(k)
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    if stats and miss:
+        out.append(f"빠진 달 {', '.join(miss)}: 회계기간 안인데 받은 분개장에 이 달 전표가 없습니다")
+    return out
 
 
 def vouchers(lines: list[Line]) -> list[Voucher]:
@@ -359,12 +428,14 @@ def prior_parties(j: dict) -> set[str] | None:
 
 
 # ---------------------------------------------------------------- 매출채권 거래처별
-def ar_by_party(d: Path) -> dict:
+def ar_by_party(d: Path, schedule_only: bool = False) -> dict:
     """기말 매출채권 거래처별 잔액. 연령분석표 → 계정명세서(외상매출금 · 매출채권 시트) 순. {"rows": [(거래처, 금액)], "source", "excluded"}
-    excluded: 거래처 이름 칸에 결산 · 조정 · 선충전 같은 낱말이 있는 줄(workpapers.yaml confirmations.non_party_keywords)."""
+    excluded: 거래처 이름 칸에 결산 · 조정 · 선충전 같은 낱말이 있는 줄(workpapers.yaml confirmations.non_party_keywords).
+    schedule_only 면 계정명세서만 본다(4000C IPE 가 회사 연령표를 계정명세서와 대사할 때, 2026-10-26)."""
     d = Path(d)
     skip = load_def("workpapers.yaml").get("confirmations", {}).get("non_party_keywords", [])
-    for kind, sheet_keys in ((reader.AGING, None), ("계정명세서", ("외상매출금", "매출채권"))):
+    order = ((reader.AGING, None), ("계정명세서", ("외상매출금", "매출채권")))
+    for kind, sheet_keys in order[1:] if schedule_only else order:
         for rel in figures.received(d, kind):
             if Path(rel).suffix.lower() not in reader.READABLE:
                 continue
@@ -372,7 +443,10 @@ def ar_by_party(d: Path) -> dict:
             if kind == reader.AGING:                # 분기 연령표(Roll-Rate)가 함께 있어도 결산일 기준표만(2026-10-16)
                 tabs = reader.asof_tabs(tabs, case(d).get("fiscal_year_end"))
             for sheet, c, rows, _, _ in tabs:
-                if sheet_keys and not any(k in sheet for k in sheet_keys):
+                # 시트 이름이 「Sheet1_1」 이어도 표가 하나뿐이고 파일 이름이 계정을 밝히면(「3.계정명세서_108외상매출금」) 그 표를 쓴다.
+                # 분석의 계정명세서 읽기(analysis.balances._account_of)와 같은 규칙이다(2026-11-06 실제 회사에서 4000C 거래처별이 비었다)
+                by_file = len(tabs) == 1 and any(k in Path(rel).stem for k in sheet_keys or ())
+                if sheet_keys and not (any(k in sheet for k in sheet_keys) or by_file):
                     continue
                 out, excluded = [], []
                 for r in rows:
@@ -435,7 +509,13 @@ def schedule_openings(d: Path) -> dict:
 # ---------------------------------------------------------------- 기입란 · 저장
 def ask(b: wp.Book, ws, row: int, col: int, label: str, rule: str = "required", **k):
     """같은 시트 안에서 항목 이름이 겹치지 않게 번호를 붙여 기입란을 등록한다(다시 만들 때 값을 옮기는 열쇠)."""
-    used = {lab for sh, _, lab, _ in b.inputs if sh == ws.title}
+    # 시트별로 쓴 이름을 모아 둔다. b.inputs 는 덧붙이기만 하므로 지난번 뒤로 붙은 것만 더한다(2026-11-09: 결과 목록 수천 줄에서
+    # 부를 때마다 전체를 다시 훑어 제곱으로 늘던 것)
+    seen = b.__dict__.setdefault("_ask_seen", {"n": 0, "by": {}})
+    for sh, _, lab0, _ in b.inputs[seen["n"]:]:
+        seen["by"].setdefault(sh, set()).add(lab0)
+    seen["n"] = len(b.inputs)
+    used = seen["by"].get(ws.title, set())
     lab, n = label, 2
     while lab in used:
         lab, n = f"{label} ({n})", n + 1
@@ -458,6 +538,8 @@ class Kept(Exception):
 # 옛 「해당 여부: …」 는 Part 2 칸뿐이었고 새 이름은 「추가 절차 해당 여부: …」 다(Part 1 의 「해당 여부: …」 와 겹치지 않게)
 OLD_SHEETS = {"리드": ("Lead", "표지")}
 OLD_LABELS = {"리드": {"해당 여부: ": "추가 절차 해당 여부: "}}
+# 번호를 뗀 시트 이름 → 옛 기입란 앞말 → 새 앞말. 4000CL 기말 후 출금 검토의 「판정: …」 은 「분류: …」 칸으로 옮긴다(2026-10-26)
+OLD_LABELS_BY_BASE = {"기말 후 출금 검토": {"판정: ": "분류: "}}
 
 
 def _carry_target(sheet: str, label: str, new_keys: dict, by_base: dict):
@@ -468,6 +550,11 @@ def _carry_target(sheet: str, label: str, new_keys: dict, by_base: dict):
     hit = by_base.get((wp.base_name(sheet), label))
     if hit:
         return hit
+    for old, new in (OLD_LABELS_BY_BASE.get(wp.base_name(sheet)) or {}).items():
+        if label.startswith(old):
+            hit = by_base.get((wp.base_name(sheet), new + label[len(old):]))
+            if hit:
+                return hit
     for old, new in (OLD_LABELS.get(sheet) or {}).items():
         if label.startswith(old):
             label = new + label[len(old):]
@@ -508,6 +595,8 @@ def save(b: wp.Book, force: bool = False) -> dict:
     elif src is not None:
         old = {(x["sheet"], x["label"]): x["value"] for x in wp.readback(src) if not wp._blank(x["value"])}
         new_keys = {(sh, lab): (sh, ref) for sh, ref, lab, _ in b.inputs}
+        ref_label = {(sh, ref): lab for sh, ref, lab, _ in b.inputs}
+        prefill = getattr(b, "prefill_labels", set())
         by_base = {(wp.base_name(sh), lab): (sh, ref) for sh, ref, lab, _ in b.inputs}
         for k, v in old.items():
             target = _carry_target(k[0], k[1], new_keys, by_base)
@@ -519,8 +608,11 @@ def save(b: wp.Book, force: bool = False) -> dict:
                 if wp._blank(cell.value):
                     cell.value = v
                     moved += 1
+                elif ref_label.get(target) in prefill and cell.value != v:   # 엔진이 제안 값을 넣은 칸: 감사인 값이 앞선다
+                    cell.value = v
+                    moved += 1
                 carried += 1
-            elif k[1] != "검토자":
+            elif k[1] != "검토자" and not str(k[1]).startswith(wp.AI_LABEL):     # AI 확인 칸은 저장 때 만들고 거기서 옮긴다(Book._ai_sheets)
                 lost.append(f"{k[0]}!{k[1]}")
         if lost and not force and src == path:
             raise Kept(path, lost)

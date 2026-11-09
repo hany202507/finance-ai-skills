@@ -17,7 +17,7 @@ from . import figures, folder, ocr, priorwp, reader, shareholders
 from .errors import DefinitionError, IntakeError
 
 LINKS_FILE = folder.DEFS / "received_links.yaml"
-PATCH_KEYS = {"path", "kind", "period", "facts", "linked_workpapers", "confirmed", "basis", "ocr_confirm"}
+PATCH_KEYS = {"path", "kind", "period", "facts", "linked_workpapers", "confirmed", "basis", "ocr_confirm", "by"}
 OCR_CONFIRM_KEYS = {"item", "value", "by"}
 FACT_KEYS = {"text", "basis", "source_page", "value"}
 PERIOD_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?(~\d{4}(-\d{2}(-\d{2})?)?)?$")
@@ -107,6 +107,22 @@ def _ai(facts):
 
 
 NO_TEXT_MIN = 20          # 한 쪽에서 공백을 뺀 글자가 이보다 적으면 글자 층이 없는 쪽으로 본다(「Page 1」 같은 머리글만 있는 스캔본)
+PROGRESS = None           # 진행 한 줄을 받을 함수(화면 서버가 건다, 2026-10-23 T3). 없으면 stderr 에만 「n/m <파일>」 을 낸다
+
+
+def report_progress(text: str) -> None:
+    """받은자료 읽기가 파일마다 진행을 알린다. 화면은 이 줄을 「지금 차례」 띠에 보인다. stderr 라 명령 출력(stdout)을 더럽히지 않는다."""
+    import sys
+
+    try:
+        print(text, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+    if PROGRESS is not None:
+        try:
+            PROGRESS(text)
+        except Exception:  # noqa: BLE001  화면 쪽 오류가 엔진을 멈추지 않는다
+            pass
 _TEXT_CACHE: dict[str, bool] = {}
 
 
@@ -152,6 +168,16 @@ DOC_FACTS = ("기준일 ", "금융기관 이름 ", "약정서 종류 ", "약정�
 
 def _doc_fact(f: dict) -> bool:
     return f.get("basis") == "엔진" and f["text"].startswith(DOC_FACTS)
+
+
+def need_ai_paths(docs: dict) -> list[str]:
+    """AI 판독이 필요한 파일: 엔진 사실(문서 사실 말고)도 AI 사실도 없는 받은자료, 판독 뒤 내용이 바뀐 영구조서.
+    read_all 과 화면(audit.ui.model)이 같이 쓴다(2026-10-22 화면이 같은 규칙으로 「AI 판독 남음」 을 보이려고 read_all 에서 떼어 냄)."""
+    out = [f["path"] for f in docs.get("files") or [] if f["role"] == "received" and not [x for x in _engine(f["facts"]) if not _doc_fact(x)]
+           and (not f["confirmed"] or Path(f["path"]).suffix.lower() not in reader.EXCEL) and not _ai(f["facts"])]
+    # 판독한 뒤 내용이 바뀐 영구조서는 다시 판독한다(앞 판독은 남아 있고 확인 전이다, 2026-10-18)
+    out += [f["path"] for f in docs.get("files") or [] if f["role"] == "permanent" and f.get("needs_recheck")]
+    return out
 
 
 def _read_pdf_docs(d: Path, docs: dict, touched: set, made: set) -> list[str]:
@@ -238,14 +264,16 @@ def read_all(engagement_dir: Path, now: str | None = None, use_ocr: bool = True)
     fy_end = _fy_end(case)
     touched = set(rep["new"]) | set(rep["changed"])
     scans, _ = no_text_pdfs(d, docs)
+    if scans and use_ocr:
+        report_progress(f"글자 없는 PDF {len(scans)}건 OCR 확인")
     ocr_rep = ocr.ensure(d, docs, on=use_ocr, pdfs=scans)
     if ocr_rep["warning"]:
         docs.setdefault("warnings", []).append(ocr_rep["warning"])
 
     read, sniffed, unread, linked = [], [], [], []
-    for f in docs["files"]:
-        if f["role"] != "received":
-            continue
+    received = [f for f in docs["files"] if f["role"] == "received"]
+    for n, f in enumerate(received, 1):
+        report_progress(f"{n}/{len(received)} {Path(f['path']).name}")
         p = d / f["path"]
         excel = p.suffix.lower() in reader.EXCEL
         kind = f["kind"]
@@ -299,10 +327,7 @@ def read_all(engagement_dir: Path, now: str | None = None, use_ocr: bool = True)
 
     docs["indexed_at"] = at
     _put(d, "문서목록.json", docs)
-    need_ai = [f["path"] for f in docs["files"] if f["role"] == "received" and not [x for x in _engine(f["facts"]) if not _doc_fact(x)]
-               and (not f["confirmed"] or Path(f["path"]).suffix.lower() not in reader.EXCEL) and not _ai(f["facts"])]
-    # 판독한 뒤 내용이 바뀐 영구조서는 다시 판독한다(앞 판독은 남아 있고 확인 전이다, 2026-10-18)
-    need_ai += [f["path"] for f in docs["files"] if f["role"] == "permanent" and f.get("needs_recheck")]
+    need_ai = need_ai_paths(docs)
     no_text, no_text_todo = no_text_pdfs(d, docs)
     by = {f["path"]: f for f in docs["files"]}
     saved = [p for p in no_text if ocr_saved(d, by[p])]
@@ -412,6 +437,8 @@ def _check(item, i: int, files: dict, kinds: dict, numbers: set[str], seen: set)
             bad = [x for x in lw if not _known_wp(x, numbers)]
             if bad:
                 probs.append(f"{where}: 폴더 표준에 없는 조서번호입니다: {', '.join(bad)}")
+    if "by" in item and (basis != "사람" or not isinstance(item["by"], str) or not 0 < len(item["by"].strip()) <= 20):
+        probs.append(f"{where}: by 는 확인한 회계사 이름(20자 안)이고 basis 사람 일 때만 씁니다")
     if "ocr_confirm" in item:
         oc = item["ocr_confirm"]
         if basis != "사람":
@@ -494,9 +521,17 @@ def apply_patch(engagement_dir: Path, patch: dict, now: str | None = None, sourc
         if human:
             f["confirmed"] = item.get("confirmed", True)
             counts["확인"] += 1 if f["confirmed"] else 0
+            if f["confirmed"] and item.get("by"):
+                # 누가 확인했나(2026-10-22). 같은 줄이 감사 폴더 _기록 에도 남아 색인을 다시 만들어도 되살아난다(audit/records.py)
+                f.update(confirmed_by=item["by"].strip(), confirmed_at=at)
+            elif not f["confirmed"]:
+                f.pop("confirmed_by", None)
+                f.pop("confirmed_at", None)
         else:
             # AI 가 종류 · 기간 · 사실 · 연결 중 무엇을 넣었든 회계사가 확인하기 전까지는 확인 전이다
             f["confirmed"] = False
+            f.pop("confirmed_by", None)          # 앞선 사람 확인은 새 판독에 닿지 않는다(_기록 줄은 남는다)
+            f.pop("confirmed_at", None)
     try:
         jsonschema.validate(new, folder._schema()["문서목록.json"])
     except jsonschema.ValidationError as e:

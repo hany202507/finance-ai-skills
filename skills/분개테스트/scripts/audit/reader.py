@@ -36,7 +36,8 @@ NEW_PARTY_FACT = "전기 분개장에 없던 거래처"
 
 # 열 이름 후보. 앞의 것이 먼저다. 정확히 같은 이름을 먼저 보고, 없으면 포함하는 이름을 본다
 COLS = {
-    "code": ["계정코드", "코드", "계정과목코드"],
+    # 「Code」: 더존 분개장 엑셀 내보내기는 계정 · 거래처 · 적요 코드 열 머리가 모두 영문 Code 다. 가장 왼쪽(계정과목 바로 앞)이 계정코드(2026-11-05)
+    "code": ["계정코드", "코드", "계정과목코드", "Code", "CODE"],
     "name": ["계정명", "계정과목", "과목명", "계정"],
     "line": ["표시과목", "재무제표표시과목", "보고과목"],
     "cur": ["당기", "당기말", "당기잔액", "잔액", "금액"],
@@ -97,6 +98,11 @@ COLS = {
     "rev_prior": ["전기누적매출", "전기까지인식매출", "전기누적수익", "전기말누적매출", "전기누적공사수익"],
     "rev_cur": ["당기인식매출", "당기매출", "당기수익", "당기공사수익"],
     "billed": ["누적청구액", "청구누계", "누적청구", "누적청구금액"],
+    # 회사가 만든 대손충당금 연령표(2026-10-26, 4000C IPE). 거래처 · 연령 구간 · 잔액 · 설정률 · 충당금이 한 줄인 꼴
+    "party_code": ["거래처코드"],
+    "bucket": ["연령구간", "기간구간", "경과구간", "경과기간", "구간", "연령"],
+    "rate": ["설정률", "설정율", "대손설정률", "대손설정율", "대손율", "대손률", "충당률", "적립률", "적립율"],
+    "allow_amt": ["대손충당금", "충당금", "충당금설정액", "대손충당금설정액", "설정액"],
 }
 # 일자 열은 부분 일치로 찾을 때 입력일자 · 등록일자 · 수정일자를 고르지 않는다(2026-10-21 JET 검토: 「회계일」 처럼 이름이 정확히 맞지 않는 분개장에서
 # 입력일자를 전표 일자로 읽으면 당기 · 기말 후를 가르는 기준까지 바뀐다)
@@ -104,7 +110,7 @@ EXCLUDE = {"date": ("입력", "등록", "수정"), "dep_end": ("기초", "전기
            "prior": ("차변", "대변", "이월"), "dr": ("계정", "과목", "코드", "잔액", "-", "−"), "cr": ("계정", "과목", "코드", "잔액", "-", "−"),
            "voucher": ("거래처", "사업자", "프로젝트", "카드", "계좌", "주민", "등록"), "party": ("코드", "번호", "분류", "유형"),
            "amount": ("차변", "대변", "공급", "세액"), "cost_todate": ("전기",), "rev_cur": ("누적", "전기"), "contract_amt": ("변경전",), "relation": ("명", "이름"),
-           "rp_name": ("코드", "번호")}
+           "rp_name": ("코드", "번호"), "rate": ("액",), "allow_amt": ("률", "율"), "bucket": ("일수",)}
 EXACT_ONLY = {"year", "mon", "day", "side"}       # 짧은 이름이라 포함 비교를 하지 않는다
 PRIOR_TB = "전기 시산표"
 TB_NO_CODE = "코드 없는 더존 합계잔액시산표"
@@ -127,6 +133,9 @@ def _num(v) -> float | None:
     s = str(v).strip().replace(",", "").replace("원", "")
     neg = s.startswith("(") and s.endswith(")")
     s = s.strip("()")
+    # 더존 · 회계법인 출력물의 음수 표시 △ · ▲ · ▽(2026-11-05, 기타포괄손익누계액 「△15,193,066」 이 빠졌다)
+    if s[:1] in ("△", "▲", "▽", "▼"):
+        neg, s = not neg, s[1:].strip()
     try:
         x = float(s)
     except ValueError:
@@ -176,12 +185,14 @@ def _is_total_row(row, loose: bool = True) -> bool:
     return False
 
 
-def _find_col(headers: list[str], key: str) -> int | None:
+def _find_col(headers: list[str], key: str, used=()) -> int | None:
+    """key 열의 위치. used 에 든 열은 건너뛴다(2026-11-09: 더존 두 줄 머리 「전표승인정보 년/월/일 · 번호」 에서 전표번호 동의어
+    「전표」 가 이미 일자로 쓴 첫 열에 먼저 걸려 전표번호 열을 버리던 것)."""
     cands = COLS[key]
     excl = EXCLUDE.get(key, ())
     for c in cands:
         for i, h in enumerate(headers):
-            if h == c:
+            if h == c and i not in used:
                 return i
     if key in EXACT_ONLY:
         return None
@@ -189,7 +200,7 @@ def _find_col(headers: list[str], key: str) -> int | None:
         if len(c) < 2:
             continue
         for i, h in enumerate(headers):
-            if c in h and not any(x in h for x in excl):
+            if c in h and i not in used and not any(x in h for x in excl):
                 return i
     return None
 
@@ -306,7 +317,7 @@ def _match(headers: list[str], required: list[list[str]], optional: list[str]) -
         cols[found[0]] = found[1]
     for key in optional:
         if key not in cols:
-            i = _find_col(headers, key)
+            i = _find_col(headers, key, used=set(cols.values()))
             if i is not None and i not in cols.values():
                 cols[key] = i
     return cols
@@ -692,10 +703,16 @@ NUM_PREFIX = re.compile(r"^\s*(?:\(\s*\d+\s*\)|\d+\s*[.．])\s*")
 FS_SECTIONS = ("자산", "부채", "자본")
 FS_TOTALS = {"자산총계", "부채총계", "자본총계", "부채와자본총계", "부채및자본총계", "부채와자본의총계"}
 FS_CALCS = {"매출총이익", "매출총손실", "영업이익", "영업손실", "법인세비용차감전순이익", "법인세비용차감전순손실", "법인세차감전순이익",
-            "법인세차감전순손실", "당기순이익", "당기순손실", "영업외손익"}
+            "법인세차감전순손실", "당기순이익", "당기순손실", "영업외손익",
+            # 2026-11-05 더존 손익계산서 조회표 「Ⅷ. 법인세차감전이익」 이 계정 줄(법인세비용 묶음)로 들어가 세전이익이 두 번 셈이 됐다
+            "법인세차감전이익", "법인세차감전손실", "법인세비용차감전이익", "법인세비용차감전손실", "매출총손익", "영업손익",
+            "법인세비용차감전순손익", "법인세차감전순손익", "당기순손익"}
 # 자본에서 차변 성격인 계정(일반기업회계기준 자본조정 차감 항목과 결손금), 자산에서 대변 성격인 차감 계정
 EQUITY_DEBIT = ("결손금", "자기주식", "주식할인발행차금", "감자차손", "처분손실")
-CONTRA_ASSET = ("대손충당금", "누계액", "현재가치할인차금", "정부보조금")
+CONTRA_ASSET = ("대손충당금", "누계액", "현재가치할인차금", "정부보조금", "국고보조금")
+# 매출원가 계산 내역 줄(기초 재고 + 당기 제조원가 · 매입 − 기말 재고). 같은 묶음에 매출원가 줄이 따로 있으면 계정이 아니다(2026-11-05)
+COST_DETAIL = re.compile(r"^(기초|기말)\S*재고액$|^당기\S*(제조원가|매입액|매입원가|공사원가)$|^타계정(으로|에서)?대체")
+COST_END = re.compile(r"^기말\S*재고액$|^타계정으로대체")
 
 
 def _fs_header(rows):
@@ -734,6 +751,11 @@ def _fs_header(rows):
 
 def _fs_lines(rows, lab: int, cols: list[int]) -> list[tuple]:
     """(종류, 이름, 금액, 들여쓰기). 종류: section · total · h1 · h2 · acct."""
+    return [x[:4] for x in _fs_lines_full(rows, lab, cols)]
+
+
+def _fs_lines_full(rows, lab: int, cols: list[int]) -> list[tuple]:
+    """_fs_lines 와 같고 끝에 (안쪽 칸, 바깥 칸) 값이 붙는다. 차감 짝 판정(_fs_contras)이 쓴다."""
     seq = []
     for r in rows:
         raw = _cell(r, lab)
@@ -760,19 +782,65 @@ def _fs_lines(rows, lab: int, cols: list[int]) -> list[tuple]:
         if not key:
             continue
         if level == 0 and key in FS_SECTIONS:
-            seq.append(("section", key, None, indent))
+            seq.append(("section", key, None, indent, inner, outer))
         elif key in FS_TOTALS or key in FS_CALCS:
-            seq.append(("total", key, outer if outer is not None else inner, indent))
+            seq.append(("total", key, outer if outer is not None else inner, indent, inner, outer))
         elif level:
-            seq.append((f"h{level}", key, outer if outer is not None else inner, indent))
+            seq.append((f"h{level}", key, outer if outer is not None else inner, indent, inner, outer))
         else:
-            seq.append(("acct", key, inner if inner is not None else outer, indent))
+            seq.append(("acct", key, inner if inner is not None else outer, indent, inner, outer))
     return seq
 
 
-def _fs_items(seq: list[tuple], stmt: str) -> list[dict]:
+CONTRA_ZERO = CONTRA_ASSET + ("충당금", "보조금", "퇴직연금운용자산", "국민연금전환금")
+
+
+def _fs_contras(full: list[tuple]) -> dict[int, str]:
+    """재무상태표의 차감 짝 {줄 번호: 위 과목 이름}(2026-11-05).
+
+    공시 재무상태표는 위 과목과 차감 과목(대손충당금 · 감가상각누계액 · 국고보조금 · 퇴직연금운용자산)을 안쪽 칸에 쓰고
+    마지막 차감 줄의 바깥 칸에 순액을 쓴다. 안쪽 칸 줄이 이어지면 첫 줄이 위 과목이고 뒤 줄이 차감이다. 묶음이 닫히는 것은
+      가) 바깥 칸 순액이 있고 위 과목 − 차감 합 = 순액일 때(이름과 관계없이 차감, 예: 건물 · 국고보조금 · 일반참여분 · 감가상각누계액)
+      나) 순액이 0 이라 바깥 칸이 비고 위 과목 − 차감 합 = 0 이며 차감 줄 이름이 차감 계정일 때(단기대여금 · 대손충당금)
+      다) 차감 줄의 안쪽 칸이 비고 바깥 칸이 위 과목 − 앞 차감 합과 같을 때. 그 해 차감 금액이 0 이라 순액만 적힌 줄이다
+         (전기 열 「국고보조금 | 빈 칸 | 639,462,253」). 이 줄은 금액을 0 으로 바꾼다(full 을 고친다)
+    둘 다 아니면 차감으로 보지 않는다(이름 규칙 CONTRA_ASSET 이 대신 본다)."""
+    out: dict[int, str] = {}
+    base = None                 # (줄 번호, 이름, 금액)
+    block: list[tuple] = []     # [(줄 번호, 이름, 금액)]
+    for i, (kind, key, _v, _ind, inner, outer) in enumerate(full):
+        if kind != "acct":
+            base, block = None, []
+            continue
+        if base is None:
+            if inner is not None and outer is None:
+                base, block = (i, key, inner), []
+            continue
+        if inner is None:
+            rest = base[2] - sum(x[2] for x in block)
+            if block and outer is not None and abs(rest - outer) < 1 and any(w in key for w in CONTRA_ZERO):
+                out.update({j: base[1] for j, _, _ in block})
+                out[i] = base[1]
+                full[i] = (kind, key, 0, _ind, 0, outer)
+            base, block = None, []                  # 바깥 칸만 있는 줄: 묶음이 닫혔거나 묶음이 아니다
+            continue
+        block.append((i, key, inner))
+        rest = base[2] - sum(x[2] for x in block)
+        if outer is not None:
+            if abs(rest - outer) < 1:
+                out.update({j: base[1] for j, _, _ in block})
+            base, block = None, []
+        elif abs(rest) < 1 and all(any(w in k for w in CONTRA_ZERO) for _, k, _ in block):
+            out.update({j: base[1] for j, _, _ in block})
+            base, block = None, []
+    return out
+
+
+def _fs_items(seq: list[tuple], stmt: str, contras: dict[int, str] | None = None) -> list[dict]:
     """계정 줄. 아래에 계정 줄이 없는 제목 줄에 금액이 있으면 그 제목 줄이 계정이다(예: Ⅸ. 법인세비용).
-    같은 제목 아래에서 들여쓰기가 더 깊은 줄은 계산 내역(기초 재고 · 당기 매입 등)이라 뺀다."""
+    같은 제목 아래에서 들여쓰기가 더 깊은 줄은 계산 내역(기초 재고 · 당기 매입 등)이라 뺀다.
+    들여쓰기가 같아도 매출원가 줄과 함께 있는 계산 내역(COST_DETAIL)은 뺀다. 계산 내역만 있으면 그것이 계정이고 기말 재고는 뺄셈이다.
+    contras(_fs_contras 결과)가 있으면 줄마다 contra(차감 짝의 위 과목 이름 · 위 과목이면 False · 판정 밖이면 None)를 단다."""
     items = []
     section, h1, h2 = ("자산" if stmt == "bs" else None), None, None
     for i, (kind, key, v, ind) in enumerate(seq):
@@ -790,9 +858,13 @@ def _fs_items(seq: list[tuple], stmt: str) -> list[dict]:
             nxt = seq[i + 1] if i + 1 < len(seq) else None
             leaf = nxt is None or (nxt[0] != "acct" and not (kind == "h1" and nxt[0] == "h2"))
             if leaf and v not in (None, 0):
-                items.append({"name": key, "section": section, "h1": h1, "heading": key, "value": v, "indent": -1})
+                items.append({"name": key, "section": section, "h1": h1, "heading": key, "value": v, "indent": -1, "i": i})
         else:
-            items.append({"name": key, "section": section, "h1": h1, "heading": h2 or h1, "value": v, "indent": ind})
+            items.append({"name": key, "section": section, "h1": h1, "heading": h2 or h1, "value": v, "indent": ind, "i": i})
+    if contras is not None:
+        bases = {i for i in range(len(seq)) if seq[i][0] == "acct" and (i + 1) in contras and (i not in contras)}
+        for it in items:
+            it["contra"] = contras.get(it["i"]) or (False if it["i"] in bases else None)
     groups: dict = {}
     for it in items:
         groups.setdefault((it["section"], it["h1"], it["heading"]), []).append(it)
@@ -800,6 +872,14 @@ def _fs_items(seq: list[tuple], stmt: str) -> list[dict]:
     for g in groups.values():
         lv = min((x["indent"] for x in g if x["indent"] >= 0), default=-1)
         drop |= {id(x) for x in g if x["indent"] >= 0 and x["indent"] != lv}
+        if stmt == "is":
+            detail = [x for x in g if COST_DETAIL.search(x["name"])]
+            if detail and len(detail) < len([x for x in g if x["indent"] >= 0]):
+                drop |= {id(x) for x in detail}
+            elif detail:
+                for x in detail:
+                    if COST_END.search(x["name"]) and x["value"] is not None:
+                        x["value"] = -abs(x["value"])
     return [x for x in items if id(x) not in drop and x["value"] is not None]
 
 
@@ -808,11 +888,13 @@ def _fs_group(stmt: str, it: dict) -> tuple[str, int]:
     name, h1 = it["name"], it.get("h1") or it["heading"] or ""
     if stmt == "bs":
         sec = it["section"] or "자산"
+        contra = it.get("contra")             # 구조로 본 차감 짝(_fs_contras). None 이면 이름으로 본다
         if sec == "자산":
-            return ("비유동자산" if "비유동" in h1 else "유동자산"), (-1 if any(k in name for k in CONTRA_ASSET) else 1)
+            neg = bool(contra) if contra is not None else any(k in name for k in CONTRA_ASSET)
+            return ("비유동자산" if "비유동" in h1 else "유동자산"), (-1 if neg else 1)
         if sec == "부채":
-            return ("비유동부채" if "비유동" in h1 else "유동부채"), -1
-        return "자본", (1 if any(k in name for k in EQUITY_DEBIT) else -1)
+            return ("비유동부채" if "비유동" in h1 else "유동부채"), (1 if contra else -1)
+        return "자본", (1 if (contra or any(k in name for k in EQUITY_DEBIT)) else -1)
     if "원가" in h1:
         return "매출원가", 1
     if "외수익" in h1:
@@ -852,17 +934,24 @@ def fs_layout(path: Path) -> dict | None:
                 continue
             hi, lab, cur_cols, pri_cols = _fs_header(rows)
             body = rows[hi + 1:]
-            cur = _fs_lines(body, lab, cur_cols)
+            full = _fs_lines_full(body, lab, cur_cols)
+            keys = {x[1] for x in full}
+            stmt = "bs" if ("자산총계" in keys or "자산" in keys) else "is"
+            found = _fs_contras(full) if stmt == "bs" else {}
+            cur = [x[:4] for x in full]
             # 전기 열은 같은 행에서 오므로 _fs_lines 가 거르는 행도 같다. 이름으로 맞추면 같은 이름 두 줄(대손충당금)이 섞인다
-            pri = _fs_lines(body, lab, pri_cols) if pri_cols else []
+            pfull = _fs_lines_full(body, lab, pri_cols) if pri_cols else []
+            if stmt == "bs" and pfull:
+                _fs_contras(pfull)          # 순액만 적힌 차감 줄의 금액을 0 으로 바꾼다
+            pri = [x[:4] for x in pfull]
             if len(pri) != len(cur):
                 pri = []
-            keys = {x[1] for x in cur}
-            stmt = "bs" if ("자산총계" in keys or "자산" in keys) else "is"
             seq, last_acct = [], None
             for i, (kind, key, v, ind) in enumerate(cur):
                 contra = None
-                if kind == "acct" and last_acct and any(k in key for k in CONTRA_ASSET):
+                if i in found:
+                    contra = found[i]
+                elif kind == "acct" and last_acct and any(k in key for k in CONTRA_ASSET):
                     contra = last_acct
                 elif kind == "acct":
                     last_acct = key
@@ -892,16 +981,32 @@ def fs_accounts(path: Path) -> dict | None:
                 continue
             rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
             h = _fs_header(rows)
-            hi, lab, cur_cols, _ = h
-            seq = _fs_lines(rows[hi + 1:], lab, cur_cols)
-            keys = {x[1] for x in seq}
+            hi, lab, cur_cols, pri_cols = h
+            full = _fs_lines_full(rows[hi + 1:], lab, cur_cols)
+            keys = {x[1] for x in full}
             stmt = "bs" if ("자산총계" in keys or "자산" in keys) else "is"
+            contras = _fs_contras(full) if stmt == "bs" else None
+            seq = [x[:4] for x in full]
+            # 비교식 재무제표의 전기 열(2026-11-05). 같은 행에서 오므로 줄 번호로 맞춘다. 줄 수가 다르면 쓰지 않는다
+            pfull = _fs_lines_full(rows[hi + 1:], lab, pri_cols) if pri_cols else []
+            if len(pfull) != len(full):
+                pfull = []
+            pc = _fs_contras(pfull) if (pfull and stmt == "bs") else None
+            pseq = [x[:4] for x in pfull]
+            pitems = {}
+            if pfull:
+                for it in _fs_items(pseq, stmt, pc):
+                    g, sign = _fs_group(stmt, it)
+                    pitems[it["i"]] = _int(sign * it["value"])
             items = []
-            for it in _fs_items(seq, stmt):
+            for it in _fs_items(seq, stmt, contras):
                 g, sign = _fs_group(stmt, it)
-                items.append({"name": it["name"], "group": g, "amount": _int(sign * it["value"]), "heading": it["heading"]})
+                items.append({"name": it["name"], "group": g, "amount": _int(sign * it["value"]), "heading": it["heading"], "i": it["i"],
+                              **({"contra_of": it["contra"]} if it.get("contra") else {}),
+                              **({"prior": pitems.get(it["i"], 0)} if pfull else {})})
             if items:
-                out.append({"sheet": ws.title, "stmt": stmt, "items": items, "totals": {k: v for t, k, v, _ in seq if t == "total"}})
+                out.append({"sheet": ws.title, "stmt": stmt, "items": items, "totals": {k: v for t, k, v, _ in seq if t == "total"},
+                            "prior_totals": {k: v for t, k, v, _ in pseq if t == "total"}, "prior_column": bool(pfull)})
     finally:
         wb.close()
     return {"sheets": out} if out else None
@@ -961,7 +1066,16 @@ JOURNAL_OPT = ["code", "name", "voucher", "row", "memo", "party"]
 JOURNAL_EXTRA = ("입력구분", "전표구분", "입력방법", "작성구분", "작성자", "입력자", "승인자",
                  "등록자", "작성자명", "입력자명", "등록자명", "입력사원", "사용자", "결재자", "승인자명", "결재자명", "확정자",
                  "입력일시", "입력일자", "입력일", "등록일시", "등록일자", "등록일", "작성일시", "최초입력일시",
-                 "입력시각", "입력시간", "등록시각", "등록시간")
+                 "입력시각", "입력시간", "등록시각", "등록시간", "작성일자")
+
+
+def _extra_name(h: str) -> str | None:
+    """분개장 추가 열 이름. 더존 두 줄 머리의 「전표작성정보 년/월/일」 은 전표를 만든 날이라 작성일자로 읽는다(2026-11-09)."""
+    if h in JOURNAL_EXTRA:
+        return h
+    if "작성" in h and h.endswith(("년/월/일", "일자")):
+        return "작성일자"
+    return None
 # 분개장 꼴. 같은 머리줄에서 앞의 꼴이 먼저다(두 계정 칸 꼴은 차변금액 · 대변금액 열도 있어 한 줄 한 계정 꼴보다 먼저 본다)
 JOURNAL_FORMS = (("두 계정 칸", [["dr_acc"], ["cr_acc"], ["dr"], ["cr"]]),
                  ("차변 · 대변 열", [["dr"], ["cr"]]),
@@ -970,6 +1084,7 @@ JOURNAL_FORMS = (("두 계정 칸", [["dr_acc"], ["cr_acc"], ["dr"], ["cr"]]),
 SIDE_DR = {"차", "차변", "借", "D", "DR"}
 SIDE_CR = {"대", "대변", "貸", "C", "CR"}
 _JCACHE: dict = {}
+JOURNAL_CACHE_FILES = 3
 
 
 def _jkey(path: Path):
@@ -982,7 +1097,8 @@ def _jkey(path: Path):
 
 def journal_tables(path: Path) -> list[dict]:
     """분개장 시트마다 머리줄 · 꼴. [{"sheet", "form", "cols", "rows", "above", "headers"}]. 일자는 한 열(일자 · 년/월/일 ·
-    승인일 등)이거나 년 · 월 · 일 세 열이다(R8). 마지막으로 읽은 파일 하나는 기억해 두고 다시 열지 않는다."""
+    승인일 등)이거나 년 · 월 · 일 세 열이다(R8). 마지막으로 읽은 파일 셋(JOURNAL_CACHE_FILES)은 기억해 두고 다시 열지 않는다
+    (당기 · 기말 후 분개장을 분석과 분개장 대사가 차례로 읽고, 사이에 시산표 파일을 분개장인지 본다, 2026-10-26)."""
     path = Path(path)
     key = _jkey(path)
     if key is None:
@@ -997,13 +1113,19 @@ def journal_tables(path: Path) -> list[dict]:
             if hit:
                 rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
                 n = len(hit["above"])
-                hit.update(rows=rows[n + 1:], above=rows[:n])
+                hit.update(rows=rows[n + 1:], above=rows[:n], nrows=len(rows))
                 out.append(hit)
     finally:
         wb.close()
-    _JCACHE.clear()
+    while len(_JCACHE) >= JOURNAL_CACHE_FILES:
+        _JCACHE.pop(next(iter(_JCACHE)))
     _JCACHE[key] = {"tabs": out, "lines": None}
     return out
+
+
+def journal_sheet_rows(path: Path) -> int:
+    """분개장 파일에서 가장 긴 분개장 시트의 행 수(머리줄 포함). 엑셀 한 시트 행 한도에 닿았는지 볼 때 쓴다(2026-11-09)."""
+    return max((t.get("nrows", 0) for t in journal_tables(Path(path))), default=0)
 
 
 def _journal_header(sheet: str, rows) -> dict | None:
@@ -1052,7 +1174,12 @@ def journal_rows(path: Path) -> list[dict]:
     out = []
     for t in tabs:
         c, form, sheet = t["cols"], t["form"], t["sheet"]
-        extra_i = {h: i for i, h in enumerate(t["headers"]) if h in JOURNAL_EXTRA}
+        taken = set(c.values())
+        extra_i = {}
+        for i, h in enumerate(t["headers"]):
+            n = _extra_name(h) if i not in taken else None
+            if n and n not in extra_i:
+                extra_i[n] = i
         for i, r in enumerate(t["rows"]):
             dt = _jdate(r, c)
             if dt is None or _is_total_row(r, loose=False):
@@ -1094,9 +1221,29 @@ def journal_rows(path: Path) -> list[dict]:
                 sides.append((code, name, dr, cr))
             for code, name, dr, cr in sides:
                 out.append(dict(base, code=None if code is None else str(code), name=name, dr=dr, cr=cr))
+    _mark_closing(out)
     if key in _JCACHE:
         _JCACHE[key]["lines"] = out
     return out
+
+
+# 결산 마감 분개(2026-11-05). 더존 「분개장 전체」 출력에는 손익 계정을 집합손익(400 손익)으로 닫는 전표와 당기순손익을 잉여금으로
+# 옮기는 전표가 들어 있다. 이 전표를 그대로 두면 손익 계정 분개장 합계가 0 이 되고(시산표와 전부 다름), 12월 손익 추이가 무너진다.
+CLOSING_NAMES = ("손익", "집합손익", "손익계정")
+# 잉여금끼리만 옮기는 전표(미처분이익잉여금 ↔ 이월이익잉여금, 더존 마감 뒤 이월 처리). 이익준비금 적립 같은 처분 전표는 다른 계정이 있어 해당하지 않는다
+CARRY_NAMES = ("이월이익잉여금", "미처분이익잉여금", "이월결손금", "미처리결손금")
+
+
+def _mark_closing(lines: list[dict]) -> None:
+    """집합손익 계정 줄이 든 전표와 잉여금끼리만 옮기는 전표의 줄마다 closing=True. 전표번호가 없는 줄은 그 줄만 본다."""
+    keys = {(x["sheet"], x["date"], x["voucher"]) for x in lines if x["voucher"] and x["name"] in CLOSING_NAMES}
+    by_v: dict[tuple, set] = {}
+    for x in lines:
+        if x["voucher"]:
+            by_v.setdefault((x["sheet"], x["date"], x["voucher"]), set()).add(x["name"])
+    keys |= {k for k, names in by_v.items() if names and names <= set(CARRY_NAMES) and len(names) > 1}
+    for x in lines:
+        x["closing"] = (x["name"] in CLOSING_NAMES) or (x["voucher"] is not None and (x["sheet"], x["date"], x["voucher"]) in keys)
 
 
 def _journal(path: Path):

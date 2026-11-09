@@ -299,14 +299,20 @@ def _parse_statement(table: list[list[str]], mult: int) -> dict[str, list]:
         if not r or not r[0]:
             continue
         name = item_name(r[0])
-        if not name or name in out:
+        if not name:
             continue
         vals = []
         for g in groups[:2]:
             v = next((amount(r[j]) for j in g if j < len(r) and amount(r[j]) is not None), None)
             vals.append(None if v is None else v * mult)
+        vals += [None] * (2 - len(vals))
+        if name in out:
+            # 같은 이름이 다시 나오면(비품 · 시설장치 아래 감가상각누계액 둘, 매출채권 · 미수금 아래 대손충당금 둘) 더한다.
+            # 첫 줄만 두면 「유형자산」 묶음 줄이 아래 과목 합과 달라 묶음으로 보지 못한다(2026-11-06, figures 의 재무제표 읽기와 같은 규칙)
+            out[name] = [a if b is None else (b if a is None else a + b) for a, b in zip(out[name], vals)]
+            continue
         if any(v is not None for v in vals):
-            out[name] = vals + [None] * (2 - len(vals))
+            out[name] = vals
     return out
 
 

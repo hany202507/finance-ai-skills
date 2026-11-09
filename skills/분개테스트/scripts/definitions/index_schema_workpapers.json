@@ -31,12 +31,18 @@
             "reply_file": {"type": ["string", "null"]},
             "difference": {"type": ["integer", "number", "null"], "description": "회신 금액 − 장부 금액"},
             "alternative": {"type": ["string", "null"], "description": "미회신 · 차이 때 대체 절차와 결과(회계사)"},
+            "alt_candidates": {"type": "array", "items": {"type": "string"}, "description": "대체 절차 후보(엔진, 2026-10-24): 기말 후 입금 · 지급, 부가세 없는 결산월 청구, 반대 잔액 확인 등. 판단은 회계사"},
             "result": {"type": ["string", "null"], "description": "확인 결과(회계사 기입란)"},
             "status": {"enum": ["발송 전", "발송", "회신 일치", "회신 차이", "AI 판독 필요", "은행조회 프로그램"]},
             "issue": {"type": ["integer", "null"], "description": "차이로 올린 이슈 번호"},
             "drafts": {"type": "array", "items": {"type": "string"}, "description": "조회서 워드 초안 · 메일 초안 경로"},
             "accounts": {"type": "array", "description": "채권채무 조회서에 적은 거래처의 계정(R9 B5, 계정명세서 거래처 시트)",
-                         "items": {"type": "object", "required": ["side", "account", "amount"]}}
+                         "items": {"type": "object", "required": ["side", "account", "amount"]}},
+            "control": {"type": "object", "description": "조회서 컨트롤(2026-10-26): 3320 「조회서 컨트롤」 시트의 상태. 차이 사유 · 대체 절차 상태는 감사인 기입란",
+                        "required": ["state"], "additionalProperties": false,
+                        "properties": {"state": {"enum": ["발송 전", "발송", "회신", "차이 확인", "대체 절차", "끝"]},
+                                       "diff_reason": {"type": ["string", "null"]},
+                                       "alt_state": {"type": ["string", "null"], "description": "필요 없음 · 진행 중 · 끝남(감사인)"}}}
           }
         }
       }
