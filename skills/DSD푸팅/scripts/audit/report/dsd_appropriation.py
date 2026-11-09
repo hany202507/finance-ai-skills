@@ -296,7 +296,7 @@ def _reserve_check(doc: Doc, t: Table, rows: Rows, period: str, pc: list[int], b
     left = "이익준비금 적립(처분계산서에 없음)" if zero else labels[r]
     label = (f"{left} ≥ MIN(금전배당 {' + '.join(labels[x[1]] for x in terms if x[0] == t.id)} × 10%, "
              f"자본금 × 1/2 - {'이익준비금 0(재무상태표에 이익준비금 없음)' if bal == 0 else ('이익준비금 ' + doc_label(doc, bal))})")
-    lu = t.unit_at(r, c)                            # 천원 재무상태표의 자본금 · 이익준비금은 반올림된 금액이라 그 폭을 받는다(인바디 2025: 적립 246,676,023원 · 최소 246,676,500원)
+    lu = t.unit_at(r, c)                            # 천원 재무상태표의 자본금 · 이익준비금은 반올림된 금액이라 그 폭을 받는다(한 상장사 2025: 적립 246,676,023원 · 최소 246,676,500원)
     spread = sum(0.5 * doc.table(x[0]).unit_at(x[1], x[2]) for x in terms if doc.table(x[0]).unit_at(x[1], x[2]) > lu) / lu
     return Check(f"처분계산서-이익준비금|{period}", "계산", "레퍼", t.id, r, c, terms, None, label, "규칙",
                  "상법 제458조: 자본금의 1/2 이 될 때까지 매 결산기 이익배당액(금전배당, 중간배당 포함)의 1/10 이상을 이익준비금으로 적립한다. "

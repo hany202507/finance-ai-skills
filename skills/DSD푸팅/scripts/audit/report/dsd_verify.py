@@ -110,7 +110,7 @@ def apply_fix(c: Check, note: dict, doc: Doc, prior: Doc | None = None, wtb: Doc
 
 def _sign_only(c: Check, note: dict, doc: Doc, prior: Doc | None, wtb: Doc | None, other: Doc | None) -> str:
     """부호만 바꾸는 고침의 근거. 다른 표는 같은 금액을 반대 부호로 적을 수 있어(재무상태표는 결손금을 양수로 적고 빼고,
-    자본변동표 · 결손금처리계산서는 음수로 적는다) 작년 보고서의 같은 줄 부호만 근거로 받는다(샘플 A 결손금, 11단계 재평가)."""
+    자본변동표 · 결손금처리계산서는 음수로 적는다) 작년 보고서의 같은 줄 부호만 근거로 받는다(실제 회사 자료 결손금, 11단계 재평가)."""
     for e in note.get("evidence") or []:
         if not (isinstance(e, dict) and str(e.get("table", "")).startswith(PRIOR_ID)):
             continue
@@ -265,7 +265,7 @@ def _sentences(parts: list, words: list[str], amounts: list[str], limit: int) ->
                 at = sent.find(amt[0] if amt else hit[0])
                 text = _clip(sent, at)
                 nxt = sents[k + 1] if k + 1 < len(sents) else ""
-                if not big and _BIG.search(nxt):      # 금액은 뒷문장에 있곤 하다(10-23 삼성전자 4회: 콜옵션 문단의 둘째 문장 「취득원가는 1,241,750백만원」 을 찾으려 원문을 열었다)
+                if not big and _BIG.search(nxt):      # 금액은 뒷문장에 있곤 하다(10-23 한 상장사 4회: 콜옵션 문단의 둘째 문장 「취득원가는 1,241,750백만원」 을 찾으려 원문을 열었다)
                     text += " " + _clip(nxt, _BIG.search(nxt).start())
                     big = True
                 got.append((3 * len(amt) + len(hit) + big, -len(got), p.key, text))
@@ -288,7 +288,7 @@ def _title(t: str) -> str:
 
 def _paragraphs(doc: Doc, c: Check, cells: list, prior: Doc | None) -> list[str]:
     """검증 하나의 문장 근거(2026-10-23). 두 칸이 든 주석과 작년 보고서의 같은 주석(전기 대사가 짝지은 표, 제목이 같은 주석)에서
-    두 금액 · 차이나 줄 이름의 낱말이 든 문장을 싣는다. 10-23 삼성전자 재기에서 검증 에이전트가 원문을 11번 열어 찾은 것이
+    두 금액 · 차이나 줄 이름의 낱말이 든 문장을 싣는다. 10-23 한 상장사 재기에서 검증 에이전트가 원문을 11번 열어 찾은 것이
     이 보고서 주석 11 의 과거근무원가 문장, 작년 반기보고서 주석 6 의 콜옵션 행사 문장이었다."""
     tabs = {t.id: t for t in doc.tables()}
     labels, now, before = [], [], []
@@ -323,7 +323,7 @@ def _bundle(doc: Doc, c: Check, tabs: dict, rowmap: dict, prior: Doc | None = No
     - 두 칸이 든 표의 그 줄(표 줄)
     - 같은 주석의 다른 표에서 줄 이름이 같은 줄과 그 표의 합계 줄(같은 주석)
     - 작년 보고서의 같은 표 줄. 전기 대사가 짝지은 줄이다(작년)
-    - 작년 같은 표의 합계 줄과 짝지은 줄 위아래 두 줄(작년 같은 표, 2026-10-23). 10-22 삼성전자 재기에서 차이를 설명하는 작년 줄
+    - 작년 같은 표의 합계 줄과 짝지은 줄 위아래 두 줄(작년 같은 표, 2026-10-23). 10-22 한 상장사 재기에서 차이를 설명하는 작년 줄
       (미처분이익잉여금, 확정기여 비용)이 묶음에 없어 검증 에이전트가 원문을 12번 열었다"""
     from .base import norm
 
@@ -372,7 +372,7 @@ def _bundle(doc: Doc, c: Check, tabs: dict, rowmap: dict, prior: Doc | None = No
 
 
 # 전기 대사 판정(apply_prior_verdicts)이 근거 글 뒤에 붙인 「판정 …: …」. 판정은 「판정」 줄에 따로 적으니 근거 줄에서는 뗀다.
-# 검증 에이전트가 판정 글을 읽기 전에 근거를 보게 하려는 것이다(10-22 삼성전자 재기에서 검증 에이전트가 근거 줄의 판정 글을 먼저 봤다)
+# 검증 에이전트가 판정 글을 읽기 전에 근거를 보게 하려는 것이다(10-22 한 상장사 재기에서 검증 에이전트가 근거 줄의 판정 글을 먼저 봤다)
 _PRIOR_VERDICT = re.compile(r"(^| · )판정 (불일치|작년 불일치|설명됨|걸지 않음): .*$", re.S)
 
 
@@ -389,7 +389,7 @@ def pack(doc: Doc, checks: list[Check], tabs: dict, cause: dict, last: dict, pri
            f"- FALSE(숫자 오류) {sum(1 for c in rows if dsd_links.failed(c))}건, 확인 · 표시 오류 · 설명 부족 · 작년 보고서의 오류 {sum(1 for c in rows if not dsd_links.failed(c))}건",
            f"- 독립 검증 대상 {sum(1 for c in rows if not dsd_links.no_review(c))}건. 판정이 확인인 늘 나는 차이 {sum(1 for c in rows if dsd_links.sampled(c))}건과"
            f" 엔진이 근거를 확인한 숫자 오류 {sum(1 for c in rows if dsd_links.engine_checked(c))}건은 독립 검증을 하지 않는다"
-           "(2026-10-22 대표 결정. 「독립 검증: 대상 아님」 으로 적었다)", ""]
+           "(2026-10-22 결정. 「독립 검증: 대상 아님」 으로 적었다)", ""]
     for c in rows:
         t = tabs.get(c.table)
         left = cell_name(c.table, t, c.r, c.c) if t is not None else c.table

@@ -1,7 +1,7 @@
 """dsd 문장 검토(2026-10-17). 표가 아닌 글(표지 · 감사보고서 · 주석 문단 · 외부감사 실시내용)과 표 안 글자를 읽어
 오타 · 표현 · 사실 불일치 · 공시 누락을 찾는다. 숫자 푸팅(dsd_links)과 같은 엑셀에 「문장 검토」 시트로 나온다.
 
-대표 지시(10-17): 「푸팅은 상호 레퍼도 해야겠지만 오타 표현수정도 다 잡아야 해. 주소수정, 경영진 변경 등 공시필요한 주요 내용 포함해서.
+「푸팅은 상호 레퍼도 해야겠지만 오타 표현수정도 다 잡아야 해. 주소수정, 경영진 변경 등 공시필요한 주요 내용 포함해서.
 물론 회계감사기간 등 표 이외 것들도」.
 
 맡는 일
@@ -112,7 +112,7 @@ def segments(path: Path) -> list[Seg]:
     from . import dsd
 
     path = Path(path)
-    if path.suffix.lower() == ".pdf":                 # --prior 로 전기 감사보고서 PDF 를 받는다(2026-10-18 샘플 A)
+    if path.suffix.lower() == ".pdf":                 # --prior 로 전기 감사보고서 PDF 를 받는다(2026-10-18 실제 회사 자료)
         return _pdf_segments(path)
     out: list[Seg] = []
 
@@ -316,7 +316,7 @@ _HEAD_MARK = re.compile(r"^\s*(?:\(\d+\)|\d+[.)]|[가-하][.)]|\([가-하]\)|[�
 def _xbrl_total(s: "Seg", word: str) -> bool:
     """표 머리줄의 XBRL 합계 열 이름(「부문의 합계 | 부문의 합계 합계」). DART 가 도메인 이름(「부문의 합계」) 뒤에 「합계」 를 붙여 만든 이름이라
     회사가 고칠 오타가 아니다. 같은 줄에 「<도메인 이름>」 칸이 있고 이 칸이 「<도메인 이름> 합계」 일 때만 반복 낱말로 보지 않는다
-    (삼성전자 2026 반기 별도 주석27, 2026-11-04)."""
+    (한 상장사 2026 반기 별도 주석27, 2026-11-04)."""
     if not s.kind.startswith("표"):
         return False
     cells = [c.strip() for c in s.text.split(" | ")]
@@ -403,7 +403,7 @@ def _mixed(text: str) -> list[tuple[int, str, str]]:
 
 def spacing_findings(segs: list[Seg], D: dict, xml: bool = False, skip: dict | None = None) -> list[dict]:
     """띄어쓰기 규칙(definitions/dsd_text.yaml 의 spacing)과 한 글 안에서 「A B」 · 「AB」 를 섞어 쓴 곳(2026-10-22).
-    삼성전자 2026 반기 별도 문장 검토에서 AI 가 하나씩 적던 붙여 쓴 띄어쓰기 오타를 엔진으로 옮겼다. 한 어절에 규칙이 여럿 걸리면
+    한 상장사 2026 반기 별도 문장 검토에서 AI 가 하나씩 적던 붙여 쓴 띄어쓰기 오타를 엔진으로 옮겼다. 한 어절에 규칙이 여럿 걸리면
     고칠 안 하나로 합친다(「배당에관한사항 → 배당에 관한 사항」). 같은 어절은 보고서에 한 번만 적고 나온 곳(S번호)을 근거에 붙인다.
     skip 은 조각마다 오타 사전이 이미 잡은 낱말이다(같은 곳을 두 번 적지 않는다)."""
     rules = [(r, re.compile(r["pat"])) for r in D.get("spacing") or [] if not (xml and r.get("dsd_only"))]
@@ -700,11 +700,11 @@ def engine_findings(segs: list[Seg], facts: dict, prior: list[Seg] | None = None
                 out.append(_f(s, "율 · 률", "오타", _excerpt(s.text, word), f"{word} → {m.group(1)}{fix}", "앞 글자에 받침이 있으면(ㄴ 제외) 「률」, 없거나 ㄴ 이면 「율」"))
         for m in _DATE_COMMA.finditer(s.text):
             out.append(_f(s, "날짜 쉼표", "오타", _excerpt(s.text, m.group(0)), f"{m.group(0)} → {m.group(0).replace(',', '.')}", "날짜 구분이 쉼표로 적혔다"))
-        bare = _LIST_MARK.sub("", s.text)              # 줄 앞 번호 「1)」 「가)」 의 닫는 괄호는 세지 않는다(삼성전자 2025 감사보고서에서 4건 잘못 잡음, 10-18)
+        bare = _LIST_MARK.sub("", s.text)              # 줄 앞 번호 「1)」 「가)」 의 닫는 괄호는 세지 않는다(한 상장사 2025 감사보고서에서 4건 잘못 잡음, 10-18)
         for a, b in (("(", ")"), ("「", "」"), ("“", "”")):
             if bare.count(a) != bare.count(b):
                 out.append(_f(s, "괄호 짝", "오타", s.text[:80], f"{a} {bare.count(a)}개 · {b} {bare.count(b)}개를 맞춘다", "여는 괄호와 닫는 괄호 수가 다르다"))
-    for wrong, ss in term_at.items():                  # 같은 옛 용어는 보고서에 한 번만 적는다(씨앤씨인터내셔널 2026 반기에서 37칸에 따로 나옴, 10-18)
+    for wrong, ss in term_at.items():                  # 같은 옛 용어는 보고서에 한 번만 적는다(한 상장사 2026 반기에서 37칸에 따로 나옴, 10-18)
         more = f". 보고서 안 {len(ss)}곳(" + ", ".join(x.id for x in ss[:8]) + (" 등" if len(ss) > 8 else "") + ")" if len(ss) > 1 else ""
         out.append(_f(ss[0], "기준서 용어", "표현", _excerpt(ss[0].text, wrong), f"{wrong} → {terms[wrong]}", f"기준서의 용어와 다르다(definitions/dsd_text.yaml){more}"))
     out += spacing_findings(segs, D, xml, typo_at)
@@ -769,7 +769,7 @@ def version_spacing(res: dict, changes: list, prev_name: str) -> int:
 
 
 def blank_findings(segs: list[Seg]) -> list[dict]:
-    """외부감사 실시내용 표의 빈칸(2026-10-23). 공시된 감사보고서 329건(공개 원문 · 스터디 · 정정공시 짝 · 씨앤씨)의 실시내용 표에는
+    """외부감사 실시내용 표의 빈칸(2026-10-23). 공시된 감사보고서 329건(공개 원문 · 스터디 · 정정공시 짝 · 한 상장사)의 실시내용 표에는
     빈칸이 하나도 없었다(없는 값은 「-」 로 적는다). 회사가 준 dsd 에는 감사인이 채울 칸이 비어 있곤 하다. 가온정밀 실습에서 문장 검토 AI 가
     일수 · 인원 · 장소 · 횟수 · 일자 빈칸을 줄마다 하나씩 적느라 지적의 절반 가까이를 썼다. 엔진이 줄마다 한 번 적는다.
     빈칸 이름: 뒤 칸이 단위(일 · 명 · 회 · 시간)면 「일」 앞 숫자, 앞 칸이 글이면 「그 글」 옆 칸, 첫 줄과 칸 수가 같은 표(커뮤니케이션 표)면
@@ -863,7 +863,7 @@ def check_ai(segs: list[Seg], ai: dict, engine: list[dict]) -> tuple[list[dict],
     return ok, bad, disc
 
 
-# 회사제시 초안의 감사인 절(2026-11-04 대표 결정, 판단필요 5). 회사가 감사 중에 낸 dsd 에는 외부감사 실시내용 · 감사보고서 본문이
+# 회사제시 초안의 감사인 절(2026-11-04 결정, 판단필요 5). 회사가 감사 중에 낸 dsd 에는 외부감사 실시내용 · 감사보고서 본문이
 # 비어 있는 것이 보통이다. 이 두 절의 공시 누락 지적은 「감사인 작성 전」 으로 따로 묶고 공시 누락에서 뺀다. 제출 직전 판은 지금처럼 센다
 AUDITOR_PARTS = ("외부감사 실시내용", "감사보고서")
 DRAFT_KIND = "감사인 작성 전"
@@ -1018,7 +1018,7 @@ def reading(res: dict, part: tuple[int, int, list] | None = None) -> str:
 
 
 def reading_parts(res: dict, n: int = 2) -> list[str]:
-    """문장읽기를 앞뒤 n 몫으로 나눈다(2026-10-22). 문장 검토 에이전트 n 명이 한 몫씩 동시에 읽는다. 삼성전자 2026 반기 별도는 749줄을
+    """문장읽기를 앞뒤 n 몫으로 나눈다(2026-10-22). 문장 검토 에이전트 n 명이 한 몫씩 동시에 읽는다. 한 상장사 2026 반기 별도는 749줄을
     한 에이전트가 읽어 17.6분이 걸렸다(숫자 쪽 12.7분). 주석 제목에서 끊고, 몫마다 기준 사실 · 공시 확인 대상 · 보고서 전체 목차 ·
     그 몫의 엔진 지적을 싣는다. 글이 짧아 한 몫이 PART_MIN 줄보다 적으면 그만큼 덜 나눈다."""
     units = _units(res)
@@ -1062,7 +1062,7 @@ def merge_ai(parts: list[dict]) -> dict:
 
 def _shown(s: Seg) -> str:
     """읽기 자료에 보일 글. 표 줄은 글자(한글 · 영문)가 든 칸만 남긴다. 「현금및현금성자산 | 12,581,632 | 0」 은 「현금및현금성자산」 이다
-    (2026-10-22 실행 시간 P3: 삼성전자 2026 반기 별도 문장읽기 1,333줄 가운데 표 줄 931줄, 그중 533줄이 이름 칸 하나에 숫자 칸).
+    (2026-10-22 실행 시간 P3: 한 상장사 2026 반기 별도 문장읽기 1,333줄 가운데 표 줄 931줄, 그중 533줄이 이름 칸 하나에 숫자 칸).
     외부감사 실시내용의 표는 숫자까지 그대로 둔다. 인원수 · 감사시간은 숫자 푸팅이 보지 않아서, 빼면 빈칸인지 알 수 없다
     (같은 날 가온정밀 재기에서 문장 검토 에이전트가 dsd 원문을 직접 풀어 읽었다)."""
     if not s.kind.startswith("표") or s.part == "외부감사 실시내용":

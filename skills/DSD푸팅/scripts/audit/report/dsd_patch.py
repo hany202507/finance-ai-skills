@@ -13,7 +13,7 @@
 kind 는 구성 · 변동 · 범주 · 만기 · 일부. 변동은 total 대신 close(기말 줄)와 open(기초 줄)이고 기초는 과목의 전기와 잇는다.
 일부는 cmp le(일부 ≤ 과목)로 건다. 줄마다 과목이 다르면 each {줄: 과목} 으로 적는다. 기간 열은 엔진이 열 이름(당기말 · 전기말 ·
 당반기 · 제 N 기)으로 정하고, 못 정하면 cols {열: 당기 | 전기} 나, 표 하나가 한 기간이면 period 와 col(합계 열) 로 적는다.
-연결 · 합계 구조를 금액으로 고르지 않는다. AI 가 적은 표 종류 · 합계 줄 · 과목이 근거다(대표 10-12 금액 대조 연결 반려).
+연결 · 합계 구조를 금액으로 고르지 않는다. AI 가 적은 표 종류 · 합계 줄 · 과목이 근거다(금액 대조 연결 반려).
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def _cells(doc: Doc, xs, where: str, problems: list[str]) -> list:
 
 
 def _line(t: Table, v, axis: str, where: str, problems: list[str]):
-    """합계 구조의 줄(axis v) · 열(axis h) 하나. 정수면 번호(음수면 빼는 항), {"row": 번호, "sign": -1} 도 받는다(10-23 삼성전자 재기에서
+    """합계 구조의 줄(axis v) · 열(axis h) 하나. 정수면 번호(음수면 빼는 항), {"row": 번호, "sign": -1} 도 받는다(10-23 한 상장사 재기에서
     이 꼴을 풀지 못해 한 번 다시 넣었다). 그 밖은 그대로 둔다. (이름, 순번, 부호) 또는 원래 값."""
     key = "row" if axis == "v" else "col"
     if isinstance(v, dict) and _int(v.get(key)):

@@ -459,7 +459,7 @@ def cell_index(d: Draft) -> dict:
 # ---------------------------------------------------------------- 롤포워드(--roll, 설계 3.1)
 _TERM = re.compile(r"(제\s*)(\d+)(\s*(?:\(\s*[당전]\s*\))?\s*기)")
 _YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?=\s*(?:년|[.\-/]\s*\d{1,2}))")
-# 「당기손익-공정가치 측정」 「당기순이익」 의 당기는 기간이 아니다. 금융상품 범주 열을 당기 열로 세어 열이 엇갈려 옮겨졌다(2026-11-07 엘리스그룹 주석5)
+# 「당기손익-공정가치 측정」 「당기순이익」 의 당기는 기간이 아니다. 금융상품 범주 열을 당기 열로 세어 열이 엇갈려 옮겨졌다(2026-11-07 한 회사 주석5)
 _CUR = re.compile(r"당\s*(?:기말|기(?!\s*(?:손익|순이익|순손익|순손실|법인세|손실|이익))|반기말|반기|분기말|분기)|\(\s*당\s*\)")
 _PRI = re.compile(r"전\s*(?:기말|기|반기말|반기|분기말|분기)|\(\s*전\s*\)")
 
@@ -518,7 +518,7 @@ def period_columns(rows: list[Line], head: int, term: int | None, fy: int | None
     for j in range(1, len(names)):
         h = names[j]
         if _RATE.search(h) and not re.fullmatch(r"[당전]기(?:말|초)?\(%\)", norm(h)):
-            continue                      # 「당기말(%)」 처럼 율만 적은 기간 열은 센다(2026-11-07 엘리스그룹 주석18 할인율 표)
+            continue                      # 「당기말(%)」 처럼 율만 적은 기간 열은 센다(2026-11-07 한 회사 주석18 할인율 표)
         terms = [int(x) for x in re.findall(r"제\s*(\d+)\s*(?:\(\s*[당전]\s*\))?\s*기", h)]
         years = [int(x) for x in re.findall(r"(?<!\d)((?:19|20)\d{2})(?!\d)", h)]
         if _CUR.search(h) or (term and term in terms) or (fy and fy in years and not _PRI.search(h)):
@@ -843,7 +843,7 @@ def roll(d: Draft) -> Draft:
                                     if j < len(ln.cells) and ln.cells[j].num not in (None, 0)]
                             lost.append(f"「{c.text.strip()}」({', '.join(vals[:6]) or '값 없음'})")
                 # 줄 꼴 변동표의 새 당기 기초 = 작년 당기 기말. 같은 표의 기말 줄을 옮기기 전에 잡아 둔다. 옮긴 전기 표에서 가져오면
-                # 두 표의 열이 다를 때(당기에만 「기계장치」 열) 한 칸씩 밀려 들어갔다(2026-11-07 엘리스그룹 주석9)
+                # 두 표의 열이 다를 때(당기에만 「기계장치」 열) 한 칸씩 밀려 들어갔다(2026-11-07 한 회사 주석9)
                 o_row = next((ln for ln in rows_c[hc:] if _OPEN.match(_row_key(ln))), None)
                 c_row = next((ln for ln in rows_c[hc:] if _CLOSE.match(_row_key(ln))), None)
                 snap = ([Cell(None, text=c.text, num=c.num, fmt=c.fmt) for c in c_row.cells]
@@ -933,7 +933,7 @@ def roll(d: Draft) -> Draft:
             if cur and first and len(rest) == len(cur):
                 pairs = list(zip(cur, rest))
             elif cur and first:
-                # 기간마다 범주 열이 다른 표(당기말 2열 · 전기말 3열 · 전기초 3열): 기간 말을 뗀 열 이름으로 맞춘다(2026-11-07 엘리스그룹 주석5)
+                # 기간마다 범주 열이 다른 표(당기말 2열 · 전기말 3열 · 전기초 3열): 기간 말을 뗀 열 이름으로 맞춘다(2026-11-07 한 회사 주석5)
                 bare = lambda t: norm(re.sub(r"[당전]\s*기\s*[말초]?|기\s*초|전환일", "", t))  # noqa: E731
                 by: dict = {}
                 for j in rest:

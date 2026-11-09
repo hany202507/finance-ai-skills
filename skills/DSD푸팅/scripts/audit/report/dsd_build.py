@@ -524,7 +524,7 @@ def build(xlsx: Path, out: Path | None = None) -> dict:
     if (r.info.get("rolled") or summary.get("SUPV_OPIN")) and any(summary.values()):
         p.issues.append(issue("요약 코드", "", "", "바탕의 요약 코드(자산총계 · 감사의견 구분 등)가 그대로 남아 있다. 제출 전 편집기 「문서 헤더정보」 와 8600 에서 확인한다"))
     empty = len(re.findall(rb"<TBODY[^>]*>\s*</TBODY>", contents))
-    if empty:                                   # 편집기 스키마(Dart4.xsd)는 TBODY 에 TR 이 하나 이상 있어야 한다(2026-11-07 엘리스그룹 초안)
+    if empty:                                   # 편집기 스키마(Dart4.xsd)는 TBODY 에 TR 이 하나 이상 있어야 한다(2026-11-07 한 회사 초안)
         p.issues.append(issue("편집기 구조", "", "", f"줄이 하나도 없는 표 {empty}개. DART 편집기가 「문서를 열 수 없습니다」 로 거절한다", "막음"))
     path = zip_dsd(out, contents, r.meta, _stamp(hashlib.sha256(xlsx.read_bytes()).hexdigest(), r.sha256))
     return {"path": path, "issues": p.issues, "changed": p.changed, "added": p.added, "removed": p.removed, "mode": "바탕 고치기",

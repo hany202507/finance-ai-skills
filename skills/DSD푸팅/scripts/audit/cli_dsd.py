@@ -315,11 +315,11 @@ def foot(src: Path, out: Path, prev: Path | None = None, prior: Path | None = No
             "wtb": wdoc, "view": view, "versions": versions}
 
 
-SHOW, SHOW_LOST = 40, 10      # foot 화면에 줄마다 적는 수. 넘으면 「외 n건」 과 전체가 있는 엑셀 시트를 적는다(2026-11-04 TASK-29)
+SHOW, SHOW_LOST = 40, 10      # foot 화면에 줄마다 적는 수. 넘으면 「외 n건」 과 전체가 있는 엑셀 시트를 적는다(2026-11-04)
 
 
 def _more(items: list, shown: int, what: str, sheet: str) -> None:
-    """화면 목록을 shown 줄에서 끊었으면 남은 수와 전체가 있는 시트를 한 줄로 적는다. 예전에는 알림 없이 끊겨 씨앤씨인터내셔널 2026 반기의
+    """화면 목록을 shown 줄에서 끊었으면 남은 수와 전체가 있는 시트를 한 줄로 적는다. 예전에는 알림 없이 끊겨 한 상장사 2026 반기의
     FALSE 56건 가운데 40건만 보이고 나머지가 없는 것처럼 읽혔다."""
     if len(items) > shown:
         print(f"  {what} 외 {len(items) - shown}건(엑셀 「{sheet}」)")
@@ -355,7 +355,7 @@ def _foot(a) -> int:
         r = foot(src, out, Path(a.prev) if a.prev else None, [Path(p) for p in a.prior] if a.prior else None, Path(a.defs) if a.defs else None, a.amount_links,
                  Path(a.wtb) if a.wtb else None, Path(a.pair) if a.pair else None, Path(a.facts) if a.facts else None,
                  Path(a.case) if a.case else None, text, draft, a.html or bool(a.mask), Path(a.mask) if a.mask else None, a.stage)
-    except dsd_wtb.WtbFormatError as e:               # 정산표 양식을 못 읽으면 역추적 없이 한 줄(2026-10-18 샘플 A B-1)
+    except dsd_wtb.WtbFormatError as e:               # 정산표 양식을 못 읽으면 역추적 없이 한 줄(2026-10-18 실제 회사 자료 B-1)
         print(f"이 WTB 양식을 읽지 못함: {e}")
         return 2
     except dsd_view.MaskError as e:                   # 치환 뒤에도 실제 이름이 남으면 HTML 을 만들지 않는다(설계 4.3)
@@ -385,7 +385,7 @@ def _foot(a) -> int:
     if kinds.count("표시 오류") or kinds.count("설명 부족"):
         line += f" · 표시 오류 {kinds.count('표시 오류')} · 설명 부족 {kinds.count('설명 부족')}"
     judged = [c for c in checks if not c.excluded and c.ok is False and not c.minor and not dsd_links.no_review(c) and (not c.dropped or c.verified)]
-    # 늘 나는 차이 · 근거 확인 숫자 오류는 독립 검증 대상이 아니다(2026-10-22). 검증 뒤 판정으로 뺀 검증도 센다(10-23 삼성전자: 전기 대사 1건이 「걸지 않음」 으로 바뀌어 9/9 로 보였다)
+    # 늘 나는 차이 · 근거 확인 숫자 오류는 독립 검증 대상이 아니다(2026-10-22). 검증 뒤 판정으로 뺀 검증도 센다(10-23 한 상장사: 전기 대사 1건이 「걸지 않음」 으로 바뀌어 9/9 로 보였다)
     if any(c.verified for c in judged):
         line += f" · 독립 검증 {sum(1 for c in judged if c.verified)}/{len(judged)}(바꿈 {sum(1 for c in judged if c.verified == '바꿈')})"
     n_sampled = sum(1 for c in live if dsd_links.sampled(c))

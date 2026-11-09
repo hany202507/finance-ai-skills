@@ -186,7 +186,7 @@ def _guarantee_given(t: Table) -> bool:
 
 def _amount_col(t: Table) -> int | None:
     """보증 금액 열. 당기 금액 열이 하나뿐일 때만 고른다. 실행금액 · 보증한도 · 보증금액처럼 금액 열이 여럿이면 두 주석의 어느 열끼리
-    같아야 하는지 이름만으로 정할 수 없다(계룡건설 2025: 특수관계자 주석의 「보증한도」 와 보증 주석의 「보증금액」 이 같은 금액)."""
+    같아야 하는지 이름만으로 정할 수 없다(한 상장사 2025: 특수관계자 주석의 「보증한도」 와 보증 주석의 「보증금액」 이 같은 금액)."""
     cols = [j for j, h in enumerate(t.header) if j and _AMOUNT.search(norm(h)) and any(_isnum(r[j]) for r in t.nums) and _period_of(h) != "전기"]
     return cols[0] if len(cols) == 1 else None
 

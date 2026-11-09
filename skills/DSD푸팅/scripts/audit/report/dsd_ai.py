@@ -2,7 +2,7 @@
 
 재무제표와 주석 사이, 주석과 주석 사이 연결은 AI 가 주석의 제목 · 문장 · 표를 읽고 뜻으로 정한다. AI 는 숫자를 만들지 않고
 「이 칸은 저 칸과 같아야 한다」 만 근거와 함께 적는다. 계산과 비교는 엑셀 수식과 엔진이 한다. 금액이 같은 칸을 엔진이 찾는 것
-(dsd_refs)은 연결을 걸지 않고 AI 의 참고와 채점에만 쓴다(대표 10-12).
+(dsd_refs)은 연결을 걸지 않고 AI 의 참고와 채점에만 쓴다.
 
   reading   AI 가 읽을 자료: 재무제표 넷과 주석 전부를 원문 순서대로.
   request   연결을 넣은 뒤 놓친 것을 볼 자료: 주석을 가리키는데 아직 이어지지 않은 과목(unlinked), 합계 줄 · 열이 있는데 검증이
@@ -214,7 +214,7 @@ def expand_proposals(doc: Doc, patch: dict, defs: dict | None = None, strict: bo
 
     proposals = {"O": ["P0001-P0012", "P0015"], "X": {"P0013": "이유"}, "고침": [{"id": "P0020", "right": [...], ...}]}
     O 는 후보 그대로 연결이 되고, 고침은 후보에 적은 키(left · right · grade · when · cmp · basis …)만 바꿔 연결이 된다.
-    X 는 걸지 않은 연결로 「검증 범위」 시트에 이유와 함께 남는다. 판정을 적지 않은 후보는 「기본」 으로 그대로 연결이 된다(2026-10-22 대표 결정:
+    X 는 걸지 않은 연결로 「검증 범위」 시트에 이유와 함께 남는다. 판정을 적지 않은 후보는 「기본」 으로 그대로 연결이 된다(2026-10-22 결정:
     엔진 후보는 기본으로 넣고 AI 는 X · 고침만 적는다. 틀린 후보는 금액이 어긋나 FALSE 로 올라온다). --add 로 더할 때는 앞서 판정한 후보를
     판정한 것으로 보고 새로 생긴 후보만 기본으로 넣는다. strict 는 옛 호출을 위해 남긴 인자이고 쓰지 않는다."""
     from . import dsd_propose
@@ -307,7 +307,7 @@ _CASH_CHANGE = ("현금및현금성자산의증가", "현금및현금성자산�
 def _fs_total(t: Table, i: int, labels: list[str]) -> bool:
     """재무제표 본표의 중간 합계로 보이는 줄. 과목 단계를 알면 하위 과목이 있는 줄, 모르면 이름으로 본다.
     예전에는 주석 열 · 과목 단계가 없는 표를 본표로 보지 않아 공시 원문 xml(XBRL 꼴) 본표의 이름을 보지 않았다. 반기 · 분기의 「반기순이익」
-    「반기말의 현금」, 포괄손익의 「기타포괄손익」 「재분류되지 않는 포괄손익」 도 이름으로 본다(2026-11-04 삼성전자 2026 반기)."""
+    「반기말의 현금」, 포괄손익의 「기타포괄손익」 「재분류되지 않는 포괄손익」 도 이름으로 본다(2026-11-04 한 상장사 2026 반기)."""
     if not t.id.startswith(STATEMENTS):          # 재무제표 본표가 아니다
         return False
     if t.levels and t.levels[i] is not None:
@@ -316,7 +316,7 @@ def _fs_total(t: Table, i: int, labels: list[str]) -> bool:
             return True
     name = "".join(labels[i].split())
     keys = next((v for k, v in FS_TOTALS.items() if t.id.startswith(k)), ())
-    if t.id.startswith("현금흐름표"):        # 「투자활동으로 인한 현금유입액」 「영업으로부터 창출된 현금흐름」 도 소계다(씨앤씨인터내셔널 2026 반기)
+    if t.id.startswith("현금흐름표"):        # 「투자활동으로 인한 현금유입액」 「영업으로부터 창출된 현금흐름」 도 소계다(한 상장사 2026 반기)
         return ((any(name.startswith(k) for k in keys) and ("현금흐름" in name or "현금" in name[:6] or name.startswith("기말") or "현금유입" in name or "현금유출" in name))
                 or any(k in name for k in _CASH_CHANGE) or name.startswith(("영업으로부터창출된현금", "영업에서창출된현금")))
     if t.id.startswith("손익계산서") and not any(_isnum(v) and v for r in t.nums[:i] for v in r[1:]):
@@ -355,7 +355,7 @@ def _total_name(name: str) -> bool:
 def _head_total(labels: list[str], i: int, ends: bool = False) -> list[int]:
     """맨 위 줄이 합계인 꼴(공시 원문 xml 의 XBRL 표). 바로 아래 줄들이 이 줄 이름 뒤에 낱말을 붙인 이름(「성격별 비용」 아래 「성격별 비용 급여」 …)이고,
     ends 면(재무제표 본표) 이 줄 이름으로 끝나는 더 긴 이름(「자본금」 아래 「우선주자본금」 「보통주자본금」)도 받는다. 주석에서는 끝 이름을 받지 않는다
-    (삼성전자 주석10-1 「사채」 아래 「차감: 유동성사채」 「비유동성사채」 는 셋째 줄이 합이다). 그런 줄이 둘 이상 이어지면 그 줄 번호들, 아니면 []."""
+    (한 상장사 주석10-1 「사채」 아래 「차감: 유동성사채」 「비유동성사채」 는 셋째 줄이 합이다). 그런 줄이 둘 이상 이어지면 그 줄 번호들, 아니면 []."""
     me = " ".join(str(labels[i]).split())
     key = "".join(me.split())
     if not key:
@@ -790,7 +790,7 @@ def carry(src: Doc, dst: Doc, patch: dict) -> tuple[dict, list[str]]:
             if tid in back and back[tid][0] == nid:
                 back[tid] = (nid, {**rows, **back[tid][1]}, {**cols, **back[tid][2]})
             elif tid not in back or (same_period and sure[(tid, nid)] >= 0.9 and tid not in taken):
-                back[tid] = (nid, rows, cols)       # 숫자가 9할 넘게 같으면 이름 짝보다 앞선다(이름 짝이 표 하나씩 밀린 판, 삼성전자 사업보고서 주석 4)
+                back[tid] = (nid, rows, cols)       # 숫자가 9할 넘게 같으면 이름 짝보다 앞선다(이름 짝이 표 하나씩 밀린 판, 한 상장사 사업보고서 주석 4)
                 taken[tid] = nid
                 named.pop(tid, None)
     lost: list[str] = []
@@ -804,7 +804,7 @@ def carry(src: Doc, dst: Doc, patch: dict) -> tuple[dict, list[str]]:
 
     def by_cell(tid: str, r: int, c: int):
         """칸 하나 찾기: 새 판에서 숫자가 같은 칸 가운데 줄 이름과 주석 제목이 가장 비슷한 칸. 비슷한 정도가 같은 칸이 둘이면 고르지 않는다.
-        사업보고서는 감사보고서의 표를 다르게 나누고 합쳐 표 단위 짝이 안 되는 칸이 많다(삼성전자 2025 연결 주석 27 조정 항목)."""
+        사업보고서는 감사보고서의 표를 다르게 나누고 합쳐 표 단위 짝이 안 되는 칸이 많다(한 상장사 2025 연결 주석 27 조정 항목)."""
         t = src.table(tid)
         v = t.nums[r][c]
         if not _isnum(v) or not v:
@@ -1173,13 +1173,13 @@ def _title_tokens(title: str) -> list[str]:
 
 def misdirected_refs(doc: Doc) -> list[str]:
     """재무제표 과목이 가리킨 주석에 그 과목 이름이 한 번도 없는 곳(11단계). 주석 번호를 잘못 적은 꼴이다
-    (씨앤씨인터내셔널 2026 반기: 재무상태표 「전환사채(유동)」 이 사용권자산 주석 14 를 가리킴. 샘플 A 최종판에서 「주석 11 참조」 를 12 로 고침).
+    (한 상장사 2026 반기: 재무상태표 「전환사채(유동)」 이 사용권자산 주석 14 를 가리킴. 실제 회사 자료 최종판에서 「주석 11 참조」 를 12 로 고침).
     틀린 지적을 줄이려고 다섯 가지가 다 맞을 때만 알린다. 가리킨 주석의 제목 · 문단 · 줄 · 열 이름에 과목 이름(변형 포함)이 없다.
     그 주석의 제목과 과목 이름이 낱말 하나도 겹치지 않는다. 다른 주석의 제목에 과목 이름이 있다.
     가리킨 주석이 여러 과목을 함께 다루는 주석(범주별 금융상품, 공정가치, 위험관리, 외화, 특수관계자 …)이 아니다.
     가리킨 주석 제목의 낱말이 모두 재무상태표 과목이고 그 과목이 모두 반대쪽(자산 ↔ 부채)이다(국보디자인 2025 「유형자산 → 사용권자산과 리스부채」 는 사용권자산이 유형자산에 든 회사였다).
     자본 과목과 자본 주석, 담보를 적은 주석, 자산이 가리킨 차입금 · 사채 주석은 보지 않는다. 공개 원문 307건에서 기타포괄손익누계액이
-    매도가능금융자산 · 지분법 주석을, 자산이 담보를 적은 차입금 주석을 가리킨 곳이 틀린 알림이었다(장은테크 2025 주석5 는 「담보」 없이 「채권 최고액 … 설정」 으로 적었다).
+    매도가능금융자산 · 지분법 주석을, 자산이 담보를 적은 차입금 주석을 가리킨 곳이 틀린 알림이었다(한 상장사 2025 주석5 는 「담보」 없이 「채권 최고액 … 설정」 으로 적었다).
     처음 꼴(이름이 없으면 알림)은 스터디 보고서에서 범주별 금융상품 · 외화 주석을 가리킨 과목을 잘못 짚었다."""
     notes = {}
     for p in doc.parts:

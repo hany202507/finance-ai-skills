@@ -862,7 +862,7 @@ def _scale(t: Table, q: Table, rows: dict, a: int, b: int) -> float:
                 continue
             v, w = t.nums[i][a], q.nums[j][b]
             if not (_isnum(v) and _isnum(w) and v and w):      # 0 이 든 칸은 배수를 말해 주지 않는다. 올해 0 · 작년 351,882 를
-                continue                                        # ×0.000001 에서 맞는 줄로 세어 작년 146,134,773 을 146 으로 견줬다(더존비즈온 2025 연결)
+                continue                                        # ×0.000001 에서 맞는 줄로 세어 작년 146,134,773 을 146 으로 견줬다(한 상장사 2025 연결)
             if k == 1:
                 hit = v == w
             else:                                   # 큰 단위에서 맞춘다

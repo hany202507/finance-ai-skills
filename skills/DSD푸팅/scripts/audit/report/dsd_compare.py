@@ -129,7 +129,7 @@ def row_keys(t: Table) -> list[str]:
     (2026-10-12 스터디: 종속기업 표의 전기 대사 80건 중 45건이 이 때문에 FALSE)."""
     ncol = len(t.header)
     if getattr(t, "kind", "") == "문장":                # 문장 금액 표는 문장(줄 이름)만으로 가린다. 원문 열(「3,650,000,000원」)을 넣으면
-        return [norm(r[0]) for r in t.rows]           # 금액이 바뀐 줄의 짝을 못 지어 바뀐 곳이 「새 줄」 로 나왔다(11단계, 샘플 A 보증 금액)
+        return [norm(r[0]) for r in t.rows]           # 금액이 바뀐 줄의 짝을 못 지어 바뀐 곳이 「새 줄」 로 나왔다(11단계, 실제 회사 자료 보증 금액)
     rate = getattr(t, "rate", lambda i, j: False)      # % 칸은 숫자 열로 치지 않는다(줄 이름 경계가 판독 규칙을 바꾸기 전과 같게)
     first_num = next((j for j in range(1, ncol) if any(isinstance(r[j], (int, float)) and not rate(i, j) for i, r in enumerate(t.nums))), ncol)
     if first_num < 2 or norm(t.header[1]).startswith("주석"):      # 과목 옆 주석 번호는 해마다 바뀌므로 이름에 넣지 않는다
