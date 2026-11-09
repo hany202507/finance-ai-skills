@@ -76,8 +76,8 @@ LINES = {
     "해외이자":      [("dr", "외화예수금", "Q"), ("dr", "선납세금", "AF"), ("cr", "이자수익", "AE")],
     "해외원천세":    [("dr", "해외원천세", "AF"), ("cr", "외화예수금", "-Q"), ("pl", "외환", "AC")],
     "외화입금":      [("dr", "외화예수금", "Q"), ("cr", "가수금", "Q")],
-    "환전정산입금":  [("dr", "원화예수금", "S"), ("cr", "외화예수금", "-Q")],
-    "환전정산출금":  [("dr", "외화예수금", "Q"), ("cr", "원화예수금", "-S")],
+    "환전정산입금":  [("dr", "원화예수금", "S"), ("cr", "외화예수금", "-Q"), ("pl", "외환", "AC")],
+    "환전정산출금":  [("dr", "외화예수금", "Q"), ("cr", "원화예수금", "-S"), ("pl", "외환", "AC")],
     "해외세금환급":  [("dr", "외화예수금", "Q"), ("cr", "해외원천세", "Q")],
     "원화세금":      [("dr", "선납세금", "-S"), ("cr", "원화예수금", "-S")],
     "외화출금":      [("dr", "가지급금", "-Q"), ("cr", "외화예수금", "-Q")],
@@ -217,6 +217,7 @@ def run(txs, cfg, rates: RateBook):
     krw = b_krw
     hold = {k: [v[0], v[1]] for k, v in b_sec.items()}
     lent = dict(b_lent)
+    fx_in_day = {}          # (일자, 통화): 그날 원화로 산 외화(환전정산을 장부금액과 외환차손익으로 나눌 때 쓴다)
     pending = {}            # 주식수변동: 날짜별로 출고 행에서 떼어 놓은 장부금액(입고 행이 가져간다)
     rows = []
 
@@ -312,8 +313,14 @@ def run(txs, cfg, rates: RateBook):
             if pb <= 0:
                 issues.append(("중단", tx, f"{tx.ccy} 외화예수금 잔액이 {pb} 인데 {amount} 를 내보낸다. 기초 잔액을 확인한다"))
                 return Z
-            if amount == pb:
-                return -pk
+            if amount >= pb:
+                # 같은 날 들어올 외화보다 나가는 줄이 먼저 찍히면 잔액이 잠깐 음수가 된다. 남아 있던 외화의 장부금액은 전부 빼고,
+                # 모자란 외화는 이 줄 적용환율로 잡는다(2026-11-09). 전에는 비례식이라 직전 장부금액보다 많이 빠졌다
+                short = amount - pb
+                if short:
+                    issues.append(("정보", tx, f"외화잔액 {pb} {tx.ccy} 보다 많은 {amount} {tx.ccy} 가 먼저 나갔다(같은 날 들어올 외화보다 "
+                                               f"먼저 찍힌 줄). 모자란 {short} {tx.ccy} 의 장부금액은 이 줄 적용환율 {r.N:.2f}원으로 잡았다"))
+                return -pk - R0(short * r.N)
             return -R0(pk * amount / pb)
 
         if k == "입금":
@@ -323,6 +330,7 @@ def run(txs, cfg, rates: RateBook):
         elif k == "환전_원화외화":
             r.O, r.S = tx.G, -tx.I
             r.Q = tx.I
+            fx_in_day[(tx.date, tx.ccy)] = fx_in_day.get((tx.date, tx.ccy), Z) + tx.G
         elif k == "환전_외화원화":
             r.O, r.S = -tx.G, tx.I
             r.Q = out_book(tx.G)
@@ -349,10 +357,21 @@ def run(txs, cfg, rates: RateBook):
             r.AF = R0(tx.H * r.N)
             r.Q = out_book(tx.H)
             r.AC = r.AF + r.Q
-        elif k == "환전정산입금":
-            r.S, r.Q = tx.I, -tx.I
-        elif k == "환전정산출금":
-            r.S, r.Q = -tx.I, tx.I
+        elif k in ("환전정산입금", "환전정산출금"):
+            # 가환율 환전의 차액이다. 같은 날 원화로 산 외화 가운데 아직 남은 몫만큼만 외화예수금 장부금액을 조정하고,
+            # 나머지는 이미 나간 외화의 몫이라 이 줄의 외환차손익으로 잡는다(2026-11-09). 전에는 전부 장부금액을 조정해서
+            # 외화를 다 쓴 뒤 들어온 정산(미래에셋 자동환전)이 외화잔액 0.005 달러에 음수 장부금액을 남겼다
+            bought = fx_in_day.get((tx.date, tx.ccy), Z)
+            if bought <= 0 or pb <= 0:
+                adj = Z
+            elif pb >= bought:
+                adj = tx.I
+            else:
+                adj = R0(tx.I * pb / bought)
+            if k == "환전정산입금":
+                r.S, r.Q, r.AC = tx.I, -adj, tx.I - adj
+            else:
+                r.S, r.Q, r.AC = -tx.I, adj, adj - tx.I
         elif k == "해외세금환급":
             r.O = tx.G
             r.Q = R0(tx.G * r.N)
@@ -554,8 +573,11 @@ def _checks(rows, issues, cfg):
     fxadj = [r for r in rows if r.kind.startswith("환전정산")]
     if fxadj:
         tot = sum((r.S for r in fxadj), Z)
-        issues.append(("확인", None, f"환전정산(선환전차액 등) {len(fxadj)}건, 원화 합계 {tot:,} 원을 외화예수금 장부금액에서 "
-                                     "조정했다(가환율 환전의 차액). 건별 내역은 거래원장"))
+        book = -sum((r.Q for r in fxadj), Z)   # 정산 원화와 같은 부호(입금이면 양수)
+        fxpl = sum((r.AC for r in fxadj), Z)
+        issues.append(("확인", None, f"환전정산(가환율 환전의 차액) {len(fxadj)}건, 원화 합계 {tot:,} 원. 같은 날 원화로 산 외화 가운데 "
+                                     f"남은 몫인 {book:,} 원은 외화예수금 장부금액에서 조정했고, 이미 나간 외화의 몫인 {fxpl:,} 원은 "
+                                     "각 정산 줄의 외환차손익으로 잡았다. 건별 내역은 거래원장에 있다"))
     proc = {}
     for r in rows:
         for n in r.tx.notes:

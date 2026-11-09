@@ -288,7 +288,9 @@ def _kind_formulas(k, i, out_qty):
     pb = f"ROUND({c('P')}-{c('O')},3)"              # 직전 외화잔액
 
     def out_book(amt):                              # 외화를 내보낼 때 줄어드는 장부금액(이동평균)
-        return f"=IF({pb}<=0,0,IF(ROUND({amt},3)={pb},-{c('pk')},-ROUND({c('pk')}*({amt})/{pb},0)))"
+        # 나간 외화가 직전 잔액 이상이면 직전 장부금액 전부와 모자란 외화 × 적용환율(같은 날 들어올 외화보다 먼저 찍힌 줄)
+        return (f"=IF({pb}<=0,0,IF(ROUND({amt},3)>={pb},-{c('pk')}-ROUND((ROUND({amt},3)-{pb})*{N},0),"
+                f"-ROUND({c('pk')}*({amt})/{pb},0)))")
 
     held = f"({c('AG')}-{c('U')})"                  # 직전 보유수량
     out_cost = f"=-IF({held}<=0,0,IF({c('qty')}>={held},{c('W')},ROUND({c('W')}*{c('qty')}/{held},0)))"
@@ -305,10 +307,13 @@ def _kind_formulas(k, i, out_qty):
         f["O"], f["Q"] = f"={G}-{H}", f"={c('AE')}-{c('AF')}"
     elif k == "해외원천세":
         f["O"], f["Q"] = f"=-{H}", out_book(H)
-    elif k == "환전정산입금":
-        f["Q"] = f"=-{I}"
-    elif k == "환전정산출금":
-        f["Q"] = f"={I}"
+    elif k in ("환전정산입금", "환전정산출금"):
+        # 같은 날 원화로 산 외화 가운데 남은 몫(직전 외화잔액 ÷ 그날 산 외화)만큼만 장부금액을 조정한다
+        p = i - 1
+        bought = (f"SUMIFS(${COL['G']}${FIRST}:{COL['G']}{p},${COL['date']}${FIRST}:{COL['date']}{p},{c('date')},"
+                  f"${COL['ccy']}${FIRST}:{COL['ccy']}{p},{c('ccy')},${COL['kind']}${FIRST}:{COL['kind']}{p},\"환전_원화외화\")")
+        adj = f"IF({bought}<=0,0,IF({pb}<=0,0,IF({pb}>={bought},{I},ROUND({I}*{pb}/{bought},0))))"
+        f["Q"] = f"=-{adj}" if k == "환전정산입금" else f"={adj}"
     elif k in ("해외세금환급", "외화입금", "외화가계정입"):
         f["O"], f["Q"] = f"={G}", f"=ROUND({G}*{N},0)"
     elif k in ("외화출금", "외화가계정출"):
@@ -335,8 +340,10 @@ def _kind_formulas(k, i, out_qty):
             f["U"] = f"={c('qty')}"
             f["Y"] = (f"=-SUMIFS(${COL['Y']}${FIRST}:{COL['Y']}{p},${COL['date']}${FIRST}:{COL['date']}{p},{c('date')},"
                       f"${COL['kind']}${FIRST}:{COL['kind']}{p},\"주식수변동\")")
-    if k == "환전_외화원화":
+    if k in ("환전_외화원화", "환전정산입금"):
         f["AC"] = f"={I}+{Q}"
+    elif k == "환전정산출금":
+        f["AC"] = f"={Q}-{I}"
     elif k == "해외매수":
         f["AC"] = f"={c('Y')}+{c('AD')}+{Q}"
     elif k == "해외원천세":
