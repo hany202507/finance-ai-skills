@@ -481,6 +481,75 @@ def _pkey(name: str | None) -> str:
     return party_name(name or "") or common.reader._norm(name or "")
 
 
+def recurring(cur: list, spec: dict) -> dict:
+    """반복 전표 묶기(2026-11-09 3단계, 검토 문서 4.2). 차변 계정 · 대변 계정 · 거래처 · 금액 크기대가 같은 전표가 min_months 개 달 이상,
+    min_count 건 이상 나오면 한 묶음이다(카드 대금 · 급여 · 감가상각). {"of": {id(전표): 묶음번호}, "groups": [..], "vouchers"}.
+    묶음 번호는 전표가 많은 순으로 R1, R2, …"""
+    cfg = spec.get("recurring") or {}
+    mm, mc = cfg.get("min_months", 3), cfg.get("min_count", 3)
+    steps = cfg.get("amount_steps", 4)     # 금액 크기대: 10배를 이만큼으로 나눈 구간(4 면 약 1.8배 폭). 0 이면 금액을 보지 않는다
+    by: dict[tuple, dict] = {}
+    for v in cur:
+        band = int(math.log10(max(abs(v.amount), 1.0)) * steps) if steps else 0
+        k = ("+".join(_keys(v, "dr")), "+".join(_keys(v, "cr")), "+".join(v.parties), band)
+        e = by.setdefault(k, {"vs": [], "months": set()})
+        e["vs"].append(v)
+        e["months"].add((v.date.year, v.date.month))
+    groups, of = [], {}
+    for e in sorted(by.values(), key=lambda e: (-len(e["vs"]), e["vs"][0].date)):
+        if len(e["months"]) < mm or len(e["vs"]) < mc:
+            continue
+        gid = f"R{len(groups) + 1}"
+        v0 = e["vs"][0]
+        groups.append({"id": gid, "dr": v0.label("dr"), "cr": v0.label("cr"), "parties": ", ".join(v0.parties),
+                       "months": len(e["months"]), "count": len(e["vs"]), "amount": sum(v.amount for v in e["vs"])})
+        for v in e["vs"]:
+            of[id(v)] = gid
+    return {"of": of, "groups": groups, "vouchers": len(cur), "min_months": mm, "min_count": mc}
+
+
+SIZE_BANDS = ((1, 2), (3, 5), (6, 10), (11, 50), (51, None))
+
+
+def overview(cur: list, meta: dict, cols: dict, hol: set, rec: dict) -> dict:
+    """모집단 개요(2026-11-09 3단계, 검토 문서 4.2). 시험 전에 분개장 모양을 본다: 월별 전표 · 줄 · 금액 · 주말 전표,
+    전표 크기(줄 수) 분포, 작성자별(열이 있을 때), 계정별 상위, 반복 전표 비율."""
+    months: dict[str, dict] = {}
+    sizes = {b: 0 for b in SIZE_BANDS}
+    users: dict[str, dict] = {}
+    accts: dict[str, dict] = {}
+    for v in cur:
+        k = f"{v.date.year:04d}-{v.date.month:02d}"
+        m = months.setdefault(k, {"vouchers": 0, "lines": 0, "amount": 0.0, "weekend": 0})
+        m["vouchers"] += 1
+        m["lines"] += len(v.lines)
+        m["amount"] += v.amount
+        m["weekend"] += v.date.weekday() >= 5 or v.date in hol
+        n = len(v.lines)
+        sizes[next(b for b in SIZE_BANDS if b[1] is None or n <= b[1])] += 1
+        if cols.get("user"):
+            u = (meta.get(id(v)) or {}).get("user") or "(빈 칸)"
+            e = users.setdefault(u, {"vouchers": 0, "amount": 0.0})
+            e["vouchers"] += 1
+            e["amount"] += v.amount
+        for x in v.lines:
+            a = x.code or common.reader._norm(x.name or "") or "(계정 없음)"
+            e = accts.setdefault(a, {"name": x.name or "", "lines": 0, "dr": 0.0, "cr": 0.0, "months": set()})
+            e["lines"] += 1
+            e["dr"] += x.dr
+            e["cr"] += x.cr
+            e["months"].add(k)
+    top = sorted(accts.items(), key=lambda kv: (-kv[1]["lines"], kv[0]))[:20]
+    in_rec = sum(1 for v in cur if id(v) in rec["of"])
+    return {"months": [{"month": k, **months[k]} for k in sorted(months)],
+            "sizes": [{"band": b, "vouchers": sizes[b]} for b in SIZE_BANDS],
+            "users": sorted(({"user": u, **e} for u, e in users.items()), key=lambda e: -e["vouchers"]),
+            "accounts": [{"code": a, "name": e["name"], "lines": e["lines"], "dr": e["dr"], "cr": e["cr"], "months": len(e["months"])}
+                         for a, e in top],
+            "accounts_n": len(accts), "vouchers": len(cur), "lines": sum(len(v.lines) for v in cur),
+            "recurring_vouchers": in_rec}
+
+
 def opposite_cause(d: Path, cur: list, t: dict, hit) -> None:
     """분석의 거래처별 기말 반대 잔액마다 그 잔액을 반대쪽으로 민 전표(2026-10-24).
 
@@ -723,6 +792,8 @@ def run(d: Path, mat: dict | None = None) -> dict:
                 done[id(v)]["why"] += f" · {why}"
             else:
                 hit("integrity", v, why)
+                # 음수 금액 줄만 있는 전표는 차대 불일치 · 계정 빈 줄과 달리 참고로 본다(2026-11-09, 먼저 볼 전표 점수)
+                t["hits"][-1].update(review="optional", weight=1)
 
     # 전표번호 중복 · 순서 역전 · 빠진 번호
     t = tests["voucher_seq"]
@@ -885,6 +956,9 @@ def run(d: Path, mat: dict | None = None) -> dict:
                 hit("late_entry", v, " · ".join(why))
             why = []
             h = e["hour"]
+            if h is None and ed == v.date:
+                # 시각 없이 입력일만 있고 전표 일자와 같으면 주말 · 공휴일 시험과 같은 것을 본다. 두 번 세지 않는다(2026-11-09)
+                continue
             if h is not None and (h >= o.get("night_from", 22) or h < o.get("night_to", 6)):
                 why.append(f"입력 시각 {h:02d}:{e['minute']:02d}")
             if ed.weekday() >= 5:
@@ -900,7 +974,7 @@ def run(d: Path, mat: dict | None = None) -> dict:
             t["note"] += miss
             o["note"] += miss
         if not any(meta[id(v)]["hour"] is not None for v in cur + post):
-            o["note"] += ". 입력일시에 시각이 없어 입력일의 요일 · 공휴일만 봤습니다"
+            o["note"] += ". 입력일시에 시각이 없어 입력일의 요일 · 공휴일만 봤습니다(입력일이 전표 일자와 같으면 주말 · 공휴일 시험에 맡김)"
     else:
         for k in ("late_entry", "off_hours"):
             tests[k]["note"] = "분개장에 입력일시 열이 없어 시험하지 못했습니다. 회사 전산에서 입력일시가 든 분개장을 받아 주십시오"
@@ -944,7 +1018,10 @@ def run(d: Path, mat: dict | None = None) -> dict:
         why = "; ".join(f"{x['path']} {x['why']}" for x in j["failed"])
         for t in tests.values():
             t["note"] = f"분개장을 판독하지 못해 시험하지 못했습니다({why})"
-    return {"tests": list(tests.values()), "completeness": comp, "tb_codes": tb_coded, "bs_completeness": bs, "closing": closing, "sources": sources,
+    rec = recurring(cur, spec)
+    ov = overview(cur, meta, cols, set(hol), rec)
+    return {"tests": list(tests.values()), "completeness": comp, "recurring": rec, "overview": ov,
+            "selection": spec.get("selection") or {}, "tb_codes": tb_coded, "bs_completeness": bs, "closing": closing, "sources": sources,
             "files": j["files"], "failed": j["failed"], "file_stats": j.get("file_stats", []), "file_checks": j.get("file_checks", []),
             "excluded": j.get("excluded", []),
             "dr": sum(x.dr for x in j["cur"]), "cr": sum(x.cr for x in j["cur"]), "lines": len(j["cur"]),
@@ -1078,6 +1155,7 @@ def make(d: Path, ctx: dict | None = None, force: bool = False) -> dict:
     row += 2
     b.conclusion(ws, row, 6)
 
+    _overview_sheet(b, r)
     _first_sheet(b, r, d)
     has_entry = any(r["entry_cols"].get(k) for k in ("user", "approver", "entered"))
     wl, rl = b.sheet("결과 목록",widths=[20, 12, 6, 16, 6, 26, 26, 16, 34, 16, 34, 30, 16] + ([30] if has_entry else []))
@@ -1133,35 +1211,35 @@ def _owner_map(d: Path) -> tuple[dict, dict]:
 
 
 def priority(r: dict, d: Path | None = None) -> list[dict]:
-    """먼저 볼 전표(2026-10-24). 필수 검토 시험에 하나라도 걸린 전표를 전표마다 한 줄로, 점수 높은 순.
+    """필수 검토 시험에 하나라도 걸린 전표를 전표마다 한 줄로, 점수 높은 순(2026-10-24, 가중치 2026-11-09).
 
-    점수 = 걸린 필수 시험마다 2 · 참고 시험마다 1 + 금액이 수행중요성 이상 2(절반 이상 1) + 기말 반대 잔액 원인 3.
+    점수 = 걸린 시험의 weight 합(jet.yaml, 없으면 필수 2 · 참고 1 · 기말 반대 잔액 원인 5) + 금액 점수(selection.amount_points,
+    기본은 수행중요성 이상 2 · 절반 이상 1). 시험 결과 한 건에 review · weight 가 따로 있으면 그것을 쓴다(음수 금액 줄만 있는 전표).
     담당은 전표의 주된 계정(현금 · 예금 · 부가세를 뺀 가장 큰 줄)의 영역 조서(4000+영역) 배정."""
     pm = (r.get("mat") or {}).get("performance") or 0
+    pts = (r.get("selection") or {}).get("amount_points") or [[1.0, 2], [0.5, 1]]
     by: dict[int, dict] = {}
     for t in r["tests"]:
-        req = t.get("review") == "required"
         for h in t["hits"]:
+            req = (h.get("review") or t.get("review")) == "required"
+            w = h.get("weight", t.get("weight", (2 if req else 1) + (3 if t["id"] == "opposite_cause" else 0)))
             v = h["voucher"]
-            e = by.setdefault(id(v), {"voucher": v, "tests": [], "whys": [], "required": False, "score": 0})
+            e = by.setdefault(id(v), {"voucher": v, "tests": [], "ids": [], "whys": [], "required": False, "score": 0})
             if t["title"] in e["tests"]:
                 continue
             e["tests"].append(t["title"])
+            e["ids"].append(t["id"])
             e["whys"].append(h["why"])
             e["required"] |= req
-            e["score"] += 2 if req else 1
-            if t["id"] == "opposite_cause":
-                e["score"] += 3
+            e["score"] += w
     areas, owners = _owner_map(d) if d else ({}, {})
     out = []
     for e in by.values():
         if not e["required"]:
             continue
         v = e["voucher"]
-        if pm and v.amount >= pm:
-            e["score"] += 2
-        elif pm and v.amount >= pm * 0.5:
-            e["score"] += 1
+        if pm:
+            e["score"] += next((pt for k, pt in sorted(pts, key=lambda x: -x[0]) if v.amount >= pm * k), 0)
         main = sorted((x for x in v.lines if not any(w in (x.name or "") for w in ("현금", "예금", "부가세"))),
                       key=lambda x: -max(x.dr, x.cr))
         area = areas.get(str(main[0].code)) if main and main[0].code is not None else None
@@ -1171,14 +1249,85 @@ def priority(r: dict, d: Path | None = None) -> list[dict]:
     return sorted(out, key=lambda e: (-e["score"], -e["voucher"].amount, e["voucher"].date, e["voucher"].no))
 
 
+def select(r: dict, rows: list[dict]) -> dict:
+    """검토 대상 고르기(2026-11-09 3단계, 검토 문서 4.3). rows 는 priority() 결과(점수 높은 순).
+    1) selection.all_tests 시험에 걸리고 금액이 all_min 이상인 전표는 전부 고른다(「고위험 시험 전부」).
+    2) 나머지는 점수 높은 순으로 top_n 건. 반복 전표 묶음에서는 처음 만난(점수가 가장 높은) 한 건만 고르고 나머지는 「같은 꼴」 로 센다.
+    {"picked": [..], "rule": {..}, "counts": {"pool", "all", "top", "same", "left"}}. 고른 줄에는 pick(까닭) · group(묶음 번호)을 붙인다."""
+    cfg = r.get("selection") or {}
+    mat = r.get("mat") or {}
+    titles = {t["id"]: t["title"] for t in r["tests"]}
+    all_ids = [x for x in cfg.get("all_tests", []) if x in titles]
+    floor = cfg.get("all_min", "trivial")
+    floor = float(mat.get("trivial") or 0) if floor == "trivial" else float(floor or 0)
+    top_n = int(cfg.get("top_n", 25))
+    of = (r.get("recurring") or {}).get("of", {})
+    picked, rest = [], []
+    for e in rows:
+        e["group"] = of.get(id(e["voucher"]))
+        hi = [titles[x] for x in e["ids"] if x in all_ids]
+        if hi and e["voucher"].amount >= floor:
+            e["pick"] = "고위험 시험 전부: " + " · ".join(hi)
+            picked.append(e)
+        else:
+            rest.append(e)
+    n_all = len(picked)
+    seen, same, n_top = set(), 0, 0
+    for e in rest:
+        if n_top >= top_n:
+            break
+        if e["group"] and e["group"] in seen:
+            same += 1
+            continue
+        e["pick"] = f"점수 상위 {top_n}건" + (f"(반복 묶음 {e['group']} 대표)" if e["group"] else "")
+        picked.append(e)
+        n_top += 1
+        if e["group"]:
+            seen.add(e["group"])
+    return {"picked": picked,
+            "rule": {"all_tests": [titles[x] for x in all_ids], "all_min": floor, "top_n": top_n},
+            "counts": {"pool": len(rows), "all": n_all, "top": n_top, "same": same, "left": len(rows) - len(picked)}}
+
+
 def _first_sheet(b: wp.Book, r: dict, d: Path) -> None:
     rows = priority(r, d)
-    ws, row = b.sheet("먼저 볼 전표", widths=[6, 6, 12, 10, 16, 30, 40, 24, 24, 18, 30, 10, 26, 26])
-    ws.cell(6, 1, "필수 검토 시험에 걸린 전표만 전표마다 한 줄이다. 점수 = 걸린 필수 시험마다 2 · 참고 시험마다 1 + 금액이 수행중요성 이상 2"
-                  "(절반 이상 1) + 기말 반대 잔액 원인 3. 담당은 전표의 주된 계정 영역 조서(4000+영역)의 배정(2110-배정). "
-                  "담당자가 확인 결과와 증빙을 적고 검토자가 본다. 참고 시험(주말 · 끝자리 등)만 걸린 전표는 결과 목록에서 시험 단위로 확인한다"
+    sel = select(r, rows)
+    picked, rule, cnt = sel["picked"], sel["rule"], sel["counts"]
+    ws, row = b.sheet("먼저 볼 전표", widths=[6, 6, 30, 12, 10, 16, 30, 40, 24, 24, 18, 30, 10, 10, 26, 26])
+    ws.cell(6, 1, "필수 검토 시험에 걸린 전표 가운데 아래 규칙으로 고른 전표다(2026-11-09). 점수 = 걸린 시험의 가중치 합(definitions/jet.yaml weight) "
+                  "+ 금액 점수(수행중요성 이상 2 · 절반 이상 1). 가중치 · 규칙은 예시 값이라 회사 위험에 맞게 jet.yaml 에서 바꾼다. "
+                  "고르지 않은 전표는 결과 목록에 남는다. 담당은 전표의 주된 계정 영역 조서(4000+영역)의 배정(2110-배정)"
                   ).font = wp.font(size=9, color=wp.MUTED)
-    who = Counter(e["owner"] or "미배정" for e in rows)
+    row = b.section(ws, row, "고르는 규칙 (definitions/jet.yaml selection · recurring)")
+    rec = r.get("recurring") or {}
+    floor_txt = f" 에 걸린 전표 가운데 금액 {won(rule['all_min'])} 이상 전부" if rule["all_min"] else " 에 걸린 전표 전부"
+    lines = [("고위험 시험 전부", " · ".join(rule["all_tests"]) + floor_txt),
+             ("점수 상위", f"나머지에서 점수 높은 순으로 {rule['top_n']}건"),
+             ("반복 묶음", f"차변 계정 · 대변 계정 · 거래처 · 금액 크기대(약 1.8배 폭)가 같은 전표가 {rec.get('min_months', 3)}개 달 이상 · {rec.get('min_count', 3)}건 이상이면 "
+                       "한 묶음. 점수 상위를 고를 때 묶음마다 한 건만 대표로 올린다")]
+    for k, txt in lines:
+        b.put(ws, row, 1, k, bold=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+        b.put(ws, row, 3, txt, wrap=True)
+        ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=8)
+        ws.row_dimensions[row].height = 30
+        row += 1
+    row += 1
+    row = b.head(ws, row, ["구분", "", "전표 수", "", "", ""])
+    c0 = row
+    for k, n in (("고위험 시험 전부", cnt["all"]), ("점수 상위", cnt["top"]), ("고르지 않음(반복 묶음 같은 꼴 포함)", cnt["left"])):
+        b.put(ws, row, 1, k)
+        b.put(ws, row, 3, n, fmt="#,##0")
+        row += 1
+    b.put(ws, row, 1, "필수 검토 시험에 걸린 전표", bold=True)
+    b.put(ws, row, 3, f"=SUM(C{c0}:C{row - 1})", fmt="#,##0", bold=True)
+    b.verify("먼저 볼 전표 후보 수", f"='먼저 볼 전표'!C{row}", cnt["pool"])
+    row += 1
+    if cnt["same"]:
+        ws.cell(row, 1, f"점수 상위를 고르는 동안 이미 고른 반복 묶음과 같은 꼴이라 넘긴 전표 {cnt['same']:,}건").font = wp.font(size=9, color=wp.MUTED)
+        row += 1
+    row += 1
+    who = Counter(e["owner"] or "미배정" for e in picked)
     row = b.section(ws, row, "담당자별 건수")
     row = b.head(ws, row, ["담당", "", "전표 수", "", "", ""])
     for name, n in who.most_common():
@@ -1186,30 +1335,110 @@ def _first_sheet(b: wp.Book, r: dict, d: Path) -> None:
         b.put(ws, row, 3, n, fmt="#,##0")
         row += 1
     row += 1
-    row = b.section(ws, row, "먼저 볼 전표 (점수 높은 순)")
-    row = b.head(ws, row, ["순위", "점수", "일자", "전표번호", "금액", "걸린 시험", "근거", "차변 계정", "대변 계정", "거래처", "적요",
-                           "담당", "확인 결과", "증빙 · 답"])
-    for i, e in enumerate(rows, 1):
+    row = b.section(ws, row, "먼저 볼 전표 (고위험 시험 전부, 그다음 점수 높은 순)")
+    row = b.head(ws, row, ["순위", "점수", "고른 까닭", "일자", "전표번호", "금액", "걸린 시험", "근거", "차변 계정", "대변 계정", "거래처", "적요",
+                           "반복 묶음", "담당", "확인 결과", "증빙 · 답"])
+    for i, e in enumerate(picked, 1):
         v = e["voucher"]
         b.put(ws, row, 1, i)
         b.put(ws, row, 2, e["score"])
-        b.put(ws, row, 3, v.date.isoformat())
-        b.put(ws, row, 4, v.no)
-        b.put(ws, row, 5, v.amount, fmt=wp.WON)
-        b.put(ws, row, 6, " · ".join(e["tests"]), wrap=True)
-        b.put(ws, row, 7, " / ".join(e["whys"]), wrap=True)
-        b.put(ws, row, 8, v.label("dr"), wrap=True)
-        b.put(ws, row, 9, v.label("cr"), wrap=True)
-        b.put(ws, row, 10, ", ".join(v.parties), wrap=True)
-        b.put(ws, row, 11, common.short(v.memo, 60), wrap=True)
-        b.put(ws, row, 12, e["owner"] or "")
-        ask(b, ws, row, 13, f"확인 결과: {v.date.isoformat()} {v.no}", rule="required")
-        ask(b, ws, row, 14, f"증빙 · 답: {v.date.isoformat()} {v.no}", rule="optional")
+        b.put(ws, row, 3, e["pick"], wrap=True)
+        b.put(ws, row, 4, v.date.isoformat())
+        b.put(ws, row, 5, v.no)
+        b.put(ws, row, 6, v.amount, fmt=wp.WON)
+        b.put(ws, row, 7, " · ".join(e["tests"]), wrap=True)
+        b.put(ws, row, 8, " / ".join(e["whys"]), wrap=True)
+        b.put(ws, row, 9, v.label("dr"), wrap=True)
+        b.put(ws, row, 10, v.label("cr"), wrap=True)
+        b.put(ws, row, 11, ", ".join(v.parties), wrap=True)
+        b.put(ws, row, 12, common.short(v.memo, 60), wrap=True)
+        b.put(ws, row, 13, e["group"] or "")
+        b.put(ws, row, 14, e["owner"] or "")
+        ask(b, ws, row, 15, f"확인 결과: {v.date.isoformat()} {v.no}", rule="required")
+        ask(b, ws, row, 16, f"증빙 · 답: {v.date.isoformat()} {v.no}", rule="optional")
         row += 1
-    if not rows:
+    if not picked:
         ws.cell(row, 1, "필수 검토 시험에 걸린 전표가 없습니다").font = wp.font(color=wp.MUTED)
-    if rows:   # 순위 칸의 가장 큰 값이 전표 수다(재계산기 xlcalc 는 COUNTA 를 모른다)
-        b.verify("먼저 볼 전표 수", f"=MAX('먼저 볼 전표'!A{row - len(rows)}:A{row - 1})", len(rows))
+    if picked:   # 순위 칸의 가장 큰 값이 전표 수다(재계산기 xlcalc 는 COUNTA 를 모른다)
+        b.verify("먼저 볼 전표 수", f"=MAX('먼저 볼 전표'!A{row - len(picked)}:A{row - 1})", len(picked))
+
+
+def _overview_sheet(b: wp.Book, r: dict) -> None:
+    """모집단 개요(2026-11-09 3단계). 시험 결과를 보기 전에 분개장 모양을 본다. 합계는 수식이고 엔진 값과 맞댄다."""
+    ov, rec = r.get("overview"), r.get("recurring") or {}
+    if not ov or not ov["vouchers"]:
+        return
+    ws, row = b.sheet("모집단 개요", widths=[26, 14, 14, 18, 14, 14, 40])
+    ws.cell(6, 1, "당기 전표(결산 마감 분개 제외). 시험 기준을 정하기 전에 월별 분포 · 전표 크기 · 작성자 · 자주 쓰는 계정 · 반복 전표 비율을 본다"
+            ).font = wp.font(size=9, color=wp.MUTED)
+    row = b.section(ws, row, "월별")
+    row = b.head(ws, row, ["월", "전표 수", "줄 수", "금액(차변)", "주말 · 공휴일 전표", "주말 비율", ""])
+    m0 = row
+    for m in ov["months"]:
+        b.put(ws, row, 1, m["month"])
+        b.put(ws, row, 2, m["vouchers"], fmt="#,##0")
+        b.put(ws, row, 3, m["lines"], fmt="#,##0")
+        b.put(ws, row, 4, m["amount"], fmt=wp.WON)
+        b.put(ws, row, 5, m["weekend"], fmt="#,##0")
+        b.put(ws, row, 6, f"=IF(B{row}=0,0,E{row}/B{row})", fmt="0.0%")
+        row += 1
+    b.put(ws, row, 1, "합계", bold=True)
+    for col, L in ((2, "B"), (3, "C"), (4, "D"), (5, "E")):
+        b.put(ws, row, col, f"=SUM({L}{m0}:{L}{row - 1})", fmt=wp.WON if col == 4 else "#,##0", bold=True)
+    b.put(ws, row, 6, f"=IF(B{row}=0,0,E{row}/B{row})", fmt="0.0%", bold=True)
+    b.verify("모집단 개요 전표 수", f"='모집단 개요'!B{row}", ov["vouchers"])
+    b.verify("모집단 개요 줄 수", f"='모집단 개요'!C{row}", ov["lines"])
+    tot = row
+    row += 2
+    row = b.section(ws, row, "전표 크기 (줄 수)")
+    row = b.head(ws, row, ["줄 수", "전표 수", "비율", "", "", "", ""])
+    s0 = row
+    for x in ov["sizes"]:
+        lo, hi = x["band"]
+        b.put(ws, row, 1, f"{lo}~{hi}줄" if hi else f"{lo}줄 이상")
+        b.put(ws, row, 2, x["vouchers"], fmt="#,##0")
+        b.put(ws, row, 3, f"=IF($B${tot}=0,0,B{row}/$B${tot})", fmt="0.0%")
+        row += 1
+    b.put(ws, row, 1, "합계", bold=True)
+    b.put(ws, row, 2, f"=SUM(B{s0}:B{row - 1})", fmt="#,##0", bold=True)
+    b.verify("전표 크기 합 − 전표 수", f"='모집단 개요'!B{row}-'모집단 개요'!B{tot}", 0)
+    row += 2
+    if ov["users"]:
+        row = b.section(ws, row, "작성자별")
+        row = b.head(ws, row, ["작성자", "전표 수", "비율", "금액(차변)", "", "", ""])
+        for u in ov["users"][:30]:
+            b.put(ws, row, 1, u["user"])
+            b.put(ws, row, 2, u["vouchers"], fmt="#,##0")
+            b.put(ws, row, 3, f"=IF($B${tot}=0,0,B{row}/$B${tot})", fmt="0.0%")
+            b.put(ws, row, 4, u["amount"], fmt=wp.WON)
+            row += 1
+        if len(ov["users"]) > 30:
+            ws.cell(row, 1, f"외 {len(ov['users']) - 30}명").font = wp.font(size=9, color=wp.MUTED)
+            row += 1
+        row += 1
+    row = b.section(ws, row, f"자주 쓰는 계정 상위 {len(ov['accounts'])} (계정 {ov['accounts_n']:,}개 가운데, 줄 수 순)")
+    row = b.head(ws, row, ["계정", "줄 수", "쓴 달 수", "차변 합계", "대변 합계", "", ""])
+    for a in ov["accounts"]:
+        b.put(ws, row, 1, f"{a['code']} {a['name']}" if a["name"] and a["name"] != a["code"] else a["code"])
+        b.put(ws, row, 2, a["lines"], fmt="#,##0")
+        b.put(ws, row, 3, a["months"])
+        b.put(ws, row, 4, a["dr"], fmt=wp.WON)
+        b.put(ws, row, 5, a["cr"], fmt=wp.WON)
+        row += 1
+    row += 1
+    gs = rec.get("groups") or []
+    share = ov["recurring_vouchers"] / max(ov["vouchers"], 1)
+    row = b.section(ws, row, f"반복 전표 묶음 ({len(gs):,}개, 전표 {ov['recurring_vouchers']:,}건 = 당기 전표의 {share:.1%})")
+    row = b.head(ws, row, ["묶음", "전표 수", "달 수", "금액 합계", "", "", "차변 계정 / 대변 계정 / 거래처"])
+    for g in gs[:30]:
+        b.put(ws, row, 1, g["id"])
+        b.put(ws, row, 2, g["count"], fmt="#,##0")
+        b.put(ws, row, 3, g["months"])
+        b.put(ws, row, 4, g["amount"], fmt=wp.WON)
+        b.put(ws, row, 7, f"{g['dr']} / {g['cr']}" + (f" / {g['parties']}" if g["parties"] else ""), wrap=True)
+        row += 1
+    if len(gs) > 30:
+        ws.cell(row, 1, f"외 {len(gs) - 30:,}개 묶음").font = wp.font(size=9, color=wp.MUTED)
 
 
 def _bs_sheet(b: wp.Book, r: dict) -> None:
