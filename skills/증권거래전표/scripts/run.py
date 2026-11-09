@@ -1,9 +1,10 @@
 """증권 거래내역 → 전표 한 번에.
 
 python run.py <거래내역 파일 ...> --out <산출 폴더> [--config 설정.json] [--rates 환율표.csv]
-              [--broker 삼성증권] [--standard]
+              [--broker 삼성증권] [--standard] [--opening-from 증권전표_검증_<회사>.xlsx]
 
 --standard  입력이 templates/표준거래표_양식.csv 꼴(스캔 PDF 를 AI 가 옮겨 적은 것)일 때.
+--opening-from  앞서 만든 검증 파일의 「기초·기말」 시트에서 고친 기초 잔고(수량 · 장부금액)를 읽어 설정 「기초」 대신 쓴다.
 산출(--out 폴더): 위하고_일반전표_<회사>.xlsx(업로드) · 증권전표_검증_<회사>.xlsx(요약 · 전표 · 거래원장 · 기초·기말).
 작업 파일(_작업 폴더): 실행보고.md · 표준거래표.csv · PDF 추출 마크다운.
 두 파일 모두 엔진 값을 그대로 쓴다. 엑셀 · LibreOffice 가 없어도 된다.
@@ -92,6 +93,112 @@ def fill_opening(cfg, txs, rates_rows):
     return hint
 
 
+def _dec(v):
+    """엑셀 칸 값 → Decimal. 빈칸은 0, 쉼표가 든 글자도 받는다."""
+    if v in (None, ""):
+        return Decimal(0)
+    if isinstance(v, float):
+        return Decimal(repr(v))
+    return Decimal(str(v).replace(",", "").strip())
+
+
+def read_opening_from(path, cfg, txs, rates_rows):
+    """검증 파일 「기초·기말」 시트의 기초 잔고 표를 읽어 cfg["기초"] 에 넣는다.
+
+    이번 실행이 설정과 거래내역만으로 쓸 기초(추정 포함)와 다른 줄만 넣는다. 추정 그대로 둔 줄은 넣지 않아
+    fill_opening 이 다시 추정하고 「기초 추정」 확인사항도 그대로 남는다. 돌려주는 값: 바꾼 내용 설명 목록.
+    """
+    import copy
+    import openpyxl
+    path = Path(path)
+    base = copy.deepcopy(cfg)
+    fill_opening(base, txs, rates_rows)
+    b0 = base.get("기초") or {}
+    wv = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    wf = openpyxl.load_workbook(path, read_only=True)
+    if BW.SHEET_B not in wv.sheetnames:
+        raise SystemExit(f"{path.name} 에 「{BW.SHEET_B}」 시트가 없다. 이 스킬이 만든 검증 파일을 준다")
+    vals = list(wv[BW.SHEET_B].iter_rows(max_col=8, values_only=True))
+    fmls = list(wf[BW.SHEET_B].iter_rows(max_col=8, values_only=True))
+    wv.close()
+    wf.close()
+    head =next((i for i, r in enumerate(vals) if r and r[0] == "구분" and str(r[4] or "").startswith("장부금액")), None)
+    if head is None:
+        raise SystemExit(f"{path.name} 「{BW.SHEET_B}」 시트에서 기초 잔고 표 머리글(구분 · 장부금액)을 못 찾았다")
+    names = {}
+    for s in b0.get("종목") or []:
+        names.setdefault(s["종목"], set()).add(s.get("종목코드") or s["종목"])
+    for t in txs:
+        if t.key and t.name:
+            names.setdefault(t.name, set()).add(t.key)
+    begin = cfg.setdefault("기초", {})
+    note0 = f"검증 파일 「{BW.SHEET_B}」 시트에서 읽음({path.name})"
+    changes = []
+
+    def note_of(sheet_note, base_note):
+        sheet_note = str(sheet_note or "").strip()
+        if sheet_note and sheet_note != (base_note or "") and not sheet_note.startswith("추정"):
+            return sheet_note
+        return note0
+
+    for i in range(head + 1, len(vals)):
+        r, f = vals[i], fmls[i]
+        if not r or r[0] not in ("원화예수금", "외화예수금", "종목"):
+            break
+        r = tuple(r) + (None,) * (8 - len(r))
+        f = tuple(f) + (None,) * (8 - len(f))
+        for j in (3, 4, 5):
+            if isinstance(f[j], str) and f[j].startswith("=") and r[j] is None:
+                raise SystemExit(f"{path.name} 「{BW.SHEET_B}」 {i + 1}행에 계산값 없이 저장된 수식이 있다. 엑셀에서 열어 저장한 뒤 다시 돌린다")
+        kind, name, ccy = r[0], str(r[1] or "").strip(), str(r[2] or "KRW").strip()
+        qty, book, lent, note = _dec(r[3]), E.R0(_dec(r[4])), _dec(r[5]), r[6]
+        where = f"{i + 1}행"
+        if kind == "원화예수금":
+            old = Decimal(str(b0.get("원화예수금", 0) or 0))
+            if book != old:
+                begin["원화예수금"] = str(book)
+                changes.append(f"원화예수금 {old:,} → {book:,} 원({where})")
+            continue
+        if kind == "외화예수금":
+            c = name or ccy
+            ob = (b0.get("외화") or {}).get(c) or {}
+            obal, obook = Decimal(str(ob.get("잔액", 0) or 0)), Decimal(str(ob.get("장부금액", 0) or 0))
+            if (qty, book) != (obal, obook):
+                begin.setdefault("외화", {})[c] = {"잔액": str(qty), "장부금액": str(book), "출처": note_of(note, ob.get("출처"))}
+                changes.append(f"{c} 외화예수금 잔액 {obal} → {qty} · 장부금액 {obook:,} → {book:,} 원({where})")
+            continue
+        code = str(r[7] or "").strip()
+        if not code:
+            keys = names.get(name, set())
+            if len(keys) > 1:
+                raise SystemExit(f"{path.name} 「{BW.SHEET_B}」 {where} 종목 '{name}' 이 종목코드 여럿({', '.join(sorted(keys))})과 "
+                                 "맞는다. H열에 종목코드를 적고 다시 돌린다")
+            code = next(iter(keys)) if keys else name
+        ob = next((s for s in b0.get("종목") or [] if (s.get("종목코드") or s["종목"]) == code), {})
+        old = tuple(Decimal(str(ob.get(k, 0) or 0)) for k in ("수량", "장부금액", "대여중"))
+        if ob and (qty, book, lent) == old:
+            continue
+        secs = begin.setdefault("종목", [])
+        secs[:] = [s for s in secs if (s.get("종목코드") or s["종목"]) != code]
+        nm = name or ob.get("종목") or code
+        secs.append({"종목": nm, "종목코드": code if code != nm else "", "통화": ccy or ob.get("통화", "KRW"),
+                     "수량": str(qty), "장부금액": str(book), "대여중": str(lent), "출처": note_of(note, ob.get("출처"))})
+        what = [f"{lab} {o:,} → {n:,}" for lab, o, n in zip(("수량", "장부금액", "대여 중 수량"), old, (qty, book, lent)) if o != n]
+        changes.append(f"{nm} " + (" · ".join(what) if ob else f"새 줄 수량 {qty:,} · 장부금액 {book:,}") + f"({where})")
+    return changes
+
+
+def _locked(p):
+    """엑셀이 열어 둔 파일은 덮어쓸 수 없다."""
+    if not p.is_file():
+        return False
+    try:
+        with open(p, "r+b"):
+            return False
+    except PermissionError:
+        return True
+
+
 def _quick_score(ts, cfg, rates_rows):
     """후보 표로 전표를 돌려 본 점수: (중단, 대사+미분류, −거래 수). 작을수록 좋다."""
     import copy
@@ -146,12 +253,19 @@ def main(argv=None):
     ap.add_argument("--standard", action="store_true")
     ap.add_argument("--password", help="암호 걸린 PDF 의 비밀번호(파일·보고서에 남기지 않는다)")
     ap.add_argument("--no-recalc", action="store_true", help="옛 옵션. 지금은 엑셀 재계산을 하지 않아 아무 일도 하지 않는다")
+    ap.add_argument("--opening-from", help="검증 파일(증권전표_검증_<회사>.xlsx) 「기초·기말」 시트에서 고친 기초 잔고를 읽어 쓴다")
     a = ap.parse_args(argv)
 
     out = Path(a.out)
     work = out / "_작업"
     work.mkdir(parents=True, exist_ok=True)
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8")) if a.config else {}
+    company = cfg.get("회사") or "회사"
+    busy = [p.name for p in (out / f"증권전표_검증_{company}.xlsx", out / f"위하고_일반전표_{company}.xlsx") if _locked(p)]
+    if busy:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(f"엑셀에서 열려 있어 덮어쓸 수 없다: {', '.join(busy)}. 엑셀에서 닫고 다시 돌린다")
+        return 3
     paths = [Path(p) for p in a.inputs]
     # 새 양식은 코드를 고치지 않고 설정으로 더한다: 「머리글」 {원문: 표준열}, 「적요규칙」 [{pattern, event}]
     RS.EXTRA_ALIASES = dict(cfg.get("머리글") or {})
@@ -189,11 +303,18 @@ def main(argv=None):
         txs = NZ.to_txns(tables)
     broker = a.broker or cfg.get("증권사") or guess_broker(paths, tables, " ".join(md_texts))
     rates_rows = load_rates(a.rates)
+    opened = read_opening_from(a.opening_from, cfg, txs, rates_rows) if a.opening_from else []
     hint = fill_opening(cfg, txs, rates_rows)
+    if a.opening_from:
+        (work / "설정_기초.json").write_text(json.dumps({"기초": cfg["기초"]}, ensure_ascii=False, indent=1), encoding="utf-8")
     tab = {}
     for d, c, v, s in rates_rows:
         tab.setdefault(c, []).append((d, v, s))
     res = E.run(txs, cfg, E.RateBook(tab))
+    if a.opening_from:
+        src = Path(a.opening_from).name
+        res.issues[:0] = [("정보", None, f"기초 입력({src}): {m}") for m in opened] or [
+            ("정보", None, f"기초 입력({src}): 이번 실행의 기초와 다른 줄이 없어 그대로 썼다")]
     if ocr_issues:
         res.issues[:0] = ocr_issues
         res.issues.insert(0, ("OCR", None, "OCR 로 읽은 자료다. 잔액 대사([대사])가 0 이어도 의심 칸은 원본과 한 번 대조한다"))
@@ -201,7 +322,6 @@ def main(argv=None):
     import diagnose as DG
     diag = DG.diagnose(tables, txs, cfg, res, hint, source_kinds, rates_rows)
 
-    company = cfg.get("회사") or "회사"
     import wehago_upload as WU
     # 앞선 실행이 남긴 파일을 지운다. 이번에 업로드를 막았는데 옛 업로드 파일이 남아 있으면 그것을 올리게 된다
     for old in [*out.glob(f"위하고_일반전표_{company}.xlsx"), *out.glob(f"위하고_일반전표_{company}_*.xlsx"),
@@ -272,6 +392,8 @@ def main(argv=None):
         report.append(f"- [{kind}] {where} {msg}".replace("  ", " "))
     for h in hint:
         report.append(f"- [기초 추정] {h}")
+    if a.opening_from:
+        report.append("- [기초 입력] 이번에 쓴 기초 전체는 _작업/설정_기초.json 에 있다. 설정 파일 「기초」 에 옮겨 두면 다음 실행에도 그대로 쓴다")
     report += ["", BW.PASS_NOTE]
     (work / "실행보고.md").write_text("\n".join(report), encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")

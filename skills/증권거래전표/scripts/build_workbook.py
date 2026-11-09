@@ -470,9 +470,11 @@ def _opening(ws, cfg):
     begin = cfg.get("기초") or {}
     ws["A1"], ws["A1"].font = ("기초 · 기말: 기초는 설정 「기초」(비었으면 거래내역에서 추정), 기말 수량 · 장부금액은 거래원장 합계, "
                                "기말 평가는 설정 「기말」 의 단가 · 환율"), BOLD
+    ws["A2"] = ("기초 잔고 표의 수량 · 장부금액을 고치면 이 파일의 수식이 다시 계산된다. 위하고 업로드 파일까지 바꾸려면 저장하고 "
+                "run.py 를 --opening-from <이 파일> 로 다시 돌린다")
     q = _q(SHEET_B)
     ws.cell(3, 1, "기초 잔고").font = Font(bold=True, size=12)
-    _header(ws, 4, ["구분", "이름", "통화", "수량 · 외화잔액", "장부금액(원)", "대여 중 수량", "출처 · 비고"])
+    _header(ws, 4, ["구분", "이름", "통화", "수량 · 외화잔액", "장부금액(원)", "대여 중 수량", "출처 · 비고", "종목코드"])
     r = 5
     out = {"fx": [], "sec": []}
 
@@ -482,7 +484,8 @@ def _opening(ws, cfg):
         ws.cell(r, 7, note)
         ws.cell(r, 4).number_format, ws.cell(r, 5).number_format = QTYF, NUMF
         if "추정" in str(note):
-            ws.cell(r, 7).fill = INPUT
+            for j in (4, 5, 7):
+                ws.cell(r, j).fill = INPUT
 
     krw = Decimal(str(begin.get("원화예수금", 0) or 0))
     row_(("원화예수금", "", "KRW", None, krw, None), "")
@@ -498,6 +501,7 @@ def _opening(ws, cfg):
         qty, book = Decimal(str(s.get("수량", 0) or 0)), Decimal(str(s.get("장부금액", 0) or 0))
         lent = Decimal(str(s.get("대여중", 0) or 0))
         row_(("종목", s["종목"], s.get("통화", "KRW"), qty, book, lent or None), s.get("출처", ""))
+        ws.cell(r, 8, str(s.get("종목코드") or "") or None)
         out["sec"].append({"key": s.get("종목코드") or s["종목"], "name": s["종목"], "ccy": s.get("통화", "KRW"),
                            "qty": (f"{q}D{r}", qty), "book": (f"{q}E{r}", book), "lent": (f"{q}F{r}", lent)})
         r += 1
