@@ -158,6 +158,10 @@ def register(sub) -> None:
     cv.add_argument("--bare", action="store_true", help="뼈대 없이: 머리 감싸개와 meta.xml 만 더한다(편집기 확인용 비교판)")
     cv.add_argument("--view", default=None, help="같은 보고서의 DART 공시 화면 HTML. 없으면 원문 옆 <이름>.view.html 을 쓴다. 원문에서 빠진 줄바꿈을 되살린다")
     cv.set_defaults(func=_convert)
+    dr = ps.add_parser("draft", help="전기 dsd → 당기 초안: 당기 숫자를 전기 칸으로, 기수 · 해 +1, 당기 칸 비움, 원고 엑셀 · 초안 검산까지(convert --roll 과 같은 산출물)")
+    dr.add_argument("dsd", help="전기(작년) 감사보고서 · 연결감사보고서 dsd. 회사가 준 것이든 dsd convert 가 만든 것이든 된다")
+    dr.add_argument("--out", default=None, help="결과 폴더. 없으면 전기 dsd 가 있는 폴더")
+    dr.set_defaults(func=_draft)
     q = ps.add_parser("quick", help="빠른 검토: links --text 와 foot --html 을 한 번에(엔진 후보는 판정 없이 넣는다). AI 없이 첫 HTML 까지")
     q.add_argument("dsd")
     for name in ("prev", "wtb", "pair", "facts", "case", "mask"):
@@ -885,6 +889,79 @@ def _diff(a) -> int:
     return 0
 
 
+def _roll_draft(src: Path, out: Path, company: str, year: str, form_name: str, cmd: str) -> dict:
+    """전기 dsd 하나로 당기 초안: 당기 숫자 → 전기 칸, 기수 · 해 +1, 당기 칸 비움(dsd_draft.roll) → 원고 엑셀 → dsd build → 초안 검산.
+    `dsd draft` 와 `dsd convert --roll` 이 같이 쓴다(2026-11-10, 초안 작성을 변환에서 뗌). 산출물은 결과 폴더의
+    <회사>_<다음 연도>_<보고서>_초안.dsd · 원고_…_초안.xlsx · 원고검사_….json · 초안안내_….txt."""
+    import json
+
+    from .report import dsd_build, dsd_convert as C, dsd_draft, dsd_draft_book
+
+    d = dsd_draft.read(src)
+    dsd_draft.roll(d)
+    nxt = str(int(year) + 1) if year.isdigit() else "다음"
+    stem = C.file_stem(company, nxt, form_name)
+    book = dsd_draft_book.write(out / f"원고_{stem}_초안.xlsx", d, cmd)
+    res = dsd_build.build(book, out / f"{stem}_초안.dsd")
+    built = dsd_draft.check_built(d, dsd_draft.read(Path(res["path"])))   # 만든 dsd 를 다시 읽어 원고와 칸마다 견준다(2026-11-10)
+    res["issues"] += built
+    (out / f"원고검사_{book.stem}.json").write_text(json.dumps(res["issues"], ensure_ascii=False, indent=1), encoding="utf-8")
+    rolled = d.info.get("rolled_tables") or []
+    print(f"다음 기수 초안 → {Path(res['path']).name}: 롤포워드 표 {len(rolled)} · 고친 요소 {res['changed']} · 원고 {book.name}")
+    print(f"  초안 검산(dsd 를 다시 읽어 원고와 견줌): " + (f"다른 곳 {len(built)}건(막음, 원고 검사에 적었다)" if built else "모든 표 · 줄이 원고와 같다"))
+    issues = [f"[{x['수준']} · {x['분류']}] {x['시트']} {x['칸']} {x['내용']}".rstrip() for x in res["issues"]]
+    guide = out / f"초안안내_{book.stem}.txt"          # 화면은 앞 몇 줄만, 전체는 파일로(2026-11-06 다른 회사 시험 E6: 말없이 잘렸다)
+    guide.write_text("\n".join(["[롤포워드 안내]", *d.notes, "", "[원고 검사]", *issues]) + "\n", encoding="utf-8")
+    for x in d.notes[:30]:
+        print(f"  {x}")
+    if len(d.notes) > 30:
+        print(f"  … 안내 외 {len(d.notes) - 30}건은 {guide.name}")
+    for x in issues[:20]:
+        print(f"  {x}")
+    if len(issues) > 20:
+        print(f"  … 원고 검사 외 {len(issues) - 20}건은 {guide.name}")
+    print("  그대로 남은 것: 감사인의 감사보고서 · 외부감사 실시내용 · 문단 속 날짜와 금액은 작년 글이다. 원고 엑셀에서 고쳐 dsd build 로 다시 만든다")
+    return {"dsd": Path(res["path"]), "book": book, "guide": guide, "issues": res["issues"], "built": built, "draft": d}
+
+
+def _draft(a) -> int:
+    """전기 dsd(회사가 준 것이든 dsd convert 가 만든 것이든) 하나로 당기 초안을 만든다. 회사 · 결산연도 · 보고서 종류는 dsd 안의
+    COMPANY-NAME · PERIODTO · DOCUMENT-NAME 에서 읽고, 없으면 파일 이름에서 찾는다."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    import xml.parsers.expat
+
+    from .report import dsd_convert as C, dsd_draft
+
+    src = Path(a.dsd)
+    if not src.exists():
+        print(f"파일이 없습니다: {src}")
+        return 2
+    out = Path(a.out) if a.out else src.resolve().parent
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        d = dsd_draft.read(src)
+    except (zipfile.BadZipFile, ET.ParseError, xml.parsers.expat.ExpatError, ValueError) as e:
+        print(f"읽지 못함: {type(e).__name__} {e}")
+        return 2
+    info = d.info or {}
+    company = (info.get("name") or "").strip()
+    year = (info.get("period_end") or "")[:4]
+    m = re.match(r"^(.+?)_(\d{4})_(연결감사보고서|감사보고서)", src.stem)
+    if not company and m:
+        company = m.group(1)
+    if not year.isdigit() and m:
+        year = m.group(2)
+    doc = info.get("document") or (m.group(3) if m else "")
+    form_name = "연결감사보고서" if "연결" in doc else "감사보고서"
+    if not year.isdigit():
+        print(f"결산연도를 알지 못함: {src.name}. dsd 의 PERIODTO 나 파일 이름 <회사>_<연도>_<보고서> 에서 읽는다")
+        return 2
+    print(f"{src.name}: {company or '회사 이름 없음'} · 결산 {info.get('period_end') or year} · {form_name} · 시트 {len(d.sheets)}개")
+    _roll_draft(src, out, company, year, form_name, f"python -m audit dsd draft {src.name}")
+    return 0
+
+
 def _convert(a) -> int:
     import json
     from xml.parsers.expat import ExpatError
@@ -930,29 +1007,7 @@ def _convert(a) -> int:
     print("  편집기에서: 재무제표마다 [재무제표 > 재무제표 검사] 를 돌린 뒤 파일형식 검사를 한다(공시 원문에는 그 검사 기록이 없다)")
     code = 0 if same else 1
     if a.roll:
-        from .report import dsd_build, dsd_draft, dsd_draft_book
-
-        d = dsd_draft.read(path)
-        dsd_draft.roll(d)
-        nxt = str(int(year) + 1) if year.isdigit() else "다음"
-        book = dsd_draft_book.write(out / f"원고_{C.file_stem(r.company, nxt, C.FORMS[r.form])}_초안.xlsx", d,
-                                    f"python -m audit dsd convert {xp.name} --roll")
-        res = dsd_build.build(book, out / f"{C.file_stem(r.company, nxt, C.FORMS[r.form])}_초안.dsd")
-        (out / f"원고검사_{book.stem}.json").write_text(json.dumps(res["issues"], ensure_ascii=False, indent=1), encoding="utf-8")
-        rolled = d.info.get("rolled_tables") or []
-        print(f"다음 기수 초안 → {Path(res['path']).name}: 롤포워드 표 {len(rolled)} · 고친 요소 {res['changed']} · 원고 {book.name}")
-        issues = [f"[{x['수준']} · {x['분류']}] {x['시트']} {x['칸']} {x['내용']}".rstrip() for x in res["issues"]]
-        guide = out / f"초안안내_{book.stem}.txt"          # 화면은 앞 몇 줄만, 전체는 파일로(2026-11-06 다른 회사 시험 E6: 말없이 잘렸다)
-        guide.write_text("\n".join(["[롤포워드 안내]", *d.notes, "", "[원고 검사]", *issues]) + "\n", encoding="utf-8")
-        for x in d.notes[:30]:
-            print(f"  {x}")
-        if len(d.notes) > 30:
-            print(f"  … 안내 외 {len(d.notes) - 30}건은 {guide.name}")
-        for x in issues[:20]:
-            print(f"  {x}")
-        if len(issues) > 20:
-            print(f"  … 원고 검사 외 {len(issues) - 20}건은 {guide.name}")
-        print("  그대로 남은 것: 감사인의 감사보고서 · 외부감사 실시내용 · 문단 속 날짜와 금액은 작년 글이다. 원고 엑셀에서 고쳐 dsd build 로 다시 만든다")
+        _roll_draft(path, out, r.company, year, C.FORMS[r.form], f"python -m audit dsd convert {xp.name} --roll")
     return code
 
 

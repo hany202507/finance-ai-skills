@@ -30,6 +30,7 @@ C0 = 3                          # 첫 칸 열(C)
 CHECK = "검증"
 FILL_COVER = style.FILL_NONE        # 덮인 칸(2026-11-03 공통 팔레트)
 FILL_INFO = style.FILL_SUB
+FILL_KEPT = style.FILL_FLAG        # 롤포워드가 옮기지 못해 작년 숫자를 그대로 둔 표의 숫자 칸(2026-11-10)
 GRAY = style.MUTED
 CHUNK = 30000
 LOCKED, UNLOCKED = Protection(locked=True), Protection(locked=False)
@@ -99,6 +100,21 @@ def write(path: Path, d: Draft, command: str = "") -> Path:
     for line in USAGE:
         ws.cell(r, 1, line).font = wp.font(bold=line == USAGE[0])
         r += 1
+    kept = d.info.get("kept_tables") or []
+    if kept:
+        r += 1
+        ws.cell(r, 1, f"작년 숫자를 그대로 둔 표 {len(kept)}개(분홍 칸). 당기 · 전기를 가르지 못해 옮기지 않았다. 회사 자료로 고친다").font = wp.font(bold=True)
+        for x in kept:
+            r += 1
+            ws.cell(r, 1, f"{_sheet_name(x['sheet'])} 표 {x['table']}")
+            ws.cell(r, 2, x.get("why") or "")
+            ws.cell(r, 1).fill = FILL_KEPT
+    stale = set(d.info.get("stale_cells") or [])
+    if stale:
+        r += 1
+        ws.cell(r, 1, f"옮긴 표 안에서 작년 값을 그대로 둔 숫자 칸 {len(stale)}개(분홍 칸). 당기 · 전기 열이 아닌 열(이자율 · 지분율 · 주식수 등)이다. "
+                      "올해 값으로 고친다. 표마다 아래 「롤포워드 · 읽기에서 남은 것」 에 있다").font = wp.font(bold=True)
+        ws.cell(r, 1).fill = FILL_KEPT
     if d.notes:
         r += 1
         ws.cell(r, 1, "롤포워드 · 읽기에서 남은 것").font = wp.font(bold=True)
@@ -123,8 +139,9 @@ def write(path: Path, d: Draft, command: str = "") -> Path:
     for col, w in zip("ABCD", (6, 18, 10, 60)):
         toc.column_dimensions[col].width = w
     pos_rows = []
+    kept_at = {(x["sheet"], x["table"]) for x in kept}
     for s in d.sheets:
-        pos_rows += _sheet(wb, names[s.key], s)
+        pos_rows += _sheet(wb, names[s.key], s, {t for k, t in kept_at if k == s.key}, stale)
     pw = wb.create_sheet(POS)
     for j, h in enumerate(("위치", "요소", "시트", "줄", "칸", "원문 글", "원문 꼴", "판독용 값", "부분 서식"), 1):
         pw.cell(1, j, h)
@@ -150,10 +167,16 @@ def write(path: Path, d: Draft, command: str = "") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     style.finish(wb)
     wb.save(path)
+    # 같은 dsd 면 바이트까지 같은 원고(2026-11-10): 문서 속성의 만든 · 고친 시각과 압축 안 파일 시각을 고정한다.
+    # 초안 dsd 의 주석이 이 엑셀의 해시를 적어서, 엑셀이 달라지면 초안 dsd 도 매번 달라졌다
+    from .dsd_build import steady_zip
+
+    steady_zip(path, lambda name, data: re.sub(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*", rb"\g<1>1980-01-01T00:00:00Z", data)
+               if name == "docProps/core.xml" else data)
     return path
 
 
-def _sheet(wb, name: str, s: Sheet) -> list[tuple]:
+def _sheet(wb, name: str, s: Sheet, kept: set = frozenset(), stale: set = frozenset()) -> list[tuple]:
     ws = wb.create_sheet(name)
     ws.cell(1, 1, f"{s.key} {s.title[:80]}".strip()).font = Font(name=wp.FONT, size=13, bold=True)
     ws.cell(2, 1, "C 열부터 고친다. 회색 칸은 병합된 칸이다. 표 오른쪽 「검증」 열은 엔진이 넣은 합계 수식이다(dsd 에 들어가지 않는다).").font = wp.font(size=9, color=wp.MUTED)
@@ -171,7 +194,7 @@ def _sheet(wb, name: str, s: Sheet) -> list[tuple]:
             while j < len(lines) and lines[j].kind != "표끝":
                 j += 1
             block = lines[i:j + 1]
-            r = _table(ws, name, block, r, pos)
+            r = _table(ws, name, block, r, pos, ln.table in kept, stale)
             i = j + 1
             continue
         ws.cell(r, 1, ln.kind).font = wp.font(size=9, bold=ln.kind == "제목")
@@ -212,7 +235,7 @@ def _protect(ws, width: int) -> None:
         setattr(ws.protection, a, False)
 
 
-def _table(ws, name: str, block: list[Line], r: int, pos: list) -> int:
+def _table(ws, name: str, block: list[Line], r: int, pos: list, kept: bool = False, stale: set = frozenset()) -> int:
     head = block[0]
     rows = [ln for ln in block if ln.kind in ("머리", "줄")]
     width = max([len(ln.cells) for ln in rows] + [1])
@@ -239,6 +262,8 @@ def _table(ws, name: str, block: list[Line], r: int, pos: list) -> int:
             if c.num is not None:
                 x.value = c.num
                 x.number_format = excel_format(c.fmt)
+                if kept and ln.kind == "줄" or c.loc in stale:
+                    x.fill = FILL_KEPT
             elif not c.text and c.fmt:                          # 롤포워드로 비운 당기 칸: 숫자를 넣으면 원문 꼴로 보이게
                 x.number_format = excel_format(c.fmt)
             else:
@@ -287,6 +312,7 @@ class RLine:
     values: list                                # 엑셀 값(칸마다)
     row: int
     cached: list = field(default_factory=list)  # 수식 칸의 계산값
+    gray: list = field(default_factory=list)    # 덮인 칸 색(FILL_COVER)인 칸. 새 줄이 위 줄의 세로 병합에 이어지는지 dsd build 가 본다(2026-11-10)
 
 
 def issue(kind: str, sheet: str, where: str, what: str, level: str = "확인") -> dict:
@@ -371,7 +397,8 @@ def read(path: Path) -> Read:
                 w = width or max(c for c in range(C0, ws.max_column + 1) if ws.cell(r, c).value not in (None, "")) - C0 + 1
                 vals = [ws.cell(r, C0 + j).value for j in range(w)]
                 cached = [wv.cell(r, C0 + j).value for j in range(w)]
-                lines.append(RLine(kind, loc, vals, r, cached))
+                gray = [_is_cover(ws.cell(r, C0 + j)) for j in range(w)]
+                lines.append(RLine(kind, loc, vals, r, cached, gray))
                 continue
             vals = [ws.cell(r, C0).value]
             cached = [wv.cell(r, C0).value]
@@ -380,6 +407,12 @@ def read(path: Path) -> Read:
             issues.append(issue("엑셀 손상", name, "", "마지막 표의 「표끝」 줄이 없어졌다. 시트 끝까지를 그 표로 본다"))
         sheets.append((name, lines))
     return Read(contents, meta, base, info, sheets, toc, issues, sha)
+
+
+def _is_cover(c) -> bool:
+    f = c.fill
+    rgb = f.fgColor.rgb if f is not None and f.fgColor is not None else None
+    return isinstance(rgb, str) and rgb[-6:].upper() == str(FILL_COVER.fgColor.rgb)[-6:].upper()   # 엑셀이 다시 저장하면 앞 두 자리가 00 → FF
 
 
 def value_text(v, cached=None) -> tuple[str, float | None, str]:

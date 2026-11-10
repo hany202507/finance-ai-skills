@@ -122,7 +122,7 @@ AI 는 숫자를 만들거나 더하지 않는다. 금액이 맞는지는 연결
 | 하려는 일 | 명령 | 나오는 것 |
 |---|---|---|
 | 회사가 고쳐 온 판에서 무엇이 바뀌었나(푸팅 없이) | `python scripts/run.py diff <옛 판> <새 판> --html --out <폴더>` | `판비교_<옛>_<새>.xlsx`(요약 · 바뀐 곳 · 같이 고칠 곳 · 바뀐 부분 시트), `.json`, `.html` |
-| dsd · 공시 xml 을 엑셀에서 고치기 | `python scripts/run.py sheet <dsd 나 xml> [--roll] --out <폴더>` | `원고_<이름>.xlsx`. `--roll` 은 작년 판으로 당기 초안 |
+| dsd · 공시 xml 을 엑셀에서 고치기 | `python scripts/run.py sheet <dsd 나 xml> --out <폴더>` | `원고_<이름>.xlsx`. 작년 판으로 당기 초안을 쓰는 것은 DSD초안 스킬(`run.py draft`)이다 |
 | 고친 원고로 dsd 만들기 | `python scripts/run.py build <원고.xlsx>` | `<이름>_원고판.dsd` 와 원고 검사. 바탕이 dsd 면 고친 글자만 바꾼다 |
 | 화면에서 모은 수정 목록으로 수정판 만들기 | `python scripts/run.py fix <dsd> <수정_이름.json>` | `<이름>_수정판.dsd` |
 | 결과 폴더의 화면 다시 열기 | `python scripts/run.py serve <폴더>` | 검토 화면 서버 |

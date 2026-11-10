@@ -42,6 +42,7 @@ class Plan:
     changed: int = 0                                   # 바꾼 요소 수
     added: int = 0
     removed: int = 0
+    rolled: bool = False                               # 롤포워드 원고(지우지 못한 재작년 줄의 숫자를 비운다)
 
 
 # ---------------------------------------------------------------- 글 조각
@@ -225,7 +226,7 @@ def _num_text(rv, cached, ref: dsd_draft.Cell | None) -> str:
 def plan(r: RB.Read) -> tuple[Plan, Draft, Source]:
     orig = dsd_draft.from_raw(r.contents, r.meta, r.base)
     src = Source(r.contents)
-    p = Plan(list(r.issues))
+    p = Plan(issues=list(r.issues), rolled=bool(r.info.get("rolled")))   # 첫 인자는 edits 다. 원고 읽기 경고가 고칠 목록에 들어가 build 가 멈췄다(2026-11-09)
     names = {RB._sheet_name(s.key): s for s in orig.sheets}
     excel = dict(r.sheets)
     toc_names = {t[0] for t in r.toc}
@@ -366,6 +367,8 @@ def _table_plan(src: Source, s: dsd_draft.Sheet, name: str, t: Node, block: list
     prev_tr: Node | None = None
     pending: dict = {}
     order = []
+    row_of = {tr.k: i for i, tr in enumerate(trs)}
+    seq: list = []                                     # 원고 차례: ("old", 바탕 줄 차례) · ("new", 원고 줄, 넣을 곳, 위 줄 뒤인지)
     for rl in rows:
         ol = orig.get(rl.loc) if rl.loc is not None and rl.loc not in used else None
         if rl.loc is not None and rl.loc in used:
@@ -400,43 +403,314 @@ def _table_plan(src: Source, s: dsd_draft.Sheet, name: str, t: Node, block: list
                     if d:
                         p.edits += _attr_edit(src, n, "AUNITVALUE", d)
             prev_tr = tr
+            seq.append(("old", row_of[tr.k]))
             continue
-        # 새 줄
+        # 새 줄: 넣을 곳만 적어 두고, 세로 병합을 맞추며 만든다(_place_rows)
         if all(v in (None, "") for v in rl.values):
             continue
-        base = prev_tr or (src.nodes[next(iter(orig))] if orig else None)
-        if base is None:
+        if not trs:
             p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "복사할 줄이 없는 표", "막음"))
             continue
-        if (base.get("ACOPY") or "").upper() != "Y":
-            p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "편집기가 복사를 허용하지 않은 줄(ACOPY)이라 새 줄을 넣지 못했다", "막음"))
-            continue
-        if spanned.get(base.k):
-            p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "병합 칸이 든 줄은 복사하지 못해 새 줄을 넣지 못했다", "막음"))
-            continue
-        ref = orig.get(base.k)
-        new_tr = _copy_tr(src, base, cells[base.k], rl, ref)
-        key = base.e if prev_tr is not None else base.s
-        pending.setdefault(key, []).append((b"\n" + new_tr) if prev_tr is not None else (new_tr + b"\n"))
-        p.added += 1
-        if t.get("ACLASS") == "FINANCE":
-            p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "재무제표 새 과목: 단계(ALEVEL) · 계정코드(ACODE)는 위 줄 것을 복사했다. 편집기에서 확인한다"))
+        body = next((tr for tr in trs if tr.parent is not None and tr.parent.tag != "THEAD"), None)
+        if prev_tr is not None and not (rl.kind == "줄" and prev_tr.parent is not None and prev_tr.parent.tag == "THEAD" and body is not None):
+            seq.append(("new", rl, prev_tr.e, True))
+        else:                                      # 표 첫 줄, 또는 머리(THEAD) 바로 아래 본문 줄: 본문 첫 줄 앞에 넣는다. 머리 안에 넣었다(2026-11-10)
+            seq.append(("new", rl, (body or trs[0]).s, False))
+    stay = []
     for loc, ln in orig.items():
         if loc in used:
             continue
         tr = src.nodes[loc]
         if (tr.get("ADELETE") or "").upper() != "Y":
-            p.issues.append(issue("dsd 로 옮기기", name, "", f"편집기가 지우기를 허용하지 않은 줄(ADELETE)이라 지우지 않았다: 「{_row_label(ln)}」", "막음"))
-            continue
-        if spanned.get(tr.k):
-            p.issues.append(issue("dsd 로 옮기기", name, "", f"병합 칸이 든 줄이라 지우지 않았다: 「{_row_label(ln)}」", "막음"))
+            # 롤포워드 원고: 지우지 못한 줄은 재작년 줄이라 숫자가 전기 칸에 남았다. 숫자만 비워 남긴다(2026-11-09 전수 대조)
+            blank = _blank_numbers(src, ln, p) if p.rolled else 0
+            p.issues.append(issue("dsd 로 옮기기", name, "", "편집기가 지우기를 허용하지 않은 줄(ADELETE)이라 지우지 않았다"
+                                  + (f"(숫자 칸 {blank}개는 비웠다. 편집기에서 줄을 지운다)" if blank else "") + f": 「{_row_label(ln)}」", "막음"))
+            stay.append(row_of[tr.k])
             continue
         p.edits.append((tr.s, tr.e, b""))
         p.removed += 1
+    _place_rows(src, name, t, trs, orig, _final_rows(seq, stay), p, pending)
     if order != sorted(order):
         p.issues.append(issue("엑셀 손상", name, "", "표 줄의 위치 번호 차례가 바탕과 다르다(줄을 옮기거나 정렬했다). 줄 차례는 바꾸지 않았다", "막음"))
     for key, chunks in pending.items():
         p.edits.append((key, key, b"".join(chunks)))
+
+
+def _span(n: Node) -> tuple[int, int]:
+    def one(v):
+        try:
+            return max(1, int(v or 1))
+        except ValueError:
+            return 1
+    return one(n.get("ROWSPAN")), one(n.get("COLSPAN"))
+
+
+def _layout(trs: list) -> list[dict]:
+    """줄마다 {열: (칸 노드, 칸이 시작하는 줄, 시작 열)}. 세로 · 가로 병합으로 덮인 열도 덮는 칸으로 적는다."""
+    taken: dict = {}
+    out = []
+    for r, tr in enumerate(trs):
+        row, c = {}, 0
+        for n in tr.kids:
+            if n.tag not in CELLS:
+                continue
+            while (r, c) in taken:
+                row[c] = taken[(r, c)]
+                c += 1
+            rs, cs = _span(n)
+            for dr in range(rs):
+                for dc in range(cs):
+                    taken[(r + dr, c + dc)] = (n, r, c)
+            for dc in range(cs):
+                row[c + dc] = (n, r, c)
+            c += cs
+        while (r, c) in taken:
+            row[c] = taken[(r, c)]
+            c += 1
+        out.append(row)
+    return out
+
+
+def _grid_problems(src: Source) -> "Counter":
+    """표마다 칸 모양 어긋남: 세로 병합이 머리(THEAD) · 본문(TBODY) 경계나 표 끝을 넘는 칸, 줄마다 다른 칸 수.
+    {(표 첫 칸 글, 어긋남): 수}. 바탕과 견줘 새로 생긴 것만 build 가 막음으로 낸다(회사 표가 원래 고르지 않을 수 있다)."""
+    from collections import Counter
+
+    out = Counter()
+    for t in (n for n in src.nodes if n.tag == "TABLE"):
+        trs = [tr for sec in t.kids if sec.tag in ("THEAD", "TBODY") for tr in sec.findall("TR")]
+        if not trs:
+            continue
+        first = next((n for tr in trs for n in tr.kids if n.tag in CELLS), None)
+        head = re.sub(r"<[^>]+>", "", src.raw[first.se:first.es].decode("utf-8", "replace")).strip()[:20] if first is not None and first.es else ""
+        for r, tr in enumerate(trs):
+            for n in tr.kids:
+                if n.tag in CELLS and _span(n)[0] > 1:
+                    rs = _span(n)[0]
+                    if r + rs > len(trs) or any(trs[r + d].parent is not tr.parent for d in range(1, rs)):
+                        out[(head, "세로 병합이 머리 · 본문 경계나 표 끝을 넘는다")] += 1
+        widths = [max(row) + 1 if row else 0 for row in _layout(trs)]
+        if len(set(widths)) > 1:
+            out[(head, "줄마다 칸 수가 다르다")] += 1
+    return out
+
+
+def _final_rows(seq: list, stay: list) -> list:
+    """dsd 에 남을 표 줄 차례: 원고 차례(남긴 바탕 줄 · 새 줄)에 지우지 못한 바탕 줄을 바탕 차례대로 끼운다."""
+    out, left = [], sorted(stay)
+    for e in seq:
+        if e[0] == "old":
+            while left and left[0] < e[1]:
+                out.append(("old", left.pop(0)))
+        out.append(e)
+    return out + [("old", r) for r in left]
+
+
+def _place_rows(src: Source, name: str, t: Node, trs: list, orig: dict, rows: list, p: Plan, pending: dict) -> None:
+    """새 줄을 만들어 넣고 세로 병합(ROWSPAN)을 남은 줄에 맞춘다(2026-11-10 요청 「오류가 있을 수 없는 스킬」).
+    rows 는 dsd 에 남을 줄 차례(_final_rows). 규칙은 하나다: 덮인 칸은 바로 위 줄에서 그 열을 가진 칸에 잇는다.
+      바탕 줄   바탕 표에서 위 칸에 덮인 열이 덮인 칸이다. 위 줄에 같은 열 칸이 없으면(병합 칸을 가진 줄을 지웠고 위가 다른 모양)
+                바탕 병합 칸을 그 줄에 다시 넣는다.
+      새 줄     원고에서 앞쪽 칸이 덮인 칸 색(롤포워드가 당기 표의 병합을 본떠 칠한 것)이면 덮인 칸이다. 남은 바탕 줄 사이에 끼었고
+                아래 바탕 줄이 그 열에서 덮였고 이 줄 그 열이 비었으면 위 칸에 잇는다(사람이 묶음 안에 넣은 줄).
+    새 칸 · 바탕 칸의 ROWSPAN 은 이은 줄 수다. 그 전에는 병합 칸이 든 줄을 넣지도 지우지도 못해 숫자만 비워 두었다."""
+    lay = _layout(trs)
+    width = max((max(r) + 1 for r in lay if r), default=0)
+    info: dict = {}                            # 칸 열쇠 → {"cols", "rows"(차례들), "node"(바탕 칸 | None), "kind"(바탕 · 다시 · 새), "row"}
+    cover: list = []                           # 차례마다 {열: 칸 열쇠}
+    made: list = []
+
+    def above(prev: dict, cols: range, head: bool):
+        x = prev.get(cols.start)                # 머리 줄은 머리 칸에, 본문 줄은 본문 칸에만 잇는다(본문 줄이 THEAD 칸 ROWSPAN 에 들어갔다, 2026-11-10)
+        return x if x is not None and info[x]["cols"] == cols and info[x]["head"] == head else None
+
+    def head_row(r: int) -> bool:
+        ln = orig.get(trs[r].k)
+        return (trs[r].parent is not None and trs[r].parent.tag == "THEAD") or (ln is not None and ln.kind == "머리")
+
+    def text_of(r: int, c: int) -> str:
+        ln = orig.get(trs[r].k)
+        return norm_text(ln.cells[c].text) if ln is not None and c < len(ln.cells) else ""
+
+    for k, e in enumerate(rows):
+        prev = cover[-1] if cover else {}
+        if e[0] == "old":
+            r = e[1]
+            row = {}
+            for c0, (n, r0) in sorted({c0: (n, r0) for n, r0, c0 in lay[r].values()}.items()):
+                cols = range(c0, c0 + _span(n)[1])
+                if r0 == r:
+                    x = n.k
+                    info[x] = {"cols": cols, "rows": [k], "node": n, "kind": "바탕", "row": r, "head": head_row(r), "text": text_of(r, c0)}
+                else:
+                    # 바탕 줄은 바탕 병합 칸(남았거나 다시 넣은 것)이나, 같은 글의 새 줄 칸(당기 표에서 묶음 첫 줄을 가져온 것)에만 잇는다
+                    x = above(prev, cols, head_row(r))
+                    if x is not None and not (x == n.k or info[x]["node"] is n or (info[x]["kind"] == "새" and info[x]["text"] == text_of(r0, c0))):
+                        x = None
+                    if x is None:
+                        x = ("다시", k, c0)
+                        info[x] = {"cols": cols, "rows": [k], "node": n, "kind": "다시", "row": r, "head": head_row(r), "text": text_of(r0, c0)}
+                    else:
+                        info[x]["rows"].append(k)
+                for c in cols:
+                    row[c] = x
+            cover.append(row)
+            continue
+        _, rl, key, after = e
+        nxt = next((rows[m][1] for m in range(k + 1, len(rows)) if rows[m][0] == "old"), None)
+        vals, gray = rl.values, getattr(rl, "gray", None) or []
+        lead = next((j for j in range(max(len(vals), len(gray))) if not (j < len(gray) and gray[j])), len(vals))
+        join, drop = [], set()
+        for x in dict.fromkeys(prev.values()):
+            cols = info[x]["cols"]
+            if info[x]["head"] != (rl.kind == "머리"):
+                continue
+            inside = (nxt is not None and all(c in lay[nxt] and lay[nxt][c][1] < nxt for c in cols)
+                      and all(c >= len(vals) or vals[c] in (None, "") for c in cols))
+            if cols.stop <= lead or inside:
+                join.append(x)
+                drop |= set(cols)
+        need = [j for j, v in enumerate(vals) if v not in (None, "") and j not in drop]
+        g2 = {j for j in range(len(gray)) if gray[j] and j not in drop}
+        pos = next((rows[m][1] for m in range(k - 1, -1, -1) if rows[m][0] == "old"), 0)
+        i = _template(trs, lay, orig, width, pos, rl.kind, drop, need, g2)
+        if i is None:
+            p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "값이 든 칸과 칸 모양이 맞는 줄(복사를 허용한 줄)이 표에 없어 새 줄을 넣지 못했다", "막음"))
+            cover.append(prev)                 # 넣지 못한 줄: 아래 줄이 위 줄을 그대로 잇는다
+            continue
+        row = {}
+        for x in join:
+            info[x]["rows"].append(k)
+            for c in info[x]["cols"]:
+                row[c] = x
+        for c0, n in sorted({c0: n for n, r0, c0 in lay[i].values() if r0 == i and c0 not in drop}.items()):
+            x = ("새", k, c0)
+            info[x] = {"cols": range(c0, c0 + _span(n)[1]), "rows": [k], "node": None, "kind": "새", "row": None, "head": rl.kind == "머리",
+                       "text": norm_text(rl.values[c0]) if c0 < len(rl.values) and rl.values[c0] is not None else ""}
+            for c in info[x]["cols"]:
+                row[c] = x
+        cover.append(row)
+        made.append((k, rl, key, after, i, drop))
+    for x, v in info.items():                  # 바탕 칸의 세로 병합을 이은 줄 수에 맞추고, 다시 넣을 칸을 넣는다
+        n, many = v["node"], len(v["rows"])
+        if v["kind"] == "바탕" and many != _span(n)[0]:
+            p.edits += _attr_set(src, n, "ROWSPAN", str(many))
+        elif v["kind"] == "다시":
+            r = v["row"]
+            at = _cell_slot(trs[r], lay[r], r, v["cols"].start)
+            p.edits.append((at, at, _with_attr(src.raw[n.s:n.e], n.se - n.s, "ROWSPAN", str(many))))
+    for k, rl, key, after, i, drop in made:
+        spans = {x[2]: len(v["rows"]) for x, v in info.items() if v["kind"] == "새" and x[1] == k}
+        new_tr = _new_tr(src, trs[i], lay[i], i, rl, orig.get(trs[i].k), drop, spans)
+        pending.setdefault(key, []).append((b"\n" + new_tr) if after else (new_tr + b"\n"))
+        p.added += 1
+        if t.get("ACLASS") == "FINANCE":
+            p.issues.append(issue("dsd 로 옮기기", name, f"A{rl.row}", "재무제표 새 과목: 단계(ALEVEL) · 계정코드(ACODE)는 본뜬 줄 것을 복사했다. 편집기에서 확인한다"))
+
+
+def _template(trs: list, lay: list, orig: dict, width: int, pos: int, kind: str, drop: set, need: list, g2: set) -> int | None:
+    """새 줄에 본뜰 TR 차례. 새 줄이 가질 열(drop 밖)마다 그 줄에서 시작하는 칸이 있고, 값이 든 열마다 칸이 시작하고, drop 열의 칸은
+    통째로 drop 안에 있고, 복사를 허용하는(ACOPY) 줄. 가로 병합 모양이 원고 회색 칸(g2)과 같은 줄을 먼저, 같은 종류(머리 · 줄),
+    가까운 줄, 같은 거리면 위 줄. 바로 위 줄만 복사하면 위 줄이 가로 병합 머리 줄일 때 새 줄 숫자가 사라졌다(2026-11-10 초안 검산)."""
+    def fits(i: int, strict: bool) -> bool:
+        if (trs[i].get("ACOPY") or "").upper() != "Y":
+            return False
+        row = lay[i]
+        for c in range(width):
+            got = row.get(c)
+            if got is None:
+                if strict and c not in drop:
+                    return False
+                continue
+            n, r0, c0 = got
+            cols = range(c0, c0 + _span(n)[1])
+            if c in drop:
+                if r0 == i and any(x not in drop for x in cols):
+                    return False
+            elif r0 != i or any(x in drop for x in cols):
+                return False
+        return all(j in row and row[j][1] == i and row[j][2] == j for j in need)
+
+    def miss(i: int) -> int:
+        return sum(1 for c, (n, r0, c0) in lay[i].items() if c not in drop and (c0 != c) != (c in g2))
+
+    def kind_of(i: int) -> str:
+        ln = orig.get(trs[i].k)
+        return ln.kind if ln is not None else ""
+
+    for strict in (True, False):
+        cand = [i for i in range(len(trs)) if fits(i, strict)]
+        if cand:
+            return min(cand, key=lambda i: (miss(i), kind_of(i) != kind, abs(i - pos), i > pos))
+    return None
+
+
+def _attr_set(src: Source, n: Node, name: str, value: str) -> list:
+    """칸 시작 태그의 속성 값을 바꾸고, 없으면 더한다."""
+    tag = src.raw[n.s:n.se]
+    new = _with_attr(tag, len(tag), name, value)
+    return [(n.s, n.se, new)] if new != tag else []
+
+
+def _with_attr(piece: bytes, se: int, name: str, value: str) -> bytes:
+    tag, rest = piece[:se].decode("utf-8"), piece[se:]
+    if re.search(rf'\b{name}="[^"]*"', tag):
+        tag = re.sub(rf'(\b{name}=")[^"]*(")', lambda m: m.group(1) + value + m.group(2), tag, count=1)
+    else:
+        cut = len(tag) - (2 if tag.endswith("/>") else 1)
+        tag = tag[:cut] + f' {name}="{value}"' + tag[cut:]
+    return tag.encode("utf-8") + rest
+
+
+def _cell_slot(tr: Node, row: dict, r: int, c0: int) -> int:
+    """r 줄(tr)에 c0 열에서 시작하는 칸을 넣을 바이트 위치: 그 뒤 열에서 시작하는 첫 칸 앞, 없으면 마지막 칸 뒤."""
+    own = sorted({cc: n for col, (n, rr, cc) in row.items() if rr == r}.items())
+    later = [n for cc, n in own if cc > c0]
+    if later:
+        return later[0].s
+    return own[-1][1].e if own else tr.se
+
+
+def _new_tr(src: Source, tr: Node, row: dict, i: int, rl, ref, drop: set, spans: dict) -> bytes:
+    """tr(i 줄)을 본떠 새 줄 바이트를 만든다: drop 열의 칸은 빼고, 남은 칸은 rl 값과 세로 병합 수(spans)로."""
+    edits = []
+    for col, (n, r0, c0) in sorted(row.items()):
+        if r0 != i or col != c0:
+            continue
+        if c0 in drop:
+            edits.append((n.s - tr.s, n.e - tr.s, b""))
+            continue
+        rs = spans.get(c0, 1)
+        if _span(n)[0] != rs:
+            edits.append((n.s - tr.s, n.se - tr.s, _with_attr(src.raw[n.s:n.se], n.se - n.s, "ROWSPAN", str(rs))))
+        if n.es is None:
+            continue
+        rv = rl.values[c0] if c0 < len(rl.values) else None
+        cv = rl.cached[c0] if c0 < len(rl.cached) else None
+        rc = ref.cells[c0] if ref is not None and c0 < len(ref.cells) else None
+        edits.append((n.se - tr.s, n.es - tr.s, escape(_num_text(rv, cv, rc)).encode("utf-8")))
+    piece = src.raw[tr.s:tr.e]
+    out, at = [], 0
+    for a, b, new in sorted(edits):
+        out.append(piece[at:a])
+        out.append(new)
+        at = b
+    out.append(piece[at:])
+    return b"".join(out)
+
+
+def _blank_numbers(src: Source, ln, p: Plan) -> int:
+    """줄의 숫자 칸 글을 비운다. 여러 줄을 덮는 칸(ROWSPAN)은 다른 줄 숫자이기도 해서 두고, 비운 칸 수를 돌려준다."""
+    k = 0
+    for c in ln.cells:
+        if c.covered or c.loc is None or c.num is None or c.span[0] > 1:
+            continue
+        edits, _ = text_edit(src, src.nodes[c.loc], "")
+        p.edits += edits
+        k += 1 if edits else 0
+    p.changed += k
+    return k
 
 
 def _row_label(ln) -> str:
@@ -451,30 +725,6 @@ def _attr_edit(src: Source, n: Node, name: str, value: str) -> list:
     a = n.s + len(tag[:m.start(2)].encode("utf-8"))
     b = n.s + len(tag[:m.end(2)].encode("utf-8"))
     return [(a, b, value.encode("utf-8"))]
-
-
-def _copy_tr(src: Source, tr: Node, row_nodes: list, rl, ref) -> bytes:
-    """tr 을 복사해 칸 글을 rl 의 값으로 바꾼 바이트."""
-    raw = src.raw
-    edits = []
-    for j, n in enumerate(row_nodes):
-        if n is None:
-            continue
-        rv = rl.values[j] if j < len(rl.values) else None
-        cv = rl.cached[j] if j < len(rl.cached) else None
-        rc = ref.cells[j] if ref is not None and j < len(ref.cells) else None
-        text = _num_text(rv, cv, rc)
-        if n.es is None:
-            continue
-        edits.append((n.se - tr.s, n.es - tr.s, escape(text).encode("utf-8")))
-    piece = raw[tr.s:tr.e]
-    out, pos = [], 0
-    for a, b, new in sorted(edits):
-        out.append(piece[pos:a])
-        out.append(new)
-        pos = b
-    out.append(piece[pos:])
-    return b"".join(out)
 
 
 _REF = re.compile(r"(주석\s*)(\d+)")
@@ -512,12 +762,31 @@ def _stamp(xlsx_sha: str, base_sha: str) -> bytes:
     return json.dumps({STAMP: xlsx_sha, "바탕": base_sha}, ensure_ascii=False).encode("utf-8")
 
 
+FIXED_TIME = (1980, 1, 1, 0, 0, 0)       # 압축 안 파일 시각. 같은 입력이면 바이트까지 같은 파일(2026-11-10 요청 「매번 동일하게」)
+
+
+def steady_zip(path: Path, edit=None) -> None:
+    """저장한 zip(엑셀 등)의 안 파일 시각을 고정해 다시 쓴다. edit(이름, 바이트) 가 있으면 그 결과로 바꿔 쓴다."""
+    src = zipfile.ZipFile(io.BytesIO(path.read_bytes()))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for i in src.infolist():
+            data = src.read(i.filename)
+            zi = zipfile.ZipInfo(i.filename, FIXED_TIME)
+            zi.compress_type, zi.external_attr = i.compress_type, i.external_attr
+            z.writestr(zi, edit(i.filename, data) if edit else data)
+        z.comment = src.comment
+    path.write_bytes(buf.getvalue())
+
+
 def zip_dsd(path: Path, contents: bytes, meta: bytes, comment: bytes = b"") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("contents.xml", contents)
-        z.writestr("meta.xml", meta)
+        for name, data in (("contents.xml", contents), ("meta.xml", meta)):
+            zi = zipfile.ZipInfo(name, FIXED_TIME)
+            zi.compress_type, zi.external_attr = zipfile.ZIP_DEFLATED, 0o600 << 16
+            z.writestr(zi, data)
         z.comment = comment
     path.write_bytes(buf.getvalue())
     return path
@@ -538,6 +807,8 @@ def build(xlsx: Path, out: Path | None = None) -> dict:
     summary = orig.info.get("summary") or {}
     if (r.info.get("rolled") or summary.get("SUPV_OPIN")) and any(summary.values()):
         p.issues.append(issue("요약 코드", "", "", "바탕의 요약 코드(자산총계 · 감사의견 구분 등)가 그대로 남아 있다. 제출 전 편집기 「문서 헤더정보」 와 8600 에서 확인한다"))
+    for (head, what), k in (_grid_problems(Source(contents)) - _grid_problems(src)).items():   # 바탕에 없던 칸 모양 어긋남(2026-11-10)
+        p.issues.append(issue("편집기 구조", "", "", f"표 칸 모양이 어긋났다({what}{f' {k}곳' if k > 1 else ''}): 「{head}」 로 시작하는 표", "막음"))
     empty = len(re.findall(rb"<TBODY[^>]*>\s*</TBODY>", contents))
     if empty:                                   # 편집기 스키마(Dart4.xsd)는 TBODY 에 TR 이 하나 이상 있어야 한다(2026-11-07 한 회사 초안)
         p.issues.append(issue("편집기 구조", "", "", f"줄이 하나도 없는 표 {empty}개. DART 편집기가 「문서를 열 수 없습니다」 로 거절한다", "막음"))

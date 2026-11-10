@@ -26,6 +26,8 @@ import re
 from datetime import date, datetime
 from pathlib import Path
 
+from copy import copy
+
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -247,6 +249,14 @@ class Book:
 
     def put(self, ws, row: int, col: int, value, fmt=None, bold=False, wrap=False, flag=False, color=None):
         c = ws.cell(row, col, value)
+        # 서식이 없는 새 칸이면 같은 인자로 먼저 만든 칸의 서식을 그대로 복사한다(2026-11-09: 결과 목록 수만 줄에서 칸마다 서식
+        # 객체를 새로 만들고 해시하느라 조서 쓰기가 실행 시간의 절반을 넘던 것). 이미 서식이 있는 칸은 예전대로 하나씩 붙인다
+        key = (bold, color or INK, fmt, flag, wrap)
+        cache = self.__dict__.setdefault("_put_styles", {})
+        if not c.has_style and key in cache:
+            c._style = copy(cache[key])
+            return c
+        fresh = not c.has_style
         c.font = font(bold=bold, color=color or INK)
         c.border = BOX
         if fmt:
@@ -254,6 +264,8 @@ class Book:
         if flag:
             c.fill = FILL_FLAG
         c.alignment = Alignment(vertical="top", wrap_text=wrap, horizontal="right" if fmt and not wrap else None)
+        if fresh:
+            cache[key] = copy(c._style)
         return c
 
     def draft_column(self, ws, col: int, width: int = 44) -> None:

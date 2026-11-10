@@ -1,6 +1,6 @@
 """DART 편집기 dsd 파일 쓰기와 읽기 (2026-10-06).
 
-규격 근거는 dsd 샘플 1건, 공개 감사보고서 원문(OpenDART XML) 204건과 공개 자료다(docs/specs/2026-10-06-감사-DART-dsd-규격.md). dsd 는 zip 이고 안에 contents.xml(dart4.xsd 꼴
+규격 근거는 dsd 샘플 1건, 공개 감사보고서 원문(OpenDART XML) 204건과 공개 자료다(설계 문서). dsd 는 zip 이고 안에 contents.xml(dart4.xsd 꼴
 본문)과 meta.xml 이 있다.
 
   write_dsd(path, parts, info)   HTML 과 같은 부분 목록 [(부분 이름, 블록 목록)] 과 회사 정보로 dsd 를 쓴다

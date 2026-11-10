@@ -1,4 +1,4 @@
-"""DSD 푸팅: 판 비교와 숫자 레퍼 체크를 브라우저에서 보는 HTML 한 파일(2026-10-26, 설계 docs/specs/2026-10-26-감사-DSD푸팅-HTML보기-design.md).
+"""DSD 푸팅: 판 비교와 숫자 레퍼 체크를 브라우저에서 보는 HTML 한 파일(2026-10-26, 설계 문서).
 
   build(doc, checks, pdoc, m, old_checks, extra) -> dict      dsd_보기.json 에 쓰는 자료
   render(data, out) -> Path                                   템플릿 dsd_view.html 에 자료를 넣은 한 파일

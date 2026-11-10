@@ -153,6 +153,35 @@ def _sha(p: Path) -> str:
     return h.hexdigest()
 
 
+def _kinds_of(sub: dict) -> list[dict]:
+    return [k if isinstance(k, dict) else {"name": k, "keys": [k.split()[0]]} for k in sub["kinds"]]
+
+
+def _flat_received_kind(received: dict, name: str, prior_years: tuple[str, ...]) -> tuple[str, str, bool, str | None]:
+    """받은자료 바로 아래 둔 파일의 종류(폴더 표준 3판, 2026-11-10). (kind, basis, confirmed, folder_kind).
+    children 순서대로 이름 열쇠말을 맞춘다. flat_keys 가 있는 묶음(전기 · 조회회신 · 회사답변)은 그 말이 이름에 있을 때만 후보이고,
+    전기는 전년도 연도가 이름에 있어도 후보다. 여러 묶음에 걸리면 flat_keys 가 맞은 묶음이 먼저이고, 그래도 하나가 아니면 「분류 전」 으로 두어
+    index read 의 엔진 판독(SNIFF_FROM)이 정하게 한다."""
+    strong, weak = [], []
+    for sub in received.get("children", []):
+        fk = sub.get("flat_keys")
+        gated = fk is not None
+        gate_hit = bool(fk) and (any(k in name for k in fk) or (sub["path"] == "전기" and any(y in name for y in prior_years)))
+        if gated and not gate_hit:
+            continue
+        kinds = _kinds_of(sub)
+        hit = next((k["name"] for k in kinds if any(key and key in name for key in k.get("keys", []))), None)
+        if hit is None and len(kinds) == 1 and gate_hit:
+            hit = kinds[0]["name"]
+        if hit is None:
+            continue
+        (strong if gate_hit else weak).append((hit, sub["path"]))
+    picks = strong or weak
+    if len(picks) == 1:
+        return picks[0][0], "파일명", True, picks[0][1]
+    return "분류 전", "파일명", False, None
+
+
 def _received_kind(sub: dict | None, name: str) -> tuple[str, str, bool]:
     """받은자료 파일의 종류. (kind, basis, confirmed). 하위 폴더의 종류가 하나면 폴더로, 여럿이면 파일 이름의 열쇠말로 정한다."""
     if sub is None:
@@ -164,6 +193,34 @@ def _received_kind(sub: dict | None, name: str) -> tuple[str, str, bool]:
         if any(key and key in name for key in k.get("keys", [])):
             return k["name"], "파일명", True
     return f"{sub['path']} (종류 판독 필요)", "폴더", False
+
+
+ENGINE_ROLES = ("index", "archive", "records", "scratch", "versions")
+
+
+def hide_engine_dirs(engagement_dir: Path, std: dict | None = None) -> list[str]:
+    """엔진 폴더(_색인 · _보관 · _기록 · _작업 · _판)에 Windows 숨김 속성을 건다(폴더 표준 3판, 2026-11-10).
+    회계사가 탐색기에서 여는 것은 받은자료와 단계 폴더다. 다른 OS 에서는 아무 일도 하지 않는다. 숨긴 폴더 이름을 돌려준다."""
+    import sys
+
+    if not sys.platform.startswith("win"):
+        return []
+    import ctypes
+
+    std = std or load_standard()
+    d = Path(engagement_dir)
+    done = []
+    for f in _folders(std):
+        if f.get("role") not in ENGINE_ROLES:
+            continue
+        p = d / f["path"]
+        if not p.is_dir():
+            continue
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(str(p))
+        if attrs != -1 and not attrs & 0x2:
+            if ctypes.windll.kernel32.SetFileAttributesW(str(p), attrs | 0x2):
+                done.append(f["path"])
+    return done
 
 
 def _carry(entry: dict, old: dict) -> None:
@@ -246,17 +303,20 @@ def periods(case: dict) -> dict:
 
 
 def scaffold(engagement_dir: Path, company: str, fiscal_year_end: str, kind: str = "계속감사", now: str | None = None,
-             fiscal_year_start: str | None = None, size: str | None = None) -> Path:
+             fiscal_year_start: str | None = None, size: str | None = None, received_subfolders: bool = False) -> Path:
     """fiscal_year_start: 반기 · 짧은 사업연도의 시작일(없으면 결산일 1년 전 다음 날로 본다, R8).
-    size: 회사 규모(소규모 · 일반). 감사인이 소규모 1100 해당 여부 검토로 정한 값이다. 없으면 적지 않는다(미정)."""
+    size: 회사 규모(소규모 · 일반). 감사인이 소규모 1100 해당 여부 검토로 정한 값이다. 없으면 적지 않는다(미정).
+    received_subfolders: True 면 받은자료 하위 폴더 12개를 미리 만든다(2판 꼴, 시험 · 합성 세트용). 기본은 만들지 않는다(3판, 2026-11-10)."""
     std = load_standard()
     d = Path(engagement_dir)
     for f in _folders(std):
         if f.get("optional"):
             continue
         (d / f["path"]).mkdir(parents=True, exist_ok=True)
-        for c in f.get("children", []):
-            (d / f["path"] / c["path"]).mkdir(parents=True, exist_ok=True)
+        # 3판(2026-11-10): 받은자료 하위 폴더는 만들지 않는다. 회계사는 파일을 00 받은자료 바로 아래 둔다(하위 폴더를 만들어 써도 된다)
+        if received_subfolders:
+            for c in f.get("children", []):
+                (d / f["path"] / c["path"]).mkdir(parents=True, exist_ok=True)
     (d / std["permanent"]["path"]).resolve().mkdir(parents=True, exist_ok=True)   # 회사 단위 영구조서
     idx = d / "_색인"
     at = now or _now()
@@ -280,6 +340,7 @@ def scaffold(engagement_dir: Path, company: str, fiscal_year_end: str, kind: str
         if not (idx / name).exists():
             _write(idx / name, data)
     scan(d, now=at, quiet_log=True)
+    hide_engine_dirs(d, std)
     return d
 
 
@@ -298,6 +359,8 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
     old_missing = _read(idx / "문서목록.json", {"missing": []}).get("missing", [])
 
     folders = {f["path"]: f for f in _folders(std)}
+    fy = str(case.get("fiscal_year_end") or "")[:4]
+    prior_years = (str(int(fy) - 1),) if fy.isdigit() else ()
     wp_folder = _wp_folder_map(std)
     numbers = list(wp_folder)
     names = {str(k): v for k, v in std.get("workpaper_names", {}).items()}
@@ -351,13 +414,18 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
             warnings.append(f"표준에 없는 폴더의 파일입니다: {rel}")
         elif f["role"] == "received":
             sub = next((c for c in f.get("children", []) if len(parts) > 2 and c["path"] == parts[1]), None)
-            if sub is None:
-                warnings.append(f"받은자료는 하위 폴더(회사제시 · 분개장 · 세무신고 등)에 넣어 주십시오: {rel}")
-            kind, basis, ok = _received_kind(sub, p.name)
+            if len(parts) == 2:
+                # 3판(2026-11-10): 바로 아래 둔 파일은 이름 열쇠말로 종류와 묶음(folder_kind)을 정한다
+                kind, basis, ok, fkind = _flat_received_kind(f, p.name, prior_years)
+            else:
+                if sub is None:
+                    warnings.append(f"표준에 없는 받은자료 폴더입니다. 파일을 00 받은자료 바로 아래 두거나 표준 하위 폴더에 넣어 주십시오: {rel}")
+                kind, basis, ok = _received_kind(sub, p.name)
+                fkind = sub["path"] if sub else None
             pm = PERIOD_RE.search(p.stem)
-            entry.update(role="received", folder_kind=sub["path"] if sub else None, kind=kind, kind_basis=basis, confirmed=ok,
+            entry.update(role="received", folder_kind=fkind, kind=kind, kind_basis=basis, confirmed=ok,
                          period=(pm.group(1) + (f"-{pm.group(2)}" if pm.group(2) else "")) if pm else None)
-            if sub and sub.get("versioned") and not entry["version"]:
+            if fkind == "회사제시" and not entry["version"]:
                 warnings.append(f"회사제시 파일 이름 끝에 판을 붙여 주십시오(_v1.1 등): {rel}")
         elif f["role"] == "workpapers":
             rm = REVIEW_RE.match(p.name)
@@ -464,6 +532,7 @@ def scan(engagement_dir: Path, now: str | None = None, quiet_log: bool = False) 
         case["log"].insert(0, {"at": at, "who": "색인", "what": what, "read": new_files + changed, "wrote": [f"_색인/{n}" for n in INDEX_FILES[:3]]})
     _write(idx / "감사건.json", case)
     validate_index(d)
+    hide_engine_dirs(d, std)
     return {"files": len(files), "new": new_files, "changed": changed, "gone": gone, "warnings": warnings,
             "company_version": company_version, "version_changed": version_changed, "rechecked": sorted(set(rechecked)),
             "unconfirmed": [f["path"] for f in files if not f["confirmed"]]}
@@ -481,9 +550,7 @@ def check(engagement_dir: Path) -> list[str]:
             continue
         if not (d / f["path"]).is_dir():
             problems.append(f"폴더가 없습니다: {f['path']}")
-        for c in f.get("children", []):
-            if not (d / f["path"] / c["path"]).is_dir():
-                problems.append(f"폴더가 없습니다: {f['path']}/{c['path']}")
+        # 3판: 받은자료 하위 폴더는 선택이라 없어도 문제가 아니다
     for name in INDEX_FILES:
         if not (d / "_색인" / name).exists():
             problems.append(f"색인 파일이 없습니다: _색인/{name}")
