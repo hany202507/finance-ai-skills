@@ -267,7 +267,7 @@ LEDGER = [
     ("krd", "원화 차이", 10, NUMF),
     ("U", "수량 변동", 9, QTYF), ("AT", "대여 변동", 8, QTYF), ("AG", "보유수량", 9, QTYF),
     ("hq", "증권사 잔고수량", 9, QTYF), ("hqd", "수량 차이", 8, QTYF), ("W", "직전 장부금액", 13, NUMF),
-    ("Y", "장부금액 변동", 13, NUMF),
+    ("X", "매입원가", 13, NUMF), ("Y", "장부금액 변동", 13, NUMF),
     ("AB", "처분손익", 12, NUMF), ("AC", "외환차손익", 11, NUMF), ("AE", "배당 · 이자(세전)", 12, NUMF),
     ("AF", "원천세 · 현지세", 11, NUMF), ("AD", "매수 수수료", 10, NUMF),
     ("rsrc", "환율 근거", 22, None),
@@ -281,8 +281,9 @@ FIRST = 4                  # 첫 자료 행(1 설명 · 2 묶음 · 3 머리글)
 DIFF = ("fxd", "krd", "hqd")
 
 
-def _kind_formulas(k, i, out_qty):
-    """거래 종류마다 엔진 run() 의 계산을 그대로 옮긴 수식. {열 이름: 수식}."""
+def _kind_formulas(k, i, out_qty, method="이동평균", last=None):
+    """거래 종류마다 엔진 run() 의 계산을 그대로 옮긴 수식. {열 이름: 수식}.
+    method 가 총평균이면 매도 · 출고 원가는 종목 전체(FIRST~last)의 매입원가 합 ÷ 들어온 수량 합 × 수량이다."""
     c = lambda key: f"{COL[key]}{i}"
     G, H, I, J, N, Q = c("G"), c("H"), c("I"), c("J"), c("N"), c("Q")
     pb = f"ROUND({c('P')}-{c('O')},3)"              # 직전 외화잔액
@@ -293,7 +294,20 @@ def _kind_formulas(k, i, out_qty):
                 f"-ROUND({c('pk')}*({amt})/{pb},0)))")
 
     held = f"({c('AG')}-{c('U')})"                  # 직전 보유수량
-    out_cost = f"=-IF({held}<=0,0,IF({c('qty')}>={held},{c('W')},ROUND({c('W')}*{c('qty')}/{held},0)))"
+    if method == "총평균":
+        # 총평균 단가 = 종목 전체 매입원가 합(기초 · 매수 · 옮겨 받은 장부금액) ÷ 들어온 수량 합. 매도 줄은 단가를 바꾸지 않는다.
+        # 매입원가(X) 열만 읽고 장부금액 변동(Y) 열은 읽지 않아 다른 매도 줄과 순환참조가 생기지 않는다.
+        # 그 뒤 들어오는 줄이 없고 전부 내보내면 남은 장부금액 전부(엔진 avg_cost 와 같다).
+        def rng(key, a, b):
+            return f"${COL[key]}${a}:{COL[key]}{b}"
+        tot_book = f"SUMIF({rng('key', FIRST, last)},{c('key')},{rng('X', FIRST, last)})"
+        tot_qty = f"SUMIFS({rng('U', FIRST, last)},{rng('key', FIRST, last)},{c('key')},{rng('U', FIRST, last)},\">0\")"
+        later = (f"SUMIFS({rng('U', i + 1, last)},{rng('key', i + 1, last)},{c('key')},{rng('U', i + 1, last)},\">0\")"
+                 if i < last else "0")
+        avg_cost = f"ROUND({tot_book}/{tot_qty}*{c('qty')},0)"
+        out_cost = f"=-IF({held}<=0,0,IF({c('qty')}>={held},IF({later}=0,{c('W')},{avg_cost}),{avg_cost}))"
+    else:
+        out_cost = f"=-IF({held}<=0,0,IF({c('qty')}>={held},{c('W')},ROUND({c('W')}*{c('qty')}/{held},0)))"
     f = {}
     if k == "환전_원화외화":
         f["O"], f["Q"] = f"={G}", f"={I}"
@@ -326,7 +340,8 @@ def _kind_formulas(k, i, out_qty):
         f["S"] = s
     if k in ("해외매수", "국내매수"):
         f["U"] = f"={c('qty')}"
-        f["Y"] = f"=ROUND({G}*{N},0)" if k == "해외매수" else f"={I}"
+        f["X"] = f"=ROUND({G}*{N},0)" if k == "해외매수" else f"={I}"
+        f["Y"] = f"={c('X')}"
         f["AD"] = f"=ROUND({H}*{N},0)" if k == "해외매수" else f"={J}"
     elif k in ("해외매도", "국내매도"):
         f["U"], f["Y"] = f"=-{c('qty')}", out_cost
@@ -335,7 +350,8 @@ def _kind_formulas(k, i, out_qty):
         if out_qty:
             f["U"], f["Y"] = f"=-{c('qty')}", out_cost
         else:
-            # 종목코드가 바뀌는 기업행위: 같은 날 출고 행에서 떼어 놓은 장부금액을 가져온다
+            # 종목코드가 바뀌는 기업행위: 같은 날 출고 행에서 떼어 놓은 장부금액을 가져온다.
+            # 매입원가(X)는 엔진 값으로 둔다. 수식으로 두면 총평균 단가 → 출고 원가 → 이 칸으로 순환참조가 된다(_ledger 가 값을 쓴다)
             p = i - 1
             f["U"] = f"={c('qty')}"
             f["Y"] = (f"=-SUMIFS(${COL['Y']}${FIRST}:{COL['Y']}{p},${COL['date']}${FIRST}:{COL['date']}{p},{c('date')},"
@@ -407,14 +423,19 @@ def _ledger(ws, res, opening, X):
             fml(r, "AT", f"={s['lent'][0]}", s["lent"][1])
         run_qty[key] = run_qty.get(key, Decimal(0)) + s["qty"][1]
         fml(r, "AG", f"={_cum('key', 'U', r, r)}", run_qty[key])
-        fml(r, "Y", f"={s['book'][0]}", s["book"][1])
+        fml(r, "X", f"={s['book'][0]}", s["book"][1])
+        fml(r, "Y", f"={COL['X']}{r}", s["book"][1])
         r += 1
 
+    method = E.cost_method(res.cfg)
+    last = r + len(res.rows) - 1          # 총평균 수식이 종목 전체 범위(FIRST~last)를 읽는다
     rows = []
     for row in res.rows:
         t, k = row.tx, row.kind
         fx = t.ccy != "KRW"
         rows.append(r)
+        if k == "주식수변동" and not E.is_out(t.raw_type) and row.X:
+            val(r, "X", row.X)                 # 옮겨 받은 장부금액(엔진 값, _kind_formulas 주석)
         for key, v in (("seq", t.seq), ("date", t.date), ("raw", t.raw_type), ("kind", k), ("name", t.name),
                        ("key", _text(t.key)), ("ccy", _text(t.ccy)), ("qty", t.qty or None), ("G", t.G or None),
                        ("H", t.H or None), ("I", t.I or None), ("J", t.J or None), ("rsrc", row.rate_src or None)):
@@ -429,9 +450,9 @@ def _ledger(ws, res, opening, X):
             fml(r, "N", f"=IF({COL['G']}{r}=0,0,{COL['I']}{r}/{COL['G']}{r})", row.N)
         elif fx and row.N:
             val(r, "N", row.N)
-        engine = {"O": row.O, "Q": row.Q, "S": row.S, "U": row.U, "Y": row.Y, "AD": row.AD, "AB": row.AB,
+        engine = {"O": row.O, "Q": row.Q, "S": row.S, "U": row.U, "X": row.X, "Y": row.Y, "AD": row.AD, "AB": row.AB,
                   "AC": row.AC, "AE": row.AE, "AF": row.AF}
-        for key, formula in _kind_formulas(k, r, k == "주식수변동" and E.is_out(t.raw_type)).items():
+        for key, formula in _kind_formulas(k, r, k == "주식수변동" and E.is_out(t.raw_type), method, last).items():
             fml(r, key, formula, engine[key])
         if fx and (k in E.LINES or k == "주식수변동"):
             fml(r, "P", f"=ROUND({_cum('ccy', 'O', r, r)},3)", row.P)
@@ -643,7 +664,7 @@ def _summary(ws, res, lines, cks, broker, upload_note, upload_checks, diag, hint
     dates = [r.tx.date for r in res.rows if r.tx.date]
     period = f"{min(dates)} ~ {max(dates)}" if dates else ""
     ws["A1"], ws["A1"].font = "증권 거래 전표 검증", Font(bold=True, size=14)
-    ws["A2"] = (f"회사 {cfg.get('회사', '')} · 증권사 {broker or '판별 못함'} · 거래 {period} · 분류 {cfg.get('분류', '단기매매')} · "
+    ws["A2"] = (f"회사 {cfg.get('회사', '')} · 증권사 {broker or '판별 못함'} · 거래 {period} · 분류 {cfg.get('분류', '단기매매')} · 원가 {E.cost_method(cfg)} · "
                 f"만든 때 {dt.datetime.now():%Y-%m-%d %H:%M}")
     ws["A4"], ws["A4"].font = "결론", BOLD
     ws["D4"] = upload_note

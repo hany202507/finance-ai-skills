@@ -372,7 +372,7 @@ def main(argv=None):
         res.issues.append(("확인", None, f"검증 파일 {s}!{coord} 수식 {f} 를 다시 계산하면 {got}, 엔진 값은 {exp} (스킬 결함)"))
 
     report = [f"# 증권 거래 전표 실행 보고 ({dt.datetime.now():%Y-%m-%d %H:%M})", "",
-              f"- 회사: {company} · 증권사: {broker or '판별 못함'} · 분류: {cfg.get('분류','단기매매')}",
+              f"- 회사: {company} · 증권사: {broker or '판별 못함'} · 분류: {cfg.get('분류','단기매매')} · 원가 평가방법: {E.cost_method(cfg)}",
               f"- 거래 {len(txs)}건 · 전표 대상 {sum(1 for r in res.rows if r.kind in E.LINES)}건 · 검토대기 {sum(1 for r in res.rows if r.kind == '검토')}건"]
     report += [f"- {n}" for n in notes]
     kinds = {}

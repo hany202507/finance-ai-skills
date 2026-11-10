@@ -3,7 +3,7 @@
 계산은 여기 하나뿐이다. 위하고 업로드 파일과 검증 워크북은 이 값을 그대로 쓴다(build_workbook.py).
 2026-11-08 까지는 같은 식을 엑셀 수식으로 다시 짜서 대조했는데, 엑셀 판마다 함수가 달라 업로드 값이 틀렸다.
 
-원가: 종목별 이동평균. 외화예수금: 통화별 이동평균 장부금액.
+원가: 종목별 이동평균(기본) 또는 총평균(설정 「평가방법」). 외화예수금: 통화별 이동평균 장부금액.
 반올림: 원 단위 ROUND(엑셀과 같은 0.5 올림).
 """
 from __future__ import annotations
@@ -193,7 +193,49 @@ class RateBook:
         return best
 
 
+METHODS = {"이동평균": "이동평균", "이동평균법": "이동평균", "총평균": "총평균", "총평균법": "총평균"}
+
+
+def cost_method(cfg) -> str:
+    """설정 「평가방법」. 이동평균(회계, 기본) · 총평균(세무상 신고하지 않았을 때의 방법)."""
+    raw = str(cfg.get("평가방법") or "이동평균").strip()
+    if raw not in METHODS:
+        raise ValueError(f"평가방법 '{raw}' 는 모른다. 이동평균 또는 총평균 가운데 하나를 설정 「평가방법」 에 적는다")
+    return METHODS[raw]
+
+
 def run(txs, cfg, rates: RateBook):
+    """전표 계산. 총평균이면 먼저 한 번 돌려 종목별 총평균 단가(기초 + 매입 ÷ 총수량)를 구하고 그 단가로 다시 돌린다.
+    종목코드가 바뀌는 기업행위로 옮긴 장부금액은 상대 종목의 단가에 따라 바뀌므로, 단가가 더 안 바뀔 때까지 되풀이한다."""
+    if cost_method(cfg) != "총평균":
+        return _run_once(txs, cfg, rates, None)
+    res, prev = _run_once(txs, cfg, rates, None), None
+    for _ in range(8):
+        avg = total_averages(res.rows, cfg)
+        if avg == prev:
+            break
+        prev = avg
+        res = _run_once(txs, cfg, rates, avg)
+    return res
+
+
+def total_averages(rows, cfg):
+    """종목별 총평균 자료 {종목코드: (기초 장부금액 + 매입원가 합, 기초 수량 + 들어온 수량 합, 마지막으로 들어온 줄 번호)}.
+    법인세법 시행령 제74조①1호라목: 사업연도 개시일 취득가액 + 사업연도 중 취득가액을 총수량으로 나눈 단가. 매도는 단가를 바꾸지 않는다."""
+    avg = {}
+    for s in (cfg.get("기초") or {}).get("종목") or []:
+        k = s.get("종목코드") or s["종목"]
+        avg[k] = [Decimal(str(s.get("장부금액", 0) or 0)), Decimal(str(s.get("수량", 0) or 0)), -1]
+    for i, r in enumerate(rows):
+        if r.kind in HOLD_KINDS and r.U > 0:
+            a = avg.setdefault(r.tx.key, [Z, Z, -1])
+            a[0] += r.X
+            a[1] += r.U
+            a[2] = i
+    return {k: tuple(v) for k, v in avg.items()}
+
+
+def _run_once(txs, cfg, rates: RateBook, avg):
     classification = cfg.get("분류", "단기매매")
     # 2026-11-08: 단기매매(K-IFRS FVPL)만 처리한다. 매도가능(FVOCI)은 처분 시 평가손익 누계 정리와
     # 기초 누계 입력이 없어 막는다. 필요해지면 업데이트한다. 아래 afs 분기는 그때 쓰려고 남긴다
@@ -221,7 +263,14 @@ def run(txs, cfg, rates: RateBook):
     pending = {}            # 주식수변동: 날짜별로 출고 행에서 떼어 놓은 장부금액(입고 행이 가져간다)
     rows = []
 
-    for tx in txs:
+    def avg_cost(key, qty, held, book, idx):
+        """총평균 매도 · 출고 원가. 그 뒤 들어오는 줄이 없고 전부 내보내면 남은 장부금액 전부(반올림 끝수를 남기지 않는다)."""
+        tot_book, tot_qty, last_in = avg.get(key, (Z, Z, -1))
+        if qty >= held and idx > last_in:
+            return book
+        return Z if tot_qty <= 0 else R0(tot_book * qty / tot_qty)
+
+    for idx, tx in enumerate(txs):
         k = kind_of(tx)
         if k not in ("대여",) and not (tx.qty or tx.G or tx.H or tx.I or tx.J):
             issues.append(("정보", tx, f"'{tx.raw_type}' 는 금액·수량이 없는 안내 행이라 전표를 내지 않았다"))
@@ -248,11 +297,17 @@ def run(txs, cfg, rates: RateBook):
                 if tx.qty > r.V:
                     issues.append(("중단", tx, f"{tx.name} 기업행위 출고 {tx.qty} 가 보유 {r.V} 보다 많다. 기초 잔고를 넣는다"))
                 r.U = -tx.qty
-                r.Z_ = Z if r.V <= 0 else (r.W if tx.qty >= r.V else R0(r.W * tx.qty / r.V))
+                if r.V <= 0:
+                    r.Z_ = Z
+                elif avg is not None:
+                    r.Z_ = avg_cost(tx.key, tx.qty, r.V, r.W, idx)
+                else:
+                    r.Z_ = r.W if tx.qty >= r.V else R0(r.W * tx.qty / r.V)
                 r.Y = -r.Z_
             else:
                 r.U = tx.qty
                 r.Y = -pending.get(tx.date, Z)
+                r.X = r.Y            # 옮겨 받은 장부금액은 이 종목의 매입원가로 센다(총평균 단가)
             pending[tx.date] = pending.get(tx.date, Z) + r.Y
             h[0] += r.U
             h[1] += r.Y
@@ -408,6 +463,8 @@ def run(txs, cfg, rates: RateBook):
                 if r.V <= 0 or tx.qty > r.V:
                     issues.append(("중단", tx, f"{tx.name} 매도 수량 {tx.qty} 가 보유 {r.V} 보다 많다. 기초 잔고를 넣는다"))
                     r.Z_ = Z if r.V <= 0 else r.W
+                elif avg is not None:
+                    r.Z_ = avg_cost(tx.key, tx.qty, r.V, r.W, idx)
                 else:
                     r.Z_ = r.W if tx.qty == r.V else R0(r.W * tx.qty / r.V)
                 r.Y = -r.Z_
@@ -437,14 +494,32 @@ def run(txs, cfg, rates: RateBook):
                                              "전기말 장부금액을 설정 「기초」 에 넣고 다시 돌린다"))
     year_end, fx_end = closing(cfg, hold, fx_bal, fx_book, b_sec, txs, issues)
     _checks(rows, issues, cfg)
-    _period_end_notes(rows, issues, cfg, year_end, fx_end)
+    _period_end_notes(rows, issues, cfg, year_end, fx_end, avg)
     return Result(rows, issues, year_end, fx_end, cfg)
 
 
-def _period_end_notes(rows, issues, cfg, year_end, fx_end):
+HOLD_KINDS = ("해외매수", "해외매도", "국내매수", "국내매도", "주식수변동")
+
+
+def _period_end_notes(rows, issues, cfg, year_end, fx_end, avg=None):
     """기간 전체에 걸린 확인사항. 근거는 2026-11-08 분개규칙 원문 검토(references/분개규칙.md 「검토 근거」)."""
     trades = [r for r in rows if r.kind in ("국내매수", "국내매도", "해외매수", "해외매도")]
-    if trades:
+    if trades and avg is not None:
+        issues.append(("정보", None, "원가는 종목별 총평균법이다(설정 「평가방법」). 세무상 유가증권 평가방법을 신고하지 않은 법인의 방법이다"
+                                     "(법인세법 시행령 제75조① · ② → 제74조④, 단가 정의는 제74조①1호라목). 단가는 넣은 거래 기간의 "
+                                     "기초 장부금액과 매입원가 합계를 총수량으로 나눈 값이라, 넣은 기간이 사업연도 전체가 아니면 세무상 "
+                                     "단가와 다르다. 회계 장부가 이동평균이면 처분손익 차이를 세무조정한다"))
+        names = {}
+        for r in rows:
+            if r.tx.key:
+                names.setdefault(r.tx.key, r.tx.name)
+        sold = {r.tx.key for r in trades if r.kind.endswith("매도")}
+        for key in sorted(sold, key=lambda k: names.get(k, k)):
+            tot_book, tot_qty, _ = avg.get(key, (Z, Z, -1))
+            if tot_qty > 0:
+                issues.append(("정보", None, f"{names.get(key, key)} 총평균 단가 {tot_book / tot_qty:,.2f}원 = (기초 장부금액 + 매입원가) "
+                                             f"{tot_book:,}원 ÷ 총수량 {tot_qty.normalize():f}주"))
+    elif trades:
         issues.append(("확인", None, "전표 일자는 증권사 파일의 일자 열이다(체결일 · 매매일 칸이 있으면 그 칸). 일반기업회계기준 6.4의2 와 "
                                      "법인세법 시행령 제68조①5호(국내 상장주식)는 체결일 기준이다. 일자가 결제일이면 기말 직전 2영업일에 "
                                      "체결하고 다음 해에 결제한 매매를 미수금 · 미지급금으로 따로 잡는다"))
@@ -453,7 +528,8 @@ def _period_end_notes(rows, issues, cfg, year_end, fx_end):
                                          "실2.48 · 실2.49) 매수 수수료도 영업외로 두려면 회사설정 영업외비용 코드를 등록해 설정 `계정` 의 "
                                          "지급수수료를 바꾼다"))
         issues.append(("정보", None, "원가는 종목별 이동평균법이다. 매기 같은 방법을 쓰고 주석에 적는다(일반기업회계기준 6.A7의5 · 6.A24). "
-                                     "세무상 평가방법을 신고하지 않았으면 총평균법이라(법인세법 시행령 제75조) 차이를 세무조정한다"))
+                                     "세무상 평가방법을 신고하지 않았으면 총평균법이라(법인세법 시행령 제75조) 차이를 세무조정한다. "
+                                     "세무 장부로 쓰려면 설정 「평가방법」 을 총평균으로 바꿔 사업연도 전체 거래로 다시 돌린다"))
     if (cfg.get("기말") or {}).get("일자"):
         issues.append(("확인", None, "기말에 받을 권리가 확정됐는데 아직 안 들어온 배당 · ETF 분배금은 이 스킬이 잡지 않는다(입금 행으로만 "
                                      "전표를 낸다). 미수배당금 · 미수수익으로 따로 잡는다(일반기업회계기준 16.16⑵ · 실6.64⑴). 세법 귀속은 "
