@@ -222,7 +222,7 @@ def build_return_html(company, period, mine, staff, findings, filed_label):
 
 # ── 부속명세 ─────────────────────────
 def build_attach_html(company, period, att, ver, ctx):
-    """부속명세 8종. 공식 서식 칸 구성을 그대로 옮긴 것은 attach_forms.py 다."""
+    """부속명세 9종. 공식 서식 칸 구성을 그대로 옮긴 것은 attach_forms.py 다."""
     import attach_forms
     return attach_forms.build(company, period, att, ver, ctx)
 

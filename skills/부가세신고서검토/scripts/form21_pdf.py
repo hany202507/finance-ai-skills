@@ -353,15 +353,19 @@ def build(out_path, *, company, rows, p2=None, 확정=True,
                  ("월", 1, 4), ("일)", 0, 5)]
         for tok, nth, idx in slots:
             hits = by.get(tok, [])
+            if tok == "제":
+                # 「제」 는 이 줄에 한 번만 있다(2026. 3. 20. 서식). 예전에 두 번째 것을 찾아
+                # 기 숫자가 빈칸으로 나갔다. 「기」 바로 왼쪽의 「제」 를 고른다
+                nxt = by.get("기", [None])[0]
+                left = [h for h in hits if nxt and h[0] < nxt[0]]
+                if left:
+                    w = max(left, key=lambda h: h[0])
+                    s.center(w[2], nxt[0], y0, y1, str(기간[idx]), 8)
+                continue
             if len(hits) <= nth:
                 continue
             w = hits[nth]
-            if tok == "제":
-                nxt = by.get("기", [None])[0]
-                if nxt:
-                    s.center(w[2], nxt[0], y0, y1, str(기간[idx]), 8)
-            else:
-                s.right(w[0], y0, y1, str(기간[idx]), 8, pad=2)
+            s.right(w[0], y0, y1, str(기간[idx]), 8, pad=2)
 
     # ── 사업자 블록 ──────────────────────────────────────
     def fill(label, text, size=8, nth=0, pad=4):

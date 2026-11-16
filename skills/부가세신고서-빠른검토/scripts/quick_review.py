@@ -151,6 +151,21 @@ def _lines(words):
     return res
 
 
+def _lines_mid(words):
+    """높이의 가운데로 묶는다. 서식 원본에 값을 얹은 PDF 는 금액이 칸 이름보다 1~2pt 위에서
+    시작해, 윗변으로 묶으면 금액이 윗줄(세로로 걸친 「과세」 같은 칸 이름)로 붙는다.
+    위하고 출력물은 윗변 묶음이 맞아 본지에서 못 읽은 란을 채울 때만 쓴다."""
+    out = []
+    mid = lambda w: (w[1] + w[3]) / 2
+    for w in sorted(words, key=lambda w: (mid(w), w[0])):
+        h = max(w[3] - w[1], 1.0)
+        if out and abs(mid(w) - out[-1][0]) <= h * 0.4:
+            out[-1][1].append(w)
+        else:
+            out.append([mid(w), [w]])
+    return [sorted(ws, key=lambda w: w[0]) for _, ws in out]
+
+
 def _mid_of(txt, mid, target):
     joined, spans = "", []
     for t, m in zip(txt, mid):
@@ -165,7 +180,9 @@ def _mid_of(txt, mid, target):
 
 def _kind(top):
     t = top
-    for k, key in (("본지1", "별지제21호서식"), ("본지2", "2장앞쪽"),
+    # 본지 2장 머리는 출력 프로그램마다 다르다. 위하고는 「(2장앞쪽)」, 2026. 3. 20. 서식 원본은
+    # 「(6쪽(제2장중제4쪽)앞쪽)」 이다
+    for k, key in (("본지1", "별지제21호서식"), ("본지2", "2장앞쪽"), ("본지2", "제2장중"),
                    ("카드갑", "수령명세서(갑)"), ("카드을", "수령명세서(을)"),
                    ("불공제", "공제받지못할매입세액명세서"),
                    ("매출세계", "매출처별세금계산서합계표"), ("매입세계", "매입처별세금계산서합계표"),
@@ -184,6 +201,9 @@ def _ints(ws):
 def _total_row(ls, single_amount):
     """합계표 「합계」 줄. 금액이 낱자로 나와 x 간격이 가장 큰 곳에서 공급가액과 세액을 자른다."""
     for ws in ls:
+        # 「합 계」 로 두 낱말로 나오는 서식도 있다
+        if ws[0][4] == "합" and len(ws) > 1 and ws[1][4] == "계":
+            ws = [ws[0][:4] + ("합계",) + ws[0][5:]] + ws[2:]
         if ws[0][4] != "합계":
             continue
         ns = [w for w in ws[1:] if NUM.match(w[4])]
@@ -222,7 +242,8 @@ def read_return(path):
                     R["biz"].append((pno + 1, d[:10]))
                     break
         else:
-            m = BIZ.search("\n".join(flat))
+            # 서식 이름이 없는 이어지는 쪽은 거래처 명세뿐이라 첫 사업자번호가 거래처 것이다
+            m = BIZ.search("\n".join(flat)) if kind != "기타" else None
             if m:
                 R["biz"].append((pno + 1, m.group().replace("-", "")))
         m = next((PERIOD.search(j) for j in flat if PERIOD.search(j)), None)
@@ -238,6 +259,9 @@ def read_return(path):
             continue
         if kind in ("본지1", "본지2"):
             _read_main(ls, flat, R, pno)
+            # 못 읽은 란만 가운데 묶음으로 한 번 더 채운다(먼저 읽은 값은 그대로 둔다)
+            lm = _lines_mid(pg.get_text("words"))
+            _read_main(lm, ["".join(w[4] for w in ws) for ws in lm], R, pno)
         if kind == "불공제":
             # 3. 공통매입세액 안분계산명세 ~ 4. 사이에 금액이 있는지
             sec = False
@@ -481,10 +505,14 @@ def review(L, F, footer, R):
         add(8, "불공제명세서", f"{T(17):,}", "", "", CHECK if T(17) else NA,
             ["(17) 이 있는데 공제받지못할매입세액명세서가 없음"] if T(17) else [])
     else:
+        # (17) = (56) = (53) 사유별 + (54) 공통매입 안분 + (55) 대손처분. ⑨ 는 사유별 합계라 (53) 과 맞춘다
         nine = g.get("⑨", (0, 0, 0))
-        ok = nine[1:] == (S(53), T(53)) == (S(17), T(17))
-        add(8, "불공제명세서 ⑨=(53)=(17)", f"{T(17):,}", f"{nine[2]:,}", nine[2] - T(17),
-            PASS if ok else CHECK, [] if ok else [f"⑨ {nine[1]:,}/{nine[2]:,}, (53) {S(53):,}/{T(53):,}, (17) {S(17):,}/{T(17):,}"])
+        s56 = (S(53) + S(54) + S(55), T(53) + T(54) + T(55))
+        ok = nine[1:] == (S(53), T(53)) and s56 == (S(17), T(17))
+        add(8, "불공제명세서 ⑨=(53), (17)=(53)+(54)+(55)", f"{T(17):,}", f"{nine[2] + T(54) + T(55):,}",
+            nine[2] + T(54) + T(55) - T(17),
+            PASS if ok else CHECK, [] if ok else [f"⑨ {nine[1]:,}/{nine[2]:,}, (53) {S(53):,}/{T(53):,}, "
+                                                  f"(54) {S(54):,}/{T(54):,}, (17) {S(17):,}/{T(17):,}"])
 
     # 9 계산서합계표
     bad, rep, oth = [], [], []
@@ -492,6 +520,8 @@ def review(L, F, footer, R):
         t = fm.get(k)
         if t is None and not S(n):
             continue
+        if t is not None and not t.get("공급가액") and not S(n):
+            continue        # 서식은 있지만 금액이 없다. 해당없음
         if t is None or not S(n):
             bad.append(f"{label}: 합계표 {'없음' if t is None else format(t['공급가액'], ',')}, ({n}) {S(n):,}")
             continue
