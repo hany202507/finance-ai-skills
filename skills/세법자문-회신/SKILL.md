@@ -15,59 +15,7 @@ description: 세무·세법 쟁점을 TaxDoctor 와 법제처 korean-law 두 곳
 
 ## 준비 (처음 한 번)
 
-근거 출처 두 곳과 훅 하나를 쓴다. 0단계 확인에서 빠진 것이 드러나면 이 절로 돌아와 사용자에게 안내한다.
-
-### 1. TaxDoctor 커넥터
-
-세법령 90종과 세법 판단의 전제가 되는 비세법 참조 법령 81종(민법 · 상법 · 주택법 · 근로기준법 · 중소기업기본법 등)의 조문, 지난 판, 부칙, 예규 · 해석례, 판례 · 조세심판원 결정을 조회하는 외부 커넥터다(2026-11-02 `list_laws`).
-
-1. `taxdoctorai.com` 에서 무료 가입한다.
-2. 클로드 설정 → 커넥터 → 커스텀 커넥터 추가. 이름 `TaxDoctor`, 주소 `https://mcp.taxdoctorai.com/mcp`. 설정 화면에서 사람이 한다.
-   터미널에서 Claude Code 를 쓰면 `claude mcp add --transport http taxdoctor https://mcp.taxdoctorai.com/mcp`.
-3. 확인: 「TaxDoctor 의 list_laws 로 수록 법령 수를 알려줘」. 세법 90건 안팎과 비세법 참조 법령 80건 안팎이 나온다.
-
-### 2. korean-law 법령 서버
-
-법제처 OPEN API 를 직접 부르는 로컬 서버다. 이 저장소의 `mcp/korean-law` 이고 Node.js 18 이상이 필요하다.
-
-1. OC 를 받는다. OC 는 법제처 OPEN API 이용자 아이디다. `open.law.go.kr` 회원가입 → OPEN API 활용신청(승인까지 하루 이틀). OC 값은 가입 이메일의 아이디 부분이다(`hong@gmail.com` 이면 `hong`). 신청 화면에서 법령 본문 · 부칙, 판례 · 법령해석례 · 헌재결정례, 별표 · 서식, 조세심판원 결정례를 모두 체크한다. 좁게 신청하면 오류 없이 0건으로 나온다.
-2. 설치 스크립트(`install.ps1`, `install.sh`)가 서버를 `~/.claude/mcp/korean-law` 에 넣는다. 그 폴더에 `node_modules` 가 없으면 거기서 `npm install` 을 실행한다.
-3. 등록한다. 경로는 절대경로로 적는다. `~` 를 쓰면 연결이 안 된다.
-
-   ```bash
-   claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈 폴더 절대경로>/.claude/mcp/korean-law/index.js"
-   ```
-
-   데스크톱 앱만 써서 `claude` 명령이 없으면 홈 폴더의 `.claude.json` 파일 `mcpServers` 에 넣는다.
-
-   ```json
-   "korean-law": {
-     "type": "stdio",
-     "command": "node",
-     "args": ["<홈 폴더 절대경로>/.claude/mcp/korean-law/index.js"],
-     "env": { "LAW_OC": "<본인OC>" }
-   }
-   ```
-
-4. 앱을 껐다 켠 뒤 확인한다. 「korean-law 로 국세기본법을 찾아줘」에 법령 이름 · 시행일 · `law.go.kr` 링크가 나온다.
-
-### 3. 훅
-
-세법 낱말이 든 질문에 근거 규약(범위와 등급)을 끼워 넣는다. 스킬은 모델이 고르지만 훅은 매번 들어가므로, 스킬이 안 뜬 질문에도 규약이 적용된다.
-
-설치 스크립트가 `~/.claude/hooks/tax-source-guard.mjs` 에 넣는다. `~/.claude/settings.json` 에 등록한다. 이미 `hooks` 가 있으면 `UserPromptSubmit` 배열에 한 항목을 더한다.
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "node \"<홈 폴더 절대경로>/.claude/hooks/tax-source-guard.mjs\"" } ] }
-    ]
-  }
-}
-```
-
-확인: `node "<홈 폴더 절대경로>/.claude/hooks/tax-source-guard.mjs" --selftest` 가 `PASS` 를 낸다. 등록한 뒤 앱을 껐다 켠다.
+TaxDoctor · korean-law · 훅 설치 방법은 `references/준비.md` 에 있다. 0단계에서 두 출처 가운데 한쪽이라도 응답하지 않을 때, 또는 처음 설치할 때 읽는다.
 
 ## 근거 범위와 등급
 

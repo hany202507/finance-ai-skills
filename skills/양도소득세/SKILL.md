@@ -22,25 +22,7 @@ description: 주택·토지·건물 양도건을 질문지로 사실부터 모�
 
 ## 시험해 보기
 
-스킬의 `tests/cases.py` 에 있는 합성 사례 A(서울 아파트 1세대1주택, 고가주택)로 한 번 돌려 봅니다. 스킬 폴더에서:
-
-```bash
-pip install -r requirements.txt
-python tests/sample_inputs.py A sample
-python scripts/run.py --사실관계 sample/a.json --출력 out
-```
-
-화면에 `산출세액 2,565,000원, 지방소득세 256,500원, 검산 통과` 와 자산별 판정이 나오고 `out/` 에 `양도소득세_계산근거.xlsx` 가 생깁니다. 설치 확인은 이 한 건이면 됩니다. `tests/` 의 전체 시험은 몇 분 걸려서 설치할 때는 돌리지 않습니다. 스킬 코드를 고친 사람이 `python -m pytest -q tests` 로 돌리고, GitHub 에 올리면 Actions 가 자동으로 돌립니다.
-
-같은 사례로 신고서까지 만들어 봅니다. `sample/a_신고인.json` 은 `tests/filers.py` 의 합성 신고인입니다.
-
-```bash
-python scripts/make_return.py --사실관계 sample/a.json --신고인 sample/a_신고인.json --출력 out --오늘 2026-12-20
-```
-
-합성 신고인의 작성일(제출하는 날)이 2026-12-20 이라 `--오늘` 을 그 날로 줍니다. 작성일이 오늘보다 앞서면 종료코드 2 로 멈춥니다. 이 날짜는 기준정보 확인일보다 7일 넘게 뒤라 화면의 경고 절에 「기준정보 확인일 … 7일 넘게 지났다」가 나옵니다. 예시 날짜 때문에 나오는 경고이고 계산 결과는 달라지지 않습니다.
-
-화면에 `신고서 PDF 두 벌(양도소득세_신고서.pdf, 지방소득세_신고서.pdf)을 만들었다 (종료코드 0)` 이 나오고 `out/` 에는 신고서 PDF 두 벌과 `양도소득세_계산근거.xlsx` 만 있습니다.
+설치 확인은 합성 사례 A 한 건이면 된다. 입력을 만들고 run.py, make_return.py 를 돌리는 명령과 기대 출력은 `references/시험해보기.md` 에 있다(설치를 마치고 한 번 돌려 볼 때 읽는다).
 
 ## 설치 뒤 점검
 
@@ -52,17 +34,7 @@ python scripts/make_return.py --사실관계 sample/a.json --신고인 sample/a_
 
 TaxDoctor 를 넣었으면 앱을 껐다 켠 뒤 「소득세법 제89조 원문 찾아줘」로 확인합니다. 법령명 · 시행일 · 링크가 나오면 연결된 것입니다.
 
-### TaxDoctor 가 안 될 때 (선택)
-
-아래 셋은 TaxDoctor 가 응답하지 않을 때 조문을 읽는 데 씁니다. 없어도 계산과 신고서 만들기는 됩니다. 없으면 「TaxDoctor 가 안 될 때 쓰는 선택 항목이 있다」고 한 줄만 알리고, 사용자가 원하면 아래대로 안내합니다.
-
-| 확인할 것 | 있으면 보이는 도구 | 없을 때 알릴 것 |
-|---|---|---|
-| korean-law 법령 서버 | `mcp__korean-law__get_law_text` | 설치 경로는 `<홈 폴더 절대경로>/.claude/mcp/korean-law/index.js` 입니다(저장소 설치 스크립트가 넣습니다). 그 경로에 `index.js` 가 없으면 저장소의 `mcp/korean-law` 폴더를 그 경로로 복사하고 Node 패키지를 설치합니다(Node.js 18 이상). 그다음 Claude 앱에 「korean-law 법령 서버를 사용자 범위로 등록해 줘. 실행은 node "<그 경로>", 환경변수 LAW_OC 는 <본인OC>」를 보내고 앱을 껐다 켭니다 |
-| 법제처 OC | korean-law 첫 조회가 인증 오류 없이 응답 | `https://open.law.go.kr` 회원가입 → 「OPEN API 신청」에서 활용신청(승인 1~2일). 법령 본문·부칙, 행정규칙, 판례·법령해석례·헌재결정례, 별표·서식, 조세심판원 결정례를 모두 체크합니다. OC 는 가입한 이메일의 @ 앞부분인 아이디입니다(`hong@gmail.com` 이면 `hong`) |
-| 법제처 통합검색(korean-law-mcp) | `legal_research`, `get_annexes` | 커스텀 커넥터 추가, 주소 `https://mcp.gomdori.app/law?oc=<본인OC>`. `?oc=` 를 빼면 OC 없는 사용자끼리 나눠 쓰는 한도에 걸려 자주 막힙니다 |
-
-korean-law 를 넣으려면 OC 가 먼저 있어야 합니다. OC 가 없으면 OC 항목부터 알리고, 승인된 뒤 korean-law 등록과 통합검색 주소에 같은 OC 를 넣게 합니다. 다 갖추면 앱을 껐다 켜고 「korean-law 로 민법 제162조 원문 찾아줘」로 확인합니다.
+TaxDoctor 가 응답하지 않을 때 조문을 읽는 선택 항목(korean-law 법령 서버, 법제처 OC, 법제처 통합검색)은 `references/법령서버-대체.md` 에 있다. 없어도 계산과 신고서 만들기는 되므로, 없으면 「TaxDoctor 가 안 될 때 쓰는 선택 항목이 있다」고 한 줄만 알리고 사용자가 원할 때 그 파일대로 안내한다.
 
 기준정보를 직접 다시 받으려면(`scripts/refresh/fetch_articles.py`) 법제처 OC 와 TaxDoctor 가 둘 다 있어야 합니다.
 
@@ -103,14 +75,7 @@ MCP 가 없으면 `python scripts/evidence.py inventory <폴더> --출력 <폴�
 claude mcp add yangdo -- python <스킬 경로>/scripts/mcp_server.py
 ```
 
-| 도구 | 하는 일 |
-|---|---|
-| `yangdo_next_questions` | 사실관계에 비어 있는 것 중 다음에 물을 문항을 돌려준다. 문항마다 `섹션`, `섹션이름`, 흔한 값의 `가정` 이 붙는다. `생략` 에는 묻지 않는 선택 문항과 그 안내가 온다. 인자는 `facts_path`(파일 경로)나 `facts`(JSON 객체) 중 하나, `limit`(한 번에 받을 문항 수, 기본 1. 묶어 물을 때는 10 안팎). `forms`(서식 단계 문항도 낸다)는 계산용 문항을 모을 때는 쓰지 않는다 |
-| `yangdo_answer` | 문항 답을 사실관계에 넣는다. 인자는 `facts_path` 나 `facts`, `question`(문항 id), `value`(답), 자산이나 주택마다 묻는 문항이면 `asset`(자산 id), `house`(주택 id). `value` 에 문자열 「모름」을 주면 모름으로 기록한다. `facts_path` 를 주면 그 파일을 고쳐 쓰고, `facts` 를 주면 고친 사실관계를 `사실관계` 로 돌려준다 |
-| `yangdo_calculate` | 판정, 세액, 근거, 파일설명서 코드를 응답으로 낸다. 인자는 `facts_path` 나 `facts`, `today`(YYYY-MM-DD, 비우면 한국 시간 오늘), `out_dir`. `out_dir` 를 주면 그 폴더에 이 스킬이 쓰는 이름의 이전 파일을 지우고 `양도소득세_계산근거.xlsx` 만 쓴다 |
-| `yangdo_forms` | 계산에 이어 신고인 정보 검사, 신고값, 서식 검산, 신고서 PDF 두 벌까지 한다. 출력 폴더에는 신고서 PDF 두 벌과 계산근거 엑셀만 남는다. 인자는 `facts_path` 나 `facts`, `filer_path`(신고인 JSON 파일 경로, 필수), `out_dir`(필수), `today` |
-| `regulated_area` | 기준일에 조정대상지역·투기과열지구·투기지역인지 공고 이력으로 판정한다. 필수 인자 `sido`(시도), `sigungu`(시군구), `as_of`(기준일), 선택 인자 `eupmyeondong`(읍면동), `in_district`(지구해당) |
-| `ruleset_info` | 기준정보 판 id, 확인일, 시행예정 개정, 계류 개정 |
+도구마다 하는 일과 인자 표는 `references/MCP-도구.md` 에 있다(도구 호출이 오류로 돌아오거나 인자와 출력 파일을 확인할 때 읽는다).
 
 `facts` 와 `facts_path` 는 하나만 줍니다. 둘 다 주거나 둘 다 빼면 오류입니다. `yangdo_answer` 에 `facts_path` 를 주려면 그 파일이 먼저 있어야 합니다.
 
@@ -122,15 +87,7 @@ claude mcp add yangdo -- python <스킬 경로>/scripts/mcp_server.py
 
 문항은 섹션끼리 묶어 묻습니다. `limit` 를 10 안팎으로 주고, 받은 문항 가운데 첫 문항과 `섹션` 이 같은 것을 한 메시지에 번호를 붙여 묻습니다(예: 세대 묶음 H01 배우자, H03 세대원, H04 세대가 가진 집, H06 입주권·분양권). 사용자가 한 번에 답하면 문항마다 `yangdo_answer` 로 넣고 다시 받습니다. 앞 답에 따라 나오는 문항(H01 이 아니오일 때의 H02 등)은 다음 호출에 나옵니다. 한 섹션의 문항이 하나뿐이면 다음 섹션 문항과 합쳐 물어도 됩니다. 사용자가 하나씩 묻기를 원할 때만 `limit` 1 로 하나씩 묻습니다.
 
-MCP 가 없으면 같은 일을 스크립트로 합니다. `{skill}` 은 스킬 폴더 경로로 바꿔 읽습니다. 새 사건은 위와 같이 `{"자산": [{"id": "A"}]}` 를 담은 파일을 먼저 만듭니다.
-
-```bash
-# 다음 문항
-python -c "import sys,json; sys.path.insert(0, r'{skill}'); from yangdo import questions as Q; r=Q.next_questions(json.load(open(r'<facts.json>', encoding='utf-8')), limit=10); print(json.dumps({k: r[k] for k in ('다음', '남은', '생략')}, ensure_ascii=False, indent=1))"
-
-# 답 넣기(자산이나 주택마다 묻는 문항은 자산=, 주택= 를 함께 준다)
-python -c "import sys,json; sys.path.insert(0, r'{skill}'); from yangdo import questions as Q; p=r'<facts.json>'; f=Q.answer(json.load(open(p, encoding='utf-8')), '<문항id>', <값>, 자산='<자산id>'); json.dump(f, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)"
-```
+MCP 가 없으면 같은 일을 스크립트로 한다. 다음 문항을 받는 명령과 답을 넣는 명령은 `references/MCP-없을때.md` 에 있다(`{skill}` 은 스킬 폴더 경로로 바꿔 읽는다).
 
 문항을 물을 때 지킬 것:
 
@@ -143,18 +100,7 @@ python -c "import sys,json; sys.path.insert(0, r'{skill}'); from yangdo import q
 - 양도 원인(P03)이 수용, 교환, 부담부증여, 기타면 나머지 문항을 묻지 말고 바로 알립니다. 취득 원인(A15)이 상속, 증여, 부담부증여, 조합원, 기타일 때도 같습니다. `yangdo_next_questions` 는 이때도 문항을 돌려주지만 따르지 말고, 계산해서 나오는 다루지않음 결과를 알립니다.
 - 양도 원인이 경매면 잔금일 문항(A11)에 매수인이 매각대금을 다 낸 날을 받습니다. 사실관계에 `양도.대금완납일` 로 넣어도 되고, 둘 다 있으면 대금완납일을 씁니다.
 
-고객이 직접 채울 때는 `질문지/양도소득세_질문지.html` 을 보냅니다. 브라우저에서 여는 파일 하나이고 서버와 외부 전송이 없습니다. 근거 링크만 law.go.kr 로 열립니다.
-
-- 고객이 「답변 내려받기」로 받은 `양도소득세_답변.json` 이 사실관계 JSON 입니다. 이 파일을 `facts_path` 로 주고 `yangdo_next_questions` 로 남은 문항을 이어서 묻습니다.
-- 앞 답으로 계산해 봐야 물을지 정해지는 문항에는 「회계사가 확인합니다」 표시가 붙습니다. 고객이 화면 위의 「회계사가 확인하는 항목 숨기기」를 켜고 비워 둔 문항은 대화에서 다시 묻습니다.
-- 성명, 주민등록번호, 전화번호, 계좌와 양수인 같은 서식 단계 문항은 HTML 에 없습니다. 3절의 `신고인.json` 으로 받습니다.
-- 문항 정의는 대화와 HTML 이 `질문지/문항.json` 하나를 같이 씁니다. 문항을 고치면 `python scripts/make_questionnaire_html.py` 로 HTML 을 다시 만듭니다.
-
-엔진은 사실관계 입력도 검사합니다. 인적사항이나 주소 문자열이 있으면 오류 문장을 내고 멈춥니다. 정수가 아닌 금액, 음수 금액, 형식이 틀린 날짜와 거주기간, 양도일보다 늦은 취득일은 해당 문항을 질문으로 돌려줍니다. 날짜는 `YYYY-MM-DD` 글자만 받으므로 `20261115` 처럼 붙여 쓴 날짜도 형식이 틀린 날짜입니다. 자산 `id` 는 글자 그대로 세대 주택목록의 `자산id` 와 같아야 하고 겹치면 안 됩니다.
-
-자료형도 문항 정의의 `답형식` 대로 검사합니다. 예/아니오 문항에 `"false"` 같은 글자를 넣거나 복수선택 문항에 목록 대신 글자를 넣으면, 그 값을 참이나 거짓으로 읽지 않고 해당 문항을 질문으로 돌려줍니다. 글자 하나를 목록으로 읽어 중과배제 사유가 생기는 일을 막는 검사입니다.
-
-엔진이 반영하지 못하는 사실이 사실관계에 있으면 낮은 세액을 내지 않고 다루지않음으로 돌려줍니다. 같은 날 주택 여러 채 양도, 다가구 호실별 양도, 매수인이 부담한 양도소득세, 특수관계인에게 시가보다 낮게 양도 등이 해당하고, 전체 목록은 `references/적용한계.md` 에 있습니다.
+고객이 직접 채울 때는 `질문지/양도소득세_질문지.html` 을 보낸다. 고객이 내려받은 답변 파일을 이어 받는 법과 엔진이 입력을 거부하는 경우는 `references/질문지와-입력검사.md` 에 있다(고객 답변 파일을 받았거나 엔진이 입력 오류를 낼 때 읽는다).
 
 ## 2. 계산
 
