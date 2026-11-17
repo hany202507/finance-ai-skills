@@ -12,6 +12,10 @@ Claude Code skills for Korean accounting, tax and audit work: corporate tax retu
 
 세무 · 회계 · 감사 · 커리어 가운데 쓰는 분야만 골라 받을 수 있습니다([설치](#설치)).
 
+> **공인회계사 박상정(Hany)이 만들고 계속 고쳐요([만든 사람](#만든-사람)).** 쓰다가 막히면 재무 · 회계 · 세무 실무자 1,200명 넘게 모인 카카오톡 [재무 AI 오픈채팅방](https://open.kakao.com/o/gAUK185h)에서 물어보세요. 스킬을 만들고 쓰는 과정은 유튜브 [AI CFO Lab](https://www.youtube.com/@AICFOLab)에 올려요. 강의 · 기업 교육 문의는 [hello@kernelspace.io](mailto:hello@kernelspace.io) 로 보내 주세요.
+>
+> 패스트캠퍼스 「재무/회계 실무자를 위한 AI 업무자동화」 강의에서는 이 저장소의 현금흐름표 · 매입매출장검토 · 부가세신고서검토 스킬을 설치해 써요.
+
 | 이름 | 분야 | 하는 일 |
 |---|---|---|
 | [현금흐름표](skills/현금흐름표/) | 회계 | 전기 재무상태표와 당기 분개장(또는 계정별원장)으로 현금흐름표 직접법·간접법을 만들고 서로 맞춰 본다 |
@@ -357,7 +361,17 @@ claude mcp add -s user korean-law -e LAW_OC=<본인OC> -- node "<홈 폴더 절�
 
 ## 만든 사람
 
-박상정(Hany). 재무·회계·세무 실무에 AI 에이전트를 붙이는 일을 합니다. 재무 AI 커리큘럼은 [kernelacademy-web](https://github.com/hany202507/kernelacademy-web) 에 공개하고 있습니다.
+**박상정(Hany), 공인회계사.** 회계 실무를 하면서 재무 업무를 AI 에이전트로 자동화하고, 그 방법을 강의해요.
+
+- **주식회사 커널스페이스 대표.** 결산 · 부가세 · 원천세 · 세법자문을 하는 AI ERP [Gridie](https://gridie.ai) 를 만들어 운영해요.
+- **한국공인회계사회 AI 자문위원.** 전에는 KPMG 와 법무법인 세종에서 일했어요.
+- **강의.** 한국공인회계사회 실전AI활용 부트캠프, 세종대 AI 재무분석 실전캠프, 패스트캠퍼스 「재무/회계 실무자를 위한 AI 업무자동화」. 실무자를 위한 AI 강의는 [Kernelacademy](https://kernelacademy.io) 에서 열고, 커리큘럼은 [kernelacademy-web](https://github.com/hany202507/kernelacademy-web) 에 공개해요.
+
+### 커뮤니티 · 유튜브 · 문의
+
+- **카카오톡 오픈채팅 [「재무•회계•세무 전문가의 AI성장기」](https://open.kakao.com/o/gAUK185h).** 재무 · 회계 · 세무 실무자 1,200명 넘게 모인 재무 AI 커뮤니티예요. AI 를 실무에 쓴 사례와 질문을 나눠요. 이 저장소의 스킬을 쓰다 막히면 여기서 물어보세요. 유튜브 편마다 쓴 설계서도 이 방에 올려요.
+- **유튜브 [AI CFO Lab](https://www.youtube.com/@AICFOLab).** 회계사가 Claude 로 회사 장부 프로그램을 만들고 세금 신고를 자동화하는 과정을 보여 드려요. 통합고용세액공제 · 경정청구 검토 · 양도세 · 원천세 신고 자동화 편이 올라가 있어요.
+- **메일 [hello@kernelspace.io](mailto:hello@kernelspace.io).** 강의 · 기업 교육 · 협업 문의를 받아요.
 
 ## 라이선스
 
