@@ -18,12 +18,13 @@ from fractions import Fraction
 from pathlib import Path
 
 import pymupdf as fitz
+
+from ..formkit import put     # 폭을 잰 글꼴로 칸 안에 넣는다(넘치면 가로로 줄인다)
 from .calc import FAR, age_limits, deemed_until, floor2, is_senior, youth_cutoff
 from .model import Inputs
 
 HERE = Path(__file__).resolve().parent
 FORMS = HERE / "forms"
-FONT = "korea"            # PyMuPDF 내장 CJK 글꼴(Droid Sans Fallback)
 SIZE, ROW_SIZE = 9.0, 7.0
 OUT_PDF = "통합고용_법정서식.pdf"
 KIND_CODE = {"청년": "4", "장애인": "5", "고령자": "6", "경력단절": "7", "북한이탈주민": "8"}
@@ -251,46 +252,6 @@ def roster(inp: Inputs, res: dict, rules: dict, company: str) -> tuple[dict, dic
 
 
 # ---------------------------------------------------------------- 쓰기
-
-_FONT = None
-
-
-def _font():
-    global _FONT
-    if _FONT is None:
-        _FONT = fitz.Font(FONT)
-    return _FONT
-
-
-def put(page, box, text: str, align: str = "r", size: float = SIZE, pad: float = 1.6, min_sx: float = 0.55) -> None:
-    """칸(box) 안에 글자를 넣는다. 넘치면 가로로 0.55 배까지 줄이고, 그래도 넘치면 글자 크기를 줄인다.
-    폭을 잰 글꼴로 그대로 그린다(TextWriter). insert_text 의 내장 CJK 이름 글꼴은 숫자를 전각 폭으로 그려 칸을 넘친다."""
-    if text in (None, ""):
-        return
-    font = _font()
-    x0, y0, x1, y1 = box
-    room = max(1.0, (x1 - x0) - 2 * pad)
-    size = min(size, (y1 - y0) * 0.8)
-    w = font.text_length(text, fontsize=size)
-    sx = 1.0
-    if w > room:
-        sx = max(min_sx, room / w)
-        if w * sx > room:
-            size = size * room / (w * sx)
-            w = font.text_length(text, fontsize=size)
-    width = w * sx
-    if align == "l":
-        x = x0 + pad
-    elif align == "c":
-        x = (x0 + x1 - width) / 2
-    else:
-        x = x1 - pad - width
-    y = (y0 + y1) / 2 + size * 0.36
-    pt = fitz.Point(x, y)
-    tw = fitz.TextWriter(page.rect)
-    tw.append(pt, text, font=font, fontsize=size)
-    tw.write_text(page, color=(0, 0, 0), morph=(pt, fitz.Matrix(sx, 1)) if sx < 1 else None)
-
 
 def _fill(page, fields: dict, values: dict, page_no: int) -> int:
     n = 0

@@ -13,6 +13,7 @@ from openpyxl import Workbook, load_workbook
 
 from .. import xlsx as X
 from ..case import WP_DIR, Case, MissingInput, won
+from ..formkit import recalc
 from . import book, lawform
 from .calc import REASONS, compute, hours_for, month_end
 from .model import (COMPANY_ROWS, INPUT_DIR, INPUT_NAME, PAY_COLS, PERIODS, STAFF_COLS, InputError, Inputs, load_data,
@@ -260,30 +261,6 @@ def memos(inp: Inputs, res: dict, rules: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------- 엑셀 재계산과 대조
-
-def recalc(path: Path) -> bool:
-    """엑셀로 한 번 계산해 수식 결과를 파일에 심는다. 엑셀이 없으면 False."""
-    try:
-        import pythoncom
-        import win32com.client
-    except ImportError:
-        return False
-    pythoncom.CoInitialize()
-    try:
-        xl = win32com.client.DispatchEx("Excel.Application")
-    except Exception:                                        # noqa: BLE001  엑셀이 깔리지 않은 PC
-        return False
-    try:
-        xl.Visible, xl.DisplayAlerts = False, False
-        wb = xl.Workbooks.Open(str(path), UpdateLinks=0)
-        xl.CalculateFull()
-        wb.Save()
-        wb.Close(False)
-    finally:
-        xl.Quit()
-        pythoncom.CoUninitialize()
-    return True
-
 
 def read_back(path: Path, checks: dict) -> dict:
     """재계산한 파일에서 엔진 대조와 검산 결과를 읽는다."""
