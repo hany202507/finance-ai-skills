@@ -178,12 +178,18 @@ class Book:
 
         section("2. 감면기간(최초 소득 과세연도부터 5개 과세연도)")
         ye, yi = self.a("y:end"), self.a("y:inc")
-        d5 = f"(EDATE({found},60)-1)"
-        put("first_end", "최초 소득 과세연도 종료일",
-            f'IF({I("최초 소득 발생 과세연도 종료일")}<>"",{I("최초 소득 발생 과세연도 종료일")},'
-            f'IF(COUNTIFS({ye},">="&{found},{yi},">0")>0,_xlfn.AGGREGATE(15,6,{ye}/(({ye}>={found})*({yi}>0)),1),'
-            f'IF(COUNTIFS({ye},">="&{d5})>0,_xlfn.AGGREGATE(15,6,{ye}/({ye}>={d5}),1),"")))',
-            "제6조 제1항(소득이 없으면 개시일부터 5년이 되는 날이 속하는 과세연도)", "date", kind="date")
+        put("start", "사업 개시일(비우면 창업일)", f'IF({I("사업 개시일")}<>"",{I("사업 개시일")},{found})', "제6조 제1항 괄호", "date",
+            kind="date")
+        put("day5", "사업 개시일부터 5년이 되는 날", f'EDATE({N("start")},60)-1', "개시일을 첫날로 센다", "date", kind="date")
+        d5 = N("day5")
+        put("inc_end", "소득이 처음 생긴 과세연도 종료일",
+            f'IF(COUNTIFS({ye},">="&{found},{yi},">0")>0,_xlfn.AGGREGATE(15,6,{ye}/(({ye}>={found})*({yi}>0)),1),"")',
+            "1연도별 감면사업 소득금액이 0 보다 큰 첫 과세연도", "date", kind="date")
+        put("y5_end", "5년이 되는 날이 속하는 과세연도 종료일", f'IF(COUNTIFS({ye},">="&{d5})>0,_xlfn.AGGREGATE(15,6,{ye}/({ye}>={d5}),1),"")',
+            "", "date", kind="date")
+        inc, y5, given = N("inc_end"), N("y5_end"), I("최초 소득 발생 과세연도 종료일")
+        put("first_end", "최초 소득 과세연도 종료일", f'IF({given}<>"",{given},IF({inc}="",{y5},IF({y5}="",{inc},MIN({inc},{y5}))))',
+            "제6조 제1항: 소득이 처음 생긴 과세연도와 5년이 되는 날이 속하는 과세연도 중 이른 쪽", "date", kind="date")
         fi = N("first_end")
         put("term_end", "감면 끝 날", f'IF({fi}="","",EDATE({fi}+1,48)-1)', "그 다음 과세연도 개시일부터 4년 이내에 끝나는 과세연도까지", "date",
             kind="date")
@@ -206,13 +212,17 @@ class Book:
         section("4. 창업 시기 · 지역(제6조 제1항 제1호 가목 · 나목, 시행령 제5조 제25항)")
         put("era", "창업 시기", f'IF({found}<={B("boundary")},"2025이전","2026이후")', kind="text")
         mr, md, reg = I("이전 · 지점 지역"), I("이전 · 지점 설치일"), I("창업 지역")
-        put("moved", "이전 · 지점 지역 적용", f'AND({mr}<>"",{md}<>"",{md}<={fe},{reg}<>"{REGIONS[0]}")', kind="bool")
+        era = N("era")
+        rank = lambda x: f'IF({x}="{REGIONS[0]}",0,IF({era}="2025이전",1,IF({x}="{REGIONS[1]}",1,2)))'  # noqa: E731
+        put("moved_set", "이전 · 지점을 이 과세연도까지 둠", f'AND({mr}<>"",{md}<>"",{md}<={fe})', kind="bool")
+        put("moved", "이전 · 지점 지역 적용(감면율이 더 낮을 때만)", f'AND({N("moved_set")},{rank(mr)}<{rank(reg)})',
+            "시행령 제5조 제25항. 감면율 순서: 과밀억제권역 < 수도권(2026 이후 창업) < 수도권 밖 · 수도권 인구감소지역", kind="bool")
         put("region", "감면율을 정하는 지역", f'IF({N("moved")},{mr},{reg})', kind="text")
         put("key", "감면율 표 구분", f'{N("era")}&"|"&IF({N("region")}="{REGIONS[0]}","과밀",IF({N("era")}="2025이전","과밀외",'
             f'IF({N("region")}="{REGIONS[1]}","수도권","지방")))', kind="text")
 
         section("5. 소규모(제6항) · 신성장 서비스업(제5항)")
-        put("fy_months", "과세연도 개월 수", f'DATEDIF({fs},{fe}+1,"m")')
+        put("fy_months", "과세연도 개월 수", f'MAX(1,DATEDIF({fs},{fe}+1,"m"))', "1개월 미만 끝수는 버림, 최소 1")
         put("revenue_year", "수입금액(1년 환산)", f'IF({N("fy_months")}<12,{I("수입금액")}*12/{N("fy_months")},{I("수입금액")})', "제6조 제6항 괄호",
             "won", engine=float(self.r["revenue_year"]))
         put("threshold", "소규모 수입금액 한도", f'IF({fs}>={B("small_from")},{B("t2026")},{B("t2025")})', "제6조 제6항, 부칙 <제21223호> 제2조", "won")

@@ -1,4 +1,4 @@
-"""창업중소기업 세액감면 계산(결정적). 같은 값을 워크북 수식이 따로 계산하고 「6엔진대조」 시트가 견준다.
+"""창업중소기업 세액감면 계산(결정적). 같은 값을 워크북 수식이 따로 계산하고 「4엔진대조」 시트가 견준다.
 
 순서: 창업 해당 → 감면기간 → 청년 · 지역 · 소규모 · 신성장으로 감면율 → 고용증가 추가감면율 → 감면세액(법인세법 제59조 제2항)
 → 최저한세(111 줄만) → 5억원 한도 → 중복 배제 선택. 근거는 rules.yaml.
@@ -50,6 +50,16 @@ def region_key(era: str, region: str) -> str:
     return "수도권" if region == REGIONS[1] else "지방"
 
 
+def region_rank(era: str, region: str) -> int:
+    """감면율 순서(작을수록 낮다). 과밀억제권역 0, 2026 이후 창업의 수도권(과밀 · 인구감소 제외) 1, 그 밖 2.
+    2025 이전 창업은 과밀억제권역 밖이 모두 같은 감면율이라 1(제6조 제1항 제1호 가목 · 나목, 제6항 제1호 · 제2호)."""
+    if region == REGIONS[0]:
+        return 0
+    if era == "2025이전":
+        return 1
+    return 1 if region == REGIONS[1] else 2
+
+
 def year_list(inp: Inputs) -> list[Year]:
     """연도별 시트 + 해당 과세연도(시트에 없으면 회사 시트 값으로 더한다)."""
     v = inp.values
@@ -60,19 +70,31 @@ def year_list(inp: Inputs) -> list[Year]:
     return ys
 
 
-def first_income_end(inp: Inputs, ys: list[Year], rules: dict) -> tuple[date | None, str]:
+def first_income(inp: Inputs, ys: list[Year], rules: dict, next_day: bool = False) -> dict:
+    """최초 소득 과세연도(제6조 제1항). 소득이 처음 생긴 과세연도와 사업 개시일부터 5년이 되는 날이 속하는 과세연도 중 이른 쪽.
+
+    5년이 되는 날은 사업 개시일 + 5년 - 1일(엑셀 EDATE(개시일, 60) - 1). next_day 면 초일을 넣지 않고 하루 뒤로 잰다
+    (국세기본법 제4조 → 민법 제157조 · 제160조, 확인 줄에만 쓴다)."""
     v = inp.values
-    if v["최초 소득 발생 과세연도 종료일"]:
-        return v["최초 소득 발생 과세연도 종료일"], "회사 시트에 넣은 값"
     found = v["창업일"]
-    for y in ys:
-        if y.end >= found and y.income > 0:
-            return y.end, f"연도별 시트에서 감면사업 소득금액이 처음 0 보다 큰 과세연도({y.start} ~ {y.end})"
-    day5 = edate(found, 12 * rules["period"]["no_income_years"]["value"]) - timedelta(days=1)
-    for y in ys:
-        if y.end >= day5:
-            return y.end, f"사업 개시일부터 5년이 되는 날({day5})이 속하는 과세연도(소득이 없어 제6조 제1항 괄호)"
-    return None, "감면사업 소득금액이 0 보다 큰 과세연도가 없고 개시일부터 5년도 지나지 않았습니다"
+    start = v["사업 개시일"] or found
+    one = timedelta(days=1)
+    years = 12 * rules["period"]["no_income_years"]["value"]
+    day5 = edate(start + one, years) - one if next_day else edate(start, years) - one
+    inc = next((y for y in ys if y.end >= found and y.income > 0), None)
+    y5 = next((y for y in ys if y.end >= day5), None)
+    out = {"start": start, "day5": day5, "inc_end": inc.end if inc else None, "y5_end": y5.end if y5 else None}
+    if v["최초 소득 발생 과세연도 종료일"]:
+        out.update(first=v["최초 소득 발생 과세연도 종료일"], why="회사 시트에 넣은 값")
+    elif inc and (y5 is None or inc.end <= y5.end):
+        out.update(first=inc.end, why=f"연도별 시트에서 감면사업 소득금액이 처음 0 보다 큰 과세연도({inc.start} ~ {inc.end})")
+    elif y5:
+        later = f". 소득이 처음 생긴 과세연도({inc.start} ~ {inc.end})보다 앞선다" if inc else ""
+        out.update(first=y5.end, why=f"사업 개시일({start})부터 5년이 되는 날({day5})이 속하는 과세연도({y5.start} ~ {y5.end}). "
+                                    f"그때까지 소득이 없어 제6조 제1항 괄호를 따랐다{later}")
+    else:
+        out.update(first=None, why="감면사업 소득금액이 0 보다 큰 과세연도가 없고 사업 개시일부터 5년도 지나지 않았습니다")
+    return out
 
 
 def compute(inp: Inputs, rules: dict) -> dict:
@@ -95,8 +117,12 @@ def compute(inp: Inputs, rules: dict) -> dict:
     r["c_started"] = found <= fe
 
     # 2. 감면기간
-    first, why_first = first_income_end(inp, ys, rules)
-    r["first_end"], r["first_why"] = first, why_first
+    fi = first_income(inp, ys, rules)
+    first = fi["first"]
+    r["first_end"], r["first_why"] = first, fi["why"]
+    r["start"], r["day5"], r["inc_end"], r["y5_end"] = fi["start"], fi["day5"], fi["inc_end"], fi["y5_end"]
+    alt = first_income(inp, ys, rules, next_day=True)
+    r["first_end_next_day"] = alt["first"]          # 초일 불산입으로 잰 최초 소득 과세연도(확인 줄에만)
     if first:
         r["term_end"] = edate(first + timedelta(days=1), 12 * (rules["period"]["term_years"]["value"] - 1)) - timedelta(days=1)
         r["nth"] = math.floor(F(months_between(first, fe), 12) + F(1, 2)) + 1 if first <= fe else 0   # 엑셀 ROUND(m/12, 0) + 1
@@ -124,19 +150,28 @@ def compute(inp: Inputs, rules: dict) -> dict:
     r["era"] = "2025이전" if found <= boundary else "2026이후"
     region = v["창업 지역"]
     moved, moved_on = v["이전 · 지점 지역"], v["이전 · 지점 설치일"]
-    r["moved"] = bool(moved and moved_on and moved_on <= fe and region != REGIONS[0])
+    # 시행령 제5조 제25항: 감면율이 더 낮은 지역으로 옮기거나 지점을 둔 때만 그 지역에서 창업한 것으로 본다
+    r["moved_set"] = bool(moved and moved_on and moved_on <= fe)
+    r["moved"] = r["moved_set"] and region_rank(r["era"], moved) < region_rank(r["era"], region)
     r["region"] = moved if r["moved"] else region
     r["key"] = f"{r['era']}|{region_key(r['era'], r['region'])}"
     table = rules["rates"]["value"][r["key"]]
 
     # 5. 소규모(제6항)
-    months = months_between(fs, fe + timedelta(days=1))
+    end1 = fe + timedelta(days=1)
+    whole = months_between(fs, end1)                                  # 1개월 미만 끝수는 버린다(엑셀 DATEDIF "m")
+    months = max(1, whole)                                            # 1개월 미만 과세연도도 1개월로 나눈다
     r["fy_months"] = months
     rev = F(v["수입금액"])
     r["revenue_year"] = rev * 12 / months if months < 12 else rev
     small_from = _d(rules, "small", "from")
     r["threshold"] = rules["small"]["threshold_2026" if fs >= small_from else "threshold_2025"]["value"]
     r["small"] = r["type"] == "일반" and r["revenue_year"] <= r["threshold"]
+    # 1개월 미만 끝수를 1개월로 올려 셀 때의 판정(확인 줄에만, 계산은 버림)
+    r["fy_months_up"] = max(1, whole + (1 if edate(fs, whole) < end1 else 0))
+    rev_up = rev * 12 / r["fy_months_up"] if r["fy_months_up"] < 12 else rev
+    r["revenue_year_up"] = rev_up
+    r["small_up"] = r["type"] == "일반" and rev_up <= r["threshold"]
 
     # 6. 신성장 서비스업(제5항)
     ng_until = date.fromisoformat(rules["new_growth"]["until"])
@@ -229,7 +264,7 @@ def compute(inp: Inputs, rules: dict) -> dict:
 
 def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
     """회계사에게 전할 확인 줄. 판정을 바꾸지 않고 알리기만 한다."""
-    v, out = inp.values, []
+    v, out = inp.values, list(inp.notes)
     reasons = [(r["c_deadline"], "창업일이 2027년 12월 31일 뒤입니다(제6조 제1항)"),
                (r["c_sme"], "중소기업이 아니거나 중소기업이 아니게 된 날이 이 과세연도 안입니다(제6조 제1항 · 제11항)"),
                (r["c_industry"], "감면 업종이 아니거나 각 호 단서의 제외 업종입니다(제6조 제3항)"),
@@ -243,6 +278,10 @@ def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
         out.append(f"최초 소득 과세연도: {r['first_why']}. 감면 {r['nth']}차 연도, 감면 끝 {r['term_end']}")
     else:
         out.append(f"최초 소득 과세연도를 정하지 못했습니다: {r['first_why']}")
+    if not v["최초 소득 발생 과세연도 종료일"] and r["first_end"] != r["first_end_next_day"]:
+        out.append(f"사업 개시일 다음 날부터 5년을 세면(초일 불산입, 국세기본법 제4조 → 민법 제157조) 5년이 되는 날이 하루 늦어"
+                   f" 최초 소득 과세연도 종료일이 {r['first_end_next_day'] or '아직 없음'} 으로 바뀝니다. 엔진은 사업 개시일을 첫날로 세어"
+                   f" 5년이 되는 날을 {r['day5']} 로 보았습니다. 어느 쪽으로 볼지 회계사가 정하고, 다르게 보면 「최초 소득 발생 과세연도 종료일」 에 넣으십시오")
     if not v["대표자 생년월일"]:
         out.append("대표자 생년월일이 없어 청년창업중소기업이 아닌 것으로 계산했습니다. 청년이면 생년월일 · 병역 개월 수 · 최대주주를 넣으십시오")
     elif r["age"] is not None and r["age"] <= 34 and v["대표자 최대주주"] != "Y":
@@ -251,8 +290,15 @@ def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
         out.append("청년 요건 상실일이 이 과세연도 안이라 청년상실 감면율을 썼습니다(시행령 제5조 제2항, 상실 기업을 제6항 소규모에서 뺀 것은 엔진 해석)")
     if r["moved"]:
         out.append(f"사업장 이전 · 지점 설치로 「{r['region']}」 에서 창업한 것으로 보았습니다(시행령 제5조 제25항)")
+    elif r["moved_set"]:
+        out.append(f"이전 · 지점 지역 「{v['이전 · 지점 지역']}」 은 창업 지역 「{v['창업 지역']}」 보다 감면율이 낮지 않아 계산에 쓰지 않았습니다"
+                   "(시행령 제5조 제25항은 감면율이 더 낮은 지역으로 옮기거나 지점을 둔 때만 그 지역에서 창업한 것으로 본다)")
     if r["small"]:
         out.append(f"수입금액(연 환산) {int(r['revenue_year']):,}원이 {r['threshold']:,}원 이하라 제6항 감면율을 썼습니다")
+    if r["small"] != r["small_up"]:
+        out.append(f"과세연도가 {r['fy_months']}개월과 1개월 미만 끝수입니다. 끝수를 버려 {r['fy_months']}개월로 연 환산했고(수입금액"
+                   f" {int(r['revenue_year']):,}원), 끝수를 1개월로 올리면 {r['fy_months_up']}개월(수입금액 {int(r['revenue_year_up']):,}원)이라"
+                   " 소규모(제6항) 판정이 바뀝니다. 제6항은 개월 수 세는 법을 정하지 않으니 회계사가 정하십시오")
     if r["new_growth"]:
         out.append("신성장 서비스업(제5항): 최초 소득 과세연도를 최초 감면 과세연도로 보고 1 ~ 3차 75%, 4 ~ 5차 50% 로 계산했습니다(회계사 확인 전)")
     if r["eligible"] and r["rate"] == 0:
@@ -275,8 +321,15 @@ def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
     if r["conflict_employ"]:
         out.append(f"2025년 이후 창업이라 창업감면을 받으면 통합고용 · 고용증대 세액공제({v['통합고용 · 고용증대 세액공제']:,}원)를 함께 받지 못합니다"
                    "(제127조 제4항 단서). 공제는 이월되고 감면은 이월되지 않으니 회사 사정에 맞게 고르십시오")
+    elif v["통합고용 · 고용증대 세액공제"] > 0 and r["add_amt"] > 0:
+        without = r["o_9"] - r["add_amt"] + r["t_9"]
+        out.append(f"2024년 이전 창업이라도 고용증가 추가감면(제6조 제7항) {r['add_amt']:,}원을 받으면 통합고용 · 고용증대 세액공제"
+                   f"({v['통합고용 · 고용증대 세액공제']:,}원)를 함께 받지 못합니다(종전 제127조 제4항 단서, 부칙 <제20617호> 제2조로 2024년 이전"
+                   f" 창업은 종전 단서). 추가감면을 빼면 창업감면은 {without:,}원이고 통합고용 · 고용증대 세액공제를 함께 받을 수 있습니다. 둘 중 고르십시오."
+                   " 금액은 추가감면을 넣은 쪽으로 계산했습니다")
     elif v["통합고용 · 고용증대 세액공제"] > 0:
-        out.append("2024년 이전 창업이라 통합고용 · 고용증대 세액공제와 창업감면을 함께 받을 수 있습니다(제127조 제4항 단서는 2025년 이후 창업부터)")
+        out.append("2024년 이전 창업이고 고용증가 추가감면이 없어 통합고용 · 고용증대 세액공제와 창업감면을 함께 받을 수 있습니다"
+                   "(종전 제127조 제4항 단서는 제6조 제7항 추가감면을 받을 때만 함께 받지 못하게 한다)")
     if r["conflict_127"]:
         out.append(f"제127조 제4항 본문 세액공제 {v['제127조 제4항 세액공제']:,}원과 창업감면은 하나만 받습니다")
     if r["conflict_site"]:
@@ -285,16 +338,25 @@ def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
         out.append(f"중복 배제로 고른 창업감면 {r['o_9'] + r['t_9']:,}원이 함께 받지 못하는 공제감면 {r['other_sum']:,}원보다 작습니다")
     if not r["chosen"]:
         out.append("적용 선택이 「다른 공제감면」 이라 창업감면 신청 금액을 0 으로 두었습니다")
-    if v["법인전환"] == "Y" or v["합병 · 분할 · 현물출자 · 사업양수로 종전 사업 승계"] == "Y":
+    if v["법인전환"] == "Y" or (v["합병 · 분할 · 현물출자 · 사업양수로 종전 사업 승계"] == "Y" and r["no1"]):
         out.append("법인전환 · 사업 승계로 세운 법인은 새로 창업감면을 받지 못합니다. 개인사업자(또는 중소기업 간 통합으로 소멸한 중소기업)가"
                    " 받던 창업감면의 감면기간이 남았으면, 승계받은 사업에서 생긴 소득에 남은 감면기간 안에 끝나는 과세연도까지 감면받을 수 있습니다"
                    "(제32조 제4항 → 제31조 제4항, 시행령 제28조 제4항). 법인전환은 현물출자 또는 사업 양도양수(시행령 제29조 제2항)로"
                    " 순자산가액 이상 자본금을 갖춰야 합니다(제32조 제1항 · 제2항). 이 스킬은 승계 감면을 계산하지 않습니다")
-    if v["사업 분리 임직원 창업"] == "Y" and v["창업일"] >= SPIN_REL_START:
+    if v["사업 분리 임직원 창업"] == "Y":
+        out.append("사업 분리 임직원 창업이 Y 입니다. 사업을 개시한 임직원이 대표자 겸 최대주주(시행령 제5조 제21항 제2호)가 아니게 되면"
+                   " 그 사유가 생긴 과세연도부터 감면하지 않습니다(같은 조 제22항). 엔진은 이 요건을 판정하지 않으니 이 과세연도까지"
+                   " 대표자 · 최대주주가 그대로인지 확인하십시오")
+    if v["사업 분리 임직원 창업"] == "Y" and max(v["창업일"], v["사업 개시일"] or v["창업일"]) >= SPIN_REL_START:
         out.append("2026-02-27 이후 사업을 시작했고 사업 분리 임직원 창업이 Y 입니다. 회사와 그 임직원이 친족관계 · 경영지배관계가"
                    " 아닌지 확인하십시오(시행령 제5조 제21항 제3호). 해당하면 창업으로 보지 않습니다")
-    if found_before_2020(v):
-        out.append("2019년까지(2020-01-01 전) 창업했습니다. 현행 규정으로 계산했으니 업종 범위 · 제7항이 그때 규정과 다른지 종전 조문을 확인하십시오")
+    if v["창업일"] < OLD_ALL_BEFORE:
+        out.append("2018-05-29 전에 창업했습니다. 이때 창업한 기업은 감면율 · 소규모 · 고용증가 추가감면 · 업종 범위를 포함한 제6조 전체가"
+                   " 창업 당시 규정입니다(부칙 <제15623호> 제4조, 2018-01-01 전 창업은 부칙 <제15227호> 제39조도 같다). 엔진은 현행 규정으로"
+                   " 계산했으니 창업 당시 조문으로 다시 계산하십시오")
+    elif found_before_2020(v):
+        out.append("2018-05-29 ~ 2019-12-31 에 창업했습니다. 업종 범위(제6조 제3항)는 창업 당시 규정입니다(부칙 <제16835호> 제4조)."
+                   " 현행 업종 목록으로 계산했으니 종전 업종 범위와 다른지 확인하십시오")
     out.append("이 계산은 창업중소기업(제1항 제1호 · 제5항 ~ 제7항)만 봅니다. 창업보육센터사업자 · 창업벤처 · 에너지신기술중소기업과"
                " 업종 판정(한국표준산업분류), 상시근로자 수, 감면소득 구분경리는 보지 않습니다")
     return out
@@ -302,6 +364,8 @@ def memos(inp: Inputs, r: dict, rules: dict) -> list[str]:
 
 # 시행령 제5조 제21항 제3호(친족관계 · 경영지배관계 아닐 것)는 2026-02-27 이후 사업 개시분부터(부칙 <제36127호> 제2조)
 SPIN_REL_START = date(2026, 2, 27)
+# 2018-05-29 전 창업은 제6조 전체가 종전 규정(부칙 <제15623호, 2018.5.29> 제4조)
+OLD_ALL_BEFORE = date(2018, 5, 29)
 
 
 def found_before_2020(v: dict) -> bool:

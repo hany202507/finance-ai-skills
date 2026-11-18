@@ -211,8 +211,9 @@ def _rows_of(inp: Inputs, res: dict, rules: dict, per: str) -> list[list[str]]:
         if worked:
             a, b = max(p.hired, period.start), min(p.left or FAR, period.end)
             span = f"{a.month:02d}~{b.month:02d}"
-        young = r.regular and period.start < hi and period.end >= lo
-        cut = (youth_cutoff(p, co.size, rules, True) if deem else hi) if r.regular else None
+        youth_ok = r.regular and p.kind == "정규직"       # 기간제 · 단시간은 청년이 아니라 청년 여부 · 제외시점을 비운다
+        young = youth_ok and period.start < hi and period.end >= lo
+        cut = (youth_cutoff(p, co.size, rules, True) if deem else hi) if youth_ok else None
         out.append([
             ymd(p.birth), p.name, yn(r.regular), (r.reason[:1] if r.reason else ""), (num(r.weight) if r.weight < 1 else ""),
             yn(p.resident), yn(p.capital or co.capital), ymd(p.hired), span, num(r.m_work), per_head(r.n_work, exact), num(m_y),

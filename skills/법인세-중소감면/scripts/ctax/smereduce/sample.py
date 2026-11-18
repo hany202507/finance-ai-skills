@@ -14,17 +14,18 @@ from openpyxl import Workbook
 
 from .. import xlsx as X
 from ..inputdef import write_sheet
-from .model import COMPANY_ROWS, DEF_INTRO, SOURCE, S_CO, definitions
+from .model import ALIASES, COMPANY_ROWS, DEF_INTRO, EXCLUDED, SOURCE, STARTUP_YEAR, S_CO, definitions
 
 COMPANY = {
     "과세연도 시작일": date(2025, 1, 1),
     "과세연도 종료일": date(2025, 12, 31),
     "중소기업": "Y",
     "업종": "제조업",
-    "업종 괄호 제외 업종": "N",
+    EXCLUDED: "N",
     "일반 서적 출판업": "N",
     "별표 3 업종 호": 13,
     "매출액": 9_000_000_000,
+    STARTUP_YEAR: "N",
     "본점 수도권": "N",
     "감면 사업장 수도권": "N",
     "각 사업연도 소득금액": 820_000_000,
@@ -48,7 +49,7 @@ EXPECT = {"reduced_income": 702_439_025, "a7": 34_185_365, "a9": 34_185_365, "to
 
 def write(path: Path, company: dict | None = None, blank: bool = False, drop: tuple = ()) -> Path:
     """회사 시트 하나. blank 면 값 없이 머리글과 설명만. drop 의 항목은 값을 비운다."""
-    co = {} if blank else dict(COMPANY, **(company or {}))
+    co = {} if blank else dict(COMPANY, **{ALIASES.get(k, k): v for k, v in (company or {}).items()})
     wb = Workbook()
     ws = wb.active
     ws.title = S_CO

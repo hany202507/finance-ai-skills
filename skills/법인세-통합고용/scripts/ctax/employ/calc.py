@@ -130,26 +130,38 @@ def is_senior(p: Person, rules: dict) -> bool:
     return p.hired >= add_months(p.birth, 12 * int(rule(rules, "youth", "senior_age")))
 
 
-def fixed_youth(p: Person, rules: dict) -> bool:
-    """나이와 상관없이 청년등인 사람(장애인 등 · 고령자 · 경력단절 · 북한이탈주민)."""
-    return p.disabled == "Y" or is_senior(p, rules) or p.career == "Y" or p.defector == "Y"
+def defector_since(co: Company, rules: dict) -> date:
+    """북한이탈주민을 나이와 상관없이 청년등으로 세는 입사일 하한: 2025년 1월 1일 이후 처음 개시하는 과세연도의 시작일.
+    그 전 과세연도에 고용한 북한이탈주민은 종전 규정이라 청년등이 아니다(부칙 <대통령령 제35347호> 제9조, rules.yaml youth.defector_from)."""
+    d0 = date.fromisoformat(rule(rules, "youth", "defector_from"))
+    d = date(d0.year, co.fy_start.month, 1)
+    return d if d >= d0 else date(d0.year + 1, co.fy_start.month, 1)
 
 
-def youth_kind(p: Person, rules: dict) -> str:
+def is_defector(p: Person, since: date) -> bool:
+    return p.defector == "Y" and p.hired >= since
+
+
+def fixed_youth(p: Person, rules: dict, since: date) -> bool:
+    """나이와 상관없이 청년등인 사람(장애인 등 · 고령자 · 경력단절 · 북한이탈주민). since 는 defector_since."""
+    return p.disabled == "Y" or is_senior(p, rules) or p.career == "Y" or is_defector(p, since)
+
+
+def youth_kind(p: Person, rules: dict, since: date) -> str:
     if p.disabled == "Y":
         return "장애인"
     if is_senior(p, rules):
         return "고령자"
     if p.career == "Y":
         return "경력단절"
-    if p.defector == "Y":
+    if is_defector(p, since):
         return "북한이탈주민"
     return "청년"
 
 
 def one_year_day(p: Person) -> date:
     """근로기간이 1년이 되는 날(입사일부터 12개월 뒤의 전날). 이 날이 그 달 말일 이전이면 그 달부터 새 범위 근무개월에 넣는다
-    (rules.yaml scope.service_year, 2026-11-02 대표 결정)."""
+    (rules.yaml scope.service_year, 국세청 사전-2026-법규소득-0365 와 같다)."""
     return add_months(p.hired, 12) - timedelta(days=1)
 
 
@@ -194,13 +206,14 @@ def weight_of(p: Person, rules: dict, hours: float | None = None) -> Fraction:
 # ---------------------------------------------------------------- 과세연도
 
 def periods(co: Company, rules: dict) -> dict[str, Period]:
-    """해당 · 직전 · 직전전 과세연도. 직전 · 직전전은 12개월로 본다."""
+    """해당 · 직전 · 직전전 과세연도. 직전 · 직전전은 회사 시트 시작일이 있으면 그 날부터 다음 과세연도 시작 전날까지,
+    없으면 12개월로 본다(rules.yaml count.prior_months). 인원은 그 기간의 월말 수(개월 수)로 나눈다."""
     out = {}
-    start, end = co.fy_start, co.fy_end
     deemed_from = date.fromisoformat(rule(rules, "youth", "deemed_from"))
-    for i, name in enumerate(PERIODS):
-        s = add_months(co.fy_start, -12 * i)
-        e = end if i == 0 else add_months(co.fy_start, -12 * (i - 1)) - timedelta(days=1)
+    s1 = co.prev_start or add_months(co.fy_start, -12)
+    s2 = co.prev2_start or add_months(s1, -12)
+    spans = ((co.fy_start, co.fy_end), (s1, co.fy_start - timedelta(days=1)), (s2, s1 - timedelta(days=1)))
+    for name, (s, e) in zip(PERIODS, spans):
         ends, m = [], s
         while month_end(m) <= e:
             ends.append(month_end(m))
@@ -220,10 +233,11 @@ def count_period(inp: Inputs, per: Period, rules: dict, scope: str = "종전", s
     for x in pays:
         by_id.setdefault(x.id, []).append(x)
     cut_n = (lambda x: x) if sum_floor else floor2                      # noqa: E731  사람별 계산한 수
+    since = defector_since(co, rules)
     rows = []
     for p in inp.staff:
         hours = hours_for(p, per.name, scope)[0]
-        r = Row(person=p, weight=weight_of(p, rules, hours), kind=youth_kind(p, rules))
+        r = Row(person=p, weight=weight_of(p, rules, hours), kind=youth_kind(p, rules, since))
         mine = by_id.get(p.id, [])
         if not per.has_payroll:
             r.proof = "자료없음"
@@ -234,7 +248,7 @@ def count_period(inp: Inputs, per: Period, rules: dict, scope: str = "종전", s
         r.reason = common or ("" if r.proof != "N" else REASONS["e"])
         lo, hi = age_limits(p, rules)
         cut = youth_cutoff(p, co.size, rules, per.deemed)
-        fixed = fixed_youth(p, rules)
+        fixed = fixed_youth(p, rules, since)
         left = p.left or FAR
         year1 = one_year_day(p) if scope == "새" else None
         for e in per.ends:
@@ -343,13 +357,23 @@ def new_credit(size: str, capital: str, cur: tuple, priors: list, rates: dict) -
                 first, second = ms[t["term"]]
                 t["ded"] = round(t["n_o"] * int(first) + (m - t["n_o"]) * int(second))
                 t["min_rule"] = "청년등 외 증가 인원이 최소고용증가인원수 미만"
+                # 제3호의 「청년등외상시근로자의 증가 인원 수」 는 제2호가 「뺀 값」 으로 정해 음수일 수 있고, 제3호에는 0 으로 본다는
+                # 글이 없다(「음수이면 0」 은 제1호 · 제2호 금액에 대한 말). 엔진은 0 으로 두고 음수를 넣은 값을 따로 알린다
+                raw = min(t["d_o"], t["d_t"])
+                if raw < 0:
+                    t["n_o_raw"] = raw
+                    t["ded_alt"] = round(raw * int(first) + (m - raw) * int(second))
         out["ded"] = sum(t["ded"] for t in got)
+        if any("ded_alt" in t for t in got):
+            out["ded_alt"] = sum(t.get("ded_alt", t["ded"]) for t in got)
         top = max((t["d_t"] for t in got), default=Fraction(0))
         out["gate"] = "충족" if top > m else "미충족"
     else:
         out["gate"] = "해당 없음"
     if out["gate"] != "미충족":
         out["credit"] = max(0, out["youth"] + out["other"] - out["ded"])
+        if "ded_alt" in out:
+            out["credit_alt"] = max(0, out["youth"] + out["other"] - out["ded_alt"])
     return out
 
 
@@ -504,9 +528,26 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
         cut = yp < ypp or yc < ypp
         return (0 if cut else prev_amounts[0]) + prev_amounts[1], ("청년등 감소" if cut and prev_amounts[0] else "")
 
+    def youth_switch(prev_amounts: tuple, vals: list, kind: str) -> dict | None:
+        """청년등만 줄고 전체는 유지됐을 때, 제29조의7 회신(서면-2023-법인-0978, 서면-2024-소득-4000)대로 최초 공제연도
+        청년등 증가 인원에 청년등 외 1인당 금액을 계속 공제하면 얼마인지. 엔진은 이 금액을 공제액에 넣지 않는다."""
+        y_rate, o_rate = per_head(co.size, co.capital, rates)
+        if not (prev_amounts[0] and y_rate and o_rate):
+            return None
+        n1 = Fraction(int(prev_amounts[0])) / y_rate                    # 최초 공제연도 청년등 증가 인원(공제액 ÷ 1인당 금액)
+        if kind == "2":
+            (_, yc), (_, yp) = vals
+            dec = yp - yc
+        else:
+            (_, yc), (_, yp), (_, ypp) = vals
+            dec = ypp - min(yp, yc)
+        dec = max(Fraction(0), min(dec, n1))
+        return {"n1": n1, "dec": dec, "rate": o_rate, "amount": round(n1 * o_rate), "amount_dec": round(dec * o_rate)}
+
     pw2 = pers["직전"].start >= deemed_from
     pw3 = pers["직전전"].start >= deemed_from
     second, second_cut, second_alt = 0, "", None
+    second_youth_alt = third_youth_alt = None
     f1 = (co.first_prev_youth, co.first_prev_other)
     if any(f1) and co.consumer != "Y":
         if pers["직전"].end > date(2025, 12, 31):              # 2026 과세연도부터 늘어난 인원은 신규공제라 2차 연도가 없다
@@ -515,6 +556,8 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
             second_cut = "직전 인원 없음"
         else:
             second, second_cut = judge(f1, pick("해당", "직전", per_worker=pw2), "2")
+            if second_cut == "청년등 감소":
+                second_youth_alt = youth_switch(f1, pick("해당", "직전", per_worker=pw2), "2")
             if pw2:                                              # 월말 합 방식으로 세면 판정이 달라지는지 알린다
                 alt, _ = judge(f1, pick("해당", "직전", per_worker=False), "2")
                 second_alt = alt if alt != second else None
@@ -529,6 +572,8 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
             third_cut = "직전전 인원 없음"
         else:
             third, third_cut = judge(f2, pick("해당", "직전", "직전전", per_worker=pw3), "3")
+            if third_cut == "청년등 감소":
+                third_youth_alt = youth_switch(f2, pick("해당", "직전", "직전전", per_worker=pw3), "3")
             if pw3:
                 alt, _ = judge(f2, pick("해당", "직전", "직전전", per_worker=False), "3")
                 third_alt = alt if alt != third else None
@@ -565,6 +610,7 @@ def compute(inp: Inputs, rules: dict, rates: dict) -> dict:
             "n_y": n_y, "n_o": n_o,
             "a_y": a_y, "a_o": a_o, "first_y": first_y, "first_o": first_o, "first": first_y + first_o, "second": second,
             "second_cut": second_cut, "second_alt": second_alt, "second_pw": pw2, "third": third, "third_cut": third_cut,
-            "third_alt": third_alt, "third_pw": pw3, "new": new, "new_total": new_total, "returned": float(returned),
+            "third_alt": third_alt, "third_pw": pw3, "second_youth_alt": second_youth_alt, "third_youth_alt": third_youth_alt,
+            "defector_since": defector_since(co, rules), "new": new, "new_total": new_total, "returned": float(returned),
             "returned_roster": returned_roster, "returnees": backs, "direct": direct,
             "extra": extra, "total": first_y + first_o + second + third + new_total + extra}

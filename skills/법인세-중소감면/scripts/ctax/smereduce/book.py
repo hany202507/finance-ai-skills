@@ -12,7 +12,7 @@ from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from .. import xlsx as X
-from .model import COMPANY_ROWS, NOT_LISTED, Inputs, picks
+from .model import COMPANY_ROWS, EXCLUDED, NOT_LISTED, STARTUP_YEAR, Inputs, picks
 
 S_LIST, S_IN, S_BASE, S_CALC, S_FORM, S_CHECK = "목록", "0입력", "0기준", "2계산", "3신청서", "4엔진대조"
 DATE_FMT = "yyyy-mm-dd"
@@ -88,7 +88,8 @@ class Book:
         put("publish_from", "일반 서적 출판업(마목) 적용 개시일", date.fromisoformat(ind["publish"]["from"]), ind["publish"]["basis"], DATE_FMT)
         put("small_since", "별표 3 새 표 적용(과세연도 종료일이 이 날 이후, 엔진 규칙)", date.fromisoformat(R["small"]["since"]["value"]),
             R["small"]["since"]["basis"], DATE_FMT)
-        put("hydro_from", "수소발전사업 적용 개시일(엔진 규칙)", date.fromisoformat(ind["hydrogen"]["from"]), ind["hydrogen"]["basis"], DATE_FMT)
+        put("energy_from", "누목 재생에너지 · 두목 수소발전사업 시행일(과세연도 시작일로 가름, 엔진 규칙)", date.fromisoformat(ind["energy"]["from"]),
+            ind["energy"]["basis"], DATE_FMT)
         put("limit", "감면한도", R["limit"]["base"]["value"], R["limit"]["base"]["basis"])
         put("per_worker", "감소 상시근로자 1명당 한도 차감", R["limit"]["per_worker"]["value"], R["limit"]["per_worker"]["basis"])
         row += 2
@@ -126,7 +127,7 @@ class Book:
             X.cell(ws, row, 1, name)
         self.addr["b:wholesale"] = f"{_q(S_BASE)}$A${top}:$A${row}"
         put("half", "감면 비율 절반 업종(제2호 단서)", ind["half"]["value"], ind["half"]["basis"])
-        put("hydro", "수소발전사업", ind["hydrogen"]["value"], ind["hydrogen"]["basis"])
+        put("energy_old", "이 날 이후 개시 과세연도에 감면 업종이 아닌 옛 누목", ind["energy"]["old"], ind["energy"]["value"])
         X.widths(ws, [52, 20, 90, 20])
 
     # ------------------------------------------------------------ 2계산
@@ -162,15 +163,23 @@ class Book:
         section("1. 감면 대상(제7조 제1항)")
         put("c_deadline", "일몰 안", f"{fe}<={B('deadline')}", "제7조 제1항", kind="bool")
         put("c_sme", "중소기업", f'{I("중소기업")}="Y"', "제7조 제1항", kind="bool")
-        put("c_industry", "감면 업종", f'AND({ind}<>{_s(NOT_LISTED)},{I("업종 괄호 제외 업종")}="N",'
-            f'NOT(AND({ind}={B("hydro")},{fs}<{B("hydro_from")})))', "제7조 제1항 제1호", kind="bool")
+        put("c_industry", "감면 업종", f'AND({ind}<>{_s(NOT_LISTED)},{I(EXCLUDED)}="N",'
+            f'NOT(AND({ind}={B("energy_old")},{fs}>={B("energy_from")})))', "제7조 제1항 제1호(누목 · 두목은 2026-09-18 판에서 바뀜)", kind="bool")
         put("eligible", "감면 대상", f'AND({N("c_deadline")},{N("c_sme")},{N("c_industry")})', kind="bool")
 
         section("2. 소기업 · 수도권 · 업종 구분")
         put("threshold", "소기업 규모 기준", f'IF({I("소기업 규모 기준 직접 입력")}<>"",{I("소기업 규모 기준 직접 입력")},'
             f'IF({fe}>={B("small_since")},INDEX({B("small")},{I("별표 3 업종 호")}),INDEX({B("small_old")},{I("별표 3 업종 호")})))',
             "시행령 제6조 제4항, 중소기업기본법 시행령 별표 3(과세연도 종료일 현재 시행 표)", "won")
-        put("small", "소기업", f'{I("매출액")}<={N("threshold")}', "매출액 ≤ 규모 기준", kind="bool")
+        put("months_m0", "시작 달부터 종료 달까지 달 차이", f'(YEAR({fe})-YEAR({fs}))*12+MONTH({fe})-MONTH({fs})', "개월 수 계산용")
+        m0 = N("months_m0")
+        end_m0 = f'IF(DAY(EDATE({fs},{m0}))<DAY({fs}),EDATE({fs},{m0}),EDATE({fs},{m0})-1)'
+        put("months", "과세연도 개월 수(1개월 미만은 1개월)", f'IF(AND({m0}>=1,{end_m0}>={fe}),{m0},{m0}+1)',
+            "법인세법 시행령 제92조를 빌린 엔진 규칙(태양력)")
+        put("annualize", "매출액 연 환산", f'AND({I(STARTUP_YEAR)}="Y",{N("months")}<12)',
+            "시행규칙 제5조 · 제2조 제4항 단서(창업 · 분할 · 합병 과세연도)", kind="bool")
+        put("sales_used", "소기업 판정 매출액", f'IF({N("annualize")},{I("매출액")}*12/{N("months")},{I("매출액")})', "매출액 × 12 ÷ 개월 수", "won")
+        put("small", "소기업", f'{N("sales_used")}<={N("threshold")}', "소기업 판정 매출액 ≤ 규모 기준", kind="bool")
         put("size", "기업 규모", f'IF({N("small")},"소기업","중기업")', kind="text")
         put("capital", "수도권", f'OR({I("본점 수도권")}="Y",{I("감면 사업장 수도권")}="Y")', "제7조 제1항 단서(본점이 수도권이면 모든 사업장 수도권)",
             kind="bool")
@@ -197,7 +206,7 @@ class Book:
         inc, ded, src = I("각 사업연도 소득금액"), I("이월결손금 · 비과세 · 소득공제"), I("공제액등이 생긴 사업")
         put("biz_income", "감면사업 소득", f'MAX(0,{inc}-{I("감면 제외 소득")})', "해당 사업장 · 감면 업종 소득", "won")
         put("ded_share", "공제액등 중 감면사업 몫", f'IF({src}="감면사업",{ded},IF(OR({src}="그 밖의 사업",{inc}<=0),0,'
-            f'ROUNDDOWN(ROUND({ded}*{N("biz_income")}/{inc},4),0)))', "제1호 전액 · 제2호 소득금액 비례 안분", "won")
+            f'MIN({ded},ROUNDDOWN(ROUND({ded}*{N("biz_income")}/{inc},4),0))))', "제1호 전액 · 제2호 소득금액 비례 안분(공제액등 이하)", "won")
         put("reduced_income", "감면소득", f'MAX(0,{N("biz_income")}-{N("ded_share")})', "", "won")
 
         section("6. 감면세액(법인세법 제59조 제2항)")
@@ -211,10 +220,12 @@ class Book:
         put("min_tax", "최저한세액", f'ROUNDDOWN(ROUND({N("mt_base")}*{I("최저한세율")},4),0)', "제132조 제1항", "won")
         put("mt_room", "감면이 받을 수 있는 최저한세 여지", f'MAX(0,{tax}-{N("min_tax")}-{I("먼저 적용할 다른 최저한세 대상 감면 · 공제")})',
             "제132조 제1항 제4호(제7조는 적용대상)", "won")
-        put("a8", "⑧ 감면세액(최저한세 반영)", f'MIN({N("a7")},{N("mt_room")})', "", "won")
-        put("mt_cut", "최저한세로 감면하지 않은 금액", f'{N("a7")}-{N("a8")}', "", "won")
+        put("a8", "⑧ 감면세액(최저한세 반영)", f'MIN({N("a7")},{N("mt_room")})',
+            "작성방법 4: ⑦ - 최저한세 배제세액. ⑦ 이 한도와 여지를 함께 넘을 때의 값은 회계사 확인 전", "won")
         put("a9", "⑨ 한도충족 감면세액", f'MIN({N("a8")},{N("limit")})', "서식 작성방법: ⑧ 과 감면한도 중 적은 금액", "won")
-        put("limit_over", "한도를 넘어 감면하지 않은 금액", f'{N("a8")}-{N("a9")}', "", "won")
+        put("a7_lim", "⑦ 중 감면한도까지", f'MIN({N("a7")},{N("limit")})', "", "won")
+        put("limit_over", "감면한도로 감면하지 않은 금액", f'{N("a7")}-{N("a7_lim")}', "제7조 제1항 제3호", "won")
+        put("mt_cut", "최저한세로 감면하지 않은 금액", f'{N("a7_lim")}-{N("a9")}', "제132조 제1항 제4호(감면한도까지의 금액 기준)", "won")
 
         section("7. 중복 배제(제127조 제4항 · 제5항)와 통합고용세액공제")
         put("other_sum", "함께 받지 못하는 공제감면 합계", f'{I("제127조 제4항 세액공제")}+{I("같은 사업장 다른 감면")}', "제127조 제4항 본문 · 제5항", "won")
@@ -253,6 +264,7 @@ class Book:
         row += 2
         for text in ("작성방법: ⑦ 대상세액은 최저한세 적용 전 감면세액, ⑧ 은 ⑦ 에서 최저한세 배제세액을 뺀 금액, ⑨ 는 ⑧ 과 감면한도 중 적은 금액",
                      "다른 감면 줄(창업감면 11O · 111 등)은 이 시트에 없다. 같은 사업장이면 제127조 제5항으로 하나만 적는다",
+                     "4쪽 ❺ 감면한도계산(1억원 - 500만원 × 상시근로자 수 감소인원)은 이 스킬이 채우지 않는다. 사람이 적는다",
                      "상호 · 사업자등록번호 · 대표자 · 주소 · 날짜 · 서명은 사람이 적는다"):
             X.cell(ws, row, 1, text).font = X.NOTE_FONT
             row += 1
@@ -285,7 +297,8 @@ class Book:
         X.header(ws, row, ["결과", "값", "", ""])
         for label, f, fmt in (("중소기업특별세액감면(신청, 112)", N("total"), "won"), ("감면 대상", N("eligible"), None),
                               ("감면 비율 구분", N("key"), None), ("감면율", N("rate"), "rate"), ("감면한도", N("limit"), "won"),
-                              ("⑦ 대상세액", N("a7"), "won"), ("최저한세로 감면하지 않은 금액", N("mt_cut"), "won"),
+                              ("⑦ 대상세액", N("a7"), "won"), ("감면한도로 감면하지 않은 금액", N("limit_over"), "won"),
+                              ("최저한세로 감면하지 않은 금액", N("mt_cut"), "won"),
                               ("통합고용 세액공제 당기 · 이월", f'TEXT({N("emp_now")},"#,##0")&" · "&TEXT({N("emp_carry")},"#,##0")', None)):
             row += 1
             X.cell(ws, row, 1, label)
@@ -298,6 +311,7 @@ class Book:
             ("신청서 1A4 ⑨ = 2계산 신청 금액", N("f:total"), N("total"), "="),
             ("112 ⑨ ≤ ⑧ ≤ ⑦", f"AND({N('f:a9')}<={N('f:a8')},{N('f:a8')}<={N('f:a7')})", "TRUE", "bool"),
             ("⑨ ≤ 감면한도", N("a9"), N("limit"), "<="),
+            ("⑦ = ⑨ + 한도로 뺀 금액 + 최저한세로 뺀 금액", N("a7"), f'{N("a9")}+{N("limit_over")}+{N("mt_cut")}', "="),
             ("감면세액 ≤ 감면소득에 대한 세액", N("total"), N("tax_on_income"), "<="),
             ("감면소득 ≤ 과세표준(넘으면 100% 로 자름)", N("inc_ratio"), "1", "<="),
             ("감면 뒤 세액이 최저한세를 지킴", f"{I('산출세액')}-{N('a8')}", N("min_tax"), ">=t"),

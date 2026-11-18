@@ -1,9 +1,11 @@
 """통합고용세액공제 검증 워크북(`2 조서/통합고용_검증.xlsx`)을 쓴다. 숫자는 모두 엑셀 수식이다.
 
 시트 순서가 계산 순서다: 0기준 → 1사원명부 → 2급여대장 → 3판정(해당 · 직전 · 직전전) → 4인원 → 5공제액 → 6서식10의9 → 7서식10의10.
-「8엔진대조」 는 calc.py 가 따로 계산한 값을 수식 값 옆에 놓는다. 노란 칸만 사람이 고친다.
+「8엔진대조」 는 calc.py 가 따로 계산한 값을 수식 값 옆에 놓는다. 노란 셀만 사람이 고친다.
 """
 from __future__ import annotations
+
+from datetime import date
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -118,11 +120,13 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict, staff_last: int)
     k.put("fy_end", "과세연도 종료일", co.fy_end, kind="input", fmt=DATE)
     months = lambda s, t: f"=(YEAR({t})-YEAR({s}))*12+MONTH({t})-MONTH({s})+1"   # noqa: E731
     k.put("months", "과세연도 개월 수", months(k["fy_start"], k["fy_end"]), fmt="0")
-    k.put("p_start", "직전 과세연도 시작일", f"=EDATE({k['fy_start']},-12)", kind="input", fmt=DATE,
-          note="직전 과세연도가 12개월이 아니면 고칩니다")
+    k.put("p_start", "직전 과세연도 시작일", co.prev_start or f"=EDATE({k['fy_start']},-12)", kind="input", fmt=DATE,
+          note="회사 시트 「직전 과세연도 시작일」 이 비면 12개월 전입니다. 설립 첫해처럼 직전 과세연도가 12개월이 아니면 그 시작일을 넣습니다. "
+               + basis(rules, "count", "prior_months"))
     k.put("p_end", "직전 과세연도 종료일", f"={k['fy_start']}-1", kind="input", fmt=DATE)
     k.put("p_months", "직전 과세연도 개월 수", months(k["p_start"], k["p_end"]), fmt="0")
-    k.put("pp_start", "직전전 과세연도 시작일", f"=EDATE({k['p_start']},-12)", kind="input", fmt=DATE)
+    k.put("pp_start", "직전전 과세연도 시작일", co.prev2_start or f"=EDATE({k['p_start']},-12)", kind="input", fmt=DATE,
+          note="회사 시트 「직전전 과세연도 시작일」 이 비면 직전 시작일의 12개월 전입니다")
     k.put("pp_end", "직전전 과세연도 종료일", f"={k['p_start']}-1", kind="input", fmt=DATE)
     k.put("pp_months", "직전전 과세연도 개월 수", months(k["pp_start"], k["pp_end"]), fmt="0")
     k.put("size", "기업 구분", co.size, kind="input", note="중소기업 · 중견기업 · 일반기업. 중소기업 여부는 51호 기준검토표와 맞춥니다")
@@ -151,6 +155,12 @@ def _base(ws, inp: Inputs, res: dict, rules: dict, rates: dict, staff_last: int)
     k.put("sum_floor", "근로자별 인원을 합계에서 버림", f'=IF({k["fy_start"]}>={day(r("count", "sum_floor_from"))},"Y","N")',
           note="Y 면 사람별 계산한 수를 버리지 않고 더한 뒤 100분의 1 미만을 버립니다. N 이면 사람마다 버린 뒤 더합니다. "
                + basis(rules, "count", "sum_floor_from"))
+    d0 = date.fromisoformat(r("youth", "defector_from"))
+    dm = lambda y: f"DATE({y},MONTH({k['fy_start']}),1)"     # noqa: E731
+    k.put("defector_since", "북한이탈주민을 청년등으로 세는 입사일(이 날 이후)",
+          f'=IF({dm(d0.year)}>={day(d0.isoformat())},{dm(d0.year)},{dm(d0.year + 1)})', fmt=DATE,
+          note="2025년 1월 1일 이후 처음 개시하는 과세연도의 시작일. 그 전에 고용한 북한이탈주민은 나이로 가립니다. "
+               + basis(rules, "youth", "defector_from"))
     y25, yo = r("youth", "deemed_years_2025"), r("youth", "deemed_years_other")
     pick = lambda d: (f'=IF({k["size"]}="중소기업",{d["중소기업"]},IF({k["size"]}="중견기업",{d["중견기업"]},'   # noqa: E731
                       f'{d["일반기업"]}))')
@@ -277,7 +287,8 @@ def _staff(ws, inp: Inputs, k: KV, last: int) -> None:
                      f'{k["deem_other"]})),"")'),
             C_CUT: f'=IF(ISNUMBER({a(C_DEEM)}),MAX({a(C_35)},{a(C_DEEM)}),{a(C_35)})',
             C_SENIOR: f'=IF({A["hired"]}>=EDATE({A["birth"]},12*{k["senior"]}),"Y","N")',
-            C_FIXED: (f'=IF(OR({A["disabled"]}="Y",{a(C_SENIOR)}="Y",{A["career"]}="Y",{A["defector"]}="Y"),"Y","N")'),
+            C_FIXED: (f'=IF(OR({A["disabled"]}="Y",{a(C_SENIOR)}="Y",{A["career"]}="Y",'
+                      f'AND({A["defector"]}="Y",{A["hired"]}>={k["defector_since"]})),"Y","N")'),
             C_REGULAR: f'=IF({A["kind"]}="정규직","Y","N")',
             C_YEAR1: f'=EDATE({A["hired"]},12)-1',
             # 육아휴직 복귀자(제29조의8 제5항, rules.yaml extra.return_rule): 복직일이 해당 과세연도 · 기한 안, 최대주주 · 친족 아님,
@@ -295,7 +306,7 @@ def _staff(ws, inp: Inputs, k: KV, last: int) -> None:
                 c.number_format = NUM2
     ws.freeze_panes = ws.cell(row=STAFF_FIRST, column=3)
     X.widths(ws, [10, 10, 12, 12, 12, 7, 9, 8, 9, 9, 9, 8, 6, 9, 8, 12, 12, 8, 8, 9, 8, 8, 8, 16, 26, 8, 12, 12, 12, 9, 12, 12, 7, 9, 7, 14])
-    X.note(ws, last + 2, "열 뜻과 근거는 스킬 문서 「원천 데이터 정의」 와 ctax/employ/NOTES.md 에 있습니다")
+    X.note(ws, last + 2, "열 뜻과 근거는 스킬 문서 「원천 데이터 정의」 에 있습니다")
 
 
 def _pay(ws, pays: list, last: int) -> dict:
@@ -387,7 +398,8 @@ def _judge(ws, per: str, k: KV, pay: dict, n: int, last: int, n_pay: int) -> Non
             f'SUMIFS({pay[x]},{pay["id"]},{a(J_ID)},{pay["month"]},">="&{START},{pay["month"]},"<="&{END})'
             for x in ("tax", "pension", "health")) + '>0,"Y","N"))') if n_pay else "자료없음"
         kind_of = lambda m: (f'=IF({a(m)}=0,"",IF({A("disabled")}="Y","장애인",IF({st(C_SENIOR, s)}="Y","고령자",'   # noqa: E731
-                             f'IF({A("career")}="Y","경력단절",IF({A("defector")}="Y","북한이탈주민","청년")))))')
+                             f'IF({A("career")}="Y","경력단절",IF(AND({A("defector")}="Y",{A("hired")}>={k["defector_since"]}),'
+                             f'"북한이탈주민","청년")))))')
         hours = f'IF({A(avg)}="",N({A("hours")}),{A(avg)})' if avg else f'N({A("hours")})'
         f = {
             J_ID: f"={st(1, s)}", J_NAME: f"={st(2, s)}", J_BIRTH: f"={st(3, s)}", J_HIRED: f"={st(4, s)}",
@@ -750,12 +762,12 @@ def _credit(ws, k: KV, cnt: dict, rules: dict, rates: dict) -> KV:
             kind="total")
         c.section("세액공제액")
         won("total", "⑥ 세액공제액(⑳ + ㉖ + ㉜ + 신규공제 + ㊱)", f"={c['20']}+{c['26']}+{c['32']}+{c['new_total']}+{c['36']}",
-            "8호(갑) 코드 18S 당기발생액. 최저한세 · 이월 · 농어촌특별세는 조서 20 공제감면에서 봅니다", kind="total")
+            "별지 제8호서식(갑) 코드 18S 당기발생액. 최저한세 · 이월공제 · 농어촌특별세는 이 워크북이 계산하지 않고 신고서에서 반영합니다", kind="total")
         X.widths(ws, [48, 18, 100])
         return c
     c.section("세액공제액")
     won("total", "⑥ 세액공제액(⑳ + ㉖ + ㉜ + ㊱)", f"={c['20']}+{c['26']}+{c['32']}+{c['36']}",
-        "8호(갑) 코드 18S 당기발생액. 최저한세 · 이월 · 농어촌특별세는 조서 20 공제감면에서 봅니다", kind="total")
+        "별지 제8호서식(갑) 코드 18S 당기발생액. 최저한세 · 이월공제 · 농어촌특별세는 이 워크북이 계산하지 않고 신고서에서 반영합니다", kind="total")
     X.widths(ws, [48, 18, 100])
     return c
 
@@ -1196,7 +1208,9 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
                 continue
             j, s = JUDGE_FIRST + i, STAFF_FIRST + i
             jg = lambda col: ref(S_JUDGE[per], f"${L(col)}{j}")      # noqa: E731
-            young = f'AND({st(C_REGULAR, s)}="Y",{start}<{st(C_35, s)},{end}>={st(C_15, s)})'
+            # 청년 여부와 청년 제외시점은 상시근로자인 정규직만 적는다(기간제 · 단시간은 청년이 아니다)
+            youth_ok = f'AND({jg(REG)}="Y",{st(C_REGULAR, s)}="Y")'
+            young = f'AND({youth_ok},{start}<{st(C_35, s)},{end}>={st(C_15, s)})'
             vals = [
                 f"={jg(J_BIRTH)}", f"={jg(J_NAME)}", f"={jg(REG)}", f"={jg(REASON)}",
                 f'=IF({jg(WEIGHT)}<1,{jg(WEIGHT)},"")', f"={st(attr_col('resident'), s)}",
@@ -1204,7 +1218,7 @@ def _roster(ws, inp: Inputs, res: dict, k: KV, cnt: dict, judge_last: int) -> di
                 (f'=IF({jg(J_MW)}=0,"",TEXT(MONTH(MAX({jg(J_HIRED)},{start})),"00")&"~"&TEXT(MONTH(MIN({jg(J_LEFTX)},{end})),"00"))'),
                 f"={jg(M20)}", f"={jg(N21)}", f"={jg(M22)}", f"={jg(N23)}",
                 f'=IF({young},"Y","N")', f'=IF(AND({deem}="Y",ISNUMBER({st(C_DEEM, s)})),"Y","N")',
-                f'=IF({st(C_REGULAR, s)}="Y",IF({deem}="Y",{st(C_CUT, s)},{st(C_35, s)}),"")',
+                f'=IF({youth_ok},IF({deem}="Y",{st(C_CUT, s)},{st(C_35, s)}),"")',
                 f"={st(attr_col('disabled'), s)}", f"={st(C_SENIOR, s)}", f"={st(attr_col('career'), s)}",
                 f"={st(attr_col('defector'), s)}", f"={st(attr_col('converted'), s)}", returned_flag(per, s, start, end),
             ]
