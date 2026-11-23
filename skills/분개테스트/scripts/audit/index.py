@@ -278,6 +278,9 @@ def read_all(engagement_dir: Path, now: str | None = None, use_ocr: bool = True)
         excel = p.suffix.lower() in reader.EXCEL
         kind = f["kind"]
         need = f["path"] in touched or not _engine(f["facts"])
+        stale = (kind == reader.JOURNAL and p.suffix.lower() in reader.READABLE
+                 and f.get("journal_rules") != reader.JOURNAL_RULES)
+        need = need or stale
         if excel and need and "판독 필요" in kind and f.get("folder_kind") == priorwp.PRIOR_FOLDER and priorwp.looks_like_workpaper(p):
             # 전기 폴더의 손 조서(Lead · 감사절차 · Conclusion 라벨이 있는 엑셀). 원장 발췌 시트 때문에 분개장으로 읽히기 전에 먼저 본다
             f.update(kind=priorwp.PRIOR_WP, kind_basis="엔진", confirmed=True)
@@ -293,6 +296,8 @@ def read_all(engagement_dir: Path, now: str | None = None, use_ocr: bool = True)
         if need and kind in reader.READERS and readable:
             facts = reader.read(p, kind, fy_end)
             f["facts"] = facts + _ai(f["facts"])
+            if kind == reader.JOURNAL:
+                f["journal_rules"] = reader.JOURNAL_RULES
             (read if facts else unread).append(f["path"])
             # 판독 실패는 「파일 없음」 과 다르다. 까닭을 색인에 남기고 확인 전으로 둔다(R8)
             if facts:

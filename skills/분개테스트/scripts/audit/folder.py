@@ -173,7 +173,7 @@ def _carry(entry: dict, old: dict) -> None:
         entry.update(kind=old["kind"], kind_basis=old["kind_basis"], confirmed=old["confirmed"])
     elif any(x.get("basis") == "AI" for x in old.get("facts") or []):
         entry["confirmed"] = old["confirmed"]  # AI 사실이 붙은 파일은 회계사 확인 여부를 그대로 둔다
-    for k in ("facts", "linked_workpapers", "read_error", "needs_recheck"):
+    for k in ("facts", "linked_workpapers", "read_error", "needs_recheck", "journal_rules"):
         if old.get(k):
             entry[k] = old[k]
     # 회계사가 확인한 OCR 값은 같은 파일(해시)일 때만 잇는다. 파일이 바뀌면 확인이 풀린다(2026-10-18)

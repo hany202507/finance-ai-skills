@@ -358,6 +358,10 @@
               "type": "string",
               "description": "엔진 판독 종류인데 사실을 내지 못한 까닭(R8). 판독되면 지운다"
             },
+            "journal_rules": {
+              "type": "string",
+              "description": "이 분개장을 읽은 판독 규칙 판(reader.JOURNAL_RULES, 2026-11-23). 엔진 판과 다르면 파일이 그대로여도 다시 읽는다"
+            },
             "ocr_confirmed": {
               "type": "array",
               "description": "회계사가 쪽 그림과 대조해 확인한 OCR 값(2026-10-18, index apply 의 ocr_confirm). 파일 해시(sha256)가 같을 때만 쓴다. 분석이 이 값을 대사 · 이슈에 쓰고 ocr_checks 에서 뺀다",

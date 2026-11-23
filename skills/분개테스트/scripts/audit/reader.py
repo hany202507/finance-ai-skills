@@ -1107,14 +1107,29 @@ def journal_tables(path: Path) -> list[dict]:
         return _JCACHE[key]["tabs"]
     wb = _open(path)
     out = []
+    blank = set()                       # 이어지는 시트 사이에 낀 빈 시트(건너뛰고 앞 표를 잇는다)
     try:
-        for ws in wb.worksheets:
+        for wi, ws in enumerate(wb.worksheets):
             hit = _journal_header(ws.title, [tuple(r) for r in ws.iter_rows(values_only=True, max_row=HEADER_SCAN + 1)])
+            prev = out[-1] if out and _may_continue(path, out[-1], wi, blank) else None
             if hit:
                 rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
                 n = len(hit["above"])
-                hit.update(rows=rows[n + 1:], above=rows[:n], nrows=len(rows))
+                hit.update(rows=rows[n + 1:], above=rows[:n], nrows=len(rows), ws_index=wi)
+                if prev and _same_journal(prev, hit):
+                    # 다음 시트가 머리줄을 되풀이해 이어 쓴 꼴(머리줄 있는 이어짐)
+                    prev["continued"] = True
+                    hit["cont_of"] = prev.get("cont_of") or prev["sheet"]
                 out.append(hit)
+            elif prev:
+                rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+                if not any(_filled(r) for r in rows):
+                    blank.add(wi)
+                    continue
+                cont = _journal_continuation(prev, ws.title, rows, wi)
+                if cont:
+                    prev["continued"] = True
+                    out.append(cont)
     finally:
         wb.close()
     while len(_JCACHE) >= JOURNAL_CACHE_FILES:
@@ -1123,9 +1138,101 @@ def journal_tables(path: Path) -> list[dict]:
     return out
 
 
+# 엑셀 한 시트 행 한도. 옛 엑셀(.xls)은 65,536행이고 더존은 그보다 조금 앞(65,492행)에서 끊어 내보낸다. 한도의 99% 넘게 찼으면
+# 잘렸을 수 있다고 본다(workpapers.common 이 같은 값을 쓴다). 다음 시트로 이어 쓴 경우는 잘림이 아니다(journal_sheet_rows, 2026-11-23)
+SHEET_ROW_LIMIT = {".xls": 65_536, ".xlsx": 1_048_576, ".xlsm": 1_048_576}
+# 분개장 판독 규칙 판. 바꾸면 색인이 파일이 그대로여도 분개장을 다시 읽는다(index.read_all, 문서목록 files[].journal_rules, 2026-11-23)
+JOURNAL_RULES = "2026-11-23"
+
+
+def row_limit_hit(path: Path, nrows: int) -> int | None:
+    """시트 행 수가 그 형식의 한 시트 한도 99% 이상이면 한도, 아니면 None."""
+    lim = SHEET_ROW_LIMIT.get(Path(path).suffix.lower())
+    return lim if lim and nrows >= lim * 0.99 else None
+
+
+def _cut_at_limit(path: Path, nrows: int) -> bool:
+    """이어지는 시트를 찾을 때 앞 시트가 한도에서 끊겼다고 볼지. 그 형식의 한도에 더해, xlsx 라도 옛 엑셀 한도(65,536행) 바로 아래에서
+    끝난 시트는 xls 를 xlsx 로 바꾼 파일이라 본다(2026-11-23 밤 리뷰, xlsx 변환본이 둘째 시트를 버리고 잘림 표시도 없었다).
+    잘림 표시(row_limit_hit)는 형식 한도만 본다. 다음 시트가 이어짐으로 읽히지 않으면 변환본은 지금처럼 표시 없이 남는다."""
+    old = SHEET_ROW_LIMIT[".xls"]
+    return row_limit_hit(path, nrows) is not None or (Path(path).suffix.lower() in SHEET_ROW_LIMIT and old * 0.99 <= nrows <= old)
+
+
+# 이어지는 시트(2026-11-23 밤). 더존 분개장 xls 는 첫 시트 65,492행에서 끊고 머리줄 없는 다음 시트(Sheet2)로 이어 쓴다.
+# 한 전표의 차변 줄과 대변 줄이 두 시트에 나뉘기도 한다(실제 1월 1/30 181번). 앞 시트가 한도에 닿았고 바로 다음 시트에 머리줄이 없을 때,
+# 그 시트 앞 줄들이 앞 시트의 열로 일자와 금액 또는 계정이 읽히면 같은 분개장이 이어진 것으로 본다. 금액이 빈 줄(영세율 부가세예수금)도
+# 분개장 줄이라 계정 칸만 있어도 센다(1 · 3월 둘째 시트 앞 20줄의 세 줄에 한 줄이 그렇다)
+#
+# 2026-11-23 밤 리뷰에서 더 고친 것. 합계 줄은 표본에서 빼고 합계 줄만 넘어온 시트도 이어짐으로 본다. 맨 앞 제목 줄 몇 개와 사이사이
+# 일계 줄(일자 없는 줄)은 건너뛴다. 사이에 낀 빈 시트는 건너뛴다. 다른 표를 잇지 않게, 이어지는 첫 일자가 앞 시트 마지막 일자부터
+# CONT_DAYS 일 안이어야 하고. 맞지 않으면 잇지 않고 잘림으로 남는다
+CONT_SAMPLE = 20
+CONT_SHARE = 0.8
+CONT_DATED = 0.5          # 표본 가운데 일자 있는 줄의 몫(나머지는 일계 · 빈 일자 줄)
+CONT_LEAD = 5             # 첫 일자 줄 앞에 둘 수 있는 줄(제목 「분개장(계속)」 등)
+CONT_DAYS = 31
+_CONT_KEYS = ("dr", "cr", "amount", "signed", "dr_acc", "cr_acc", "code", "name")
+
+
+def _filled(r) -> bool:
+    return any(v not in (None, "") for v in r)
+
+
+def _may_continue(path: Path, prev: dict, wi: int, blank: set) -> bool:
+    """wi 시트가 prev 표를 이을 수 있는 자리인가. prev 시트가 한도에 닿았고 그 사이 시트가 모두 비었다."""
+    return all(j in blank for j in range(prev["ws_index"] + 1, wi)) and _cut_at_limit(path, prev["nrows"])
+
+
+def _last_date(t: dict):
+    for r in reversed(t["rows"]):
+        dt = _jdate(r, t["cols"])
+        if dt is not None:
+            return dt
+    return None
+
+
+def _follows(prev: dict, first) -> bool:
+    """이어지는 시트의 첫 일자가 앞 시트 마지막 일자 이후 CONT_DAYS 일 안이다(앞 시트에 일자가 없으면 보지 않는다)."""
+    last = _last_date(prev)
+    return last is None or 0 <= (first - last).days <= CONT_DAYS
+
+
+def _same_journal(prev: dict, hit: dict) -> bool:
+    """머리줄을 되풀이한 다음 시트가 앞 표와 같은 분개장인가(꼴 · 열이 같고 일자가 이어진다)."""
+    if hit["form"] != prev["form"] or hit["cols"] != prev["cols"]:
+        return False
+    first = next((dt for r in hit["rows"] if (dt := _jdate(r, hit["cols"])) is not None), None)
+    return first is not None and _follows(prev, first)
+
+
+def _journal_continuation(prev: dict, title: str, rows: list[tuple], wi: int) -> dict | None:
+    """머리줄 없는 시트가 앞 분개장 시트의 이어짐이면 앞 표의 머리줄 · 꼴 · 열로 만든 표, 아니면 None."""
+    c = prev["cols"]
+    keep = {k: v for k, v in prev.items() if k not in ("rows", "above", "nrows", "continued", "ws_index", "sheet")}
+    table = dict(keep, sheet=title, rows=rows, above=[], nrows=len(rows), ws_index=wi,
+                 cont_of=prev.get("cont_of") or prev["sheet"])
+    body = [r for r in rows if _filled(r) and not _is_total_row(r, loose=False)]
+    if not body:
+        return table                    # 합계 줄만 넘어온 시트(앞 시트가 마지막 분개장 줄로 꽉 찼다)
+    k = next((i for i, r in enumerate(body[:CONT_LEAD + 1]) if _jdate(r, c) is not None), None)
+    if k is None:
+        return None
+    win = body[k:k + CONT_SAMPLE]
+    dated = [r for r in win if _jdate(r, c) is not None]
+    if len(dated) < CONT_DATED * len(win):
+        return None
+    keys = [x for x in _CONT_KEYS if x in c]
+    ok = sum(1 for r in dated if any(_cell(r, c[x]) not in (None, "") for x in keys))
+    if ok < CONT_SHARE * len(dated) or not _follows(prev, _jdate(dated[0], c)):
+        return None
+    return table
+
+
 def journal_sheet_rows(path: Path) -> int:
-    """분개장 파일에서 가장 긴 분개장 시트의 행 수(머리줄 포함). 엑셀 한 시트 행 한도에 닿았는지 볼 때 쓴다(2026-11-09)."""
-    return max((t.get("nrows", 0) for t in journal_tables(Path(path))), default=0)
+    """분개장 파일에서 마지막 시트(다음 시트로 이어지지 않는 시트) 가운데 가장 긴 것의 행 수(머리줄 포함). 엑셀 한 시트 행 한도에
+    닿았는지 볼 때 쓴다(2026-11-09). 한도에 닿았어도 다음 시트로 이어 쓴 시트는 잘린 것이 아니라서 세지 않는다(2026-11-23)."""
+    return max((t.get("nrows", 0) for t in journal_tables(Path(path)) if not t.get("continued")), default=0)
 
 
 def _journal_header(sheet: str, rows) -> dict | None:
@@ -1186,7 +1293,8 @@ def journal_rows(path: Path) -> list[dict]:
                 continue
             g = lambda k: _cell(r, c[k]) if k in c else None  # noqa: E731
             vno, party, memo = g("voucher"), g("party"), g("memo")
-            base = {"sheet": sheet, "i": i, "date": dt, "voucher": None if vno in (None, "") else str(vno).strip(),
+            base = {"sheet": sheet, **({"part_of": t["cont_of"]} if t.get("cont_of") else {}),
+                    "i": i, "date": dt, "voucher": None if vno in (None, "") else str(vno).strip(),
                     "row": _num(g("row")), "memo": None if memo in (None, "") else str(memo).strip(),
                     "party": None if party in (None, "") else str(party).strip(),
                     "extra": {h: _cell(r, j) for h, j in extra_i.items()}}
@@ -1236,14 +1344,14 @@ CARRY_NAMES = ("이월이익잉여금", "미처분이익잉여금", "이월결�
 
 def _mark_closing(lines: list[dict]) -> None:
     """집합손익 계정 줄이 든 전표와 잉여금끼리만 옮기는 전표의 줄마다 closing=True. 전표번호가 없는 줄은 그 줄만 본다."""
-    keys = {(x["sheet"], x["date"], x["voucher"]) for x in lines if x["voucher"] and x["name"] in CLOSING_NAMES}
+    keys = {(x.get("part_of") or x["sheet"], x["date"], x["voucher"]) for x in lines if x["voucher"] and x["name"] in CLOSING_NAMES}
     by_v: dict[tuple, set] = {}
     for x in lines:
         if x["voucher"]:
-            by_v.setdefault((x["sheet"], x["date"], x["voucher"]), set()).add(x["name"])
+            by_v.setdefault((x.get("part_of") or x["sheet"], x["date"], x["voucher"]), set()).add(x["name"])
     keys |= {k for k, names in by_v.items() if names and names <= set(CARRY_NAMES) and len(names) > 1}
     for x in lines:
-        x["closing"] = (x["name"] in CLOSING_NAMES) or (x["voucher"] is not None and (x["sheet"], x["date"], x["voucher"]) in keys)
+        x["closing"] = (x["name"] in CLOSING_NAMES) or (x["voucher"] is not None and (x.get("part_of") or x["sheet"], x["date"], x["voucher"]) in keys)
 
 
 def _journal(path: Path):

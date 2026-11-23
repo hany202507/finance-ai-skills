@@ -351,7 +351,7 @@ def journals(d: Path) -> dict:
 
 # 엑셀 한 시트 행 한도. 옛 엑셀(.xls)은 65,536행이고 더존은 그보다 조금 앞에서 끊어 내보낸다(2026-11-09 실제 분개장 65,492행).
 # 한도의 99% 넘게 찼으면 잘렸을 수 있다고 본다
-SHEET_ROW_LIMIT = {".xls": 65_536, ".xlsx": 1_048_576, ".xlsm": 1_048_576}
+SHEET_ROW_LIMIT = reader.SHEET_ROW_LIMIT          # 한 시트 행 한도(정의는 reader, 2026-11-23)
 _YM_IN_NAME = (re.compile(r"(?<!\d)(20\d{2})[-_.]?(0[1-9]|1[0-2])(?!\d)"), re.compile(r"(?<!\d)(\d{2})(0[1-9]|1[0-2])(?!\d)"))
 _M_IN_NAME = re.compile(r"(?<!\d)(1[0-2]|0?[1-9])\s*월")
 
