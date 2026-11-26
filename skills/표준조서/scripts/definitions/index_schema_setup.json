@@ -1,0 +1,15 @@
+{
+ "$comment": "감사 세팅 색인(2026-10-26, 카드). audit/setup.py 가 쓰고 audit/status.py required_extra 가 읽는다(감시 F3). 감사건.json 은 칸을 더 받지 않아 규모를 여기에 둔다.",
+ "필수조서.json": {
+  "type": "object",
+  "required": ["size"],
+  "additionalProperties": false,
+  "properties": {
+   "format_version": {"const": 1},
+   "size": {"enum": ["소규모", "일반", "상장"]},
+   "required": {"type": "array", "items": {"type": "string"}},
+   "basis": {"type": "string"},
+   "set_at": {"type": "string"}
+  }
+ }
+}

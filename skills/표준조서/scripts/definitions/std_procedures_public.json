@@ -1,0 +1,3091 @@
+{
+ "note": "표준조서 공개판 표지 절차 목록. 한공회 감사조서서식 4000 Part 1 · Part 2 의 번호와 경영진 주장만 옮겼고 절차 문장은 싣지 않는다. 문장은 한공회 서식을 본다. 4000C Part 1 은 사무소 말로 줄인 제목과 할 일이다.",
+ "1": {
+  "A": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "C",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "B": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "O",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "O",
+      "CO",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "11.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "SAJ": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO",
+      "O",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "DER": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "A",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "C": {
+   "items": [
+    {
+     "step": "1. 총괄표: 당기말 잔액을 총계정원장(시산표)과, 전기말 잔액을 전기 감사보고서와 대조하고 큰 변동의 원인을 밝힌다",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2. 거래처별 명세서: 거래처별 명세서의 합계를 검산해 장부와 대조하고, 유의적이거나 비경상적인 항목을 훑어본다",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3. 외부조회: 조회 대상을 고르고, 회신을 장부 잔액과 대사하고, 회신이 없는 곳은 대체 절차를 한다",
+     "assertions": [
+      "E",
+      "RO",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4. 계정 분류와 장단기 구분: 일반 상거래가 아닌 채권이 섞였는지 보고 재분류 여부를 정하고, 장단기 구분이 맞는지 본다",
+     "assertions": [
+      "V",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5. 회수가능성과 대손충당금: 연령분석, 회전율과 회수기일 분석, 회수가 의심되는 채권의 개별 검토(경영진 질문 · 담보), 설정 기준과 전기 비율 비교로 대손충당금이 맞는지 본다",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6. 기간귀속: 결산일 전후의 제품 인도와 용역 제공이 맞는 기간에 기록됐는지 본다",
+     "assertions": [
+      "RO",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7. 외화환산: 외화 매출채권의 결산일 환산을 다시 계산해 본다",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8. 특수관계자 채권: 명세서에서 특수관계자 채권과 거래를 가려내 금액을 확정하고 3500 특수관계자 조서와 주석으로 잇는다",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9. 공시: 확정 금액을 주석과 대사하고 공시사항(담보 제공, 특수관계자, 대손충당금 변동 등)을 검토한다",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "10. 감사결론",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "DL": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "A",
+      "C",
+      "CL",
+      "E"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A",
+      "E",
+      "CL",
+      "O"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "A",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "O"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "U",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "D": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A",
+      "E",
+      "C",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A",
+      "E",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "10.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "E": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "RO",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "11.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "12.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "E100": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "V"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "E"
+     ],
+     "link": "sheet"
+    }
+   ]
+  },
+  "F": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "RO",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "11.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "12.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "G": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "11.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "H": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "8.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "I": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A",
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "10.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "J": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "O",
+      "V"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "O",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "E",
+      "O",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "11.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "AA": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "RO",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "RO",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "8.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "BBDD": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "RO",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "11.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "12.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "CC": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "RO",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A",
+      "E",
+      "C",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A",
+      "E",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL",
+      "U",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "11.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "EE": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "C",
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "E",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "V",
+      "A",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "E",
+      "RO",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "FF": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "C",
+      "E",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A",
+      "E",
+      "C",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "10.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "11.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "FFF": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A",
+      "E",
+      "C",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "TUL": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "RO",
+      "C",
+      "V"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "RO",
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "CL": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A",
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "V",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "GG": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "P": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "O",
+      "A",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "O",
+      "C",
+      "A",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "O",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "Q": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "O",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "9.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "10.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "R": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "O",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "CO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "8.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "9.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "S": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "O",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "CL"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "T": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "O",
+      "CL"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "C",
+      "A",
+      "RO"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "U": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "O"
+     ],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "O",
+      "CL"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "O",
+      "A"
+     ],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "JV": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "CL",
+      "P"
+     ],
+     "link": "notes"
+    },
+    {
+     "step": "5.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  },
+  "IOC": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "sheet"
+    }
+   ]
+  },
+  "CF": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [],
+     "link": "lead"
+    },
+    {
+     "step": "2.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "3.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "4.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "5.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "6.",
+     "assertions": [],
+     "link": "sheet"
+    },
+    {
+     "step": "7.",
+     "assertions": [],
+     "link": "notes"
+    },
+    {
+     "step": "8.",
+     "assertions": [],
+     "link": "lead"
+    }
+   ]
+  }
+ },
+ "2": {
+  "A": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "RO"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "RO"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "CL",
+      "V"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "V"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C",
+      "CL"
+     ]
+    }
+   ]
+  },
+  "B": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "RO",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "CL"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "V"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "C",
+      "RO"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "V"
+     ]
+    }
+   ]
+  },
+  "DER": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "C",
+      "CL"
+     ]
+    }
+   ]
+  },
+  "C": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "RO"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "RO",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "V"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "V"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A",
+      "C"
+     ]
+    }
+   ]
+  },
+  "D": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "CO"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "RO"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "E": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "V"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "CL"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "RO",
+      "V"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": []
+    }
+   ]
+  },
+  "E100": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "O",
+      "E"
+     ]
+    }
+   ]
+  },
+  "F": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": []
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "CL"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": []
+    }
+   ]
+  },
+  "G": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "V",
+      "C"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": []
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    }
+   ]
+  },
+  "H": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    }
+   ]
+  },
+  "I": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "J": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    }
+   ]
+  },
+  "AA": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": []
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C",
+      "A",
+      "RO",
+      "V"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "CL"
+     ]
+    }
+   ]
+  },
+  "BBDD": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "RO",
+      "C",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "RO",
+      "V",
+      "A",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "V"
+     ]
+    }
+   ]
+  },
+  "CC": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "V"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "FF": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "RO",
+      "C",
+      "V"
+     ]
+    }
+   ]
+  },
+  "FFF": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "TUL": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "C"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "C"
+     ]
+    },
+    {
+     "step": "7.",
+     "assertions": [
+      "C",
+      "CO"
+     ]
+    }
+   ]
+  },
+  "CL": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "RO",
+      "CL"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "RO",
+      "O",
+      "C",
+      "CL"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "RO",
+      "C"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "GG": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "E",
+      "C",
+      "V"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "E",
+      "RO",
+      "V"
+     ]
+    },
+    {
+     "step": "5.",
+     "assertions": [
+      "E",
+      "RO",
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "6.",
+     "assertions": [
+      "CL"
+     ]
+    }
+   ]
+  },
+  "P": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "O",
+      "C",
+      "A",
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A"
+     ]
+    }
+   ]
+  },
+  "Q": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ]
+    }
+   ]
+  },
+  "R": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    }
+   ]
+  },
+  "S": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "C",
+      "V",
+      "A"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "A"
+     ]
+    }
+   ]
+  },
+  "T": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "C",
+      "A"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A"
+     ]
+    },
+    {
+     "step": "3.",
+     "assertions": [
+      "O",
+      "C",
+      "A"
+     ]
+    },
+    {
+     "step": "4.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  },
+  "U": {
+   "items": [
+    {
+     "step": "1.",
+     "assertions": [
+      "CL"
+     ]
+    },
+    {
+     "step": "2.",
+     "assertions": [
+      "A",
+      "E",
+      "C"
+     ]
+    }
+   ]
+  }
+ }
+}

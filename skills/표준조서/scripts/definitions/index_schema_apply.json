@@ -1,0 +1,99 @@
+{
+  "$comment": "수정 반영과 판 관리 색인(2026-10-12). audit/apply.py 가 쓴다. 판.json 은 판 목록과 지금 판, 수정반영.json 은 마지막 반영(또는 되돌리기)에서 바뀐 숫자다. signature 는 그 판의 문서가 담고 있는 회계사 기입(8100A 처리 수정 분개 · 8100B 수정 제안 반영 예)과 회사제시 판이다. 숫자는 모두 엔진 문서에서 읽은 값이다.",
+  "판.json": {
+    "type": "object",
+    "required": ["format_version", "current", "versions"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "current": {"type": ["integer", "null"], "description": "감사 폴더가 지금 어느 판 상태인지. 판이 없으면 null"},
+      "versions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["no", "at", "kind", "path", "signature", "files", "hash_list_sha256"],
+          "additionalProperties": false,
+          "properties": {
+            "no": {"type": "integer", "minimum": 0},
+            "at": {"type": "string"},
+            "kind": {"enum": ["처음", "반영", "되돌리기 전"]},
+            "path": {"type": "string", "description": "감사 폴더 기준 상대경로(_판/<번호>_<시각>)"},
+            "parent": {"type": ["integer", "null"], "description": "이 판을 만들 때의 지금 판. --undo 가 번호 없이 돌아갈 판"},
+            "note": {"type": "string"},
+            "signature": {
+              "type": "object",
+              "required": ["adjust", "wtb", "company_version"],
+              "additionalProperties": false,
+              "properties": {
+                "adjust": {"type": "array", "items": {"type": "array"}, "description": "[이슈, 계정코드, 차변, 대변]"},
+                "wtb": {"type": "array", "items": {"type": "string"}},
+                "company_version": {"type": ["string", "null"]}
+              }
+            },
+            "files": {"type": "integer", "minimum": 0},
+            "hash_list_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    }
+  },
+  "수정반영.json": {
+    "type": "object",
+    "required": ["format_version", "at", "kind", "version", "changed_numbers", "changed_files", "not_rebuilt", "mismatches"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "at": {"type": "string"},
+      "kind": {"enum": ["반영", "되돌림"]},
+      "version": {"type": "integer"},
+      "from_version": {"type": ["integer", "null"]},
+      "note": {"type": "string"},
+      "triggers": {"type": "array", "items": {"type": "string"}},
+      "changed_numbers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["workpaper", "item", "before", "after", "diff"],
+          "additionalProperties": false,
+          "properties": {
+            "workpaper": {"type": "string"},
+            "item": {"type": "string"},
+            "before": {"type": ["number", "null"]},
+            "after": {"type": ["number", "null"]},
+            "diff": {"type": ["number", "null"]}
+          }
+        }
+      },
+      "changed_files": {"type": "array", "items": {"type": "string"}},
+      "unchanged_files": {"type": "array", "items": {"type": "string"}},
+      "new_files": {"type": "array", "items": {"type": "string"}},
+      "not_rebuilt": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["path", "why"],
+          "additionalProperties": false,
+          "properties": {"path": {"type": "string"}, "why": {"type": "string"}}
+        }
+      },
+      "mismatches": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {"type": "string"},
+            "area": {"type": ["string", "null"]},
+            "where": {"type": ["string", "null"]},
+            "item": {"type": ["string", "null"]},
+            "doc": {"type": ["number", "null"]},
+            "ref": {"type": ["number", "null"]},
+            "diff": {"type": ["number", "null"]}
+          }
+        }
+      },
+      "errors": {"type": "array", "items": {"type": "string"}},
+      "notes": {"type": "array", "items": {"type": "string"}}
+    }
+  }
+}

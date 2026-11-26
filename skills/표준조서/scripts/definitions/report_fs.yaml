@@ -1,0 +1,73 @@
+# 보고 단계(R4 report) 정의 (2026-10-05)
+#
+# 계정코드 앞 3글자로 재무제표 위치를 정한다. 더존 표준 대역을 따른 가정이고, 실제 회사 코드표와 같다고 보증하지 않는다.
+# 회사 코드표가 다르면 이 파일의 범위만 고친다. 범위 밖 계정은 재무제표에 넣지 않고 푸팅에서 '확인'으로 보인다.
+# 2026-10-06(R8): 영업외수익을 901~950 에서 901~930 으로, 영업외비용을 951~ 에서 931~ 로 고쳤다. 더존 표준 계정체계에서
+# 931 이자비용부터가 영업외비용이고 accounts.yaml code_sections 도 그렇다(샘플 진단 #6, 931~950 비용 계정을 수익으로 묶던 결함).
+# 501~799(제조 · 도급 · 분양 · 운송 원가 계정)는 범위에 넣지 않는다. 마감 전 시산표의 원가 계정은 원가명세서를 거쳐 매출원가와
+# 재고로 나뉘므로 재무제표 위치를 엔진이 정하지 않고 '판독 필요' 로 남긴다(근거가 확정되면 그때 범위를 둔다).
+# 쓰는 곳: audit/report/fs.py(재무제표 구조) · misstatement.py(8100A 영향 구분) · notes.py(주석 골격)
+
+# sign: 표시 부호. 시산표는 차변 +, 대변 − 이므로 부채 · 자본 · 수익은 −1 을 곱해 양수로 보인다
+groups:
+  - {key: 유동자산, side: 자산, from: 101, to: 175, sign: 1}
+  - {key: 비유동자산, side: 자산, from: 176, to: 250, sign: 1}
+  - {key: 유동부채, side: 부채, from: 251, to: 290, sign: -1}
+  - {key: 비유동부채, side: 부채, from: 291, to: 330, sign: -1}
+  - {key: 자본, side: 자본, from: 331, to: 399, sign: -1}
+  - {key: 매출액, side: 손익, from: 401, to: 450, sign: -1}
+  - {key: 매출원가, side: 손익, from: 451, to: 500, sign: 1}
+  - {key: 판매비와관리비, side: 손익, from: 801, to: 900, sign: 1}
+  - {key: 영업외수익, side: 손익, from: 901, to: 930, sign: -1}
+  - {key: 영업외비용, side: 손익, from: 931, to: 997, sign: 1}
+  - {key: 법인세비용, side: 손익, from: 998, to: 999, sign: 1}
+
+# 당기순이익을 더해 마감 후 금액으로 보이는 계정(시산표는 마감 전이다)
+retained_earnings: {from: 351, to: 380}
+
+# 8100A 왜곡표시 영향 구분(한공회 8100A 열 구성)
+categories:
+  - {key: 자산·유동, from: 101, to: 175}
+  - {key: 자산·비유동, from: 176, to: 250}
+  - {key: 부채·유동, from: 251, to: 290}
+  - {key: 부채·비유동, from: 291, to: 330}
+  - {key: 자본, from: 331, to: 399}
+  - {key: 손익·법인세 전, from: 401, to: 997}
+  - {key: 법인세비용, from: 998, to: 999}
+
+# 당기 표시과목을 전기 재무제표에서 찾을 때 같은 과목으로 보는 이름
+aliases:
+  금융원가: [이자비용, 금융비용]
+  이자비용: [금융원가, 금융비용]
+  현금및현금성자산: [현금및예금, 현금성자산]
+  매출액: [수익, 영업수익]
+
+# 전기 재무제표에서 과목이 아니라 합계로 보는 이름(푸팅 전기 대사에 쓴다)
+prior_totals: [자산총계, 부채총계, 자본총계, 부채와자본총계, 부채및자본총계, 유동자산, 비유동자산, 유동부채, 비유동부채,
+               매출총이익, 영업이익, 영업손실, 법인세비용차감전순이익, 당기순이익, 당기순손실,
+               매출총손실, 법인세비용차감전순손실, 법인세차감전순이익, 법인세차감전순손실]   # R8: 손실 이름도 합계 줄
+
+# 2700A 기입값도 분석 적용값도 없을 때 8100A 에 참고로만 보이는 전체 중요성 후보. 정하는 것은 감사인이다.
+# 백분율은 methodology.yaml 기본값과 같게 둔다(2026-10-07 맞춤: 매출 0.5% → 1%)
+materiality_candidates:
+  - {base: 법인세비용차감전순이익, pct: 0.05}
+  - {base: 매출액, pct: 0.01}
+  - {base: 자산총계, pct: 0.005}
+
+# 주석 골격(일반기업회계기준). kind 는 notes.py 의 만드는 방법, units 는 관련 재무제표 과목 이름
+notes:
+  - {key: overview, title: 회사의 개요, kind: overview}
+  - {key: policy, title: 중요한 회계정책, kind: policy}
+  - {key: cash, title: 현금및현금성자산, kind: lines, units: [현금및현금성자산, 현금, 현금및예금]}
+  - {key: ar, title: 매출채권, kind: lines, units: [매출채권, 외상매출금]}
+  - {key: inventory, title: 재고자산, kind: lines, units: [재고자산]}
+  - {key: ppe, title: 유형자산, kind: fixed_assets, units: [유형자산]}
+  - {key: intangible, title: 무형자산, kind: movement, units: [무형자산]}
+  - {key: borrowings, title: 차입금, kind: borrowings, units: [단기차입금, 유동성장기부채, 장기차입금, 차입금]}
+  - {key: retirement, title: 퇴직급여, kind: retirement}
+  - {key: equity, title: 자본, kind: equity}
+  - {key: revenue, title: 매출, kind: revenue}
+  - {key: tax, title: 법인세비용, kind: tax}
+  - {key: related, title: 특수관계자, kind: related}
+  - {key: contingent, title: 우발부채와 약정사항, kind: contingent}
+  - {key: subsequent, title: 후속사건, kind: subsequent}

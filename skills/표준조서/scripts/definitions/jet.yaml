@@ -1,0 +1,379 @@
+# 분개 테스트(3600-JET) 시험 정의 (R4 실행, 2026-10-05)
+#
+# audit/workpapers/jet.py 가 읽는다. 분개장 전수를 엔진이 판독하고 시험마다 걸린 전표를 결과 목록에 적는다.
+# 시험 문구의 근거: 감사기준서 240(부정) 문단 33(a) · A42~A45, 한공회 3600 부정의 검토 분개 테스트 절차.
+# (2026-10-21 회계위키 원문 대조로 고침. 예전에는 국제기준 번호 「32(a) · A41~A44」 를 적었다. 한국 기준서는 33(a) 가 분개 테스트 요구사항이고 A44 가 부정한 분개의 특성이다)
+# 기준값(일수 · 비율 · 횟수)은 탐지 감도다. 판단 기준이 아니다. 대표 블라인드 대조로 조정하고 날짜와 까닭을 남긴다.
+#
+# review: required 면 그 시험에 걸린 전표가 「먼저 볼 전표」 시트에 전표마다 한 줄로 올라 확인 결과를 적어야 검사를 통과한다
+# (2026-10-24, 전에는 결과 목록의 시험 × 전표마다 적었다). optional 이면 결과 목록에서 시험 단위 확인만 받는다.
+
+version: 1
+
+# 더존 계정코드 앞 세 자리 기준 계정 묶음. 회사 계정코드가 다르면 names 낱말로 찾는다
+accounts:
+  revenue: {ranges: [[401, 430]], names: [매출], except: [매출채권, 외상매출금, 매출원가]}   # except: 2026-10-21, 코드 없는 분개장에서 외상매출금 · 매출원가를 매출로 읽던 것을 막는다
+  receivable: {ranges: [[108, 110]], names: [외상매출금, 받을어음, 매출채권]}
+  cash: {ranges: [[101, 106]], names: [현금, 예금]}
+  vat_output: {ranges: [[255, 255]], names: [부가세예수금]}
+  other_payable: {ranges: [[253, 253]], names: [미지급금]}
+  # 2026-10-24 추가. 선수금(계약부채)을 매출로 넘기는 것은 수행의무를 이행한 만큼의 정상 수익 인식이다(일반기준 16장 · K-IFRS 1115).
+  # 구독 매출 회사에서 「매출 상대 계정이 매출채권 · 현금이 아님」 규칙에 달마다 걸려 드문 조합의 대부분이 되던 것을 뺀다(가상 회사 세트 약 140건)
+  advances: {ranges: [[259, 259]], names: [선수금, 선수수익, 계약부채]}
+  asset: {ranges: [[101, 250]]}
+  # 2026-11-09 4단계 추가. 매입채무 · 미지급금(현금 없이 이익을 늘린 전표의 「채무」), 가계정, 추정 계정
+  payable: {ranges: [[251, 253]], names: [외상매입금, 매입채무, 지급어음, 미지급금]}
+  suspense: {ranges: [[134, 134], [257, 257]], names: [가지급금, 가수금, 미결산, 가계정, 전도금, 임시계정], any: true}
+  estimates: {names: [충당금, 충당부채, 대손상각, 평가손실, 평가이익, 손상차손, 재고자산평가], any: true}
+  expense: {ranges: [[451, 899], [951, 999]]}
+  # 2026-10-21 추가. 손익 효과는 매출 · 매출원가(401~499)와 판관비 · 영업외 · 법인세(801~999)로 센다. 제조원가(501~799)는 재고로 가므로 뺀다.
+  # 코드가 없는 줄만 names 로 찾고 except 낱말이 든 계정명(외상매출금 · 선급비용 · 이익잉여금 등)은 뺀다
+  # 코드도 없고 시산표에도 같은 이름이 없을 때만 낱말로 본다. unless 낱말(환입 · 전입액)은 except 를 넘어 손익으로 넣는다(대손충당금환입 · 충당부채전입액).
+  # 2026-10-21 검토: 판관비 이름(복리후생비 · 지급수수료 · 경상연구개발비 등)을 더하고, 자기주식처분이익 · 기타포괄손익(자본)을 뺐다
+  pnl: {ranges: [[401, 499], [801, 999]],
+        names: [매출, 수익, 이익, 비용, 원가, 손실, 급여, 상여, 상각비, 수수료, 임차료, 보험료, 세금과공과, 운반비, 복리후생비, 접대비, 기업업무추진비,
+                광고선전비, 여비교통비, 통신비, 수도광열비, 소모품비, 연구개발비, 차량유지비, 교육훈련비, 도서인쇄비, 수선비, 법인세, 잡비, 전입액, 환입],
+        except: [매출채권, 외상매출금, 받을어음, 잉여금, 준비금, 충당, 누계액, 미수, 선급, 선납, 미지급, 예수, 이연, 선수, 기타포괄, 자기주식, 법인세부채],
+        unless: [환입, 전입액]}
+  # any: true 인 묶음은 코드가 있어도 계정명 낱말로 찾는다(더존 코드 체계가 아닌 회사도 잡게)
+  # 「임원」 은 임원대여금 · 임원장기대여금 · 임원차입금을 잡고, 임원급여 · 상여 · 퇴직금 같은 비용은 except 로 뺀다(2026-10-21 검토)
+  related: {ranges: [[134, 134], [257, 257]], names: [가지급금, 가수금, 주임종, 주.임.종, 주·임·종, 주주, 대표이사, 특수관계, 임원, 종업원대여],
+            except: [급여, 상여, 퇴직, 보수, 복리], any: true}
+  # 「기타포괄손익-공정가치측정금융자산」 은 자산이라 뺀다. 그 평가이익 · 평가손실(기타포괄손익)은 자본이라 넣는다(2026-10-21 검토)
+  equity: {ranges: [[331, 399]], names: [자본금, 잉여금, 자본조정, 자기주식, 기타포괄, 주식발행초과금, 감자차익, 주식선택권],
+           except: [금융자산], unless: [평가이익, 평가손실], any: true}
+
+# 거래처 이름에 이 낱말이 들면 대표 · 주주 · 임원 관련 거래로 본다(2026-10-21)
+related_parties: [대표이사, 대표자]
+
+# 작성자 · 승인자 · 입력일시 열 이름(2026-10-21). 분개장 머리줄에서 괄호 · 빈칸을 뺀 이름이 정확히 같아야 한다(reader.JOURNAL_EXTRA 에도 있다).
+# 이 열이 없으면 self_approval · rare_user · late_entry · off_hours 시험은 돌지 않고 까닭을 적는다
+entry_columns:
+  user: [작성자, 입력자, 등록자, 작성자명, 입력자명, 등록자명, 입력사원, 사용자]
+  approver: [승인자, 결재자, 승인자명, 결재자명, 확정자]
+  entered: [입력일시, 입력일자, 입력일, 등록일시, 등록일자, 등록일, 작성일시, 최초입력일시, 작성일자]   # 작성일자: 더존 「전표작성정보 년/월/일」(2026-11-09)
+  entered_time: [입력시각, 입력시간, 등록시각, 등록시간]   # 입력일자와 시각이 다른 열인 분개장(2026-10-21 검토). 입력일시에 시각이 없을 때 합친다
+
+
+# 검토 대상 고르기 · 반복 전표 묶기(2026-11-09 3단계, 설계 문서 4.2 · 4.3).
+# 아래 값과 시험별 weight 는 회계법인 방법론(PCAOB 2025 · ICAI · 감사기준서 240 A45)을 참고한 예시 값이다. 회계사가 회사 위험에 맞게 바꾼다.
+# 점수 = 걸린 시험의 weight 합 + 금액 점수. 필수 검토(review: required) 시험에 하나라도 걸린 전표만 고른다.
+selection:
+  # 이 시험에 걸린 전표는 점수와 상관없이 전부 본다(기말 · 결산 후 · 경영진 무시 위험이 가장 직접적인 시험, 240 A45)
+  all_tests: [post_ye_reversal, near_ye_large, profit_up, manual_adjust, opposite_cause, self_approval, late_entry, no_collection]
+  all_min: trivial      # 위 시험이라도 이 금액 미만이면 점수 순으로 넘긴다. trivial(명백히 사소한 금액) | 숫자 | 0
+  top_n: 25             # 나머지는 점수 높은 순으로 이만큼. 같은 반복 묶음에서는 한 건만 고른다
+  amount_points: [[1.0, 2], [0.5, 1]]   # 금액 ÷ 수행중요성이 1 이상이면 +2, 0.5 이상이면 +1
+recurring:
+  # 차변 계정 · 대변 계정 · 거래처 · 금액 크기대가 같은 전표가 min_months 개 달 이상, min_count 건 이상이면 반복 전표 한 묶음으로 본다
+  # (카드 대금 · 급여 · 감가상각처럼 같은 꼴이 달마다 나오는 전표. 점수 상위를 고를 때 묶음마다 한 건만 대표로 올린다)
+  min_months: 3
+  min_count: 3
+  amount_steps: 4       # 금액 크기대도 같아야 한 묶음이다. 10배를 4 구간으로 나눈다(약 1.8배 폭). 0 이면 금액을 보지 않는다
+tests:
+  - id: weekend
+    title: 주말 · 공휴일 전표
+    condition: 전표 일자가 토요일 · 일요일 또는 아래 공휴일
+    review: optional
+    weight: 1
+  - id: post_ye_reversal
+    title: 기말 후 취소 · 역분개
+    condition: 결산일 후 전표 가운데 결산일 전 window_before 일 안의 전표와 계정 · 거래처 · 금액이 같고 차대가 반대인 것. 원 전표와 짝으로 적는다. 짝이 없어도 결산일 후 매출 차변 전표는 따로 적는다
+    window_before: 45
+    window_after: 60
+    review: required
+    weight: 3
+  - id: near_ye_large
+    title: 결산일 근처 큰 금액
+    condition: 결산일 전 days 일 안의 전표 가운데 전표 금액이 수행중요성 × ratio 이상
+    days: 15
+    ratio: 0.5
+    review: required
+    weight: 2
+  - id: rare_pair
+    title: 드문 계정 조합
+    condition: 차변 계정 묶음 · 대변 계정 묶음이 당기에 max_count 번 이하 나온 전표, 또는 아래 rules 에 걸린 전표
+    max_count: 1
+    # 규칙 하나가 당기 전표의 5% 와 widespread_min 건 가운데 큰 쪽보다 많이 걸리면 목록 대신 계정별 건수 메모로 남긴다(2026-10-21 실제 회사 분개장의 자동 매출 전표).
+    # 당기 1번 나온 조합(max_count)은 이 기준을 받지 않는다
+    widespread: 0.05
+    widespread_min: 5
+    rules:
+      - {title: 매출 상대 계정이 매출채권 · 현금 · 부가세예수금이 아님, credit: revenue, debit_not: [receivable, cash, revenue, advances]}
+      - {title: 매출 대 미지급금, any_of: [revenue], with: [other_payable]}
+      - {title: 비용을 자산으로 대체, credit: expense, debit: asset}
+      # credit_except: 대변 매출 계정이 모두 이 낱말이 든 계정이면 뺀다. 해외 · 수출 매출은 영세율이라 부가세예수금이 없는 것이 정상이다(2026-10-21 실제 회사 분개장의 해외매출)
+      - {title: 부가세예수금 없는 외상 매출, debit: receivable, credit: revenue, without: vat_output, credit_except: [해외, 수출, 영세],
+         widespread_note: 부가세를 다른 전표로 모아 잡는지 회사에 확인하고 매출을 부가세 신고서 과세표준과 대사해 주십시오}
+    review: required
+    weight: 2
+  - id: round
+    title: 끝자리 0 반복
+    condition: 전표 금액이 unit 원 단위로 떨어지고 min_amount 원 이상
+    unit: 10000000
+    min_amount: 100000000
+    review: optional
+    weight: 1
+  - id: no_memo
+    title: 적요 없음
+    condition: 적요가 비어 있는 행이 있는 전표
+    review: optional
+    weight: 1
+  - id: manual_adjust
+    title: 수기 조정 전표
+    condition: 입력구분 열이 수기 · 수동 · 조정이면 그 전표. 그 열이 없으면 결산일 전 days 일 안에서 적요에 keywords 가 든 전표(열이 없어 적요로 대신함을 시트에 적는다)
+    columns: [입력구분, 전표구분, 입력방법, 작성구분]
+    values: [수기, 수동, 조정, 결산]
+    keywords: [조정, 정산, 대체, 수정, 자산화, 실사]
+    days: 15
+    review: required
+    weight: 3
+  # ---- 2026-10-21 추가(대표 「시나리오가 얕다」). 감사기준서 240 A44 의 부정한 분개 특성(드문 계정 · 통상 분개하지 않는 직원 · 장부마감 후 입력 ·
+  # 계정 식별번호 없는 분개 · 어림수)과 계정의 성격(보고기간말 조정), 감사기준서 550 특수관계자를 시험으로 옮기고,
+  # 실무 JET 기준(전표번호 연속성 · 중복 의심 · 자기 승인 · 업무 시간이 아닌 입력)을 더했다.
+  # 기존 일곱 시험의 순서와 기준은 그대로 둔다(요약 시트 행 · 교안 건수가 그대로다)
+  - id: integrity
+    title: 전표 형식 이상
+    condition: 전표 하나의 차변 합계와 대변 합계가 다르거나, 계정이 빈 줄 · 음수 금액 줄이 있는 전표(240 A44 계정 식별번호 없는 분개). 음수 금액 전표가 많으면 목록 대신 메모
+    widespread: 0.05      # 음수 금액 전표가 당기 전표의 5% 와 widespread_min 건 가운데 큰 쪽을 넘으면 마이너스 전표를 늘 쓰는 회사로 본다(2026-10-21 검토)
+    widespread_min: 5
+    review: required
+    weight: 2
+  - id: voucher_seq
+    title: 전표번호 중복 · 순서 역전
+    condition: 같은 전표번호가 다른 날짜에 있거나, 번호는 뒤인데 일자가 앞 번호 전표들보다 min_days 일 이상 앞선 전표(나중에 끼워 넣은 전표 의심). 빠진 번호는 「전표번호 연속성」 시트에 적는다
+    min_days: 7
+    widespread: 0.05   # 순서 역전이 당기 전표의 5% 와 widespread_min 건 가운데 큰 쪽을 넘으면 번호를 입력 순서대로 붙이는 회사로 보고 목록에 올리지 않는다
+    widespread_min: 5
+    # 번호를 새로 붙이는 단위(앞부분 전체 → 달 → 일자) 가운데, 같은 번호가 다른 날짜에 있는 전표가 dup_ratio 이하인 첫 단위를 고른다.
+    # 2026-10-21 검토: 번호 개수가 아니라 전표 수로 센다(전표가 많은 하루에 판정이 끌려가 더존 일자별 번호를 연속 번호로 읽던 것)
+    dup_ratio: 0.05
+    band_gap: 1000     # 번호가 이보다 크게 떨어지면 다른 번호대로 나눠 빠진 번호를 센다(일반전표 00001~ · 매입매출전표 50001~)
+    review: required
+    weight: 2
+  - id: one_time_party
+    title: 한 번만 나온 거래처의 큰 금액
+    condition: 당기 분개장에 전표 하나로만 나온 거래처(전기 분개장이 있으면 전기에도 없던 거래처)의 전표 가운데 금액이 수행중요성 × ratio 이상
+    ratio: 0.5
+    review: required
+    weight: 2
+  - id: profit_up
+    title: 결산일 근처 이익을 늘린 전표
+    condition: 결산일 전 days 일 안의 전표 가운데 손익계정 순효과(수익 · 비용 계정의 대변 − 차변)로 이익을 수행중요성 × ratio 이상 늘린 것
+    days: 15
+    ratio: 0.5
+    review: required
+    weight: 3
+  - id: duplicate
+    title: 중복 의심 전표
+    condition: 차변 계정 · 대변 계정 · 거래처 · 금액이 같은 전표 가운데 바로 이웃한 두 전표가 days 일 안. 많으면 목록 대신 메모
+    days: 3               # 2026-10-21 검토로 7 → 3. 매주 같은 금액 거래가 걸리지 않게 하고, 사슬로 잇지 않고 이웃한 두 전표만 본다
+    widespread: 0.05
+    widespread_min: 5
+    review: required
+    weight: 2
+  # 2026-10-24 추가(1단계 재기획 15절). 분석(analyze)이 찾은 기말 반대 잔액(계정명세서 거래처별)마다 기말에서 거꾸로 거슬러
+  # 그 거래처 잔액을 반대쪽으로 민 전표를 짚는다. 이중 입금 · 이중 지급 · 선결제 · 다른 거래처로 잡은 대체가 여기 걸린다.
+  # 「중복 의심」 은 같은 금액 거래가 잦은 회사에서 목록을 끄므로(widespread) 그때도 이 시험이 그 전표를 남긴다
+  - id: opposite_cause
+    title: 기말 반대 잔액을 만든 전표
+    condition: 분석의 거래처별 기말 반대 잔액(외상매출금 대변 · 미지급금 · 예수금 · 선수금 차변 등)마다 기말에서 거꾸로 거슬러 그 잔액이 정상 쪽이던 때 뒤로 잔액을 반대쪽으로 민 전표
+    max_vouchers: 12      # 거래처 하나에서 이보다 많으면 큰 금액 순으로 이만큼만 적고 나머지 건수를 메모로 남긴다
+    review: required
+    weight: 5
+  - id: related_party
+    title: 대표 · 주주 · 임원 관련 계정
+    condition: 가지급금 · 가수금 · 주주 · 임원 채권채무 · 특수관계자 계정을 쓰거나 거래처 이름에 대표이사가 든 전표(감사기준서 550 특수관계자)
+    review: required
+    weight: 2
+  - id: equity
+    title: 자본 계정 분개
+    condition: 자본금 · 잉여금 · 자본조정 · 기타포괄손익누계액 계정을 쓴 전표(결산 손익 대체도 포함)
+    review: required
+    weight: 2
+  - id: memo_keyword
+    title: 적요 주의 낱말
+    condition: 적요에 keywords 가운데 하나가 든 전표
+    keywords: [착오, 오류, 오기, 임시, 가계정, 미확인, 미결, 보류, 테스트, 개인, 대표, 가지급, 가수, 시재, 반제, 상계, 취소, 환원, 리베이트, 상품권]
+    review: optional
+    weight: 1
+  - id: outlier
+    title: 계정별로 평소보다 큰 금액
+    condition: 같은 계정 · 같은 쪽(차변 · 대변) 줄이 min_lines 개 이상인 계정에서 줄 금액이 그 계정 중앙값의 multiple 배 이상이고 수행중요성 × ratio 이상(수행중요성이 없으면 min_amount 원 이상)
+    min_lines: 12
+    multiple: 10
+    ratio: 0.5
+    min_amount: 10000000
+    review: optional
+    weight: 1
+  # 2026-11-09 4단계 추가(설계 문서 4.4). 감사기준서 240 A44 · 315 A161 · ICAI 실무 접근
+  - id: below_limit
+    title: 승인 한도 바로 아래 금액
+    condition: 전표 금액이 회사 승인 한도(limits)의 band 배 이상 한도 미만이고, 같은 작성자(작성자 열이 없으면 거래처)에 이런 전표가 min_count 건 이상 몰린 것. limits 가 비면 시험하지 않는다
+    limits: []            # 회사 전결 규정의 승인 한도(원). 예: [10000000, 50000000]
+    band: 0.9
+    min_count: 2
+    review: required
+    weight: 2
+  - id: suspense
+    title: 결산일 근처 가계정 정리
+    condition: 결산일 전 days 일부터 결산일까지 가지급금 · 미결산 · 가계정 · 전도금(대변) 또는 가수금(차변)을 현금 · 예금이 아닌 계정으로 대체한 전표로 금액이 수행중요성 × ratio 이상(수행중요성이 없으면 min_amount)
+    days: 15
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: estimate
+    title: 추정 계정의 기말 조정 · 환입
+    condition: 결산월에 충당금 · 충당부채 · 대손상각 · 평가손익 · 손상차손 계정을 쓴 전표, 또는 기간 중 그 계정을 환입한 전표로 금액이 수행중요성 × ratio 이상(수행중요성이 없으면 min_amount)
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: no_collection
+    title: 결산일 근처 매출의 기말 후 회수 없음
+    condition: 결산일 전 days 일 안의 외상 매출(차변 매출채권 · 대변 매출)로 금액이 수행중요성 × ratio 이상인데 기말 후 분개장에 그 거래처의 매출채권 대변(회수 · 취소)이 없는 전표. 기말 후 분개장과 거래처 열이 있어야 돈다
+    days: 15
+    ratio: 0.1
+    min_amount: 10000000
+    review: required
+    weight: 3
+  - id: noncash_profit
+    title: 현금 · 채권 · 채무 없이 이익을 늘린 전표
+    condition: 기간 전체에서 손익 효과(이익 증가)가 수행중요성 × ratio 이상인데 현금 · 예금 · 매출채권 · 매입채무 · 미지급금 줄이 없는 전표(재무상태표 계정과 손익만 맞바꾼 조정, 감사기준서 315 A161). 결산일 근처는 「결산일 근처 이익을 늘린 전표」 도 본다
+    ratio: 0.5
+    min_amount: 10000000
+    review: required
+    weight: 2
+  - id: rare_account
+    title: 드물게 쓰는 계정
+    condition: 당기 전표 max_count 건 이하에만 나온 계정을 쓴 전표로 금액이 명백히 사소한 금액 이상(없으면 min_amount)
+    max_count: 3
+    min_amount: 1000000
+    review: optional
+    weight: 1
+  # 아래 넷은 분개장에 작성자 · 승인자 · 입력일시 열(entry_columns)이 있을 때만 돈다
+  - id: self_approval
+    title: 작성자 = 승인자 · 승인 없음
+    condition: 작성자와 승인자가 같거나 승인자가 빈 전표. 승인자 칸이 채워진 전표가 min_filled 보다 적으면 승인 없음은 목록 대신 메모
+    min_filled: 0.5       # 2026-10-21 검토: 자동 전표에 승인자를 남기지 않는 전산에서 분개장 전체가 목록이 되던 것
+    review: required
+    weight: 3
+  - id: rare_user
+    title: 드물게 분개한 작성자
+    condition: 당기 · 기말 후 분개장 전체에서 작성한 전표가 max_count 건 이하인 작성자의 전표(작성자가 둘 이상일 때, 240 A44 통상 분개하지 않는 직원)
+    max_count: 5
+    review: required
+    weight: 2
+  - id: late_entry
+    title: 결산 후 입력 · 늦은 입력
+    condition: 일자는 결산일 이전인데 결산일 후에 입력했거나, 입력일이 전표 일자보다 days 일 이상 늦은 전표(240 A44 장부마감 후 입력)
+    days: 30
+    review: required
+    weight: 3
+  - id: off_hours
+    title: 업무 시간이 아닌 입력
+    condition: 입력 시각이 night_from 시부터 다음 날 night_to 시 전이거나, 입력일이 토 · 일 · 공휴일인 전표
+    night_from: 22
+    night_to: 6
+    review: optional
+    weight: 1
+
+# 모집단 분석(2026-10-21). 분개장 전체의 분포표를 「분포 분석」 시트에 낸다
+analyses:
+  benford:
+    title: 첫 자리 분포(벤포드)
+    min_amount: 10        # 이보다 작은 줄 금액은 세지 않는다
+    min_lines: 300        # 줄이 이보다 적으면 판정하지 않는다(Nigrini 는 1,000 줄 이상을 권한다)
+    # 첫 자리 MAD 판정 경계(Nigrini 2012): 0.006 이하 적합, 0.012 이하 대체로 적합, 0.015 이하 경계, 그 위 부적합
+    mad: [[0.006, 적합], [0.012, 대체로 적합], [0.015, 경계]]
+    over: 부적합
+  monthly:
+    title: 월별 전표 · 매출
+    ratio: 1.5            # 결산월 매출이 사업연도 월평균의 이 배수 이상이면 표시한다
+
+# 관공서의 공휴일에 관한 규정(대통령령)과 한국천문연구원 월력요항의 공휴일 · 대체공휴일 · 임시공휴일 · 선거일.
+# 주말은 따로 보므로 주말과 겹친 날은 적지 않았다. 2026 은 월력요항(2025-06 발표)으로 다시 확인할 것.
+holidays:
+  - 2024-01-01
+  - 2024-02-09
+  - 2024-02-12
+  - 2024-03-01
+  - 2024-04-10
+  - 2024-05-06
+  - 2024-05-15
+  - 2024-06-06
+  - 2024-08-15
+  - 2024-09-16
+  - 2024-09-17
+  - 2024-09-18
+  - 2024-10-01
+  - 2024-10-03
+  - 2024-10-09
+  - 2024-12-25
+  - 2025-01-01
+  - 2025-01-27
+  - 2025-01-28
+  - 2025-01-29
+  - 2025-01-30
+  - 2025-03-03
+  - 2025-05-05
+  - 2025-05-06
+  - 2025-06-03
+  - 2025-06-06
+  - 2025-08-15
+  - 2025-10-03
+  - 2025-10-06
+  - 2025-10-07
+  - 2025-10-08
+  - 2025-10-09
+  - 2025-12-25
+  - 2026-01-01
+  - 2026-02-16
+  - 2026-02-17
+  - 2026-02-18
+  - 2026-03-02
+  - 2026-05-05
+  - 2026-05-25
+  - 2026-06-03
+  - 2026-08-17
+  - 2026-09-24
+  - 2026-09-25
+  - 2026-10-05
+  - 2026-10-09
+  - 2026-12-25
+
+# ---------------------------------------------------------------------------
+# 결산조정 전표 유형(R9 묶음 B3, 2026-10-06). 3600-JET 「결산조정 전표」 시트가 쓴다. 시험(걸림)이 아니라 분류표다.
+# 샘플 진단 §6.2: 사람 조서는 결산조정 전표를 유형(미수수익 · 선급비용 반대분개, 감가상각, 대손, 퇴직급여, 외화환산, 원가결산)으로 나눠 본다.
+# 계정 묶음(closing_accounts): ranges(더존 코드 앞 세 자리) · names(계정명에 든 낱말) · exact(계정명 전체) 가운데 하나라도 맞으면 그 묶음이다.
+# 유형(closing_types): pairs 는 [차변 묶음, 대변 묶음]. either 가 참이면 반대 방향(반대분개 · 환입)도 같은 유형이다.
+#   lines 는 그 묶음 계정이 한 줄이라도 있으면 그 유형이다. 위에서부터 처음 맞는 유형 하나만 붙인다.
+closing_accounts:
+  accrued_income: {names: [미수수익]}
+  income: {names: [이자수익, 배당금수익, 임대료수익, 수입수수료]}
+  prepaid: {names: [선급비용]}
+  expense: {ranges: [[801, 899], [931, 960]]}
+  depreciation: {names: [감가상각비, 무형자산상각비, 상각비]}
+  accumulated: {names: [감가상각누계액, 상각누계액]}
+  intangibles: {ranges: [[226, 240]]}
+  bad_debt: {names: [대손상각비, 대손충당금환입]}
+  allowance: {names: [대손충당금]}
+  retirement: {names: [퇴직급여]}
+  retirement_provision: {names: [퇴직급여충당부채, 퇴직연금운용자산, 퇴직보험예치금]}
+  fx: {names: [외화환산이익, 외화환산손실]}
+  cogs: {ranges: [[451, 470]], names: [매출원가]}
+  inventory: {ranges: [[146, 175]], exact: [재고자산, 상품, 제품, 원재료, 부재료, 재공품, 저장품, 반제품]}
+  mfg_cost: {ranges: [[501, 799]]}
+closing_types:
+  - {id: depreciation, title: 감가상각 · 무형자산상각, pairs: [[depreciation, accumulated], [depreciation, intangibles]]}
+  - {id: accrued_income, title: 미수수익 계상 · 반대분개, pairs: [[accrued_income, income]], either: true}
+  - {id: prepaid, title: 선급비용 계상 · 반대분개, pairs: [[prepaid, expense]], either: true}
+  - {id: bad_debt, title: 대손충당금 설정 · 환입, pairs: [[bad_debt, allowance]], either: true}
+  - {id: retirement, title: 퇴직급여충당부채 설정, pairs: [[retirement, retirement_provision]], either: true}
+  - {id: fx, title: 외화환산, lines: [fx]}
+  - {id: cost_close, title: 원가결산(매출원가 · 재고 · 제조원가 대체), pairs: [[cogs, inventory], [inventory, mfg_cost], [cogs, mfg_cost]], either: true}
+# 결산월: 결산일이 든 달. 유형표는 당기 전체와 결산월을 따로 센다
+# 전표 출처: 분개장에 아래 열이 있으면 그 값별로 전표를 세고, manual_values 낱말이 든 값은 수기로 본다(없으면 자동)
+source_columns: [입력구분, 전표구분, 입력방법, 작성구분]
+manual_values: [수기, 수동, 조정, 결산]

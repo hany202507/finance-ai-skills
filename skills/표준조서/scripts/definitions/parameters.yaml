@@ -1,0 +1,124 @@
+# 감사방법론 설정 카탈로그 (2026-10-07). audit/params.py 가 읽는다.
+#
+# 감사인 판단이나 감사반 방법론에 따라 달라지는 값의 목록이다. 기본값은 각 정의 파일(file · path)에 있고, 감사 건마다
+# 2700B 감사방법론 설정 조서의 「감사인 값」 칸이 그 기본값을 덮는다. 엔진은 정의 파일을 읽을 때 지금 감사 건의 2700B 값을
+# 겹쳐 읽는다(params.use). 그래서 이 감사에 적용한 값은 이 감사 파일(2700B)에 남고, 정의 파일을 나중에 고쳐도 끝난 감사의
+# 결과가 바뀌지 않는다(감사기준서 230 문서화).
+#
+# 중요성(2700A)과 2120A 유의성 기준은 그 조서의 기입란이 정본이라 여기 넣지 않는다(methodology.yaml). 화면 「방법론」 에는 함께 보인다.
+#
+# 항목
+#   key    2700B 기입란 이름에 쓰는 열쇠(바꾸지 않는다. 바꾸면 앞서 적은 값을 잃는다)
+#   file   정의 파일(definitions/<file>.yaml)
+#   path   그 파일 안 위치. 점으로 잇고, 목록은 [id=값] 으로 고른다
+#   unit   ratio(비율, 20% 또는 0.2) · pp(%p) · days(일) · count(개 · 번) · months(개월) · won(원) · multiple(배) · factor(계수)
+#          · yesno(예 · 아니오) · choice(choices 가운데 하나) · int(정수)
+#   wp     값이 닿는 조서
+#   grade  근거 수준: 기준서 · 법정 · 실무 관행 · 초기값(대표 블라인드 대조로 조정할 값) · 재현
+#   rerun  바꾼 뒤 다시 돌릴 명령
+
+version: 1
+
+groups:
+  - {key: analytics, title: "2120A 위험평가 분석적 절차 (증감 관계 · 월별)", rerun: analyze}
+  - {key: signals, title: "2120A 패턴 신호", rerun: analyze}
+  - {key: rank, title: "이슈 순위 (2120A · 2302 · 4000 대응 조서)", rerun: analyze}
+  - {key: keytx, title: "2100-주요거래 (의사록 대사 · 비경상 전표)", rerun: analyze}
+  - {key: jet, title: "3600-JET 분개 테스트", rerun: wp make}
+  - {key: sampling, title: "표본 (4000C · 4000P · 3320 표본 이유)", rerun: wp make}
+  - {key: confirm, title: "3320 외부조회 대상", rerun: wp make}
+  - {key: recalc, title: "4000 재계산 · 부외부채", rerun: wp make}
+  - {key: close, title: "8700 감사종료", rerun: close make}
+
+params:
+  # 2120A 증감 관계 · 월별
+  - {key: M-ye-month.ratio, group: analytics, name: "결산월 금액 ÷ 앞 11개월 평균", file: analytics, path: "monthly.rules[id=M-ye-month].ratio_to_avg", unit: multiple, wp: 2120A, grade: 초기값}
+  - {key: R-sales-ar.threshold, group: analytics, name: "매출 · 매출채권 증감률 차이", file: analytics, path: "relations[id=R-sales-ar].threshold", unit: ratio, wp: 2120A, grade: 초기값}
+  - {key: R-inv-cogs.threshold, group: analytics, name: "재고 · 매출원가 증감률 차이", file: analytics, path: "relations[id=R-inv-cogs].threshold", unit: ratio, wp: 2120A, grade: 초기값}
+  - {key: R-debt-interest.threshold, group: analytics, name: "차입금 · 이자비용 증감률 차이", file: analytics, path: "relations[id=R-debt-interest].threshold", unit: ratio, wp: 2120A, grade: 초기값}
+  - {key: R-intangible-rnd.threshold, group: analytics, name: "무형자산 증가와 관련 비용 감소(금액 기준 0 이면 켜짐)", file: analytics, path: "relations[id=R-intangible-rnd].threshold", unit: ratio, wp: 2120A, grade: 초기값}
+  - {key: R-payroll-headcount.threshold, group: analytics, name: "급여 · 인원 증감률 차이", file: analytics, path: "relations[id=R-payroll-headcount].threshold", unit: ratio, wp: 2120A, grade: 초기값}
+
+  # 2120A 패턴 신호
+  - {key: S-new-party-large-sales.ratio, group: signals, name: "신규 거래처 매출 합 ≥ 수행중요성 ×", file: signals, path: "signals[id=S-new-party-large-sales].min_amount.ratio", unit: multiple, wp: 2120A, grade: 초기값}
+  - {key: S-ar-days-up.n_days, group: signals, name: "매출채권 회전일수 증가", file: signals, path: "signals[id=S-ar-days-up].params.n_days", unit: days, wp: 2120A, grade: 초기값}
+  - {key: S-post-ye-reversal.window_days, group: signals, name: "결산일 뒤 매출 차감 전표를 보는 기간", file: signals, path: "signals[id=S-post-ye-reversal].params.window_days", unit: days, wp: "2120A · 8100B", grade: 초기값}
+  - {key: S-post-ye-reversal.ratio, group: signals, name: "결산일 뒤 매출 차감 합 ≥ 수행중요성 ×", file: signals, path: "signals[id=S-post-ye-reversal].min_amount.ratio", unit: multiple, wp: 2120A, grade: 초기값}
+  - {key: S-inv-days-up.n_days, group: signals, name: "재고 회전일수 증가", file: signals, path: "signals[id=S-inv-days-up].params.n_days", unit: days, wp: 2120A, grade: 초기값}
+  - {key: S-gm-swing.pp, group: signals, name: "매출총이익률 변동", file: signals, path: "signals[id=S-gm-swing].params.pp", unit: pp, wp: 2120A, grade: 초기값}
+  - {key: S-ye-round-manual.window_days, group: signals, name: "결산 직전 수동 전표를 보는 일수", file: signals, path: "signals[id=S-ye-round-manual].params.window_days", unit: days, wp: 2120A, grade: 초기값}
+  - {key: S-ye-round-manual.round_unit, group: signals, name: "수동 전표 끝자리 단위", file: signals, path: "signals[id=S-ye-round-manual].params.round_unit", unit: won, wp: 2120A, grade: 초기값}
+  - {key: S-ye-round-manual.ratio, group: signals, name: "결산 직전 수동 전표 합 ≥ 수행중요성 ×", file: signals, path: "signals[id=S-ye-round-manual].min_amount.ratio", unit: multiple, wp: 2120A, grade: 초기값}
+  - {key: S-expense-accrual-drop.p, group: signals, name: "미지급비용 감소율", file: signals, path: "signals[id=S-expense-accrual-drop].params.p", unit: ratio, wp: 2120A, grade: 초기값}
+
+  # 이슈 순위
+  - {key: rank.amount_cap, group: rank, name: "금액 점수 상한(금액 ÷ 수행중요성)", file: analytics, path: "rank.amount_cap", unit: multiple, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.recon, group: rank, name: "가중치: 자료 사이 대사", file: analytics, path: "rank.weight.recon", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.expectation, group: rank, name: "가중치: 기대치", file: analytics, path: "rank.weight.expectation", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.relation, group: rank, name: "가중치: 관계 규칙", file: analytics, path: "rank.weight.relation", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.keytx_minutes, group: rank, name: "가중치: 의사록 대사", file: analytics, path: "rank.weight.keytx_minutes", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.keytx, group: rank, name: "가중치: 비경상 전표", file: analytics, path: "rank.weight.keytx", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.variance, group: rank, name: "가중치: 증감", file: analytics, path: "rank.weight.variance", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.monthly, group: rank, name: "가중치: 월별 추이", file: analytics, path: "rank.weight.monthly", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.weight.pattern, group: rank, name: "가중치: 감리지적사례 패턴", file: analytics, path: "rank.weight.pattern", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.corroboration, group: rank, name: "다른 종류 Finding 이 겹칠 때 더하는 점수", file: analytics, path: "rank.corroboration", unit: factor, wp: 2120A, grade: 초기값}
+  - {key: rank.corroboration_cap, group: rank, name: "겹침 점수를 더하는 최대 개수", file: analytics, path: "rank.corroboration_cap", unit: count, wp: 2120A, grade: 초기값}
+  - {key: rank.pattern_bonus, group: rank, name: "같은 영역 패턴이 붙을 때 더하는 점수", file: analytics, path: "rank.pattern_bonus", unit: factor, wp: 2120A, grade: 초기값}
+
+  # 2100-주요거래
+  - {key: keytx.recurring_months, group: keytx, name: "반복 조합으로 보는 개월 수", file: key_transactions, path: "recurring_months", unit: months, wp: 2100-주요거래, grade: 초기값}
+  - {key: keytx.rare_max_count, group: keytx, name: "드문 조합: 당기 출현 횟수 이하", file: key_transactions, path: "rare_max_count", unit: count, wp: 2100-주요거래, grade: 초기값}
+  - {key: K-closing-adjust.window_days, group: keytx, name: "결산 조정 전표를 보는 결산일 전 일수", file: key_transactions, path: "gl_rules[id=K-closing-adjust].window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: K-new-party-large.ratio, group: keytx, name: "신규 거래처 큰 전표 ≥ 수행중요성 ×", file: key_transactions, path: "gl_rules[id=K-new-party-large].min_amount.ratio", unit: multiple, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.within_pct, group: keytx, name: "의사록 금액 허용 차이(자산 취득)", file: minutes_topics, path: "within_pct", unit: ratio, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.차입.days, group: keytx, name: "의사록 차입 결의 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.차입.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.증자감자.days, group: keytx, name: "의사록 증자 · 감자 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.증자·감자.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.배당.days, group: keytx, name: "의사록 배당 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.배당.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.처분.days, group: keytx, name: "의사록 자산 처분 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.자산 처분.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.취득.days, group: keytx, name: "의사록 자산 취득 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.자산 취득.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+  - {key: minutes.출자.days, group: keytx, name: "의사록 출자 ↔ 전표 일자 차이", file: minutes_topics, path: "topics.출자.match.date_window_days", unit: days, wp: 2100-주요거래, grade: 초기값}
+
+  # 3600-JET
+  - {key: jet.reversal.before, group: jet, name: "기말 후 취소: 결산일 전 원 전표를 찾는 일수", file: jet, path: "tests[id=post_ye_reversal].window_before", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.reversal.after, group: jet, name: "기말 후 취소: 결산일 후 보는 일수", file: jet, path: "tests[id=post_ye_reversal].window_after", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.near_ye.days, group: jet, name: "결산일 근처 큰 금액: 결산일 전 일수", file: jet, path: "tests[id=near_ye_large].days", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.near_ye.ratio, group: jet, name: "결산일 근처 큰 금액 ≥ 수행중요성 ×", file: jet, path: "tests[id=near_ye_large].ratio", unit: multiple, wp: 3600-JET, grade: 초기값}
+  - {key: jet.rare_pair.max_count, group: jet, name: "드문 계정 조합: 당기 출현 횟수 이하", file: jet, path: "tests[id=rare_pair].max_count", unit: count, wp: 3600-JET, grade: 초기값}
+  - {key: jet.round.unit, group: jet, name: "끝자리 0: 단위", file: jet, path: "tests[id=round].unit", unit: won, wp: 3600-JET, grade: 초기값}
+  - {key: jet.round.min_amount, group: jet, name: "끝자리 0: 최소 금액", file: jet, path: "tests[id=round].min_amount", unit: won, wp: 3600-JET, grade: 초기값}
+  - {key: jet.manual.days, group: jet, name: "수기 조정 전표(입력구분 열이 없을 때): 결산일 전 일수", file: jet, path: "tests[id=manual_adjust].days", unit: days, wp: 3600-JET, grade: 초기값}
+  # 2026-10-21 추가 시험(jet.yaml 의 같은 날 추가분)
+  - {key: jet.seq.min_days, group: jet, name: "전표번호 순서 역전: 일자가 앞선 일수 이상", file: jet, path: "tests[id=voucher_seq].min_days", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.one_time.ratio, group: jet, name: "한 번만 나온 거래처: 금액 ≥ 수행중요성 ×", file: jet, path: "tests[id=one_time_party].ratio", unit: multiple, wp: 3600-JET, grade: 초기값}
+  - {key: jet.profit_up.days, group: jet, name: "결산일 근처 이익을 늘린 전표: 결산일 전 일수", file: jet, path: "tests[id=profit_up].days", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.profit_up.ratio, group: jet, name: "결산일 근처 이익을 늘린 전표: 이익 효과 ≥ 수행중요성 ×", file: jet, path: "tests[id=profit_up].ratio", unit: multiple, wp: 3600-JET, grade: 초기값}
+  - {key: jet.duplicate.days, group: jet, name: "중복 의심 전표: 같은 전표를 찾는 일수", file: jet, path: "tests[id=duplicate].days", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.outlier.multiple, group: jet, name: "계정 평소보다 큰 금액: 그 계정 중앙값의 배수 이상", file: jet, path: "tests[id=outlier].multiple", unit: multiple, wp: 3600-JET, grade: 초기값}
+  - {key: jet.rare_user.max_count, group: jet, name: "드물게 분개한 작성자: 작성한 전표 수 이하", file: jet, path: "tests[id=rare_user].max_count", unit: count, wp: 3600-JET, grade: 초기값}
+  - {key: jet.late_entry.days, group: jet, name: "늦은 입력: 입력일이 전표 일자보다 늦은 일수 이상", file: jet, path: "tests[id=late_entry].days", unit: days, wp: 3600-JET, grade: 초기값}
+  - {key: jet.off_hours.night_from, group: jet, name: "업무 시간이 아닌 입력: 밤 시작 시각(시)", file: jet, path: "tests[id=off_hours].night_from", unit: int, wp: 3600-JET, grade: 초기값}
+  - {key: jet.off_hours.night_to, group: jet, name: "업무 시간이 아닌 입력: 아침 끝 시각(시)", file: jet, path: "tests[id=off_hours].night_to", unit: int, wp: 3600-JET, grade: 초기값}
+
+  # 표본
+  - {key: sampling.default_risk, group: sampling, name: "위험 수준 기본값(표본 시트에서 고르지 않았을 때)", file: sampling, path: "default_risk", unit: choice, choices: [기본, 높음, 보통, 낮음], wp: "4000C · 4000P", grade: 실무 관행, basis: "기본 = 실무 예시(표본 간격 = 수행중요성), 2026-10-25"}
+  - {key: sampling.factor.기본, group: sampling, name: "신뢰계수: 기본(실무 예시)", file: sampling, path: "risk_levels.기본.factor", unit: factor, wp: "4000C · 4000P", grade: 실무 관행, basis: "10-08 감사 전문가 회의 예시. 약 63%"}
+  - {key: sampling.factor.높음, group: sampling, name: "신뢰계수: 위험 높음", file: sampling, path: "risk_levels.높음.factor", unit: factor, wp: "4000C · 4000P", grade: 실무 관행, basis: "95%, −ln(1 − 신뢰수준), AICPA Audit Sampling 표와 같음"}
+  - {key: sampling.factor.보통, group: sampling, name: "신뢰계수: 위험 보통", file: sampling, path: "risk_levels.보통.factor", unit: factor, wp: "4000C · 4000P", grade: 실무 관행, basis: "90%"}
+  - {key: sampling.factor.낮음, group: sampling, name: "신뢰계수: 위험 낮음", file: sampling, path: "risk_levels.낮음.factor", unit: factor, wp: "4000C · 4000P", grade: 실무 관행, basis: "80%"}
+  - {key: sampling.tail_months, group: sampling, name: "4000P 매출 표본: 따로 뽑는 마지막 개월 수", file: sampling, path: "period_split.tail_months", unit: months, wp: 4000P, grade: 실무 관행, basis: "사람 조서(샘플 F) 1~9월 · 10~12월"}
+  - {key: sampling.sales_window_days, group: sampling, name: "4000P 매출 분석: 결산일 앞뒤 일수", file: sampling, path: "sales_window_days", unit: days, wp: 4000P, grade: 초기값}
+  - {key: sampling.seed, group: sampling, name: "표본 시드(같은 시드면 같은 표본)", file: sampling, path: "seed", unit: int, wp: "4000C · 4000P", grade: 재현}
+
+  # 3320
+  - {key: confirm.ar_top_n, group: confirm, name: "매출채권 조회: 잔액 상위 거래처 수", file: workpapers, path: "confirmations.ar_top_n", unit: count, wp: 3320, grade: 실무 관행}
+  - {key: confirm.ar_new_parties, group: confirm, name: "매출채권 조회: 신규 거래처 전부", file: workpapers, path: "confirmations.ar_new_parties", unit: yesno, wp: 3320, grade: 실무 관행}
+  - {key: confirm.ar_over_performance, group: confirm, name: "매출채권 조회: 잔액이 수행중요성 이상인 거래처 전부", file: workpapers, path: "confirmations.ar_over_performance", unit: yesno, wp: 3320, grade: 실무 관행}
+  - {key: confirm.ar_sample, group: confirm, name: "매출채권 조회: 4000C 표본에 뽑힌 거래처", file: workpapers, path: "confirmations.ar_sample", unit: yesno, wp: 3320, grade: 실무 관행}
+
+  # 4000 재계산 · 부외부채
+  - {key: recalc.days_in_year, group: recalc, name: "이자 재계산 연 일수(4000BBDD 기입란이 비었을 때)", file: recalc, path: "interest.days_in_year", unit: days, wp: 4000BBDD, grade: 실무 관행, basis: "원화 여신 1년 365일 일할 관행"}
+  - {key: recalc.unrecorded_days, group: recalc, name: "부외부채: 결산일 다음 날부터 보는 지급 전표 일수", file: recalc, path: "unrecorded.window_days", unit: days, wp: 4000AA, grade: 초기값}
+  - {key: recalc.subsequent_threshold, group: recalc, name: "기말 후 출금 검토: 분류 칸을 두는 기준 금액(4000CL 기입란이 비었을 때, 0 이면 수행중요성)", file: recalc, path: "subsequent.threshold", unit: won, wp: 4000CL, grade: 초기값, basis: "1단계 재기획 4절 8번(예 500만 원)"}
+
+  # 8700
+  - {key: close.assembly_days, group: close, name: "최종 감사파일 취합 기한(감사보고서일부터)", file: close, path: "close.assembly_days", unit: days, wp: 8700, grade: 기준서, basis: "한공회 04 · ISA 230 A21 일반적으로 60일 이내"}

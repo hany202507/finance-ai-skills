@@ -47,6 +47,7 @@ jobs:
           - 양도소득세
           - 분개테스트
           - 표본sampling
+          - 표준조서
           - DSD초안
     runs-on: ${{ matrix.os }}
     defaults:

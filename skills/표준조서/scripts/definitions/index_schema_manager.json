@@ -1,0 +1,87 @@
+{
+  "일정.json": {
+    "$comment": "감사 건 일정(2026-10-31 감사매니저 설계 3.3절). 회계사가 넣은 날짜만 둔다. 엔진이 법정 기한을 계산해 넣지 않는다. 쓰는 곳은 audit.manager.write_schedule 하나",
+    "type": "object",
+    "required": ["format_version", "values", "log"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "values": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "interim_start": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "중간감사 현장 시작"},
+          "interim_end": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "중간감사 현장 끝"},
+          "confirm_date": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "조회 기준일"},
+          "final_start": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "기말감사 현장 시작"},
+          "final_end": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "기말감사 현장 끝"},
+          "report_draft": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "감사보고서 초안 목표일"},
+          "submit_due": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "제출 기한(회계사가 넣은 날짜)"},
+          "agm": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "정기주총 예정일"}
+        }
+      },
+      "log": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["at", "who", "changed"],
+          "additionalProperties": false,
+          "properties": {
+            "at": {"type": "string"},
+            "who": {"type": "string", "minLength": 1, "description": "넣은 사람(회계사 · 대표 · 에이전트:감사매니저)"},
+            "note": {"type": ["string", "null"], "description": "회계사 · 감사인이 한 말 그대로"},
+            "changed": {"type": "object"}
+          }
+        }
+      }
+    }
+  },
+  "진행계획.json": {
+    "$comment": "감사 건 진행 계획(2026-10-31 감사매니저 설계 5.1절). 감사계획 조서(2110 · 2300)를 대신하지 않는 운영 문서다. 엔진이 틀을 만들고(audit plan), AI 는 why · basis 와 제안 항목만 쓴다(--propose, confirmed false). 항목 확인 · 지우기는 회계사(audit set plan)",
+    "type": "object",
+    "required": ["format_version", "at", "partial", "targets", "items", "log"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "at": {"type": "string"},
+      "partial": {"type": "boolean", "description": "기준 일정이 비어 목표일이 없는 것이 있다"},
+      "targets": {"type": "array", "items": {"type": "object", "required": ["id", "name", "from", "days", "date"], "additionalProperties": false,
+        "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "from": {"type": "string"}, "days": {"type": "integer"},
+                       "date": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}}}},
+      "items": {"type": "array", "items": {"type": "object", "required": ["id", "what", "source", "why", "basis", "by", "status", "confirmed"],
+        "additionalProperties": false,
+        "properties": {"id": {"type": "string", "minLength": 1}, "what": {"type": "string", "minLength": 1},
+                       "source": {"type": ["object", "null"], "required": ["file", "key"], "properties": {"file": {"type": "string"}, "key": {"type": "string"}}},
+                       "why": {"type": ["string", "null"]},
+                       "basis": {"type": "array", "items": {"type": "object", "required": ["file", "key"], "additionalProperties": false,
+                                 "properties": {"file": {"type": "string"}, "key": {"type": "string"}}}},
+                       "by": {"enum": ["엔진", "AI 제안"]}, "status": {"enum": ["후보", "제안", "확인", "지움"]},
+                       "confirmed": {"type": "boolean"}, "note": {"type": ["string", "null"]}}}},
+      "log": {"type": "array", "items": {"type": "object", "required": ["at", "who", "what"], "additionalProperties": false,
+        "properties": {"at": {"type": "string"}, "who": {"type": "string"}, "what": {"type": "string"}, "note": {"type": ["string", "null"]}}}}
+    }
+  },
+  "매니저입력.json": {
+    "$comment": "회계사 · 감사인이 정한 감사 건 상태와 순서(2026-10-31 감사매니저 설계 6절). audit set 만 쓴다. 엔진 판정(engine_status)은 현황에 따로 남는다",
+    "type": "object",
+    "required": ["format_version"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "status": {"type": "object", "required": ["value", "who", "at"], "additionalProperties": false,
+                 "properties": {"value": {"enum": ["위험", "주의", "계획대로", "끝"]}, "who": {"type": "string"}, "note": {"type": ["string", "null"]}, "at": {"type": "string"}}},
+      "priority": {"type": "object", "required": ["value", "who", "at"], "additionalProperties": false,
+                   "properties": {"value": {"enum": ["먼저"]}, "who": {"type": "string"}, "note": {"type": ["string", "null"]}, "at": {"type": "string"}}}
+    }
+  },
+  "매니저줄.json": {
+    "$comment": "감사매니저가 next 줄과 열린 검토의견 줄을 처음 본 날(2026-10-31). since 를 세는 바탕이다. audit.manager 만 쓴다",
+    "type": "object",
+    "required": ["format_version", "seen"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "seen": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}}
+    }
+  }
+}

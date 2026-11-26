@@ -1,0 +1,337 @@
+{
+  "$comment": "R4 실행 단계 색인 파일 형식(2026-10-05). _색인/조회.json 은 3320 외부조회 대장이다. `python -m audit wp make <폴더> 3320` 이 쓰고, 회계사가 3320 엑셀 대장에 적은 발송일 · 회신일 · 회신 금액 · 결과를 다음 make 때 되읽어 합친다. 장부 금액은 엔진, 회신 금액은 엔진(엑셀 회신) · 회계사(기입란) 만 넣는다. PDF 회신은 'AI 판독 필요' 로 남긴다. 은행조회는 별도 은행조회 회신 프로그램이 정본이라 대상과 결과 확인만 둔다.",
+  "조회.json": {
+    "type": "object",
+    "required": ["format_version", "updated_at", "confirmations"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "updated_at": {"type": "string"},
+      "as_of": {"type": ["string", "null"], "description": "조회 기준일(결산일)"},
+      "bank_list_file": {"type": ["string", "null"], "description": "은행조회 회신 프로그램에 넘길 대상 목록 파일(감사 폴더 기준 상대경로)"},
+      "confirmations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["no", "kind", "target", "why", "amount", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "no": {"type": "integer", "minimum": 1},
+            "kind": {"enum": ["매출채권", "매입채무", "은행", "변호사", "기타"]},
+            "target": {"type": "string", "minLength": 1},
+            "why": {"type": "array", "items": {"type": "string"}, "description": "선정 이유(잔액 상위, 신규 거래처, 수행중요성 이상, 표본, 이슈 번호, 분개장 거래 등)"},
+            "account": {"type": ["string", "null"]},
+            "amount": {"type": ["integer", "number", "null"], "description": "장부 금액(엔진). 은행은 은행조회 프로그램 회신과 대사하므로 비워 둘 수 있다"},
+            "amount_basis": {"type": ["string", "null"]},
+            "method": {"type": ["string", "null"], "description": "발송 방법(우편 · 전자우편 · 은행조회 프로그램)"},
+            "sent_at": {"type": ["string", "null"]},
+            "replied_at": {"type": ["string", "null"]},
+            "reply_amount": {"type": ["integer", "number", "null"]},
+            "reply_basis": {"enum": ["엔진", "회계사", "AI 판독 필요", null]},
+            "reply_file": {"type": ["string", "null"]},
+            "difference": {"type": ["integer", "number", "null"], "description": "회신 금액 − 장부 금액"},
+            "alternative": {"type": ["string", "null"], "description": "미회신 · 차이 때 대체 절차와 결과(회계사)"},
+            "alt_candidates": {"type": "array", "items": {"type": "string"}, "description": "대체 절차 후보(엔진, 2026-10-24): 기말 후 입금 · 지급, 부가세 없는 결산월 청구, 반대 잔액 확인 등. 판단은 회계사"},
+            "result": {"type": ["string", "null"], "description": "확인 결과(회계사 기입란)"},
+            "status": {"enum": ["발송 전", "발송", "회신 일치", "회신 차이", "AI 판독 필요", "은행조회 프로그램"]},
+            "issue": {"type": ["integer", "null"], "description": "차이로 올린 이슈 번호"},
+            "drafts": {"type": "array", "items": {"type": "string"}, "description": "조회서 워드 초안 · 메일 초안 경로"},
+            "accounts": {"type": "array", "description": "채권채무 조회서에 적은 거래처의 계정(R9 B5, 계정명세서 거래처 시트)",
+                         "items": {"type": "object", "required": ["side", "account", "amount"]}},
+            "control": {"type": "object", "description": "조회서 컨트롤(2026-10-26): 3320 「조회서 컨트롤」 시트의 상태. 차이 사유 · 대체 절차 상태는 감사인 기입란",
+                        "required": ["state"], "additionalProperties": false,
+                        "properties": {"state": {"enum": ["발송 전", "발송", "회신", "차이 확인", "대체 절차", "끝"]},
+                                       "diff_reason": {"type": ["string", "null"]},
+                                       "alt_state": {"type": ["string", "null"], "description": "필요 없음 · 진행 중 · 끝남(감사인)"}}}
+          }
+        }
+      }
+    }
+  },
+  "절차제안.json": {
+    "description": "4000 표지 절차의 해당 여부 AI 제안(2026-10-12). `python -m audit wp suggest <폴더> <patch.json>` 만 쓴다. 제안은 확인 전(confirmed false)이고 조서 기입란에는 들어가지 않는다. wp make 가 표지의 「AI 제안(확인 전)」 열에 적는다. 해당 여부는 감사인이 조서 노란 칸에 적는다.",
+    "type": "object",
+    "required": ["format_version", "updated_at", "suggestions"],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {"const": 1},
+      "updated_at": {"type": ["string", "null"]},
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["workpaper", "part", "step", "suggest", "reason", "sources", "basis", "confirmed", "at"],
+          "additionalProperties": false,
+          "properties": {
+            "workpaper": {"type": "string", "pattern": "^4000[A-Z]+[0-9]*$"},
+            "part": {"enum": [1, 2], "description": "1 한공회 4000 Part 1 절차 예시, 2 Part 2 추가 고려 절차"},
+            "step": {"type": "string", "minLength": 1, "description": "절차 이름(절차 글 첫 줄의 앞 30자). 표지 기입란 이름에 쓰는 것과 같다"},
+            "step_no": {"type": ["integer", "null"], "description": "절차 번호"},
+            "suggest": {"enum": ["해당", "해당 없음", "판단 자료 없음"]},
+            "reason": {"type": "string", "minLength": 1, "description": "근거 문장. 금액으로 보이는 숫자는 넣지 못한다"},
+            "sources": {"type": "array", "items": {"type": "string"}, "description": "근거로 본 받은자료(문서목록의 경로)"},
+            "basis": {"const": "AI"},
+            "confirmed": {"const": false},
+            "at": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "절차점검.json": {
+    "description": "4000 조서 절차 점검표의 원본 값(2026-11-24). `python -m audit wp procs <폴더> <조서번호> --verdicts <판정.json>` 이 AI 판정을 검사해 쓰고 `--apply` 가 고른 줄의 applied 를 채운다. 점검표 엑셀은 _작업/절차점검 에 있고 조서와 다른 파일이다. 판정은 확인 전이고 조서 기입란에 들어가지 않는다.",
+    "type": "object",
+    "required": [
+      "format_version",
+      "updated_at",
+      "workpapers"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "format_version": {
+        "const": 1
+      },
+      "updated_at": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "workpapers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "no",
+            "at",
+            "workpaper_file",
+            "workpaper_sha256",
+            "file",
+            "counts",
+            "items",
+            "skipped"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "no": {
+              "type": "string",
+              "pattern": "^4000[A-Z]+[0-9]*$"
+            },
+            "at": {
+              "type": "string"
+            },
+            "workpaper_file": {
+              "type": "string"
+            },
+            "deps": {
+              "type": "object",
+              "description": "근거로 든 다른 파일의 지문 {감사 폴더 기준 경로: sha256}. 다른 조서 · 받은자료 · 조회 대장. 하나라도 바뀌면 점검을 다시 한다(2단계)",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "workpaper_sha256": {
+              "type": "string"
+            },
+            "file": {
+              "type": "string"
+            },
+            "counts": {
+              "type": "object",
+              "required": [
+                "rows",
+                "todo",
+                "ok",
+                "skipped",
+                "fixed"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rows": {
+                  "type": "integer"
+                },
+                "todo": {
+                  "type": "integer"
+                },
+                "ok": {
+                  "type": "integer"
+                },
+                "skipped": {
+                  "type": "integer"
+                },
+                "fixed": {
+                  "type": "integer"
+                },
+                "unknown": {
+                  "type": "integer",
+                  "description": "볼 것 가운데 「판단 못 함」 줄 수(2단계)"
+                },
+                "area": {
+                  "type": "integer",
+                  "description": "볼 것 가운데 영역 줄 수. 절차 줄 수(rows)에는 들지 않는다(2단계)"
+                }
+              }
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "part",
+                  "key",
+                  "step",
+                  "state",
+                  "verdict",
+                  "missing",
+                  "cites",
+                  "n",
+                  "applied"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "part": {
+                    "enum": [
+                      1,
+                      2,
+                      "이슈",
+                      "영역"
+                    ]
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "step": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "enum": [
+                      "수행",
+                      "해당 없음",
+                      "미정",
+                      "수행 안 함",
+                      "영역"
+                    ]
+                  },
+                  "verdict": {
+                    "enum": [
+                      "수행됨",
+                      "사유 맞음",
+                      "일부 빠짐",
+                "수행 부족",
+                      "수행 기록 없음",
+                      "사유 어긋남",
+                      "판단 못 함"
+                    ]
+                  },
+                  "missing": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "description": "빠진 것 한 줄. 문제없는 줄은 빈 글"
+                  },
+                  "cites": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "근거 「시트!칸」"
+                  },
+                  "n": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "description": "점검표 「볼 것」 번호. 문제없는 줄은 null"
+                  },
+                  "applied": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "description": "회계사가 골라 검토의견에 옮긴 기록",
+                    "required": [
+                      "by",
+                      "at",
+                      "opinion"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "by": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "opinion": {
+                        "type": "integer"
+                      },
+                      "sig": {
+                        "type": "string",
+                        "description": "옮긴 판정의 식별값(판정 · 빠진 것 · 근거). 검토의견 위치 칸의 [절차점검 …] 과 같다"
+                      }
+                    }
+                  },
+                  "prior": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "description": "앞 판에서 검토의견에 옮긴 기록인데 이번에 판정이나 의견이 바뀐 줄. 다시 고를 수 있다(2단계)",
+                    "required": [
+                      "by",
+                      "at",
+                      "opinion"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "by": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "string"
+                      },
+                      "opinion": {
+                        "type": "integer"
+                      },
+                      "sig": {
+                        "type": "string",
+                        "description": "옮긴 판정의 식별값(판정 · 빠진 것 · 근거). 검토의견 위치 칸의 [절차점검 …] 과 같다"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "skipped": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "part",
+                  "key",
+                  "step"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "part": {
+                    "enum": [
+                      1,
+                      2,
+                      "이슈"
+                    ]
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "step": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
