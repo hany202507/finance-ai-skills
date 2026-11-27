@@ -123,7 +123,7 @@ def _report_date(texts: list[str], fiscal_year_end: str | None) -> str | None:
 
 
 def corp_name(name: str | None) -> str:
-    """회사명 비교용. 「주식회사 · (주) · ㈜」 와 공백을 뗀다(감사 폴더 「채널코퍼레이션」 과 보고서 「주식회사 채널코퍼레이션」 은 같다)."""
+    """회사명 비교용. 「주식회사 · (주) · ㈜」 와 공백을 뗀다(감사 폴더 「가나다」 와 보고서 「주식회사 가나다」 은 같다)."""
     n = dart.norm(name or "")
     for t in ("주식회사", "(주)", "（주）", "㈜"):
         n = n.replace(t, "")

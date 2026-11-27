@@ -26,7 +26,7 @@ from bestar import memos, paths, rank, steps
 from bestar.keep import ADDED_CONCL, ADDED_SHEET, save_added_conclusions
 
 YELLOW = PatternFill("solid", fgColor="FFF2CC")
-ALIAS_FILE = "설정.json"          # {"alias": "(주)스타일"}: 보고서 · 화면 · 엑셀에 실제 회사 이름 대신 쓸 이름
+ALIAS_FILE = "설정.json"          # {"alias": "(주)가나다"}: 보고서 · 화면 · 엑셀에 실제 회사 이름 대신 쓸 이름
 HEAD = PatternFill("solid", fgColor="17365D")
 
 

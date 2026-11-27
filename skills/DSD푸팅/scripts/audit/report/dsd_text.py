@@ -834,7 +834,7 @@ EXT_GROUPS = ("품질관리 검토자", "담당이사", "등록 공인회계사"
 
 
 def version_spacing(res: dict, changes: list, prev_name: str) -> int:
-    """판 비교(dsd_versions)에서 새 판에 띄어쓰기가 빠진 낱말을 문장 검토의 오타로 더한다(2026-11-04 네온테크 v2 → v3: 「2028년3월」 ·
+    """판 비교(dsd_versions)에서 새 판에 띄어쓰기가 빠진 낱말을 문장 검토의 오타로 더한다(2026-11-04 시험한 감사 건 v2 → v3: 「2028년3월」 ·
     「날사채권자의」 · 「대하여회사의」). 낱말이 든 S번호를 찾지 못하거나 엔진이 이미 같은 곳을 잡았으면 더하지 않는다. 더한 수."""
     from .dsd_versions import space_lost
 

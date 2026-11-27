@@ -78,7 +78,7 @@ python scripts/ar.py credits "<신고건>" <제안.json>
 
 ```bash
 python scripts/ar.py finish "<신고건>"
-python scripts/ar.py finish "<신고건>" --alias "(주)스타일"   # 실제 회사 이름 대신 쓸 이름(한 번 주면 남는다)
+python scripts/ar.py finish "<신고건>" --alias "(주)가나다"   # 실제 회사 이름 대신 쓸 이름(한 번 주면 남는다)
 ```
 
 - 메모가 빠진 이슈, 제안 파일 없음, 2-(1) 에서 훑지 않은 엔진 규칙에 안 걸린 계정, 앞 단계가 넘겼는데 받은 곳이 없는 항목(f* · c* · a*)이 있으면 목록을 내고 멈춘다. 고쳐서 다시 돌린다. 지금 것으로 먼저 보려면 `--draft`.
