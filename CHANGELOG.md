@@ -2,6 +2,13 @@
 
 릴리스 노트는 이 파일에 쌓는다. 버전은 `.claude-plugin/plugin.json` 의 `version` 과 같다.
 
+## v0.31.2 표준조서 묶음에 빠진 엔진 파일 (2026-11-27)
+
+- 표준조서: 전기조서(WTB)가 든 자료로 `make` 를 돌리면 전기조서 판독에서 「정의 파일이 없습니다: definitions/prior_wp.yaml」 과 `audit.report.dsd_wtb` 를 못 불러 멈췄다. 빠진 다섯 파일(`definitions/prior_wp.yaml`, `audit/report/dsd.py` · `dsd_grid.py` · `dsd_links.py` · `dsd_wtb.py`)을 묶음에 넣었다. 감사 법인 양식(BS · IS · AJE)의 전기조서를 읽을 때 쓴다.
+- 표준조서 시험 `test_bundle_complete.py`: 스킬 폴더만 임시 폴더에 복사해 `python -I` 로 전기조서가 든 가상 자료의 make · refresh · check 를 돌린다. 예시 자료에는 전기조서가 없어 이 길을 지나는 시험이 없었다.
+- 감사 스킬 여섯(PBC요청자료 · 분개테스트 · DSD푸팅 · 절차점검 · 표본sampling · DSD초안)에 `test_bundle_imports.py`: 스킬 폴더만 떼어 묶은 모듈을 하나씩 불러 본다. 감사 엔진 전체로 빈 곳을 메운 사본에서 각 스킬 시험을 돌려 실제로 연 모듈 · 정의 파일을 모아 보니, 표준조서 말고는 빠진 것이 없었다.
+- 한계: 명령 시험이 지나지 않는 함수 안 import 는 이 시험들이 보지 않는다.
+
 ## v0.31.1 주석의 감사 건 이름 걷기 (2026-11-27)
 
 - DSD푸팅 · 분개테스트 · 법인세-검토에이전트의 코드 주석과 사용 예에 남아 있던 실제 감사 건 이름을 「시험한 감사 건」 · 가상 이름 「가나다」 로 바꿨다. 동작은 바뀌지 않는다.

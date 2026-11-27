@@ -1,0 +1,72 @@
+# 전기조서 내용 읽기 (2026-10-12)
+#
+# audit/priorwp.py 가 읽는다. 전기조서의 글(메모 · 절차 · 발견사항 · 결론)을 당기 조서에 참고로 싣는다.
+# 숫자는 여기서 쓰지 않는다. 전기 잔액은 지금의 원천 순위(audit/prior.py)를 그대로 쓴다.
+# 설계: docs/plans/2026-10-12-감사-다음작업-수정반영-전기조서-배정.md 작업 2, docs/specs/2026-10-12-감사-수정반영-전기조서-배정-결과.md
+#
+# 라벨과 번호 표는 예시 조서 25개(회계법인 조서, 저장소에 없음)에서 확인한 것이다. 회사와 감사인마다 다르면 여기에 더한다.
+
+version: 1
+
+scan:
+  max_rows: 600        # 시트마다 읽는 행
+  max_cols: 14         # 글을 모으는 열
+  label_cols: 4        # 라벨을 찾는 열(A~D)
+  label_len: 40        # 이보다 긴 칸은 라벨로 보지 않는다
+  block_lines: 40      # 블록 하나에 담는 줄. 넘는 줄 수는 truncated 에 적는다
+  line_chars: 300      # 한 줄의 글자 수
+  lead_lines: 8        # 당기 Lead 의 「전기 조서 내용(참고)」 에 블록마다 싣는 줄
+  min_blocks: 2        # 전기 폴더의 엑셀을 전기조서로 보는 최소 블록 수(색인 판별)
+
+# 블록 종류 → 라벨. 칸의 글에서 앞 번호 · 괄호 · 빈칸을 떼고 소문자로 바꾼 것과 견준다
+labels:
+  lead: [leadsheet, lead]
+  procedures: [auditprocedure, auditprocedures]
+  procedure: [감사절차, 절차]
+  purpose: [감사목적, 목적]
+  result: [감사결과, 결과]
+  memo: [auditmemo, memo, 감사메모, 메모]
+  nature: [계정의주요성격]
+  findings: [발견사항, findings, 수정사항]
+  conclusion: [conclusion, 감사결론, 결론]
+
+kind_names:
+  nature: 계정의 주요 성격
+  memo: 감사 메모
+  purpose: 감사목적
+  procedure: 감사절차
+  result: 감사결과
+  findings: 발견사항
+  conclusion: 결론
+  section: 기타 블록
+
+# Lead 에 싣는 순서
+lead_order: [nature, memo, purpose, procedure, result, findings, conclusion]
+
+# 내용이 이것뿐인 발견사항 · 결론은 「특이사항 없음」 으로 본다(절차 시트의 것은 Lead 에 싣지 않는다)
+trivial: [n/a, na, 없음, 해당없음, 해당사항없음, 특이사항없음, "-"]
+
+# 파일 이름 앞머리의 알파벳 번호 → 4000 영역. 엔진 영역 번호와 같은 글자는 적지 않아도 된다(A · AA · BBDD · C · E · EE …).
+# 번호 뒤에 구분 글자가 있으면(E-3, E.4, P.1, C-1) 앞 글자만 본다
+area_codes:
+  D2: D          # 기타채권(유동 · 비유동). 엔진은 D 한 조서로 묶는다(결과 문서 6절 1번, 회계사 확인 대상)
+  R1: EE         # 급여
+  E3: CC         # 기타유동부채
+
+# 전기 절차 이름 → 당기 표지의 절차 줄. 전기 이름에 words 가 있고 표지 절차 글에 steps 가 있으면 그 줄의 「전기 수행」 칸에 적는다.
+# 낱말로 이은 것이라 확인 전이다. 잇지 못한 전기 절차는 표 아래에 따로 적는다
+procedure_match:
+  - {words: [lead, 분석적, 증감], steps: [총괄표, 비교분석표, 분석적]}
+  - {words: [조회], steps: [조회]}
+  - {words: [cut-off, cutoff, 컷오프, 기간귀속], steps: [기간귀속, 결산일 직전]}
+  - {words: [tot, 표본, 발생], steps: [발생사실, 증빙]}
+  - {words: [부가가치세, 부가세], steps: [부가가치세]}
+  - {words: [주석, 공시], steps: [공시]}
+  - {words: [실사], steps: [실사]}
+  - {words: [평가, 충당금, 손상], steps: [평가, 충당금, 손상]}
+  - {words: [이자, overall], steps: [이자]}
+  - {words: [상각], steps: [상각]}
+  - {words: [외화, 환산], steps: [외화, 환산]}
+  - {words: [특수관계], steps: [특수관계]}
+  - {words: [약정, 담보, 보증], steps: [약정, 담보, 보증]}
+  - {words: [명세서, 대사], steps: [명세서]}
